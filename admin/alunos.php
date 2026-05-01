@@ -143,8 +143,9 @@ $selUtm     = $hasUtm
     ? "u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content,"
     : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
 
+// Usa COUNT(DISTINCT DATE) para não contar múltiplos webhooks do mesmo cadastro como cadastros separados
 $selWhl = $hasWHL
-    ? "(SELECT COUNT(*) FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = 'INSCRITO') AS qtd_cadastros,
+    ? "(SELECT COUNT(DISTINCT DATE(wl.created_at)) FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = 'INSCRITO') AS qtd_cadastros,
        (SELECT MAX(wl2.created_at) FROM webhook_logs wl2 WHERE wl2.user_id = u.id AND wl2.evento = 'INSCRITO') AS ultimo_cadastro,"
     : "1 AS qtd_cadastros, NULL AS ultimo_cadastro,";
 
