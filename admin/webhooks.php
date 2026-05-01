@@ -12,8 +12,34 @@ function h(?string $v): string {
     return htmlspecialchars($v ?? '', ENT_QUOTES, 'UTF-8');
 }
 
-// Salvar / atualizar
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// === POST: salvar config webhook de live por turma ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'live_turma_save') {
+    $tid           = (int)($_POST['turma_id'] ?? 0);
+    $lurl          = trim($_POST['webhook_live_url'] ?? '');
+    $delay         = max(0, (int)($_POST['delay_ms'] ?? 500));
+    $enabled       = isset($_POST['live_webhook_enabled']) ? 1 : 0;
+    $disparo       = trim($_POST['live_disparo_data'] ?? '');
+    $disparoDB     = $disparo ? date('Y-m-d H:i:s', strtotime($disparo)) : null;
+    $excludeCert   = isset($_POST['live_exclude_cert']) ? 1 : 0;
+    $excludeZero   = isset($_POST['live_exclude_zero']) ? 1 : 0;
+    $includeSel    = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
+    $excludeSel2   = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
+    $filterCfg     = null;
+    if ($includeSel || $excludeSel2 || $excludeCert || $excludeZero) {
+        $filterCfg = json_encode(['include_any'=>$includeSel,'exclude_any'=>$excludeSel2,'exclude_cert'=>$excludeCert,'exclude_zero'=>$excludeZero], JSON_UNESCAPED_UNICODE);
+    }
+    if ($tid > 0) {
+        try {
+            $pdo->prepare("UPDATE turmas SET webhook_live_url=:u,delay_ms=:d,live_webhook_enabled=:en,live_disparo_data=:disp,live_filter_tag_ids=:tags,live_disparada=0 WHERE id=:id")
+                ->execute([':u'=>$lurl!==''?$lurl:null,':d'=>$delay,':en'=>$enabled,':disp'=>$disparoDB,':tags'=>$filterCfg,':id'=>$tid]);
+        } catch (Throwable $e) {}
+    }
+    header('Location: webhooks.php?live_edit=' . $tid . '&saved=1');
+    exit;
+}
+
+// Salvar / atualizar webhook
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'live_turma_save') {
     $id            = (int)($_POST['id'] ?? 0);
     $nome          = trim($_POST['nome'] ?? '');
     $evento        = trim($_POST['evento'] ?? '');
@@ -48,40 +74,6 @@ if (isset($_GET['toggle'])) {
 if (isset($_GET['test'])) {
     try { disparar_webhook_teste($pdo, (int)$_GET['test']); } catch (Throwable $e) {}
     header('Location: webhooks.php'); exit;
-}
-
-// === POST: salvar config webhook de live por turma ===
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'live_turma_save') {
-    $tid           = (int)($_POST['turma_id'] ?? 0);
-    $url           = trim($_POST['webhook_live_url'] ?? '');
-    $delay         = max(0, (int)($_POST['delay_ms'] ?? 500));
-    $enabled       = isset($_POST['live_webhook_enabled']) ? 1 : 0;
-    $disparo       = trim($_POST['live_disparo_data'] ?? '');
-    $disparoDB     = $disparo ? date('Y-m-d H:i:s', strtotime($disparo)) : null;
-    $excludeCert   = isset($_POST['live_exclude_cert']) ? 1 : 0;
-    $excludeZero   = isset($_POST['live_exclude_zero']) ? 1 : 0;
-    $includeSel    = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
-    $excludeSel    = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
-
-    $filterCfg = null;
-    if ($includeSel || $excludeSel || $excludeCert || $excludeZero) {
-        $filterCfg = json_encode(['include_any'=>$includeSel,'exclude_any'=>$excludeSel,'exclude_cert'=>$excludeCert,'exclude_zero'=>$excludeZero], JSON_UNESCAPED_UNICODE);
-    }
-
-    if ($tid > 0) {
-        $set = []; $params = [':id' => $tid];
-        $set[] = "webhook_live_url = :u";      $params[':u']    = $url !== '' ? $url : null;
-        $set[] = "delay_ms = :d";              $params[':d']    = $delay;
-        $set[] = "live_webhook_enabled = :en"; $params[':en']   = $enabled;
-        $set[] = "live_disparo_data = :disp";  $params[':disp'] = $disparoDB;
-        $set[] = "live_filter_tag_ids = :tags";$params[':tags'] = $filterCfg;
-        $set[] = "live_disparada = 0";
-        try {
-            $pdo->prepare("UPDATE turmas SET " . implode(", ", $set) . " WHERE id = :id")->execute($params);
-        } catch (Throwable $e) {}
-    }
-    header('Location: webhooks.php?live_edit=' . $tid . '&saved=1');
-    exit;
 }
 
 $editWebhook = null;
