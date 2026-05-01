@@ -431,45 +431,94 @@ include __DIR__ . '/_header.php';
     </div>
 </div>
 
-<!-- FUNIL HTML/CSS -->
-<div class="panel mb-4">
+<!-- FUNIL WEDGE SVG -->
+<?php if (!empty($funnelData)):
+    $fN    = count($funnelData);
+    $segW  = 100;          // SVG units per segment
+    $svgW  = $fN * $segW;  // total SVG viewBox width
+    $svgH  = 160;          // viewBox height
+    $maxFH = 138;          // funnel max height (leaves 11 top/bottom pad)
+    $padV  = ($svgH - $maxFH) / 2;
+    $fMax  = max(1, (int)$funnelData[0]['count']);
+
+    $hs = [];
+    foreach ($funnelData as $idx => $fstep) {
+        $hs[$idx] = max(6.0, round(($fstep['count'] / $fMax) * $maxFH, 1));
+    }
+?>
+<div class="panel mb-4" style="overflow:hidden">
     <div class="panel-title">Funil de conversão</div>
-    <div style="display:flex;flex-direction:column;gap:6px;padding:4px 0">
-    <?php foreach ($funnelData as $fi => $fstep):
-        $alpha = round(1 - ($fi / max(count($funnelData) - 1, 1)) * 0.55, 2);
-    ?>
-        <div style="display:flex;align-items:center;gap:10px">
-            <!-- Barra proporcional -->
-            <div style="flex:1;min-width:0">
-                <div style="
-                    width:<?= $fstep['pct_bar'] ?>%;
-                    min-width:min(280px,100%);
-                    background:rgba(250,204,21,<?= $alpha ?>);
-                    border-radius:8px;
-                    padding:9px 14px;
-                    display:flex;
-                    align-items:center;
-                    justify-content:space-between;
-                    gap:10px;
-                    transition:width .4s ease;
-                ">
-                    <span style="font-size:13px;font-weight:600;color:#111827;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                        <?= htmlspecialchars($fstep['label']) ?>
-                    </span>
-                    <span style="font-size:13px;font-weight:700;color:#111827;white-space:nowrap;margin-left:8px">
-                        <?= number_format($fstep['count']) ?>
-                    </span>
-                    <?php if ($fstep['drop'] !== null): ?>
-                    <span style="font-size:11px;font-weight:500;color:rgba(17,24,39,.7);white-space:nowrap;padding:2px 7px;background:rgba(0,0,0,.15);border-radius:999px;flex-shrink:0">
-                        ↓ <?= $fstep['drop'] ?>%
-                    </span>
-                    <?php endif; ?>
-                </div>
-            </div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+
+      <!-- SVG: pure visual trapezoids, no text distortion risk -->
+      <svg viewBox="0 0 <?= $svgW ?> <?= $svgH ?>"
+           preserveAspectRatio="none"
+           xmlns="http://www.w3.org/2000/svg"
+           style="display:block;width:100%;min-width:<?= max(320, $fN * 58) ?>px;height:150px">
+
+        <defs>
+          <linearGradient id="fgrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%"   stop-color="#facc15" stop-opacity=".92"/>
+            <stop offset="100%" stop-color="#f59e0b" stop-opacity=".48"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Unified funnel path (single polygon connecting all steps) for gradient fill -->
+        <?php
+            $topPts = '';
+            $botPts = '';
+            for ($i = 0; $i < $fN; $i++) {
+                $xl  = $i * $segW;
+                $hL  = $hs[$i];
+                $ytL = $padV + ($maxFH - $hL) / 2;
+                $ybL = $ytL + $hL;
+                $topPts .= "$xl,$ytL ";
+                $botPts  = "$xl,$ybL " . $botPts;
+            }
+            // close right edge
+            $xLast = $fN * $segW;
+            $hLast = $hs[$fN - 1];
+            $ytLast = $padV + ($maxFH - $hLast) / 2;
+            $ybLast = $ytLast + $hLast;
+            $allPts = trim($topPts) . " $xLast,$ytLast $xLast,$ybLast " . trim($botPts);
+        ?>
+        <polygon points="<?= $allPts ?>" fill="url(#fgrad)"/>
+
+        <!-- Vertical dividers between segments -->
+        <?php for ($i = 1; $i < $fN; $i++):
+            $xDiv = $i * $segW;
+            $hL   = $hs[$i];
+            $ytL  = $padV + ($maxFH - $hL) / 2;
+            $ybL  = $ytL + $hL;
+        ?>
+        <line x1="<?= $xDiv ?>" y1="<?= round($ytL, 1) ?>"
+              x2="<?= $xDiv ?>" y2="<?= round($ybL, 1) ?>"
+              stroke="rgba(8,14,26,.55)" stroke-width="1.5"/>
+        <?php endfor; ?>
+      </svg>
+
+      <!-- Labels strip: always visible, always crisp -->
+      <div style="display:flex;border-top:1px solid var(--border);background:var(--bg-card)">
+        <?php foreach ($funnelData as $i => $fstep): ?>
+        <div style="flex:1;min-width:0;text-align:center;padding:7px 3px 6px<?= ($i < $fN - 1) ? ';border-right:1px solid var(--border)' : '' ?>">
+          <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 3px">
+            <?= htmlspecialchars($fstep['label']) ?>
+          </div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px;line-height:1">
+            <?= number_format($fstep['count']) ?>
+          </div>
+          <?php if ($fstep['drop'] !== null): ?>
+          <div style="font-size:9.5px;font-weight:600;color:#fbbf24;margin-top:2px">↓ <?= $fstep['drop'] ?>%</div>
+          <?php else: ?>
+          <div style="font-size:9.5px;color:var(--muted);margin-top:2px">—</div>
+          <?php endif; ?>
         </div>
-    <?php endforeach; ?>
+        <?php endforeach; ?>
+      </div>
+
     </div>
 </div>
+<?php endif; ?>
 
 <!-- TABLE: Detalhamento das aulas -->
 <?php if ($funil): ?>
