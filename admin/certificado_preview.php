@@ -24,6 +24,7 @@ $alunoFake = [
 $certFake = [
     'codigo_uid' => 'CERT_TESTE_' . date('Ymd_His'),
     'emitido_em' => date('Y-m-d H:i:s'),
+    'course'     => 'Curso de Demonstração',
 ];
 
 $pdfUrl = gerar_pdf_certificado($alunoFake, $certFake, $config);

@@ -109,7 +109,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensagemErro  = 'Você ainda não concluiu todas as aulas obrigatórias. Finalize a trilha antes de emitir o certificado.';
     } else {
         $senhaInformada = trim((string)($_POST['senha_certificado'] ?? ''));
-        if ($senhaInformada === '' || $senhaInformada !== SENHA_CERTIFICADO) {
+
+        // === Determina a senha esperada a partir da configuração do DB ===
+        $senhaTipo   = $certCfg['senha_tipo']          ?? 'unica';
+        $senhaMode   = $certCfg['senha_mode']          ?? 'fixa';
+        $senhaFixa   = trim((string)($certCfg['senha_fixa'] ?? ''));
+        $partesFixas = json_decode((string)($certCfg['senha_partes_fixas'] ?? '[]'), true) ?: [];
+
+        // Busca senha variável da turma do aluno (se modo variável)
+        $senhaVariavel = '';
+        if ($senhaMode === 'variavel') {
+            try {
+                $stInsc = $pdo->prepare("SELECT turma_id FROM inscricoes WHERE user_id = :uid ORDER BY id DESC LIMIT 1");
+                $stInsc->execute(['uid' => $userId]);
+                $insc = $stInsc->fetch();
+                if ($insc && (int)$insc['turma_id'] > 0) {
+                    $stTurma = $pdo->prepare("SELECT senha_certificado FROM turmas WHERE id = :id LIMIT 1");
+                    $stTurma->execute(['id' => (int)$insc['turma_id']]);
+                    $turma = $stTurma->fetch();
+                    $senhaVariavel = trim((string)($turma['senha_certificado'] ?? ''));
+                }
+            } catch (Throwable $e) {}
+        }
+
+        // Monta a senha esperada
+        if ($senhaTipo === 'modular') {
+            $partes = $partesFixas;
+            if ($senhaMode === 'variavel') $partes[] = $senhaVariavel;
+            $senhaEsperada = implode('', array_map('trim', $partes));
+        } elseif ($senhaMode === 'variavel') {
+            $senhaEsperada = $senhaVariavel;
+        } else {
+            // unica + fixa: prioriza DB; fallback para constante
+            $senhaEsperada = $senhaFixa !== '' ? $senhaFixa : (defined('SENHA_CERTIFICADO') ? SENHA_CERTIFICADO : '');
+        }
+
+        if ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '') {
             $erroSenha    = true;
             $etapa        = 'erro';
             $mensagemErro = $certCfg['error_message_html'] ?? 'Senha inválida.';
