@@ -293,7 +293,11 @@ try {
 
         try {
             if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('INSCRITO', $user_id, ['codigo_turma' => $codigo_turma]);
+                disparar_webhooks('INSCRITO', $user_id, [
+                    'codigo_turma' => $codigo_turma,
+                    'codigo_live'  => $codigo_turma,
+                    'data_live'    => $data_live,
+                ]);
             }
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao disparar webhooks INSCRITO', [
