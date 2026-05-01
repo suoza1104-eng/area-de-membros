@@ -1,7 +1,11 @@
 <?php
 declare(strict_types=1);
+
+if (($_GET['key'] ?? '') !== 'emerson2025') {
+    http_response_code(403); exit('Acesso negado.');
+}
+
 require_once __DIR__ . '/../app/funcoes.php';
-proteger_admin();
 
 header('Content-Type: text/plain; charset=utf-8');
 
