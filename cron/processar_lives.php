@@ -1,9 +1,11 @@
 <?php
 // /cron/processar_lives.php
 // Dispara webhooks de live por turma (fila de alunos) quando chegar a data/hora configurada.
+// Também dispara para o SuperFuncionário se sf_enabled=1 na turma.
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
 
 $pdo = getPDO();
 $agora = date('Y-m-d H:i:s');
@@ -201,17 +203,30 @@ function post_json(string $url, string $json, int $timeout = 15): array {
 }
 
 // ----------------------------------------------------------------------------------
-// 1) Pega turmas aptas: habilitado, não disparada, com URL, e hora de disparo <= agora
-//    Regra: se live_disparo_data vazio -> usa data_live
+// 1) Detecta se coluna sf_enabled existe (migration gradual)
 // ----------------------------------------------------------------------------------
+$hasSfCol = false;
+try {
+    $pdo->query("SELECT sf_enabled FROM turmas LIMIT 0");
+    $hasSfCol = true;
+} catch (Throwable $e) {}
+
+// ----------------------------------------------------------------------------------
+// 2) Pega turmas aptas: não disparadas, com data de disparo <= agora, e
+//    que tenham PELO MENOS webhook habilitado OU SF habilitado.
+// ----------------------------------------------------------------------------------
+$sfOrClause = $hasSfCol ? "OR (sf_enabled = 1)" : "";
+
 $stmt = $pdo->prepare("
     SELECT *
       FROM turmas
      WHERE live_disparada = 0
-       AND live_webhook_enabled = 1
-       AND webhook_live_url IS NOT NULL AND webhook_live_url <> ''
        AND live_disparo_data IS NOT NULL
        AND live_disparo_data <= :agora
+       AND (
+           (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+           $sfOrClause
+       )
   ORDER BY live_disparo_data ASC, id ASC
 ");
 $stmt->execute([':agora' => $agora]);
@@ -221,8 +236,7 @@ $turmas = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 // Total de aulas obrigatórias para cálculo de andamento
 $totalObrigatoriasGlobal = total_aulas_obrigatorias($pdo);
 if (!$turmas) {
-    // Sem nada pra disparar (silencioso)
-    exit;
+    exit; // sem nada para disparar
 }
 
 // ----------------------------------------------------------------------------------
@@ -242,8 +256,9 @@ foreach ($turmas as $turma) {
     $codigo = (string)($turma['codigo'] ?? '');
     if ($codigo === '') continue;
 
-    $url = trim((string)($turma['webhook_live_url'] ?? ''));
-    if ($url === '') continue;
+    $url       = trim((string)($turma['webhook_live_url'] ?? ''));
+    $whEnabled = (int)($turma['live_webhook_enabled'] ?? 1) === 1 && $url !== '';
+    $sfEnabled = $hasSfCol && (int)($turma['sf_enabled'] ?? 0) === 1;
 
     $delay = (int)($turma['delay_ms'] ?? 500);
     if ($delay < 0) $delay = 0;
@@ -281,45 +296,65 @@ foreach ($turmas as $turma) {
     }
 
     // ----------------------------------------------------------------------------------
-    // 4) Dispara para cada aluno + loga em webhook_logs
+    // 4) Dispara para cada aluno — webhook e/ou SuperFuncionário
     // ----------------------------------------------------------------------------------
     foreach ($alunos as $aluno) {
-        // Calcula andamento (0..100) para enviar no payload
-$uid = (int)($aluno['id'] ?? 0);
-$prog = calc_andamento($pdo, $uid, (int)$totalObrigatoriasGlobal);
-$aluno['andamento']        = $prog['andamento'];
-$aluno['aulas_concluidas'] = $prog['concluidas'];
-$aluno['aulas_totais']     = $prog['total'];
+        $uid = (int)($aluno['id'] ?? 0);
+        $prog = calc_andamento($pdo, $uid, (int)$totalObrigatoriasGlobal);
+        $aluno['andamento']        = $prog['andamento'];
+        $aluno['aulas_concluidas'] = $prog['concluidas'];
+        $aluno['aulas_totais']     = $prog['total'];
 
-$payload = build_live_payload($turma, $aluno);
-        $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        // Extra disponível para resolução de campos SF e payload do webhook
+        $extra = [
+            'codigo_turma'     => $turma['codigo'],
+            'codigo_live'      => $turma['codigo_live'] ?? $turma['codigo'],
+            'data_live'        => $turma['data_live'],
+            'data_live_br'     => (function(?string $d): ?string {
+                if (!$d) return null;
+                try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
+            })($turma['data_live']),
+            'andamento'        => $aluno['andamento'],
+            'aulas_concluidas' => $aluno['aulas_concluidas'],
+            'aulas_totais'     => $aluno['aulas_totais'],
+        ];
 
-        [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
+        // --- Webhook ---
+        if ($whEnabled) {
+            $payload = build_live_payload($turma, $aluno);
+            $json    = json_encode($payload, JSON_UNESCAPED_UNICODE);
 
-        // log no webhook_logs (se tabela existir)
-        try {
-            if (table_exists($pdo, 'webhook_logs')) {
-                $log = $pdo->prepare("
-                    INSERT INTO webhook_logs
-                        (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at)
-                    VALUES
-                        (NULL, :u, :e, :p, :s, :b, :er, NOW())
-                ");
-                $log->execute([
-                    ':u'  => $aluno['id'] ?? null,
-                    ':e'  => 'LIVE_TURMA_' . $codigo,
-                    ':p'  => $json,
-                    ':s'  => $status ?: null,
-                    ':b'  => $resp,
-                    ':er' => $err ?: null,
-                ]);
+            [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
+
+            try {
+                if (table_exists($pdo, 'webhook_logs')) {
+                    $pdo->prepare("
+                        INSERT INTO webhook_logs
+                            (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at)
+                        VALUES (NULL, :u, :e, :p, :s, :b, :er, NOW())
+                    ")->execute([
+                        ':u'  => $aluno['id'] ?? null,
+                        ':e'  => 'LIVE_TURMA_' . $codigo,
+                        ':p'  => $json,
+                        ':s'  => $status ?: null,
+                        ':b'  => $resp,
+                        ':er' => $err ?: null,
+                    ]);
+                }
+            } catch (Throwable $e) {}
+        }
+
+        // --- SuperFuncionário ---
+        if ($sfEnabled) {
+            try {
+                sf_disparar_live_turma($pdo, $turma, $aluno, $extra);
+            } catch (Throwable $e) {
+                // falha de SF não para o loop
             }
-        } catch (Throwable $e) {
-            // falha no log não impede envio
         }
 
         if ($delay > 0) {
-            usleep($delay * 1000); // ms -> µs
+            usleep($delay * 1000);
         }
     }
 

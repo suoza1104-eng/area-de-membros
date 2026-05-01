@@ -468,3 +468,130 @@ function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStat
         // nunca quebra o app por causa de log
     }
 }
+
+/** ---------------------------------
+ *  Disparo SF para aluno de live de turma
+ *
+ *  Usa a config de SF da própria turma (sf_tags_text / sf_flows_text / sf_fields_json),
+ *  não as regras globais da tela SuperFuncionário.
+ *
+ *  @param array $turmaSf  Linha da turma com: codigo, data_live, codigo_live,
+ *                         sf_tags_text, sf_flows_text, sf_fields_json
+ *  @param array $aluno    Linha do usuário (com andamento/aulas_concluidas/aulas_totais injetados)
+ *  @param array $extra    Dados extras para resolução de source (ex.: extra.andamento)
+ * ----------------------------------*/
+function sf_disparar_live_turma(PDO $pdo, array $turmaSf, array $aluno, array $extra): void
+{
+    $cfg = sf_get_config($pdo);
+    if ((int)$cfg['is_enabled'] !== 1) return;
+    if ($cfg['token'] === '') return;
+
+    $evento = 'LIVE_TURMA_' . ($turmaSf['codigo'] ?? '');
+
+    // Tags
+    $tags = [];
+    foreach (preg_split('/\R+/', (string)($turmaSf['sf_tags_text'] ?? '')) as $t) {
+        $t = trim($t);
+        if ($t !== '') $tags[] = $t;
+    }
+
+    // Flows
+    $flows = [];
+    foreach (explode(',', (string)($turmaSf['sf_flows_text'] ?? '')) as $f) {
+        $f = trim($f);
+        if ($f !== '' && ctype_digit($f)) $flows[] = (int)$f;
+    }
+
+    // Campos personalizados
+    $pairs = [];
+    $fieldsJson = trim((string)($turmaSf['sf_fields_json'] ?? ''));
+    if ($fieldsJson !== '') {
+        $tmp = json_decode($fieldsJson, true);
+        if (is_array($tmp)) $pairs = $tmp;
+    }
+
+    $userRow = sf_get_user_row($pdo, $aluno);
+
+    $payload = [
+        'evento'    => $evento,
+        'user'      => $aluno,
+        'extra'     => $extra,
+        'timestamp' => date('c'),
+    ];
+
+    $fieldResult = sf_build_custom_fields($pdo, $pairs, $userRow, $extra, $payload);
+    $fields      = $fieldResult['fields'];
+
+    // Endpoint
+    $base     = rtrim($cfg['base_url'], '/');
+    if ($base === '') $base = 'https://app.superfuncionario.com.br';
+    $endpoint = $cfg['default_endpoint'] ?: '/api/contacts';
+    $url      = $base . (substr($endpoint, 0, 1) === '/' ? $endpoint : '/' . $endpoint);
+
+    // Contato mínimo
+    $email = trim((string)($userRow['email']    ?? ($aluno['email']    ?? '')));
+    $phone = trim((string)($userRow['telefone'] ?? ($aluno['telefone'] ?? '')));
+    $name  = trim((string)($userRow['nome']     ?? ($aluno['nome']     ?? '')));
+
+    $first = $name;
+    $last  = '';
+    if (strpos($name, ' ') !== false) {
+        $chunks = preg_split('/\s+/', $name);
+        $first  = array_shift($chunks) ?: $name;
+        $last   = implode(' ', $chunks);
+    }
+
+    // Actions
+    $actions = [];
+    foreach ($tags as $t) {
+        $actions[] = ['action' => 'add_tag', 'tag_name' => $t];
+    }
+    foreach ($fields as $f) {
+        $actions[] = ['action' => 'set_field_value', 'field_name' => $f['field_name'], 'value' => $f['value']];
+    }
+    foreach ($flows as $fid) {
+        $actions[] = ['action' => 'send_flow', 'flow_id' => $fid];
+    }
+
+    $body = array_filter([
+        'email'      => $email !== '' ? $email : null,
+        'phone'      => $phone !== '' ? $phone : null,
+        'first_name' => $first !== '' ? $first : null,
+        'last_name'  => $last !== '' ? $last : null,
+        'actions'    => $actions,
+    ], static fn($v) => $v !== null);
+
+    if (empty($body['email']) && empty($body['phone'])) {
+        sf_log($pdo, $evento, null, false, null, 'Aluno sem email/telefone', $payload, '');
+        return;
+    }
+
+    $headers = [];
+    if ($cfg['header_mode'] === 'bearer') {
+        $headers[] = 'Authorization: Bearer ' . $cfg['token'];
+    } else {
+        $headers[] = 'X-ACCESS-TOKEN: ' . $cfg['token'];
+    }
+
+    $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
+
+    $logRequest = json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']];
+    $logRequest['_debug'] = [
+        'custom_fields_count' => count($fields),
+        'custom_fields_keys'  => $fieldResult['resolved_keys'],
+        'skipped_keys'        => $fieldResult['skipped_keys'],
+        'source'              => 'live_turma',
+        'turma'               => $turmaSf['codigo'] ?? '',
+    ];
+
+    sf_log(
+        $pdo,
+        $evento,
+        null,
+        (bool)$res['ok'],
+        (int)$res['http_status'],
+        (string)($res['error'] ?? ''),
+        $logRequest,
+        (string)($res['response'] ?? '')
+    );
+}
