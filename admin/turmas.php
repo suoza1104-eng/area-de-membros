@@ -81,6 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $excludeCert = isset($_POST['live_exclude_cert']) ? 1 : 0;
     $excludeZero = isset($_POST['live_exclude_zero']) ? 1 : 0;
 
+    $senhaCert = trim((string)($_POST['senha_certificado'] ?? ''));
+
     // SF config
     $sfEnabled   = isset($_POST['sf_enabled']) ? 1 : 0;
     $sfTagsText  = trim((string)($_POST['sf_tags_text'] ?? ''));
@@ -125,6 +127,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hasSfTagsText   = col_exists($pdo, 'turmas', 'sf_tags_text');
     $hasSfFlowsText  = col_exists($pdo, 'turmas', 'sf_flows_text');
     $hasSfFieldsJson = col_exists($pdo, 'turmas', 'sf_fields_json');
+    $hasSenhaCert    = col_exists($pdo, 'turmas', 'senha_certificado');
+
+    // Migration: cria coluna senha_certificado se não existir
+    if (!$hasSenhaCert) {
+        try { $pdo->exec("ALTER TABLE turmas ADD COLUMN senha_certificado VARCHAR(255) NOT NULL DEFAULT ''"); $hasSenhaCert = true; } catch (Throwable $e) {}
+    }
 
     // Migration: cria colunas SF se não existirem
     if (!$hasSfEnabled) {
@@ -165,6 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($hasSfTagsText)   { $set[] = "sf_tags_text = :sftt"; $params[':sftt']  = ($sfTagsText !== '' ? $sfTagsText : null); }
         if ($hasSfFlowsText)  { $set[] = "sf_flows_text = :sfft"; $params[':sfft'] = ($sfFlowsText !== '' ? $sfFlowsText : null); }
         if ($hasSfFieldsJson) { $set[] = "sf_fields_json = :sffj"; $params[':sffj'] = $sfFieldsJson; }
+        if ($hasSenhaCert)    { $set[] = "senha_certificado = :sc"; $params[':sc']  = $senhaCert; }
 
         if ($hasLiveDisp) {
             $ld = 0;
@@ -197,6 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($hasSfTagsText)   { $cols[] = "sf_tags_text";   $vals[] = ":sftt";  $params[':sftt']  = ($sfTagsText !== '' ? $sfTagsText : null); }
         if ($hasSfFlowsText)  { $cols[] = "sf_flows_text";  $vals[] = ":sfft";  $params[':sfft']  = ($sfFlowsText !== '' ? $sfFlowsText : null); }
         if ($hasSfFieldsJson) { $cols[] = "sf_fields_json"; $vals[] = ":sffj";  $params[':sffj']  = $sfFieldsJson; }
+        if ($hasSenhaCert)    { $cols[] = "senha_certificado"; $vals[] = ":sc"; $params[':sc']    = $senhaCert; }
         if ($hasCreatedAt)    { $cols[] = "created_at";     $vals[] = "NOW()"; }
         if ($hasLiveDisp)     { $cols[] = "live_disparada"; $vals[] = "0"; }
 
@@ -363,6 +373,22 @@ include __DIR__ . '/_header.php';
                 <span class="field-lbl">Código da live <span style="color:var(--muted);font-weight:400">(slug opcional)</span></span>
                 <input type="text" name="codigo_live" value="<?= h($edit['codigo_live'] ?? '') ?>" placeholder="ex: live-perfil-led-18dez">
             </label>
+        </div>
+
+        <!-- Certificado -->
+        <p class="section-label">Certificado</p>
+        <div style="max-width:480px;">
+            <label>
+                <span class="field-lbl">Senha do certificado desta turma</span>
+                <input type="text" name="senha_certificado"
+                    value="<?= h((string)($edit['senha_certificado'] ?? '')) ?>"
+                    placeholder="Ex.: TURMA_ABRIL" autocomplete="off">
+            </label>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.6;">
+                Usada quando o modo de senha está configurado como <strong>Variável</strong> em
+                <a href="certificado_config.php" style="color:#facc15;">Configuração de Certificado</a>.
+                No modo modular+variável, esta é a <strong>última parte</strong> da senha.
+            </div>
         </div>
 
         <!-- Janelas e data -->
