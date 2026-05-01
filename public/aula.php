@@ -260,8 +260,9 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             margin-bottom:6px;
         }
         .progress-bar{
+            position:relative;
             width:100%;
-            height:8px;
+            height:16px;
             border-radius:999px;
             background:#020617;
             border:1px solid #111827;
@@ -271,8 +272,19 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             height:100%;
             width:0;
             border-radius:999px;
-            background:var(--secondary);
+            background:var(--primary);
             transition:width .35s ease;
+        }
+        .progress-bar-label{
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:11px;
+            font-weight:600;
+            color:#111827;
+            pointer-events:none;
         }
 
         .lesson-wrapper{
@@ -778,6 +790,7 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
         </div>
         <div class="progress-bar">
             <div class="progress-bar-fill" style="width: <?= $percent ?>%;"></div>
+            <span class="progress-bar-label"><?= $percent ?>%</span>
         </div>
     </div>
 
