@@ -201,6 +201,35 @@ if (isset($_GET['toggle'])) {
     exit;
 }
 
+// === POST: salvar config SF por turma ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_save') {
+    $tid        = (int)($_POST['turma_id'] ?? 0);
+    $sfEnabled  = isset($_POST['sf_enabled']) ? 1 : 0;
+    $sfTags     = trim($_POST['sf_tags_text'] ?? '');
+    $sfFlows    = trim($_POST['sf_flows_text'] ?? '');
+    $sfSources  = $_POST['sf_field_source'] ?? [];
+    $sfDests    = $_POST['sf_field_dest'] ?? [];
+    $sfPairs    = [];
+    if (is_array($sfSources) && is_array($sfDests)) {
+        $n = min(count($sfSources), count($sfDests));
+        for ($i = 0; $i < $n; $i++) {
+            $src = trim((string)$sfSources[$i]);
+            $dst = trim((string)$sfDests[$i]);
+            if ($src !== '' && $dst !== '') $sfPairs[] = ['source'=>$src,'dest'=>$dst];
+        }
+    }
+    $sfFieldsJson = $sfPairs ? json_encode($sfPairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+
+    if ($tid > 0) {
+        try {
+            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,live_disparada=0 WHERE id=:id")
+                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':id'=>$tid]);
+        } catch (Throwable $e) {}
+    }
+    header('Location: superfuncionario.php?sf_edit=' . $tid . '&saved=1');
+    exit;
+}
+
 // ===== carregar config e regras =====
 $cfg = sf_get_config($pdo);
 
@@ -233,6 +262,14 @@ foreach ($fieldOptions as $opts) {
         $fieldDatalist[$val] = $lab;
     }
 }
+
+$sfEditTurma = null;
+if (isset($_GET['sf_edit'])) {
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => (int)$_GET['sf_edit']]);
+    $sfEditTurma = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+$sfTurmasList = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 include __DIR__ . '/_header.php';
 ?>
@@ -566,7 +603,160 @@ textarea{ min-height:78px; }
         </div>
         <?php endif; ?>
     </div>
-</div>
+
+    <!-- ===== SF POR TURMA ===== -->
+    <div class="card">
+        <h4 style="margin:0 0 10px 0;">🚀 Disparo de Live por Turma — SuperFuncionário</h4>
+        <p class="small" style="margin:0 0 14px 0;">Configure as tags, fluxos e campos personalizados de SF específicos para cada turma, disparados automaticamente na data da live.</p>
+
+        <?php if (isset($_GET['saved']) && $_GET['saved'] == '1'): ?>
+            <div style="margin-bottom:14px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;font-size:13px;">
+                Configuração de SF da turma salva com sucesso!
+            </div>
+        <?php endif; ?>
+
+        <!-- datalist para campos SF da turma -->
+        <datalist id="sf-turma-source-list">
+            <?php foreach ($fieldDatalist as $val => $lab): ?>
+                <option value="<?= h($val) ?>"><?= h($lab) ?></option>
+            <?php endforeach; ?>
+        </datalist>
+
+        <div class="grid2" style="align-items:start;">
+            <!-- FORM (left) -->
+            <div>
+                <?php if ($sfEditTurma): ?>
+                    <?php
+                    $sfTEditPairs = [];
+                    $sfTFieldsRaw = trim((string)($sfEditTurma['sf_fields_json'] ?? ''));
+                    if ($sfTFieldsRaw !== '') {
+                        $tmp = json_decode($sfTFieldsRaw, true);
+                        if (is_array($tmp)) $sfTEditPairs = $tmp;
+                    }
+                    if (!$sfTEditPairs) $sfTEditPairs = [['source'=>'','dest'=>'']];
+                    ?>
+                    <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:18px;">
+                        <input type="hidden" name="action" value="sf_turma_save">
+                        <input type="hidden" name="turma_id" value="<?= (int)$sfEditTurma['id'] ?>">
+
+                        <div style="margin-bottom:14px;">
+                            <span class="small" style="display:block;font-weight:700;margin-bottom:2px;">Turma</span>
+                            <div style="font-size:14px;font-weight:600;color:var(--text);"><?= h((string)$sfEditTurma['codigo']) ?></div>
+                            <?php if (!empty($sfEditTurma['data_live'])): ?>
+                                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live: <?= h(substr((string)$sfEditTurma['data_live'],0,16)) ?></div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div style="margin-bottom:12px;">
+                            <label class="small">
+                                <input type="checkbox" name="sf_enabled" <?= (int)($sfEditTurma['sf_enabled'] ?? 0) === 1 ? 'checked' : '' ?>>
+                                Disparar alunos no SuperFuncionário ao chegar na data
+                            </label>
+                        </div>
+
+                        <div class="grid2" style="margin-bottom:12px;">
+                            <label class="small">Tags SF (uma por linha)<br>
+                                <textarea name="sf_tags_text" placeholder="ex: LIVE_CONFIRMADO" style="min-height:80px;"><?= h((string)($sfEditTurma['sf_tags_text'] ?? '')) ?></textarea>
+                            </label>
+                            <label class="small">Flow IDs (separados por vírgula)<br>
+                                <input type="text" name="sf_flows_text" value="<?= h((string)($sfEditTurma['sf_flows_text'] ?? '')) ?>" placeholder="ex: 123, 456">
+                                <div class="small" style="margin-top:4px;">IDs numéricos dos fluxos do SF.</div>
+                            </label>
+                        </div>
+
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:4px;">Campos personalizados</div>
+                        <div class="sf-hint">
+                            <b>Origem</b> — selecione da lista ou digite livremente:<br>
+                            • Aluno: <code>user.email</code>, <code>user.nome</code>, <code>user.telefone</code><br>
+                            • Turma: <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.codigo_live</code><br>
+                            • Progresso: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code><br>
+                            • Fixo: <code>literal:texto</code> | Template: <code>{{user.nome}} - {{extra.andamento}}%</code>
+                        </div>
+
+                        <div id="sf-turma-fields">
+                            <?php foreach ($sfTEditPairs as $p): ?>
+                            <div class="row">
+                                <input type="text" name="sf_field_source[]" list="sf-turma-source-list"
+                                       value="<?= h((string)($p['source'] ?? '')) ?>"
+                                       placeholder="ex: user.email ou extra.data_live">
+                                <input type="text" name="sf_field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>"
+                                       placeholder="Campo destino no SF">
+                                <button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <button type="button" class="btn-secondary" onclick="addSfTurmaRow()" style="margin-top:4px;">+ Adicionar campo</button>
+
+                        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+                            <button class="btn" type="submit">💾 Salvar configuração</button>
+                            <a class="btn-secondary" href="superfuncionario.php">Cancelar</a>
+                        </div>
+                    </form>
+                <?php else: ?>
+                    <div style="text-align:center;padding:24px;color:var(--muted);border:1px dashed var(--border);border-radius:12px;font-size:13px;">
+                        Selecione uma turma na tabela ao lado para configurar o SF.
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- TABLE (right) -->
+            <div>
+                <?php if (empty($sfTurmasList)): ?>
+                    <p class="small">Nenhuma turma cadastrada ainda. <a href="turmas.php">Cadastrar turma</a>.</p>
+                <?php else: ?>
+                <table class="table">
+                    <thead>
+                    <tr>
+                        <th>Turma</th>
+                        <th>Data Live</th>
+                        <th>SF</th>
+                        <th>Tags</th>
+                        <th>Flows</th>
+                        <th>Disparado</th>
+                        <th>Ações</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($sfTurmasList as $stl): ?>
+                        <?php
+                        $stlSfOn  = (int)($stl['sf_enabled'] ?? 0) === 1;
+                        $stlDisp  = (int)($stl['live_disparada'] ?? 0) === 1;
+                        $stlTags  = trim((string)($stl['sf_tags_text'] ?? ''));
+                        $stlFlows = trim((string)($stl['sf_flows_text'] ?? ''));
+                        ?>
+                        <tr>
+                            <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
+                            <td style="white-space:nowrap;color:var(--muted);"><?= h(substr((string)($stl['data_live']??'—'),0,16)) ?></td>
+                            <td>
+                                <?php if ($stlSfOn): ?>
+                                    <span class="sf-badge" style="color:#15803d;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)">ON</span>
+                                <?php else: ?>
+                                    <span class="sf-badge off">OFF</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= h($stlTags) ?>"><?= h($stlTags ?: '—') ?></td>
+                            <td style="color:var(--muted);"><?= h($stlFlows ?: '—') ?></td>
+                            <td>
+                                <?php if ($stlDisp): ?>
+                                    <span class="sf-badge" style="color:#15803d;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)">Sim</span>
+                                <?php else: ?>
+                                    <span class="sf-badge off">Não</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="white-space:nowrap;">
+                                <a href="?sf_edit=<?= (int)$stl['id'] ?>">⚙️ Configurar</a>
+                                &nbsp;|&nbsp;
+                                <a href="turmas.php?reset_disparo=<?= (int)$stl['id'] ?>" onclick="return confirm('Resetar disparo desta turma?')">↺ Resetar</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div><!-- /.page-sf -->
 
 <script>
 function removeRow(btn){
@@ -607,7 +797,7 @@ function updateEventHint() {
     }
 })();
 
-// Validação: avisa se alguma linha tem source preenchido mas dest vazio ou vice-versa
+// Validação campos da regra SF
 document.getElementById('form-rule').addEventListener('submit', function(e){
     var rows = document.querySelectorAll('#fields .row');
     var errors = [];
@@ -623,6 +813,20 @@ document.getElementById('form-rule').addEventListener('submit', function(e){
         }
     }
 });
+
+function removeSfTurmaRow(btn) { btn.closest('.row').remove(); }
+function addSfTurmaRow() {
+    var c = document.getElementById('sf-turma-fields');
+    if (!c) return;
+    var d = document.createElement('div');
+    d.className = 'row';
+    d.innerHTML =
+        '<input type="text" name="sf_field_source[]" list="sf-turma-source-list" placeholder="ex: user.email ou extra.data_live">' +
+        '<input type="text" name="sf_field_dest[]" placeholder="Campo destino no SF">' +
+        '<button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>';
+    c.appendChild(d);
+    d.querySelector('input[name="sf_field_source[]"]').focus();
+}
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

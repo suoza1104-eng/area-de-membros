@@ -50,12 +50,61 @@ if (isset($_GET['test'])) {
     header('Location: webhooks.php'); exit;
 }
 
+// === POST: salvar config webhook de live por turma ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'live_turma_save') {
+    $tid           = (int)($_POST['turma_id'] ?? 0);
+    $url           = trim($_POST['webhook_live_url'] ?? '');
+    $delay         = max(0, (int)($_POST['delay_ms'] ?? 500));
+    $enabled       = isset($_POST['live_webhook_enabled']) ? 1 : 0;
+    $disparo       = trim($_POST['live_disparo_data'] ?? '');
+    $disparoDB     = $disparo ? date('Y-m-d H:i:s', strtotime($disparo)) : null;
+    $excludeCert   = isset($_POST['live_exclude_cert']) ? 1 : 0;
+    $excludeZero   = isset($_POST['live_exclude_zero']) ? 1 : 0;
+    $includeSel    = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
+    $excludeSel    = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
+
+    $filterCfg = null;
+    if ($includeSel || $excludeSel || $excludeCert || $excludeZero) {
+        $filterCfg = json_encode(['include_any'=>$includeSel,'exclude_any'=>$excludeSel,'exclude_cert'=>$excludeCert,'exclude_zero'=>$excludeZero], JSON_UNESCAPED_UNICODE);
+    }
+
+    if ($tid > 0) {
+        $set = []; $params = [':id' => $tid];
+        $set[] = "webhook_live_url = :u";      $params[':u']    = $url !== '' ? $url : null;
+        $set[] = "delay_ms = :d";              $params[':d']    = $delay;
+        $set[] = "live_webhook_enabled = :en"; $params[':en']   = $enabled;
+        $set[] = "live_disparo_data = :disp";  $params[':disp'] = $disparoDB;
+        $set[] = "live_filter_tag_ids = :tags";$params[':tags'] = $filterCfg;
+        $set[] = "live_disparada = 0";
+        try {
+            $pdo->prepare("UPDATE turmas SET " . implode(", ", $set) . " WHERE id = :id")->execute($params);
+        } catch (Throwable $e) {}
+    }
+    header('Location: webhooks.php?live_edit=' . $tid . '&saved=1');
+    exit;
+}
+
 $editWebhook = null;
 if (isset($_GET['edit'])) {
     $st = $pdo->prepare("SELECT * FROM webhooks WHERE id=:id LIMIT 1");
     $st->execute([':id' => (int)$_GET['edit']]);
     $editWebhook = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
+
+$liveEditTurma = null;
+if (isset($_GET['live_edit'])) {
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => (int)$_GET['live_edit']]);
+    $liveEditTurma = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+$turmasList = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+// allTags for filter
+$allTagsWh = [];
+try {
+    $stTags = $pdo->query("SELECT id, nome FROM tags WHERE ativo = 1 ORDER BY nome ASC");
+    $allTagsWh = $stTags->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 
 $hooks = $pdo->query("SELECT * FROM webhooks ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -456,5 +505,181 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 </script>
+
+<!-- ===== DISPARO DE LIVE POR TURMA ===== -->
+<div class="wh-wrap" style="margin-top:0;">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon yellow">⚡</div>
+            <div class="card-header-text">
+                <h2>Disparo de Live por Turma</h2>
+                <p>Configure o webhook que é disparado para cada aluno quando a data da live da turma chega.</p>
+            </div>
+        </div>
+
+        <?php if (isset($_GET['saved']) && $_GET['saved'] == '1'): ?>
+            <div style="margin-bottom:14px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;font-size:13px;">
+                Configuração salva com sucesso!
+            </div>
+        <?php endif; ?>
+
+        <div class="grid-2" style="align-items:start;">
+            <!-- FORM (left) -->
+            <div>
+                <?php if ($liveEditTurma): ?>
+                    <?php
+                    $ltFilterRaw = $liveEditTurma['live_filter_tag_ids'] ?? '';
+                    $ltFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_cert'=>0,'exclude_zero'=>0];
+                    if ($ltFilterRaw) {
+                        $ltj = json_decode((string)$ltFilterRaw, true);
+                        if (is_array($ltj)) {
+                            $ltFilter['include_any'] = array_values(array_filter(array_map('intval', $ltj['include_any'] ?? []), fn($v)=>$v>0));
+                            $ltFilter['exclude_any'] = array_values(array_filter(array_map('intval', $ltj['exclude_any'] ?? []), fn($v)=>$v>0));
+                            $ltFilter['exclude_cert'] = (int)(!!($ltj['exclude_cert'] ?? 0));
+                            $ltFilter['exclude_zero'] = (int)(!!($ltj['exclude_zero'] ?? 0));
+                        }
+                    }
+                    $ltSelInc = []; foreach ($ltFilter['include_any'] as $tid) $ltSelInc[(int)$tid] = true;
+                    $ltSelExc = []; foreach ($ltFilter['exclude_any'] as $tid) $ltSelExc[(int)$tid] = true;
+                    $ltExcCert = (int)($ltFilter['exclude_cert']) === 1;
+                    $ltExcZero = (int)($ltFilter['exclude_zero']) === 1;
+                    ?>
+                    <form method="post" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:18px;">
+                        <input type="hidden" name="action" value="live_turma_save">
+                        <input type="hidden" name="turma_id" value="<?= (int)$liveEditTurma['id'] ?>">
+
+                        <div style="margin-bottom:14px;">
+                            <span class="lbl">Turma</span>
+                            <div style="font-size:14px;font-weight:600;color:var(--text);"><?= htmlspecialchars((string)$liveEditTurma['codigo'], ENT_QUOTES, 'UTF-8') ?></div>
+                            <?php if (!empty($liveEditTurma['data_live'])): ?>
+                                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live: <?= htmlspecialchars(substr((string)$liveEditTurma['data_live'],0,16), ENT_QUOTES, 'UTF-8') ?></div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div style="margin-bottom:12px;">
+                            <label class="lbl">URL do Webhook</label>
+                            <input type="text" name="webhook_live_url" value="<?= htmlspecialchars((string)($liveEditTurma['webhook_live_url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="https://...">
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                            <div>
+                                <label class="lbl">Delay entre envios (ms)</label>
+                                <input type="number" name="delay_ms" value="<?= (int)($liveEditTurma['delay_ms'] ?? 500) ?>" min="0" max="30000">
+                            </div>
+                            <div>
+                                <label class="lbl">Disparar em</label>
+                                <input type="datetime-local" name="live_disparo_data" value="<?= htmlspecialchars(($liveEditTurma['live_disparo_data'] ? date('Y-m-d\TH:i', strtotime((string)$liveEditTurma['live_disparo_data'])) : ''), ENT_QUOTES, 'UTF-8') ?>">
+                                <div class="note">Se vazio, não dispara automaticamente.</div>
+                            </div>
+                        </div>
+
+                        <div class="checkbox-row" style="margin-bottom:14px;">
+                            <input type="checkbox" id="lt-wh-enabled" name="live_webhook_enabled" <?= (int)($liveEditTurma['live_webhook_enabled'] ?? 0) === 1 ? 'checked' : '' ?>>
+                            <label for="lt-wh-enabled">Habilitar webhook da live</label>
+                        </div>
+
+                        <div style="margin-bottom:12px;">
+                            <label class="lbl">Tags: ENVIAR se tiver pelo menos 1 dessas</label>
+                            <select name="live_include_tag_ids[]" multiple size="6" style="width:100%;">
+                                <?php foreach ($allTagsWh as $tg): $tid2=(int)$tg['id']; ?>
+                                    <option value="<?= $tid2 ?>" <?= isset($ltSelInc[$tid2])?'selected':'' ?>><?= htmlspecialchars((string)$tg['nome'], ENT_QUOTES, 'UTF-8') ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="note">Vazio = não filtra por inclusão.</div>
+                        </div>
+
+                        <div style="margin-bottom:12px;">
+                            <label class="lbl">Tags: NÃO ENVIAR se tiver qualquer 1 dessas</label>
+                            <select name="live_exclude_tag_ids[]" multiple size="6" style="width:100%;">
+                                <?php foreach ($allTagsWh as $tg): $tid2=(int)$tg['id']; ?>
+                                    <option value="<?= $tid2 ?>" <?= isset($ltSelExc[$tid2])?'selected':'' ?>><?= htmlspecialchars((string)$tg['nome'], ENT_QUOTES, 'UTF-8') ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_exclude_cert" value="1" <?= $ltExcCert?'checked':'' ?>>
+                                <span style="font-size:13px;">Excluir alunos com certificado emitido</span>
+                            </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_exclude_zero" value="1" <?= $ltExcZero?'checked':'' ?>>
+                                <span style="font-size:13px;">Excluir alunos com 0% de progresso</span>
+                            </label>
+                        </div>
+
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button type="submit" class="btn">💾 Salvar configuração</button>
+                            <a href="webhooks.php" class="btn ghost">✕ Cancelar</a>
+                        </div>
+                    </form>
+                <?php else: ?>
+                    <div class="empty-state">
+                        Selecione uma turma na tabela ao lado para configurar o webhook de live.
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- TABLE (right) -->
+            <div>
+                <?php if (empty($turmasList)): ?>
+                    <div class="empty-state">Nenhuma turma cadastrada ainda. <a href="turmas.php">Cadastrar turma</a>.</div>
+                <?php else: ?>
+                <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead>
+                    <tr>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Turma</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Data Live</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">URL</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Delay</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Status</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Disparo em</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Disparado</th>
+                        <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Ações</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($turmasList as $tl): ?>
+                        <?php
+                        $tlWhOn = (int)($tl['live_webhook_enabled'] ?? 0) === 1 && !empty($tl['webhook_live_url']);
+                        $tlDisp = (int)($tl['live_disparada'] ?? 0) === 1;
+                        $tlUrl  = (string)($tl['webhook_live_url'] ?? '');
+                        $tlUrlShort = strlen($tlUrl) > 40 ? substr($tlUrl, 0, 40) . '…' : ($tlUrl ?: '—');
+                        ?>
+                        <tr style="border-bottom:1px solid var(--border);">
+                            <td style="padding:8px 6px;font-weight:600;"><?= htmlspecialchars((string)$tl['codigo'], ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;white-space:nowrap;color:var(--muted);"><?= htmlspecialchars(substr((string)($tl['data_live']??'—'),0,16), ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;font-size:11px;color:#93c5fd;word-break:break-all;" title="<?= htmlspecialchars($tlUrl, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($tlUrlShort, ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;color:var(--muted);"><?= (int)($tl['delay_ms'] ?? 500) ?>ms</td>
+                            <td style="padding:8px 6px;">
+                                <?php if ($tlWhOn): ?>
+                                    <span class="badge badge-on">ON</span>
+                                <?php else: ?>
+                                    <span class="badge badge-off">OFF</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="padding:8px 6px;white-space:nowrap;font-size:11px;color:var(--muted);"><?= htmlspecialchars(substr((string)($tl['live_disparo_data']??'—'),0,16), ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;">
+                                <?php if ($tlDisp): ?>
+                                    <span class="badge badge-on">Sim</span>
+                                <?php else: ?>
+                                    <span class="badge badge-off">Não</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="padding:8px 6px;white-space:nowrap;">
+                                <a href="?live_edit=<?= (int)$tl['id'] ?>" class="btn ghost sm">⚙️ Configurar</a>
+                                <a href="turmas.php?reset_disparo=<?= (int)$tl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')">↺ Resetar</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
 
 <?php include __DIR__ . '/_footer.php'; ?>
