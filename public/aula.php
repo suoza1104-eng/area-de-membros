@@ -587,6 +587,28 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             align-items:center;
             justify-content:center;
         }
+        .rec-lock-overlay{
+            position:absolute;
+            inset:0;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:6px;
+            background:rgba(2,6,23,.55);
+            backdrop-filter:blur(1px);
+        }
+        .rec-lock-icon{
+            font-size:28px;
+            line-height:1;
+        }
+        .rec-lock-text{
+            font-size:11px;
+            font-weight:600;
+            color:#f9fafb;
+            text-align:center;
+            padding:0 8px;
+        }
         .rec-body{
             flex:1;
             display:flex;
@@ -892,6 +914,10 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
                                 <?php else: ?>
                                     <span>Sem imagem</span>
                                 <?php endif; ?>
+                                <div class="rec-lock-overlay">
+                                    <div class="rec-lock-icon">🔒</div>
+                                    <div class="rec-lock-text">Conteúdo exclusivo</div>
+                                </div>
                             </div>
                             <div class="rec-body">
                                 <div class="rec-title"><?= h($rc['titulo']) ?></div>
