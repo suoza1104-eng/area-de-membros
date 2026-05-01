@@ -755,6 +755,12 @@ if (!is_array($initPartes)) $initPartes = [];
         qr:    'QR Code',
     };
 
+    // Converts old pixel-based QR size (>100) to percentage; new values are already %.
+    function qrToPercent(font) {
+        const v = font ?? 15;
+        return v > 100 ? Math.round(v / 1122 * 100) : v;
+    }
+
     window.updateFontLabel = function(side) {
         const sel  = document.getElementById('add-' + side + '-field');
         const lbl  = document.getElementById('lbl-' + side + '-font');
@@ -762,11 +768,20 @@ if (!is_array($initPartes)) $initPartes = [];
         const famW = document.getElementById('family-wrap-' + side);
         if (!sel || !lbl) return;
         const isQr = sel.value === 'qr';
-        lbl.textContent = isQr ? 'Tamanho QR (px)' : 'Tamanho (px)';
+        lbl.textContent = isQr ? 'Tamanho QR (% da largura)' : 'Tamanho (px)';
         if (hint) hint.style.display = isQr ? 'block' : 'none';
         if (famW) famW.style.display  = isQr ? 'none'  : 'flex';
         const fontInput = document.getElementById('add-' + side + '-font');
-        if (fontInput && isQr && parseInt(fontInput.value) < 60) fontInput.value = 120;
+        if (fontInput && isQr) {
+            fontInput.min = '5';
+            fontInput.max = '60';
+            const cur = parseInt(fontInput.value, 10);
+            // if current value looks like old pixels, reset to sensible % default
+            if (isNaN(cur) || cur > 60) fontInput.value = 15;
+        } else if (fontInput) {
+            fontInput.min = '8';
+            fontInput.max = '400';
+        }
     };
 
     function selectItem(side, index) {
@@ -790,9 +805,13 @@ if (!is_array($initPartes)) $initPartes = [];
 
         if (panel) panel.style.display = 'block';
         if (lbl)   lbl.textContent = fieldLabels[item.field] || item.field;
-        if (szInp) szInp.value = item.font ?? 18;
         const isQr = item.field === 'qr';
-        if (szLbl) szLbl.textContent = isQr ? 'Tamanho QR (px)' : 'Tamanho (px)';
+        if (szInp) {
+            szInp.value = isQr ? qrToPercent(item.font) : (item.font ?? 18);
+            szInp.min   = isQr ? '5' : '8';
+            szInp.max   = isQr ? '60' : '400';
+        }
+        if (szLbl) szLbl.textContent = isQr ? 'Tamanho QR (% da largura)' : 'Tamanho (px)';
         if (famW)  famW.style.display = isQr ? 'none' : 'block';
         if (famSel && item.fontFamily) {
             famSel.value = item.fontFamily;
@@ -908,11 +927,12 @@ if (!is_array($initPartes)) $initPartes = [];
             el.style.top  = (item.y ?? 50) + '%';
 
             if (isQr) {
-                const sz = Math.max(30, Math.min(200, item.font ?? 120));
+                const pct = Math.max(5, Math.min(60, qrToPercent(item.font)));
+                const sz  = Math.round(canvas.offsetWidth * pct / 100);
                 el.style.width  = sz + 'px';
                 el.style.height = sz + 'px';
                 el.style.padding = '4px';
-                el.innerHTML = '<div style="font-size:11px;font-weight:700;">QR</div><div style="font-size:9px;opacity:.75;">autenticação</div>';
+                el.innerHTML = '<div style="font-size:11px;font-weight:700;">QR</div><div style="font-size:9px;opacity:.75;">' + pct + '% larg.</div>';
             } else {
                 el.style.fontSize   = (item.font ?? 18) + 'px';
                 el.style.fontFamily = fontFamilyCss[item.fontFamily] || '"DejaVu Sans", sans-serif';
@@ -945,7 +965,7 @@ if (!is_array($initPartes)) $initPartes = [];
         if (!fieldSel || !fontInput) return;
 
         const field      = fieldSel.value || 'nome';
-        const font       = parseInt(fontInput.value, 10) || (field === 'qr' ? 120 : 20);
+        const font       = parseInt(fontInput.value, 10) || (field === 'qr' ? 15 : 20);
         const fontFamily = (field === 'qr') ? 'DejaVu Sans' : (famSel ? famSel.value : 'DejaVu Sans');
 
         if (!layout[side]) layout[side] = [];

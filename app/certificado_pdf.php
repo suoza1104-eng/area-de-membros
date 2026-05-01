@@ -111,14 +111,17 @@ body { font-family: "DejaVu Sans", Arial, Helvetica, sans-serif; }
         $fontFamily = htmlspecialchars($item['fontFamily'] ?? 'DejaVu Sans', ENT_QUOTES, 'UTF-8');
 
         if ($fieldKey === 'qr'):
-            $qrSize    = max(50, min(400, $font));
-            $qrDataUri = fetch_qr_data_uri($fieldValues['qr'], $qrSize);
+            // $font stores percentage (5–60) for new items; old items stored pixels (>100) → convert
+            $qrPct     = $font > 100 ? (int)round($font / 1122 * 100) : $font;
+            $qrPct     = max(5, min(60, $qrPct));
+            $qrPx      = (int)round(1122 * $qrPct / 100);  // absolute px on A4 landscape at 96dpi
+            $qrDataUri = fetch_qr_data_uri($fieldValues['qr'], max(200, $qrPx * 2));
     ?>
     <div class="field-qr" style="left:<?= $x ?>%;top:<?= $y ?>%;">
         <?php if ($qrDataUri): ?>
-        <img src="<?= $qrDataUri ?>" width="<?= $qrSize ?>" height="<?= $qrSize ?>" alt="QR">
+        <img src="<?= $qrDataUri ?>" width="<?= $qrPx ?>" height="<?= $qrPx ?>" style="width:<?= $qrPx ?>px;height:<?= $qrPx ?>px;" alt="QR">
         <?php else: ?>
-        <div style="width:<?= $qrSize ?>px;height:<?= $qrSize ?>px;background:#eee;border:1px solid #999;font-size:10px;color:#666;">[QR]</div>
+        <div style="width:<?= $qrPx ?>px;height:<?= $qrPx ?>px;background:#eee;border:1px solid #999;font-size:10px;color:#666;">[QR]</div>
         <?php endif; ?>
     </div>
     <?php else:
@@ -159,14 +162,16 @@ body { font-family: "DejaVu Sans", Arial, Helvetica, sans-serif; }
         $fontFamily = htmlspecialchars($item['fontFamily'] ?? 'DejaVu Sans', ENT_QUOTES, 'UTF-8');
 
         if ($fieldKey === 'qr'):
-            $qrSize    = max(50, min(400, $font));
-            $qrDataUri = fetch_qr_data_uri($fieldValues['qr'], $qrSize);
+            $qrPct     = $font > 100 ? (int)round($font / 1122 * 100) : $font;
+            $qrPct     = max(5, min(60, $qrPct));
+            $qrPx      = (int)round(1122 * $qrPct / 100);
+            $qrDataUri = fetch_qr_data_uri($fieldValues['qr'], max(200, $qrPx * 2));
     ?>
     <div class="field-qr" style="left:<?= $x ?>%;top:<?= $y ?>%;">
         <?php if ($qrDataUri): ?>
-        <img src="<?= $qrDataUri ?>" width="<?= $qrSize ?>" height="<?= $qrSize ?>" alt="QR">
+        <img src="<?= $qrDataUri ?>" width="<?= $qrPx ?>" height="<?= $qrPx ?>" style="width:<?= $qrPx ?>px;height:<?= $qrPx ?>px;" alt="QR">
         <?php else: ?>
-        <div style="width:<?= $qrSize ?>px;height:<?= $qrSize ?>px;background:#eee;border:1px solid #999;font-size:10px;color:#666;">[QR]</div>
+        <div style="width:<?= $qrPx ?>px;height:<?= $qrPx ?>px;background:#eee;border:1px solid #999;font-size:10px;color:#666;">[QR]</div>
         <?php endif; ?>
     </div>
     <?php else:
