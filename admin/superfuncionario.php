@@ -80,19 +80,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     if (!in_array($headerMode, ['x-access-token','bearer'], true)) $headerMode = 'x-access-token';
     if ($defaultEndpoint === '') $defaultEndpoint = '/api/contacts';
 
-    // sempre cria uma nova linha (histórico simples)
-    $st = $pdo->prepare("
-        INSERT INTO superfuncionario_config (is_enabled, base_url, token, default_endpoint, header_mode, timeout_seconds)
-        VALUES (:en,:bu,:tk,:ep,:hm,:to)
-    ");
-    $st->execute([
-        ':en' => $isEnabled,
-        ':bu' => $baseUrl,
-        ':tk' => $token,
-        ':ep' => $defaultEndpoint,
-        ':hm' => $headerMode,
-        ':to' => $timeoutSeconds,
-    ]);
+    // upsert: atualiza linha existente ou cria se não houver
+    $existing = $pdo->query("SELECT id FROM superfuncionario_config ORDER BY id DESC LIMIT 1")->fetchColumn();
+    if ($existing) {
+        $st = $pdo->prepare("
+            UPDATE superfuncionario_config
+               SET is_enabled=:en, base_url=:bu, token=:tk,
+                   default_endpoint=:ep, header_mode=:hm, timeout_seconds=:to
+             WHERE id=:id LIMIT 1
+        ");
+        $st->execute([':en'=>$isEnabled,':bu'=>$baseUrl,':tk'=>$token,':ep'=>$defaultEndpoint,':hm'=>$headerMode,':to'=>$timeoutSeconds,':id'=>$existing]);
+    } else {
+        $st = $pdo->prepare("
+            INSERT INTO superfuncionario_config (is_enabled, base_url, token, default_endpoint, header_mode, timeout_seconds)
+            VALUES (:en,:bu,:tk,:ep,:hm,:to)
+        ");
+        $st->execute([':en'=>$isEnabled,':bu'=>$baseUrl,':tk'=>$token,':ep'=>$defaultEndpoint,':hm'=>$headerMode,':to'=>$timeoutSeconds]);
+    }
 
     header('Location: superfuncionario.php');
     exit;
@@ -191,9 +195,23 @@ if (isset($_GET['edit'])) {
 }
 
 $editPairs = [];
-if ($edit && !empty($edit['fields_json'])) {
-    $tmp = json_decode((string)$edit['fields_json'], true);
-    if (is_array($tmp)) $editPairs = $tmp;
+if ($edit) {
+    // Prefere custom_fields_json (novo), cai em fields_json (legado)
+    $cfRaw = trim((string)($edit['custom_fields_json'] ?? ''));
+    $fjRaw = trim((string)($edit['fields_json'] ?? ''));
+    $rawJson = $cfRaw !== '' ? $cfRaw : $fjRaw;
+    if ($rawJson !== '') {
+        $tmp = json_decode($rawJson, true);
+        if (is_array($tmp)) $editPairs = $tmp;
+    }
+}
+
+// Datalist plano para o input de origem
+$fieldDatalist = [];
+foreach ($fieldOptions as $opts) {
+    foreach ($opts as $val => $lab) {
+        $fieldDatalist[$val] = $lab;
+    }
 }
 
 include __DIR__ . '/_header.php';
@@ -203,20 +221,30 @@ include __DIR__ . '/_header.php';
 .page-sf { max-width: 1200px; margin: 0 auto; }
 .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 980px){ .grid2{ grid-template-columns: 1fr; } }
-.small { font-size:12px;color:#9ca3af; }
+.small { font-size:12px; color:var(--muted); }
 input[type="text"], input[type="number"], select, textarea { width:100%; }
 textarea{ min-height:78px; }
-.badge{ display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid #1f2937;font-size:11px;color:#e5e7eb; }
-.badge.off{ opacity:.55; }
-.table{ width:100%; border-collapse:collapse; }
-.table th,.table td{ padding:10px 8px; border-bottom:1px solid #1f2937; font-size:12px; text-align:left; vertical-align:top; }
-.row{ display:grid; grid-template-columns: 1fr 1fr 34px; gap:8px; align-items:center; margin-bottom:8px; }
-.btnx{ width:34px; height:34px; border-radius:10px; border:1px solid #1f2937; background:#020617; color:#e5e7eb; cursor:pointer; }
-.btnx:hover{ background:#111827; }
-.btn{ background:var(--primary); color:#0b1220; border:0; padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:700; }
-.btn-secondary{ background:#111827; color:#e5e7eb; border:1px solid #1f2937; padding:10px 12px; border-radius:10px; cursor:pointer; }
-.btn-secondary:hover{ background:#0b1220; }
+.sf-badge { display:inline-block; padding:3px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; color:var(--text); background:var(--bg); }
+.sf-badge.off { opacity:.55; }
+.table { width:100%; border-collapse:collapse; }
+.table th,.table td { padding:10px 8px; border-bottom:1px solid var(--border); font-size:12px; text-align:left; vertical-align:top; color:var(--text); }
+.table th { color:var(--muted); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.row { display:grid; grid-template-columns: 1fr 1fr 34px; gap:8px; align-items:center; margin-bottom:8px; }
+.btnx { width:34px; height:34px; border-radius:10px; border:1px solid var(--border); background:var(--bg-card); color:var(--muted); cursor:pointer; transition:background var(--t); }
+.btnx:hover { background:var(--danger-dim); color:var(--danger); border-color:rgba(239,68,68,.25); }
+.sf-logs-table td { font-size:11px; }
+.sf-ok    { color:#15803d; }
+.sf-fail  { color:#dc2626; }
+.sf-hint  { font-size:11px; color:var(--muted); background:rgba(255,255,255,.04); border-radius:8px; padding:8px 10px; margin-bottom:8px; line-height:1.6; }
+.sf-hint code { background:rgba(255,255,255,.08); border-radius:4px; padding:1px 5px; font-size:10.5px; }
 </style>
+
+<!-- datalist para o campo de origem -->
+<datalist id="sf-source-list">
+<?php foreach ($fieldDatalist as $val => $lab): ?>
+    <option value="<?= h($val) ?>"><?= h($lab) ?></option>
+<?php endforeach; ?>
+</datalist>
 
 <div class="page-sf">
     <div class="card">
@@ -320,45 +348,29 @@ textarea{ min-height:78px; }
                 <div style="height:10px"></div>
 
                 <h4 style="margin:10px 0 6px 0;">Campos personalizados</h4>
-                <div class="small" style="margin-bottom:8px;">
-                    Selecione um campo de origem (do payload/extra/users) e informe o nome do campo no SF.
-                    Você pode adicionar quantos quiser.
+                <div class="sf-hint">
+                    <b>Origem</b> — selecione da lista ou digite livremente:<br>
+                    • Caminho simples: <code>user.email</code>, <code>extra.codigo_live</code><br>
+                    • Caminho profundo: <code>extra.data.purchase.transaction</code><br>
+                    • Valor fixo: <code>literal:texto aqui</code><br>
+                    • Template: <code>{{user.nome}} - {{evento}}</code><br>
+                    • Fallback: <code>user.telefone|extra.phone|literal:sem_telefone</code>
                 </div>
 
                 <div id="fields">
-                    <?php if ($editPairs): ?>
-                        <?php foreach ($editPairs as $p): ?>
-                            <div class="row">
-                                <select name="field_source[]">
-                                    <?php foreach ($fieldOptions as $group => $opts): ?>
-                                        <optgroup label="<?= h($group) ?>">
-                                            <?php foreach ($opts as $val => $lab): ?>
-                                                <option value="<?= h($val) ?>" <?= ((string)($p['source'] ?? '')===(string)$val)?'selected':'' ?>>
-                                                    <?= h($lab) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </optgroup>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input type="text" name="field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>" placeholder="Campo destino no SF (ex.: idade)">
-                                <button class="btnx" type="button" onclick="removeRow(this)">×</button>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php else: ?>
+                    <?php
+                    $initialPairs = $editPairs ?: [['source' => '', 'dest' => '']];
+                    foreach ($initialPairs as $p):
+                    ?>
                         <div class="row">
-                            <select name="field_source[]">
-                                <?php foreach ($fieldOptions as $group => $opts): ?>
-                                    <optgroup label="<?= h($group) ?>">
-                                        <?php foreach ($opts as $val => $lab): ?>
-                                            <option value="<?= h($val) ?>"><?= h($lab) ?></option>
-                                        <?php endforeach; ?>
-                                    </optgroup>
-                                <?php endforeach; ?>
-                            </select>
-                            <input type="text" name="field_dest[]" value="" placeholder="Campo destino no SF (ex.: idade)">
+                            <input type="text" name="field_source[]" list="sf-source-list"
+                                   value="<?= h((string)($p['source'] ?? '')) ?>"
+                                   placeholder="ex.: user.email ou extra.data.id">
+                            <input type="text" name="field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>"
+                                   placeholder="Campo destino no SF (ex.: idade)">
                             <button class="btnx" type="button" onclick="removeRow(this)">×</button>
                         </div>
-                    <?php endif; ?>
+                    <?php endforeach; ?>
                 </div>
 
                 <button class="btn-secondary" type="button" onclick="addRow()">Adicionar campo</button>
@@ -384,23 +396,47 @@ textarea{ min-height:78px; }
             <tr>
                 <th>Nome</th>
                 <th>Evento</th>
+                <th>Campos</th>
                 <th>Status</th>
                 <th>Ações</th>
             </tr>
             </thead>
             <tbody>
             <?php if (!$rules): ?>
-                <tr><td colspan="4" class="small">Nenhuma regra cadastrada ainda.</td></tr>
+                <tr><td colspan="5" class="small">Nenhuma regra cadastrada ainda.</td></tr>
             <?php else: ?>
                 <?php foreach ($rules as $r): ?>
+                    <?php
+                    $rCfRaw = trim((string)($r['custom_fields_json'] ?? ''));
+                    $rFjRaw = trim((string)($r['fields_json'] ?? ''));
+                    $rFieldsRaw = $rCfRaw !== '' ? $rCfRaw : $rFjRaw;
+                    $rFields = [];
+                    if ($rFieldsRaw !== '') {
+                        $rTmp = json_decode($rFieldsRaw, true);
+                        if (is_array($rTmp)) {
+                            foreach ($rTmp as $fp) {
+                                if (trim((string)($fp['source'] ?? '')) !== '' && trim((string)($fp['dest'] ?? '')) !== '') {
+                                    $rFields[] = $fp;
+                                }
+                            }
+                        }
+                    }
+                    ?>
                     <tr>
                         <td><?= h((string)$r['nome']) ?></td>
-                        <td><span class="badge"><?= h((string)$r['evento']) ?></span></td>
+                        <td><span class="sf-badge"><?= h((string)$r['evento']) ?></span></td>
+                        <td style="color:var(--muted)">
+                            <?php if ($rFields): ?>
+                                <span title="<?= h(implode(', ', array_column($rFields, 'dest'))) ?>"><?= count($rFields) ?> campo<?= count($rFields) !== 1 ? 's' : '' ?></span>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <?php if ((int)$r['is_active']===1): ?>
-                                <span class="badge">Ativa</span>
+                                <span class="sf-badge" style="color:#15803d;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)">Ativa</span>
                             <?php else: ?>
-                                <span class="badge off">Inativa</span>
+                                <span class="sf-badge off">Inativa</span>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -418,8 +454,96 @@ textarea{ min-height:78px; }
 
         <div class="small" style="margin-top:8px;">
             Dica: para validar o disparo, ative a regra e provoque o evento (ex.: assistir aula, concluir trilha etc.).
-            Os logs ficam na tabela <b>superfuncionario_logs</b>.
         </div>
+    </div>
+
+    <!-- LOGS RECENTES -->
+    <?php
+    $logs = [];
+    try {
+        $logs = $pdo->query("
+            SELECT sl.id, sl.evento, sl.rule_id, sl.ok, sl.http_status,
+                   sl.error_text, sl.response_text, sl.created_at,
+                   sr.nome AS rule_nome
+            FROM superfuncionario_logs sl
+            LEFT JOIN superfuncionario_rules sr ON sr.id = sl.rule_id
+            ORDER BY sl.id DESC LIMIT 30
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+    ?>
+    <div class="card">
+        <h4 style="margin:0 0 10px 0;">Logs recentes (últimos 30)</h4>
+        <?php if (!$logs): ?>
+            <p class="small">Nenhum log registrado ainda. Os disparos aparecem aqui automaticamente.</p>
+        <?php else: ?>
+        <div class="table-wrap">
+            <table class="table sf-logs-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Data</th>
+                        <th>Evento</th>
+                        <th>Regra</th>
+                        <th>Status</th>
+                        <th>HTTP</th>
+                        <th>Campos</th>
+                        <th>Detalhe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($logs as $l): ?>
+                    <?php
+                    $logDebug = null;
+                    $reqRaw = trim((string)($l['request_json'] ?? ''));
+                    if ($reqRaw !== '') {
+                        $reqArr = json_decode($reqRaw, true);
+                        if (is_array($reqArr) && isset($reqArr['_debug'])) {
+                            $logDebug = $reqArr['_debug'];
+                        }
+                    }
+                    ?>
+                    <tr>
+                        <td style="color:var(--muted)"><?= (int)$l['id'] ?></td>
+                        <td style="white-space:nowrap"><?= h((string)$l['created_at']) ?></td>
+                        <td><span class="sf-badge"><?= h((string)$l['evento']) ?></span></td>
+                        <td><?= h((string)($l['rule_nome'] ?? '—')) ?></td>
+                        <td>
+                            <?php if ((int)$l['ok']): ?>
+                                <span class="sf-ok">✓ OK</span>
+                            <?php else: ?>
+                                <span class="sf-fail">✗ Falha</span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= $l['http_status'] ? (int)$l['http_status'] : '—' ?></td>
+                        <td style="white-space:nowrap">
+                            <?php if ($logDebug !== null): ?>
+                                <?php
+                                $cnt     = (int)($logDebug['custom_fields_count'] ?? 0);
+                                $skiped  = (array)($logDebug['skipped_keys'] ?? []);
+                                $tooltip = '';
+                                if ($cnt > 0) $tooltip .= 'OK: ' . implode(', ', (array)($logDebug['custom_fields_keys'] ?? []));
+                                if ($skiped) $tooltip .= ($tooltip ? ' | ' : '') . 'Skip: ' . implode(', ', $skiped);
+                                ?>
+                                <span title="<?= h($tooltip) ?>" style="<?= $skiped ? 'color:#f59e0b' : 'color:var(--muted)' ?>">
+                                    <?= $cnt ?>✓<?= count($skiped) ? ' ' . count($skiped) . '✗' : '' ?>
+                                </span>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </td>
+                        <td style="max-width:240px;word-break:break-all">
+                            <?php
+                            $detail = trim((string)($l['error_text'] ?? ''));
+                            if ($detail === '') $detail = trim(substr((string)($l['response_text'] ?? ''), 0, 100));
+                            echo h($detail !== '' ? $detail : '—');
+                            ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -432,23 +556,30 @@ function addRow(){
     var container = document.getElementById('fields');
     var tpl = document.createElement('div');
     tpl.className = 'row';
-    tpl.innerHTML = <?= json_encode(
-        '<select name="field_source[]">' .
-        implode('', array_map(function($group) use ($fieldOptions){
-            $html = '<optgroup label="'.h($group).'">';
-            foreach ($fieldOptions[$group] as $val => $lab) {
-                $html .= '<option value="'.h((string)$val).'">'.h((string)$lab).'</option>';
-            }
-            $html .= '</optgroup>';
-            return $html;
-        }, array_keys($fieldOptions))) .
-        '</select>' .
-        '<input type="text" name="field_dest[]" value="" placeholder="Campo destino no SF (ex.: idade)">' .
-        '<button class="btnx" type="button" onclick="removeRow(this)">×</button>',
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    ); ?>;
+    tpl.innerHTML =
+        '<input type="text" name="field_source[]" list="sf-source-list" placeholder="ex.: user.email ou extra.data.id">' +
+        '<input type="text" name="field_dest[]" placeholder="Campo destino no SF (ex.: idade)">' +
+        '<button class="btnx" type="button" onclick="removeRow(this)">×</button>';
     container.appendChild(tpl);
+    container.lastElementChild.querySelector('input[name="field_source[]"]').focus();
 }
+
+// Validação: avisa se alguma linha tem source preenchido mas dest vazio ou vice-versa
+document.getElementById('form-rule').addEventListener('submit', function(e){
+    var rows = document.querySelectorAll('#fields .row');
+    var errors = [];
+    rows.forEach(function(row, i){
+        var src = row.querySelector('input[name="field_source[]"]').value.trim();
+        var dst = row.querySelector('input[name="field_dest[]"]').value.trim();
+        if (src !== '' && dst === '') errors.push('Linha ' + (i+1) + ': destino vazio (origem: ' + src + ')');
+        if (src === '' && dst !== '') errors.push('Linha ' + (i+1) + ': origem vazia (destino: ' + dst + ')');
+    });
+    if (errors.length > 0) {
+        if (!confirm('Atenção nos campos personalizados:\n\n' + errors.join('\n') + '\n\nSalvar mesmo assim?')) {
+            e.preventDefault();
+        }
+    }
+});
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>
