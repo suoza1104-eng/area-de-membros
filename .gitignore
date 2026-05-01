@@ -1,0 +1,17 @@
+# Dependencies
+/vendor/
+
+# Uploads (conteúdo gerado)
+/uploads/certificates/*.pdf
+/uploads/certificados/*.pdf
+
+# Logs
+*.log
+
+# Environment / config local
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
