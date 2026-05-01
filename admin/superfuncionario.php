@@ -42,18 +42,38 @@ try {
 // ===== opções de campos (origem) =====
 $fieldOptions = [
     'Payload (fixo)' => [
-        'evento' => 'Evento (código)',
-        'timestamp' => 'Timestamp (ISO)',
-        'user.id' => 'User ID',
-        'user.nome' => 'Nome',
-        'user.email' => 'Email',
+        'evento'        => 'Evento (código)',
+        'timestamp'     => 'Timestamp (ISO)',
+        'user.id'       => 'User ID',
+        'user.nome'     => 'Nome',
+        'user.email'    => 'Email',
         'user.telefone' => 'Telefone',
     ],
-    'Extra (do evento)' => [
-        'extra.codigo_live' => 'codigo_live',
-        'extra.data_live'   => 'data_live',
+    'Extra — INSCRITO / LIVE' => [
+        'extra.codigo_live'    => 'codigo_live',
+        'extra.data_live'      => 'data_live',
+        'extra.andamento'      => 'andamento (% conclusão)',
+        'extra.aulas_concluidas' => 'aulas_concluidas',
+        'extra.aulas_totais'   => 'aulas_totais',
     ],
-    'Users (tabela users)' => []
+    'Extra — CERT_EMITIDO' => [
+        'extra.pdf_url'           => 'pdf_url (link do certificado)',
+        'extra.codigo_certificado' => 'codigo_certificado',
+        'extra.curso'             => 'curso',
+        'extra.emitido_em'        => 'emitido_em',
+    ],
+    'Extra — CERT_SENHA_ERRADA' => [
+        'extra.motivo' => 'motivo',
+    ],
+    'Users (tabela users)' => [],
+];
+
+// hints por evento — exibidos dinamicamente no formulário
+$eventHints = [
+    'INSCRITO' => 'Extras disponíveis: <code>extra.codigo_live</code>, <code>extra.data_live</code>',
+    'CONCLUIU_TRILHA' => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
+    'CERT_EMITIDO' => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
+    'CERT_SENHA_ERRADA' => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -348,6 +368,7 @@ textarea{ min-height:78px; }
                 <div style="height:10px"></div>
 
                 <h4 style="margin:10px 0 6px 0;">Campos personalizados</h4>
+                <div class="sf-hint" id="sf-event-hint" style="display:none;margin-bottom:6px;border-left:3px solid rgba(250,204,21,.5);padding-left:10px;"></div>
                 <div class="sf-hint">
                     <b>Origem</b> — selecione da lista ou digite livremente:<br>
                     • Caminho simples: <code>user.email</code>, <code>extra.codigo_live</code><br>
@@ -563,6 +584,28 @@ function addRow(){
     container.appendChild(tpl);
     container.lastElementChild.querySelector('input[name="field_source[]"]').focus();
 }
+
+// Hint dinâmico por evento
+var eventHints = <?= json_encode($eventHints, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+function updateEventHint() {
+    var sel = document.querySelector('select[name="evento"]');
+    var hintDiv = document.getElementById('sf-event-hint');
+    if (!sel || !hintDiv) return;
+    var hint = eventHints[sel.value];
+    if (hint) {
+        hintDiv.innerHTML = hint;
+        hintDiv.style.display = 'block';
+    } else {
+        hintDiv.style.display = 'none';
+    }
+}
+(function() {
+    var sel = document.querySelector('select[name="evento"]');
+    if (sel) {
+        sel.addEventListener('change', updateEventHint);
+        updateEventHint();
+    }
+})();
 
 // Validação: avisa se alguma linha tem source preenchido mas dest vazio ou vice-versa
 document.getElementById('form-rule').addEventListener('submit', function(e){
