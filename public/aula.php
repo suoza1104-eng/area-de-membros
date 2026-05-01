@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 // FILE: public/aula.php
 declare(strict_types=1);
 
