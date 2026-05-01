@@ -10,14 +10,14 @@ function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-// Auto-cria tabela
+// Auto-cria tabela (TEXT não aceita DEFAULT em MySQL strict mode — sem default)
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_equipe (
         id          INT AUTO_INCREMENT PRIMARY KEY,
         nome        VARCHAR(255) NOT NULL,
         email       VARCHAR(255) NOT NULL,
         senha_hash  VARCHAR(255) NOT NULL DEFAULT '',
-        permissoes  TEXT NOT NULL DEFAULT '{}',
+        permissoes  TEXT NULL,
         ativo       TINYINT(1) NOT NULL DEFAULT 1,
         created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uk_equipe_email (email)
@@ -119,7 +119,12 @@ if (($modo === 'editar') && $editId > 0) {
     if (!$editRow) { header('Location: equipe.php'); exit; }
 }
 
-$membros = $pdo->query("SELECT * FROM admin_equipe ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+try {
+    $membros = $pdo->query("SELECT * FROM admin_equipe ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $membros = [];
+    if ($msgTipo !== 'erro') { $msg = 'Erro ao carregar membros: ' . $e->getMessage(); $msgTipo = 'erro'; }
+}
 
 require __DIR__ . '/_header.php';
 ?>
