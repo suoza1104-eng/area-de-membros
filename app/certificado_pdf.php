@@ -10,20 +10,28 @@ use Dompdf\Options;
 function fetch_qr_data_uri(string $verifyUrl, int $size): string
 {
     if (!function_exists('curl_init')) return '';
-    $apiUrl = 'https://chart.googleapis.com/chart?chs=' . $size . 'x' . $size
-            . '&cht=qr&choe=UTF-8&chl=' . urlencode($verifyUrl);
-    $ch = curl_init($apiUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => 10,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-    ]);
-    $raw = curl_exec($ch);
-    curl_close($ch);
-    return ($raw && strlen((string)$raw) > 200)
-        ? 'data:image/png;base64,' . base64_encode((string)$raw)
-        : '';
+
+    $apis = [
+        'https://api.qrserver.com/v1/create-qr-code/?size=' . $size . 'x' . $size . '&data=' . urlencode($verifyUrl) . '&format=png',
+        'https://chart.googleapis.com/chart?chs=' . $size . 'x' . $size . '&cht=qr&choe=UTF-8&chl=' . urlencode($verifyUrl),
+    ];
+
+    foreach ($apis as $apiUrl) {
+        $ch = curl_init($apiUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_SSL_VERIFYPEER => false,
+        ]);
+        $raw = curl_exec($ch);
+        curl_close($ch);
+        if ($raw && strlen((string)$raw) > 200) {
+            return 'data:image/png;base64,' . base64_encode((string)$raw);
+        }
+    }
+
+    return '';
 }
 
 /**
