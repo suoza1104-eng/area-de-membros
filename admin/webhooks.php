@@ -111,6 +111,13 @@ $eventGroups = [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],
         'CERT_SENHA_ERRADA'    => ['label' => 'Senha de certificado errada',   'desc' => 'Disparado quando o aluno tenta uma senha inválida.', 'extra' => 'extra.motivo'],
     ],
+    'Live' => [
+        'LIVE_TURMA' => [
+            'label' => 'Disparo de live por turma',
+            'desc'  => 'Disparado para cada aluno da turma quando a data/hora de disparo configurada chega. Use para regras globais que valem para todas as turmas.',
+            'extra' => 'extra.codigo_turma, extra.codigo_live, extra.data_live, extra.andamento, extra.aulas_concluidas, extra.aulas_totais',
+        ],
+    ],
 ];
 
 // Aulas dinâmicas
@@ -243,6 +250,7 @@ include __DIR__ . '/_header.php';
     .ev-pill.cert   { background: rgba(168,85,247,.15); color: #d8b4fe; border: 1px solid rgba(168,85,247,.3); }
     .ev-pill.aluno  { background: rgba(59,130,246,.15);  color: #93c5fd; border: 1px solid rgba(59,130,246,.3); }
     .ev-pill.aula   { background: rgba(34,197,94,.15);   color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .ev-pill.live   { background: rgba(250,204,21,.15);  color: #fef3c7; border: 1px solid rgba(250,204,21,.3); }
 
     /* ===== WEBHOOK CARDS ===== */
     .wh-list { display: flex; flex-direction: column; gap: 12px; }
@@ -315,7 +323,8 @@ include __DIR__ . '/_header.php';
                                     <?php foreach ($events as $code => $ev): ?>
                                         <div class="evento-opcao" data-value="<?= h($code) ?>">
                                             <strong><?= h($code) ?>
-                                                <span class="ev-pill <?= strtolower($groupName) === 'certificado' ? 'cert' : 'aluno' ?>">
+                                                <?php $gpill = match(strtolower($groupName)) { 'certificado' => 'cert', 'live' => 'live', default => 'aluno' }; ?>
+                                                <span class="ev-pill <?= $gpill ?>">
                                                     <?= h($groupName) ?>
                                                 </span>
                                             </strong>

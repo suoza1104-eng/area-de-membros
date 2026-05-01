@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
+require_once __DIR__ . '/../app/webhook_dispatcher.php';
 
 $pdo = getPDO();
 $agora = date('Y-m-d H:i:s');
@@ -344,7 +345,7 @@ foreach ($turmas as $turma) {
             } catch (Throwable $e) {}
         }
 
-        // --- SuperFuncionário ---
+        // --- SuperFuncionário por turma (config específica da turma) ---
         if ($sfEnabled) {
             try {
                 sf_disparar_live_turma($pdo, $turma, $aluno, $extra);
@@ -352,6 +353,20 @@ foreach ($turmas as $turma) {
                 // falha de SF não para o loop
             }
         }
+
+        // --- Regras globais: webhook e SF com evento LIVE_TURMA ---
+        $userStd = [
+            'id'       => $aluno['id']       ?? null,
+            'nome'     => $aluno['nome']      ?? null,
+            'email'    => $aluno['email']     ?? null,
+            'telefone' => $aluno['telefone']  ?? null,
+        ];
+        try {
+            disparar_evento_webhooks($pdo, 'LIVE_TURMA', $userStd, $extra);
+        } catch (Throwable $e) {}
+        try {
+            sf_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
+        } catch (Throwable $e) {}
 
         if ($delay > 0) {
             usleep($delay * 1000);
