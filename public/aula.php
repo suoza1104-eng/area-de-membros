@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 // FILE: public/aula.php
 declare(strict_types=1);
 
@@ -156,521 +156,848 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
 <html lang="pt-BR">
 <head>
     <meta charset="utf-8">
-    <title><?= h($lessonTitle) ?> — <?= h($courseTitle) ?></title>
+    <title><?= h($lessonTitle) ?> - Aula</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg:      <?= h($bgColor) ?>;
-            --card:    #111827;
-            --border:  #1f2937;
+        :root{
+            --bg: <?= h($bgColor) ?>;
+            --card:#020617;
+            --border:#1f2937;
             --primary: <?= h($primary) ?>;
-            --success: <?= h($secondary) ?>;
-            --text:    #e2e8f0;
-            --muted:   #64748b;
-            --dim:     #475569;
-            --font:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            --r:       10px;
-            --r-lg:    14px;
-            --r-xl:    18px;
-            --r-full:  999px;
+            --secondary: <?= h($secondary) ?>;
+            --text:#e5e7eb;
+            --muted:#9ca3af;
         }
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: var(--font);
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            overflow-x: hidden;
-            -webkit-font-smoothing: antialiased;
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{
+            font-family:Arial, sans-serif;
+            background:var(--bg);
+            color:var(--text);
+            min-height:100vh;
         }
-        a { text-decoration: none; color: inherit; }
-
-        /* ===== TOPBAR ===== */
-        .topbar {
-            position: sticky; top: 0; z-index: 50;
-            background: rgba(7,16,31,.92);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0 16px; height: 56px; gap: 12px;
+        a{text-decoration:none;color:inherit;}
+        .page{
+            max-width:1120px;
+            margin:0 auto;
+            padding:16px 12px 32px;
         }
-        .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-        .logo-box {
-            width: 34px; height: 34px; border-radius: var(--r);
-            background: rgba(250,204,21,.08); border: 1px solid rgba(250,204,21,.15);
-            display: flex; align-items: center; justify-content: center;
-            overflow: hidden; flex-shrink: 0; color: var(--primary);
+        .topbar{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:12px;
+            margin-bottom:10px;
         }
-        .logo-box img { width: 100%; height: 100%; object-fit: contain; }
-        .logo-box svg { width: 17px; height: 17px; }
-        .course-info { min-width: 0; }
-        .course-name { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-        .lesson-sub  { font-size: 11px; color: var(--muted); }
-        .btn-back {
-            display: inline-flex; align-items: center; gap: 6px;
-            padding: 7px 14px; border-radius: var(--r-full);
-            border: 1px solid var(--border); background: transparent;
-            color: var(--muted); font-size: 12px; font-weight: 500; font-family: var(--font);
-            cursor: pointer; flex-shrink: 0;
-            transition: background .15s, color .15s;
+        .logo-area{
+            display:flex;
+            align-items:center;
+            gap:10px;
         }
-        .btn-back:hover { background: rgba(255,255,255,.06); color: var(--text); }
-        .btn-back svg { width: 13px; height: 13px; }
-
-        /* ===== PAGE ===== */
-        .page { max-width: 1060px; margin: 0 auto; padding: 16px 16px 48px; }
-
-        /* ===== PROGRESS ===== */
-        .progress-card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r-xl);
-            padding: 14px 18px;
-            margin-bottom: 16px;
+        .logo-circle{
+            width:40px;
+            height:40px;
+            border-radius:999px;
+            border:1px solid var(--border);
+            background:#020617;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            overflow:hidden;
+            font-size:18px;
+            color:var(--primary);
         }
-        .progress-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-        .progress-label { font-size: 12px; font-weight: 500; color: var(--muted); }
-        .progress-pct   { font-size: 12px; font-weight: 700; color: var(--primary); }
-        .progress-bar-outer {
-            height: 6px; border-radius: var(--r-full);
-            background: rgba(255,255,255,.06); overflow: hidden;
+        .logo-circle img{
+            max-width:100%;
+            max-height:100%;
+            object-fit:contain;
         }
-        .progress-bar-inner {
-            height: 100%; border-radius: var(--r-full);
-            background: var(--primary);
-            width: <?= $percent ?>%;
-            transition: width .5s ease;
+        .course-title{
+            font-size:16px;
+            font-weight:bold;
+        }
+        .course-sub{
+            font-size:11px;
+            color:var(--muted);
         }
 
-        /* ===== LESSON WRAPPER ===== */
-        .lesson-wrapper {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r-xl);
-            overflow: hidden;
-            margin-bottom: 16px;
+        .btn-back{
+            border:none;
+            padding:8px 16px;
+            border-radius:999px;
+            background:var(--primary);
+            color:#111827;
+            cursor:pointer;
+            font-size:12px;
+            font-weight:bold;
+            display:inline-flex;
+            align-items:center;
+            gap:6px;
+            box-shadow:0 10px 30px rgba(0,0,0,.6);
         }
-        .lesson-header-bar {
-            padding: 14px 18px 0;
+        .btn-back span.icon{
+            font-size:14px;
         }
-        .lesson-tag   { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 4px; }
-        .lesson-title { font-size: 18px; font-weight: 700; }
-
-        /* VIDEO */
-        .video-wrapper { background: #000; border-top: 1px solid var(--border); margin-top: 14px; }
-        .video-inner {
-            position: relative; padding-top: 56.25%;
-        }
-        .video-inner iframe {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%; border: 0;
-        }
-        .video-embed-raw { line-height: 0; }
-        .video-placeholder {
-            padding: 50px 20px; text-align: center;
-            font-size: 14px; color: var(--muted);
+        .btn-back:hover{
+            filter:brightness(1.05);
         }
 
-        /* ACTIONS */
-        .lesson-actions {
-            padding: 14px 18px;
-            display: flex; align-items: center; justify-content: flex-end;
+        .progress-card{
+            background:#020617;
+            border-radius:16px;
+            border:1px solid var(--border);
+            padding:12px 12px 14px;
+            margin-bottom:16px;
+            box-shadow:0 14px 32px rgba(0,0,0,.45);
         }
-        .btn-done {
-            display: inline-flex; align-items: center; gap: 7px;
-            padding: 9px 18px; border-radius: var(--r-full);
-            font-size: 13px; font-weight: 700; font-family: var(--font);
-            border: none; cursor: pointer;
-            transition: filter .15s;
+        .progress-title{
+            font-size:13px;
+            font-weight:bold;
+            margin-bottom:4px;
         }
-        .btn-done svg { width: 15px; height: 15px; }
-        .btn-done.pending { background: var(--primary); color: #111827; }
-        .btn-done.pending:hover { filter: brightness(1.07); }
-        .btn-done.done { background: rgba(34,197,94,.15); color: #86efac; cursor: default; border: 1px solid rgba(34,197,94,.25); }
-
-        /* ===== SECTION HEADING ===== */
-        .section-heading {
-            font-size: 11px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: .07em;
-            color: var(--muted);
-            display: flex; align-items: center; gap: 10px;
-            margin: 20px 0 12px;
+        .progress-text{
+            font-size:11px;
+            color:var(--muted);
+            margin-bottom:6px;
         }
-        .section-heading::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-        /* ===== CAROUSEL ===== */
-        .carousel-wrap { position: relative; }
-        .carousel-track {
-            display: flex; gap: 12px;
-            overflow-x: auto; scroll-snap-type: x mandatory;
-            scroll-behavior: smooth; padding: 4px 2px 12px;
+        .progress-bar{
+            width:100%;
+            height:8px;
+            border-radius:999px;
+            background:#020617;
+            border:1px solid #111827;
+            overflow:hidden;
         }
-        .carousel-track::-webkit-scrollbar { height: 4px; }
-        .carousel-track::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: var(--r-full); }
-        .carousel-arrow {
-            position: absolute; top: 50%; transform: translateY(-50%);
-            width: 34px; height: 34px; border-radius: var(--r-full);
-            background: var(--card); border: 1px solid var(--border);
-            color: var(--text);
-            display: flex; align-items: center; justify-content: center;
-            cursor: pointer; z-index: 10;
-            box-shadow: 0 4px 14px rgba(0,0,0,.5);
-        }
-        .carousel-arrow svg { width: 14px; height: 14px; }
-        .carousel-arrow.left  { left: -8px; }
-        .carousel-arrow.right { right: -8px; }
-
-        /* Lesson mini-card in carousel */
-        .lesson-card {
-            flex: 0 0 230px; max-width: 230px;
-            background: rgba(255,255,255,.03);
-            border: 1px solid var(--border);
-            border-radius: var(--r-lg);
-            overflow: hidden; cursor: pointer;
-            scroll-snap-align: start;
-            display: flex; flex-direction: column;
-            transition: border-color .15s;
-        }
-        .lesson-card:hover { border-color: rgba(250,204,21,.25); }
-        .lesson-card.current { border-color: var(--primary); }
-        .lesson-card.locked  { opacity: .6; cursor: not-allowed; }
-        .lesson-card.locked:hover { border-color: var(--border); }
-
-        .lc-thumb {
-            position: relative; width: 100%; background: #0a1628;
-        }
-        .lc-thumb::before { content: ''; display: block; padding-top: 56.25%; }
-        .lc-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-        .lc-thumb-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-        .lc-thumb-placeholder svg { width: 22px; height: 22px; opacity: .3; }
-        .lc-lock {
-            position: absolute; inset: 0;
-            background: linear-gradient(to bottom, rgba(0,0,0,.5), rgba(0,0,0,.8));
-            display: flex; align-items: center; justify-content: center;
-            color: var(--primary);
-        }
-        .lc-lock svg { width: 20px; height: 20px; }
-
-        .lc-body { padding: 9px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
-        .lc-tag    { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
-        .lc-title  { font-size: 12px; font-weight: 600; line-height: 1.35; }
-        .lc-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-
-        .status-pill {
-            font-size: 10.5px; padding: 2px 7px; border-radius: var(--r-full);
-        }
-        .status-ok      { background: rgba(34,197,94,.12); color: #86efac; }
-        .status-pending { background: rgba(100,116,139,.15); color: var(--muted); }
-
-        .btn-lesson {
-            border: none; border-radius: var(--r-full);
-            padding: 5px 10px; font-size: 11px; font-weight: 700;
-            background: var(--primary); color: #111827;
-            cursor: pointer; font-family: var(--font);
-            transition: filter .15s;
-        }
-        .btn-lesson:hover { filter: brightness(1.07); }
-        .btn-lesson.disabled { background: rgba(255,255,255,.08); color: var(--dim); cursor: not-allowed; filter: none; }
-
-        /* Extra content */
-        .extra-box {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r-xl);
-            padding: 16px 18px;
-            margin-bottom: 16px;
-            font-size: 13px; line-height: 1.6;
-        }
-        .extra-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 10px; }
-
-        /* Rec card */
-        .rec-card {
-            flex: 0 0 240px; max-width: 240px;
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r-lg);
-            overflow: hidden; scroll-snap-align: start;
-            display: flex; flex-direction: column;
-        }
-        .rec-thumb { position: relative; width: 100%; background: #0d1117; }
-        .rec-thumb::before { content: ''; display: block; padding-top: 56.25%; }
-        .rec-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-        .rec-body  { padding: 10px 13px 12px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
-        .rec-title { font-size: 13px; font-weight: 600; }
-        .rec-desc  { font-size: 11px; color: var(--muted); flex: 1; line-height: 1.4; }
-        .rec-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; }
-        .rec-badge { font-size: 10px; padding: 2px 7px; border-radius: var(--r-full); background: rgba(100,116,139,.15); color: var(--muted); }
-        .rec-cta {
-            font-size: 11px; font-weight: 700; color: #111827;
-            background: var(--primary); border-radius: var(--r-full);
-            padding: 5px 10px; white-space: nowrap;
+        .progress-bar-fill{
+            height:100%;
+            width:0;
+            border-radius:999px;
+            background:var(--secondary);
+            transition:width .35s ease;
         }
 
-        /* WhatsApp FAB */
+        .lesson-wrapper{
+            background:#020617;
+            border-radius:16px;
+            border:1px solid var(--border);
+            box-shadow:0 18px 40px rgba(0,0,0,.55);
+            padding:12px 12px 18px;
+            margin-bottom:18px;
+        }
+        .lesson-header{
+            margin-bottom:8px;
+        }
+        .lesson-tag{
+            font-size:11px;
+            color:var(--muted);
+            margin-bottom:2px;
+        }
+        .lesson-title{
+            font-size:16px;
+            font-weight:bold;
+        }
+        .video-wrapper{
+            background:#0b1120;
+            border-radius:12px;
+            border:1px solid #111827;
+            overflow:hidden;
+            margin-top:10px;
+        }
+        .video-inner{
+            position:relative;
+            padding-top:56.25%; /* 16:9 */
+        }
+        .video-inner iframe{
+            position:absolute;
+            top:0;left:0;
+            width:100%;
+            height:100%;
+            border:0;
+        }
+        .video-placeholder{
+            padding:40px 16px;
+            text-align:center;
+            font-size:14px;
+            color:var(--muted);
+        }
+
+        .lesson-actions{
+            margin-top:12px;
+            display:flex;
+            justify-content:flex-end;
+        }
+        .btn-done{
+            border:none;
+            padding:9px 16px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:bold;
+            display:inline-flex;
+            align-items:center;
+            gap:6px;
+            cursor:pointer;
+        }
+        .btn-done span.icon{font-size:14px;}
+        .btn-done.pending{
+            background:var(--primary);
+            color:#111827;
+        }
+        .btn-done.done{
+            background:#15803d;
+            color:#ecfdf5;
+            cursor:default;
+        }
+
+        /* Seção Próximas aulas */
+        .section-header{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            margin-top:4px;
+            margin-bottom:8px;
+        }
+        .section-title{
+            font-size:14px;
+            font-weight:bold;
+        }
+        .carousel{
+            position:relative;
+        }
+        .carousel-track{
+            display:flex;
+            gap:12px;
+            overflow-x:auto;
+            scroll-behavior:smooth;
+            padding-bottom:4px;
+        }
+        .carousel-track::-webkit-scrollbar{
+            height:6px;
+        }
+        .carousel-track::-webkit-scrollbar-thumb{
+            background:#111827;
+            border-radius:999px;
+        }
+        .carousel-arrow{
+            position:absolute;
+            top:50%;
+            transform:translateY(-50%);
+            width:32px;
+            height:32px;
+            border-radius:999px;
+            border:none;
+            background:#020617;
+            color:var(--text);
+            box-shadow:0 8px 16px rgba(0,0,0,.6);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            cursor:pointer;
+            z-index:10;
+        }
+        .carousel-arrow.left{left:-4px;}
+        .carousel-arrow.right{right:-4px;}
+        .carousel-arrow:hover{filter:brightness(1.08);}
+
+        .lesson-card{
+            flex:0 0 260px;
+            max-width:260px;
+            background:#020617;
+            border-radius:16px;
+            border:1px solid var(--border);
+            box-shadow:0 14px 32px rgba(0,0,0,.45);
+            cursor:pointer;
+            display:flex;
+            flex-direction:column;
+            overflow:hidden;
+        }
+        .lesson-card.locked{
+            cursor:default;
+            opacity:.7;
+        }
+        .lesson-card.current{
+            border-color:var(--primary);
+        }
+        .lesson-header-card{
+            padding:10px 12px 6px;
+        }
+        .lesson-tag-card{
+            font-size:11px;
+            color:var(--muted);
+            margin-bottom:2px;
+        }
+        .lesson-title-card{
+            font-size:13px;
+            font-weight:bold;
+        }
+        .lesson-thumb-card{
+            position:relative;
+            width:100%;
+            background:#020617;
+            border-top:1px solid #111827;
+            border-bottom:1px solid #111827;
+            overflow:hidden;
+        }
+        /* Fallback universal p/ manter proporção 1:1 (quadrado) */
+        .lesson-thumb-card::before{
+            content:"";
+            display:block;
+            padding-top:100%;
+        }
+        .lesson-thumb-card img{
+            position:absolute;
+            inset:0;
+            width:100%;
+            height:100%;
+            object-fit:cover; /* não distorce; corta só o excedente */
+            display:block;
+        }
+        .lesson-thumb-card > span{
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+        }
+        .lesson-lock{
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:linear-gradient(to bottom, rgba(0,0,0,.6), rgba(0,0,0,.9));
+            color:#facc15;
+            font-size:26px;
+        }
+        .lesson-footer-card{
+            padding:10px 12px 12px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+        }
+        .status-pill{
+            font-size:11px;
+            padding:3px 7px;
+            border-radius:999px;
+        }
+        .status-ok{
+            background:rgba(34,197,94,.2);
+            color:#bbf7d0;
+        }
+        .status-pending{
+            background:rgba(148,163,184,.2);
+            color:#e5e7eb;
+        }
+        .btn-lesson{
+            border:none;
+            border-radius:999px;
+            padding:6px 10px;
+            font-size:11px;
+            font-weight:bold;
+            background:var(--primary);
+            color:#111827;
+            cursor:pointer;
+        }
+        .btn-lesson.disabled{
+            background:#111827;
+            color:#6b7280;
+            cursor:default;
+        }
+
+        /* Conteúdo extra */
+        .extra-box{
+            margin-top:16px;
+            background:#020617;
+            border-radius:16px;
+            border:1px solid var(--border);
+            padding:14px 12px 16px;
+            box-shadow:0 14px 32px rgba(0,0,0,.45);
+            font-size:13px;
+        }
+        .extra-title{
+            font-weight:bold;
+            margin-bottom:6px;
+        }
+
+        
+        /* Cursos recomendados - carrossel */
+        .rec-section-title{
+            margin-top:22px;
+            margin-bottom:8px;
+            font-size:14px;
+            font-weight:600;
+            color:var(--muted);
+        }
+        .rec-carousel{
+            position:relative;
+            margin:0 -4px;
+            margin-bottom:4px;
+        }
+        .rec-track{
+            display:flex;
+            gap:12px;
+            overflow-x:auto;
+            padding:4px;
+            scroll-snap-type:x mandatory;
+            -webkit-overflow-scrolling:touch;
+        }
+        .rec-card-link{
+            text-decoration:none;
+            color:inherit;
+        }
+        .rec-card{
+            background:#020617;
+            border-radius:18px;
+            border:1px solid var(--border);
+            padding:10px 12px 12px;
+            box-shadow:0 14px 32px rgba(0,0,0,.45);
+            display:flex;
+            flex-direction:column;
+            min-width:260px;
+            max-width:260px;
+            flex-shrink:0;
+            scroll-snap-align:start;
+        }
+        .rec-thumb{
+            position:relative;
+            width:100%;
+            border-radius:14px;
+            overflow:hidden;
+            margin-bottom:8px;
+            background:#020617;
+            color:var(--muted);
+            font-size:12px;
+        }
+        .rec-thumb::before{
+            content:"";
+            display:block;
+            padding-top:100%;
+        }
+        .rec-thumb img{
+            position:absolute;
+            inset:0;
+            width:100%;
+            height:100%;
+            object-fit:cover;
+            display:block;
+        }
+        .rec-thumb > span{
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+        }
+        .rec-body{
+            flex:1;
+            display:flex;
+            flex-direction:column;
+        }
+        .rec-title{
+            font-size:14px;
+            font-weight:600;
+            margin-bottom:4px;
+        }
+        .rec-desc{
+            font-size:12px;
+            color:var(--muted);
+            margin-bottom:8px;
+        }
+        .rec-footer{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+            margin-top:auto;
+        }
+        .rec-badge{
+            font-size:11px;
+            padding:4px 8px;
+            border-radius:999px;
+            background:rgba(148,163,184,.18);
+            color:#e5e7eb;
+        }
+        .rec-cta{
+            font-size:12px;
+            font-weight:600;
+            color:#111827;
+            background:var(--primary);
+            border-radius:999px;
+            padding:6px 10px;
+            white-space:nowrap;
+        }
+        .rec-arrow{
+            position:absolute;
+            top:50%;
+            transform:translateY(-50%);
+            width:32px;
+            height:32px;
+            border-radius:999px;
+            border:none;
+            background:rgba(15,23,42,.9);
+            color:#e5e7eb;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            cursor:pointer;
+            box-shadow:0 10px 22px rgba(0,0,0,.7);
+        }
+        .rec-arrow-left{
+            left:-4px;
+        }
+        .rec-arrow-right{
+            right:-4px;
+        }
+        @media (max-width:720px){
+            .rec-card{
+                min-width:220px;
+                max-width:220px;
+            }
+            .rec-arrow{
+                width:28px;
+                height:28px;
+            }
+        }
+
+@media (max-width:768px){
+            .topbar{
+                flex-direction:column;
+                align-items:flex-start;
+                gap:8px;
+            }
+            .btn-back{
+                align-self:flex-start;
+            }
+            .lesson-card{
+                flex-basis:220px;
+                max-width:220px;
+            }
+            .carousel-arrow.left{left:0;}
+            .carousel-arrow.right{right:0;}
+        }
+    
+
+        /* Botão flutuante de WhatsApp na trilha (estilo bolha com telefone) */
         .whatsapp-fab {
-            position: fixed; right: 16px; bottom: 20px;
-            width: 54px; height: 54px; border-radius: var(--r-full);
-            background: #25D366; display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 4px 20px rgba(37,211,102,.4);
-            z-index: 40; text-decoration: none;
-            animation: waPulse 2s infinite;
+            position: fixed;
+            right: 16px;
+            bottom: 18px;
+            width: 64px;
+            height: 64px;
+            border-radius: 999px;
+            background: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            z-index: 40;
+            animation: whatsPulse 1.6s infinite;
         }
-        .whatsapp-fab svg { width: 30px; height: 30px; }
-        @keyframes waPulse {
-            0%   { box-shadow: 0 0 0 0 rgba(37,211,102,.5); }
-            70%  { box-shadow: 0 0 0 14px rgba(37,211,102,0); }
-            100% { box-shadow: 0 0 0 0 rgba(37,211,102,0); }
+        .whatsapp-fab-icon {
+            width: 100%;
+            height: 100%;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 0 3px #ffffff;
+            background: #25D366;
+        }
+        .whatsapp-fab-icon svg {
+            width: 70%;
+            height: 70%;
+            display: block;
+        }
+        @keyframes whatsPulse {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(37,211,102,0.55);
+            }
+            60% {
+                transform: scale(1.12);
+                box-shadow: 0 0 0 16px rgba(37,211,102,0);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(37,211,102,0);
+            }
         }
 
-        @media (max-width: 600px) {
-            .lesson-card { flex: 0 0 85%; max-width: none; }
-            .rec-card    { flex: 0 0 75%; max-width: none; }
-            .carousel-arrow { display: none; }
-            .course-name { max-width: 140px; }
-        }
-    </style>
+        
+</style>
 </head>
 <body>
-
-<!-- TOPBAR -->
-<header class="topbar">
-    <div class="topbar-left">
-        <div class="logo-box">
-            <?php if ($logoUrl): ?>
-                <img src="<?= h($logoUrl) ?>" alt="Logo">
-            <?php else: ?>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                    <path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/>
-                </svg>
-            <?php endif; ?>
-        </div>
-        <div class="course-info">
-            <div class="course-name"><?= h($courseTitle) ?></div>
-            <div class="lesson-sub">Assistindo: <?= h($lessonTitle) ?></div>
-        </div>
-    </div>
-    <button type="button" class="btn-back" onclick="window.location.href='trilha.php'">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        Trilha
-    </button>
-</header>
-
 <div class="page">
 
-    <!-- PROGRESS -->
-    <div class="progress-card">
-        <div class="progress-row">
-            <span class="progress-label"><?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas concluídas</span>
-            <span class="progress-pct"><?= $percent ?>%</span>
+    <div class="topbar">
+        <div class="logo-area">
+            <div class="logo-circle">
+                <?php if ($logoUrl): ?>
+                    <img src="<?= h($logoUrl) ?>" alt="Logo">
+                <?php else: ?>
+                    EL
+                <?php endif; ?>
+            </div>
+            <div>
+                <div class="course-title"><?= h($courseTitle) ?></div>
+                <div class="course-sub">Assistindo: <?= h($lessonTitle) ?></div>
+            </div>
         </div>
-        <div class="progress-bar-outer">
-            <div class="progress-bar-inner"></div>
+
+        <button type="button" class="btn-back" onclick="window.location.href='trilha.php'">
+            <span class="icon">←</span>
+            <span>Voltar para a trilha</span>
+        </button>
+    </div>
+
+    <div class="progress-card">
+        <div class="progress-title">Progresso no treinamento</div>
+        <div class="progress-text">
+            Você concluiu <?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas obrigatórias (<?= $percent ?>%)
+        </div>
+        <div class="progress-bar">
+            <div class="progress-bar-fill" style="width: <?= $percent ?>%;"></div>
         </div>
     </div>
 
-    <!-- LESSON -->
     <div class="lesson-wrapper">
-        <div class="lesson-header-bar">
-            <div class="lesson-tag">Aula <?= $lessonOrder ?></div>
+        <div class="lesson-header">
+            <div class="lesson-tag">AULA <?= $lessonOrder ?></div>
             <div class="lesson-title"><?= h($lessonTitle) ?></div>
         </div>
 
         <div class="video-wrapper">
             <?php if ($hasEmbedTags && !empty($videoUrl)): ?>
-                <div class="video-embed-raw"><?= $videoUrl ?></div>
+                <div class="video-embed-raw">
+                    <?= $videoUrl /* código embed/JS completo, vem do admin */ ?>
+                </div>
             <?php elseif ($videoType === 'embed' && !empty($videoUrl)): ?>
-                <div class="video-embed-raw"><?= $videoUrl ?></div>
+                <div class="video-embed-raw">
+                    <?= $videoUrl /* embed completo, vem do admin */ ?>
+                </div>
             <?php elseif ($videoType === 'youtube' && !empty($videoUrl)): ?>
+                <?php
+                    $embedSrc = youtube_embed_src($videoUrl);
+                ?>
                 <div class="video-inner">
-                    <iframe src="<?= h(youtube_embed_src($videoUrl)) ?>"
-                            title="YouTube video player"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerpolicy="strict-origin-when-cross-origin"
-                            allowfullscreen></iframe>
+                    <iframe
+                        src="<?= h($embedSrc) ?>"
+                        title="YouTube video player"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin"
+                        allowfullscreen>
+                    </iframe>
                 </div>
             <?php else: ?>
-                <div class="video-placeholder">Nenhum vídeo configurado para esta aula.</div>
+                <div class="video-placeholder">
+                    Nenhum vídeo configurado para esta aula ainda.
+                </div>
             <?php endif; ?>
         </div>
 
         <div class="lesson-actions">
             <?php if ($isCurrentCompleted): ?>
                 <button type="button" class="btn-done done" disabled>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    Aula concluída
+                    <span class="icon">✓</span>
+                    <span>Aula concluída</span>
                 </button>
             <?php else: ?>
                 <button type="button" class="btn-done pending" id="btn-concluir-aula"
-                        data-lesson-id="<?= $lessonId ?>">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    Marcar como concluída
+                        data-lesson-id="<?= (int)$lessonId ?>">
+                    <span class="icon">✔</span>
+                    <span>Marcar aula como concluída</span>
                 </button>
             <?php endif; ?>
         </div>
     </div>
 
-    <!-- EXTRA CONTENT -->
-    <?php if (!empty(trim($htmlExtra))): ?>
-    <div class="extra-box">
-        <div class="extra-title">Conteúdo extra</div>
-        <div><?= $htmlExtra ?></div>
-    </div>
-    <?php endif; ?>
-
-    <!-- LESSONS CAROUSEL -->
     <?php if ($lessons): ?>
-    <div class="section-heading">Todas as aulas</div>
-    <div class="carousel-wrap">
-        <button type="button" class="carousel-arrow left" data-dir="-1">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <div class="carousel-track">
-        <?php foreach ($lessons as $ls):
-            $lsId        = (int)$ls['id'];
-            $slug        = $ls['slug'];
-            $titulo      = $ls['titulo'];
-            $ordem       = (int)$ls['ordem'];
-            $thumb       = $ls['thumb_url'] ?? '';
-            $isCompleted = isset($progressMap[$lsId]) && $progressMap[$lsId]['status'] === 'completed';
-            $isLocked    = !($unlockMap[$lsId] ?? false);
-            $linkAula    = 'aula.php?slug=' . urlencode($slug);
-            $isCurrent   = ($lsId === $lessonId);
-        ?>
-            <div class="lesson-card <?= $isLocked ? 'locked' : '' ?> <?= $isCurrent ? 'current' : '' ?>"
-                 data-link="<?= h($linkAula) ?>">
-                <div class="lc-thumb">
-                    <?php if ($thumb): ?>
-                        <img src="<?= h($thumb) ?>" alt="">
-                    <?php else: ?>
-                        <div class="lc-thumb-placeholder">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                        </div>
-                    <?php endif; ?>
-                    <?php if ($isLocked): ?>
-                        <div class="lc-lock">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                <div class="lc-body">
-                    <div class="lc-tag">Aula <?= $ordem ?></div>
-                    <div class="lc-title"><?= h($titulo) ?></div>
-                    <div class="lc-footer">
-                        <?php if ($isCompleted): ?>
-                            <span class="status-pill status-ok">Concluída ✓</span>
-                        <?php else: ?>
-                            <span class="status-pill status-pending"><?= $isLocked ? 'Bloqueada' : 'Pendente' ?></span>
-                        <?php endif; ?>
-                        <?php if ($isLocked): ?>
-                            <button type="button" class="btn-lesson disabled no-card-nav" data-link="<?= h($linkAula) ?>">Bloqueada</button>
-                        <?php else: ?>
-                            <button type="button" class="btn-lesson no-card-nav" data-link="<?= h($linkAula) ?>">Assistir</button>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-        <?php endforeach; ?>
+        <div class="section-header">
+            <div class="section-title">Próximas aulas</div>
         </div>
-        <button type="button" class="carousel-arrow right" data-dir="1">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-    </div>
+
+        <div class="carousel">
+            <button type="button" class="carousel-arrow left" data-dir="-1">&#9664;</button>
+            <div class="carousel-track">
+                <?php foreach ($lessons as $ls):
+                    $lsId = (int)$ls['id'];
+                    $slug  = $ls['slug'];
+                    $titulo= $ls['titulo'];
+                    $ordem = (int)$ls['ordem'];
+                    $thumb = $ls['thumb_url'] ?? '';
+                    $isCompleted = isset($progressMap[$lsId]) && $progressMap[$lsId]['status'] === 'completed';
+                    $isLocked    = !($unlockMap[$lsId] ?? false);
+                    $linkAula    = 'aula.php?slug=' . urlencode($slug);
+
+                    $isCurrent = ($lsId === $lessonId);
+                ?>
+                    <div class="lesson-card <?= $isLocked ? 'locked' : '' ?> <?= $isCurrent ? 'current' : '' ?>"
+                         data-link="<?= h($linkAula) ?>">
+                        <div class="lesson-header-card">
+                            <div class="lesson-tag-card">AULA <?= $ordem ?></div>
+                            <div class="lesson-title-card"><?= h($titulo) ?></div>
+                        </div>
+                        <div class="lesson-thumb-card">
+                            <?php if (!empty($thumb)): ?>
+                                <img src="<?= h($thumb) ?>" alt="">
+                            <?php else: ?>
+                                <span style="font-size:11px;color:var(--muted);">Sem imagem</span>
+                            <?php endif; ?>
+                            <?php if ($isLocked): ?>
+                                <div class="lesson-lock">🔒</div>
+                            <?php endif; ?>
+                        </div>
+                        <div class="lesson-footer-card">
+                            <?php if ($isCompleted): ?>
+                                <div class="status-pill status-ok">Concluída ✓</div>
+                            <?php elseif ($isLocked): ?>
+                                <div class="status-pill status-pending">Bloqueada</div>
+                            <?php else: ?>
+                                <div class="status-pill status-pending">Pendente</div>
+                            <?php endif; ?>
+
+                            <?php if ($isLocked): ?>
+                                <button type="button" class="btn-lesson disabled no-card-nav" data-link="<?= h($linkAula) ?>">Bloqueada</button>
+                            <?php else: ?>
+                                <button type="button" class="btn-lesson no-card-nav"
+                                        data-link="<?= h($linkAula) ?>">Ir para a aula</button>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <button type="button" class="carousel-arrow right" data-dir="1">&#9654;</button>
+        </div>
     <?php endif; ?>
 
-    <!-- RECOMMENDED COURSES -->
-    <?php if (!empty($recommendedCourses)): ?>
-    <div class="section-heading">Conheça nossos cursos</div>
-    <div class="carousel-wrap">
-        <button type="button" class="carousel-arrow left" data-dir="-1">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <div class="carousel-track" id="rec-track">
-        <?php foreach ($recommendedCourses as $rc): ?>
-            <a href="<?= h($rc['checkout_url']) ?>" target="_blank" class="rec-card">
-                <div class="rec-thumb">
-                    <?php if (!empty($rc['thumb_url'])): ?>
-                        <img src="<?= h($rc['thumb_url']) ?>" alt="">
-                    <?php endif; ?>
-                </div>
-                <div class="rec-body">
-                    <div class="rec-title"><?= h($rc['titulo']) ?></div>
-                    <?php if (!empty($rc['descricao'])): ?>
-                        <div class="rec-desc"><?= nl2br(h($rc['descricao'])) ?></div>
-                    <?php endif; ?>
-                    <div class="rec-footer">
-                        <span class="rec-badge">Curso completo</span>
-                        <span class="rec-cta">Ver detalhes</span>
-                    </div>
-                </div>
-            </a>
-        <?php endforeach; ?>
+    <?php if (!empty(trim($htmlExtra))): ?>
+        <div class="extra-box">
+            <div class="extra-title">Conteúdo extra da aula</div>
+            <div class="extra-body">
+                <?= $htmlExtra /* HTML controlado pelo admin */ ?>
+            </div>
         </div>
-        <button type="button" class="carousel-arrow right" data-dir="1">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-    </div>
     <?php endif; ?>
+
+    <?php if (!empty($recommendedCourses)): ?>
+        <div class="rec-section-title">Conheça nossos cursos pagos</div>
+        <div class="rec-carousel">
+            <button type="button" class="rec-arrow rec-arrow-left" aria-label="Ver cursos anteriores">&#10094;</button>
+            <div class="rec-track" id="rec-track">
+                <?php foreach ($recommendedCourses as $rc): ?>
+                    <a href="<?= h($rc['checkout_url']) ?>" target="_blank" class="rec-card-link">
+                        <div class="rec-card">
+                            <div class="rec-thumb">
+                                <?php if (!empty($rc['thumb_url'])): ?>
+                                    <img src="<?= h($rc['thumb_url']) ?>" alt="">
+                                <?php else: ?>
+                                    <span>Sem imagem</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="rec-body">
+                                <div class="rec-title"><?= h($rc['titulo']) ?></div>
+                                <?php if (!empty($rc['descricao'])): ?>
+                                    <div class="rec-desc"><?= nl2br(h($rc['descricao'])) ?></div>
+                                <?php endif; ?>
+                                <div class="rec-footer">
+                                    <span class="rec-badge">Curso completo</span>
+                                    <span class="rec-cta">Ver detalhes</span>
+                                </div>
+                            </div>
+                        </div>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+            <button type="button" class="rec-arrow rec-arrow-right" aria-label="Ver próximos cursos">&#10095;</button>
+        </div>
+    <?php endif; ?>
+
 
 </div>
 
 <?php if ($whatsappHelpUrl): ?>
 <a href="<?= h($whatsappHelpUrl) ?>" class="whatsapp-fab" data-help-fab="1"
-   target="_blank" rel="noopener noreferrer" aria-label="WhatsApp">
-    <svg viewBox="0 0 32 32" fill="none">
-        <circle cx="16" cy="16" r="16" fill="#25D366"/>
-        <path fill="#fff" d="M21.4 18.7l-1.6-1.6a1 1 0 0 0-1.04-.24l-1.15.38c-.72-.4-1.3-.93-1.8-1.64-.28-.4-.5-.83-.66-1.26l.38-1.15a1 1 0 0 0-.24-1.04l-1.6-1.6a1 1 0 0 0-1.41 0l-.86.86c-.47.47-.7 1.14-.6 1.8.14.96.54 2.26 1.62 3.76 1.08 1.5 2.37 2.62 3.33 3.26.62.41 1.45.83 2.19 1.04.64.18 1.32.02 1.8-.45l.86-.86a1 1 0 0 0 0-1.41z"/>
-    </svg>
+   target="_blank" rel="noopener noreferrer"
+   aria-label="Falar com suporte no WhatsApp">
+    <span class="whatsapp-fab-icon" aria-hidden="true">
+        <!-- Ícone estilo WhatsApp (bolha verde com telefone branco) -->
+        <svg viewBox="0 0 32 32">
+            <circle cx="16" cy="16" r="15" fill="#ffffff"/>
+            <circle cx="16" cy="16" r="13" fill="#25D366"/>
+            <path fill="#ffffff" d="M21.4 18.7l-1.6-1.6a1 1 0 0 0-1.04-.24l-1.15.38c-.72-.4-1.3-.93-1.8-1.64-.28-.4-.5-.83-.66-1.26l.38-1.15a1 1 0 0 0-.24-1.04l-1.6-1.6a1 1 0 0 0-1.41 0l-.86.86c-.47.47-.7 1.14-.6 1.8.14.96.54 2.26 1.62 3.76 1.08 1.5 2.37 2.62 3.33 3.26.62.41 1.45.83 2.19 1.04.64.18 1.32.02 1.8-.45l.86-.86a1 1 0 0 0 0-1.41z"/>
+        </svg>
+    </span>
 </a>
 <?php endif; ?>
 
 <script>
-// ===== "Marcar como concluída" =====
+// Botão "Marcar aula como concluída"
 (function(){
-    var btn = document.getElementById('btn-concluir-aula');
+    const btn = document.getElementById('btn-concluir-aula');
     if (!btn) return;
 
-    function unlockNextLessonCard() {
-        var current = document.querySelector('.lesson-card.current');
-        if (!current) return;
+function unlockNextLessonCard(){
+    const current = document.querySelector('.lesson-card.current');
+    if (!current) return;
 
-        var pillCur = current.querySelector('.lc-footer .status-pill');
-        if (pillCur) { pillCur.textContent = 'Concluída ✓'; pillCur.className = 'status-pill status-ok'; }
-        var btnCur = current.querySelector('.lc-footer .btn-lesson');
-        if (btnCur) { btnCur.textContent = 'Assistir'; btnCur.classList.remove('disabled'); }
-
-        var next = current.nextElementSibling;
-        while (next && !next.classList.contains('lesson-card')) next = next.nextElementSibling;
-        if (!next || !next.classList.contains('locked')) return;
-
-        next.classList.remove('locked');
-        var lock = next.querySelector('.lc-lock');
-        if (lock) lock.remove();
-
-        var pill = next.querySelector('.lc-footer .status-pill');
-        if (pill) { pill.textContent = 'Pendente'; pill.className = 'status-pill status-pending'; }
-        var btnN = next.querySelector('.lc-footer .btn-lesson');
-        if (btnN) { btnN.textContent = 'Assistir'; btnN.classList.remove('disabled'); }
+    // Atualiza visual do card atual
+    const pillCur = current.querySelector('.lesson-footer-card .status-pill');
+    if (pillCur){
+        pillCur.textContent = 'Concluída ✓';
+        pillCur.classList.remove('status-pending');
+        pillCur.classList.add('status-ok');
+    }
+    const btnCur = current.querySelector('.lesson-footer-card .btn-lesson');
+    if (btnCur){
+        btnCur.textContent = 'Ir para a aula';
+        btnCur.classList.remove('disabled');
     }
 
-    btn.addEventListener('click', function () {
-        var id = btn.getAttribute('data-lesson-id');
+    // Desbloqueia o próximo card (se estiver bloqueado)
+    let next = current.nextElementSibling;
+    while (next && !next.classList.contains('lesson-card')) next = next.nextElementSibling;
+    if (!next) return;
+    if (!next.classList.contains('locked')) return;
+
+    next.classList.remove('locked');
+
+    const lock = next.querySelector('.lesson-lock');
+    if (lock) lock.remove();
+
+    const pill = next.querySelector('.lesson-footer-card .status-pill');
+    if (pill){
+        pill.textContent = 'Pendente';
+        pill.classList.remove('status-ok');
+        pill.classList.add('status-pending');
+    }
+
+    const btnNext = next.querySelector('.lesson-footer-card .btn-lesson');
+    if (btnNext){
+        btnNext.textContent = 'Ir para a aula';
+        btnNext.classList.remove('disabled');
+        // garante data-link no botão (mesmo que já exista)
+        const link = next.getAttribute('data-link') || btnNext.getAttribute('data-link') || '';
+        if (link) btnNext.setAttribute('data-link', link);
+    }
+}
+
+    btn.addEventListener('click', function(){
+        const id = btn.getAttribute('data-lesson-id');
         if (!id) return;
+
         btn.disabled = true;
         btn.style.opacity = '0.7';
 
         fetch('api_concluir_aula.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'lesson_id=' + encodeURIComponent(id)
+            method:'POST',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body:'lesson_id='+encodeURIComponent(id)
         })
-        .then(function(r) { return r.json().catch(function(){ return null; }); })
-        .then(function(data) {
+        .then(r => r.json().catch(()=>null))
+        .then(data => {
             if (data && data.ok) {
-                btn.className = 'btn-done done';
-                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:15px;height:15px"><polyline points="20 6 9 17 4 12"/></svg> Aula concluída';
+                btn.classList.remove('pending');
+                btn.classList.add('done');
+                btn.innerHTML = '<span class="icon">✓</span><span>Aula concluída</span>';
                 btn.disabled = true;
                 try { unlockNextLessonCard(); } catch(e) {}
             } else {
@@ -679,7 +1006,7 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
                 btn.style.opacity = '1';
             }
         })
-        .catch(function() {
+        .catch(function(){
             alert('Erro de comunicação com o servidor.');
             btn.disabled = false;
             btn.style.opacity = '1';
@@ -687,62 +1014,112 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
     });
 })();
 
-// ===== Card click =====
-document.querySelectorAll('.lesson-card[data-link]').forEach(function(card) {
-    card.addEventListener('click', function(e) {
+// Clique no card inteiro (sem pegar os botões internos)
+document.querySelectorAll('.lesson-card[data-link]').forEach(function(card){
+    card.addEventListener('click', function(e){
         if (card.classList.contains('locked')) return;
         if (e.target.closest('.no-card-nav')) return;
-        var link = card.getAttribute('data-link');
+        const link = card.getAttribute('data-link');
         if (link) window.location.href = link;
     });
 });
 
-document.querySelectorAll('.btn-lesson[data-link]').forEach(function(btn) {
-    btn.addEventListener('click', function(e) {
+// Botões "Ir para a aula" nos cards
+document.querySelectorAll('.btn-lesson[data-link]').forEach(function(btn){
+    btn.addEventListener('click', function(e){
         e.stopPropagation();
         if (btn.classList.contains('disabled')) return;
-        var link = btn.getAttribute('data-link');
+        const link = btn.getAttribute('data-link');
         if (link) window.location.href = link;
     });
 });
 
-// ===== Carousels =====
-document.querySelectorAll('.carousel-wrap').forEach(function(wrap) {
-    var track = wrap.querySelector('.carousel-track');
+// Carrossel com limite (sem espaço em branco)
+document.querySelectorAll('.carousel').forEach(function(carousel){
+    const track = carousel.querySelector('.carousel-track');
     if (!track) return;
-    wrap.querySelectorAll('.carousel-arrow').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            var dir = parseInt(btn.getAttribute('data-dir'), 10) || 1;
-            var amt = track.clientWidth * 0.8;
-            var max = track.scrollWidth - track.clientWidth;
-            var t   = Math.min(Math.max(track.scrollLeft + dir * amt, 0), max);
-            track.scrollTo({ left: t, behavior: 'smooth' });
+
+    function scrollByDir(dir){
+        const amount = track.clientWidth * 0.8;
+        const maxScroll = track.scrollWidth - track.clientWidth;
+        let target = track.scrollLeft + dir * amount;
+        if (target < 0) target = 0;
+        if (target > maxScroll) target = maxScroll;
+        track.scrollTo({ left: target, behavior: 'smooth' });
+    }
+
+    carousel.querySelectorAll('.carousel-arrow').forEach(function(btn){
+        btn.addEventListener('click', function(){
+            const dir = parseInt(btn.getAttribute('data-dir'), 10) || 1;
+            scrollByDir(dir);
         });
     });
 });
 
-// ===== WhatsApp FAB beacon =====
+
+// Carrossel de cursos recomendados (usa .rec-carousel e .rec-arrow)
 (function(){
-    var sent = false;
-    document.addEventListener('click', function(e) {
-        var a = e.target.closest('a.whatsapp-fab[data-help-fab="1"]');
-        if (!a) return;
-        if (!sent) {
-            sent = true;
-            var endpoint = '/area_membros/public/api_click_botao.php';
-            var body = 'action=help';
-            try {
-                if (navigator.sendBeacon) { navigator.sendBeacon(endpoint, new Blob([body], {type:'application/x-www-form-urlencoded'})); return; }
-            } catch(ex) {}
-            try { fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: body, keepalive:true}).catch(function(){}); } catch(ex) {}
-        }
-        if (!a.dataset.helpDelayed) {
-            a.dataset.helpDelayed = '1';
-            e.preventDefault();
-            var href = a.href;
-            setTimeout(function(){ window.open(href, a.target || '_blank'); }, 120);
-        }
-    }, true);
+    const rec = document.querySelector('.rec-carousel');
+    if (!rec) return;
+    const track = rec.querySelector('.rec-track');
+    if (!track) return;
+
+    const btnPrev = rec.querySelector('.rec-arrow-left');
+    const btnNext = rec.querySelector('.rec-arrow-right');
+
+    function scrollByDir(dir){
+        const card = track.querySelector('.rec-card');
+        const step = card ? (card.offsetWidth + 12) : (track.clientWidth * 0.8);
+        const maxScroll = track.scrollWidth - track.clientWidth;
+        let target = track.scrollLeft + dir * step;
+        if (target < 0) target = 0;
+        if (target > maxScroll) target = maxScroll;
+        track.scrollTo({ left: target, behavior: 'smooth' });
+    }
+
+    if (btnPrev) btnPrev.addEventListener('click', function(){ scrollByDir(-1); });
+    if (btnNext) btnNext.addEventListener('click', function(){ scrollByDir(1); });
+})();
+
+</script>
+
+<script>
+(function(){
+  let sent = false;
+  function fireHelpClick(){
+    if (sent) return;
+    sent = true;
+    const endpoint = "/area_membros/public/api_click_botao.php";
+    const body = "action=help";
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([body], {type:"application/x-www-form-urlencoded"});
+        navigator.sendBeacon(endpoint, blob);
+        return;
+      }
+    } catch(e){}
+    try {
+      fetch(endpoint, {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body, keepalive:true})
+        .catch(()=>{});
+    } catch(e){}
+  }
+
+  document.addEventListener("click", function(e){
+    const a = e.target.closest('a.whatsapp-fab[data-help-fab="1"]');
+    if (!a) return;
+
+    // Dispara o registro em background sem atrapalhar o clique
+    fireHelpClick();
+
+    // (Opcional) garante alguns ms para o beacon sair antes de abrir o WhatsApp no celular
+    // sem mudar o comportamento visual
+    if (!a.dataset.helpDelayed) {
+      a.dataset.helpDelayed = "1";
+      e.preventDefault();
+      const href = a.href;
+      setTimeout(()=>{ window.open(href, a.target || "_blank"); }, 120);
+    }
+  }, true);
 })();
 </script>
 
