@@ -11,46 +11,35 @@ function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-// Se já estiver logado como aluno, manda pra trilha
 if (!empty($_SESSION['aluno_id'])) {
     header('Location: trilha.php');
     exit;
 }
 
-// Carrega configurações visuais básicas
-$stCfg = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
-$appCfg = $stCfg->fetch() ?: [
-    'course_title'    => 'Trilha de Aulas',
-    'primary_color'   => '#facc15',
-    'secondary_color' => '#22c55e',
-    'background_color'=> '#020617',
-    'logo_url'        => '',
-];
+$stCfg  = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
+$appCfg = $stCfg->fetch() ?: [];
 
-$courseTitle = $appCfg['course_title'] ?? 'Trilha de Aulas';
-$primary     = $appCfg['primary_color'] ?? '#facc15';
-$bgColor     = $appCfg['background_color'] ?? '#020617';
-$logoUrl     = $appCfg['logo_url'] ?? '';
+$courseTitle = $appCfg['course_title']     ?? 'Trilha de Aulas';
+$primary     = $appCfg['primary_color']    ?? '#facc15';
+$bgColor     = $appCfg['background_color'] ?? '#07101f';
+$logoUrl     = $appCfg['logo_url']         ?? '';
 
 $loginHelpUrl = (string)get_setting('login_help_url', '');
 $whatsHelpUrl = (string)get_setting('whatsapp_help_url', '');
-$helpUrl      = $loginHelpUrl !== '' ? $loginHelpUrl : $whatsHelpUrl;
-$helpUrl      = trim($helpUrl);
+$helpUrl      = trim($loginHelpUrl !== '' ? $loginHelpUrl : $whatsHelpUrl);
 $mailtoHelp   = 'mailto:suporte@professoremersonleite.com?subject=' . rawurlencode('Não consigo acessar a área de membros');
 
 $mensagemErro = '';
-
-// Lê cookie de e-mail salvo (se existir)
-$cookieEmail = $_COOKIE['am_email'] ?? '';
-$emailForm   = $cookieEmail;
-$lembrarMarcado = $cookieEmail !== '';
+$cookieEmail     = $_COOKIE['am_email'] ?? '';
+$emailForm       = $cookieEmail;
+$lembrarMarcado  = $cookieEmail !== '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email  = trim((string)($_POST['email'] ?? ''));
-    $senha  = trim((string)($_POST['senha'] ?? ''));
+    $email   = trim((string)($_POST['email']  ?? ''));
+    $senha   = trim((string)($_POST['senha']  ?? ''));
     $lembrar = !empty($_POST['lembrar_email']);
 
-    $emailForm = $email; // mantém preenchido no POST
+    $emailForm = $email;
 
     if ($email === '' || $senha === '') {
         $mensagemErro = 'Informe seu e-mail e senha para acessar.';
@@ -62,18 +51,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$user || empty($user['senha_hash']) || !password_verify($senha, $user['senha_hash'])) {
             $mensagemErro = 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
         } else {
-            // Login OK
             $_SESSION['aluno_id'] = (int)$user['id'];
 
-            // Atualiza last_login
             try {
                 $stUp = $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id");
                 $stUp->execute(['id' => $user['id']]);
-            } catch (Throwable $e) {
-                // não é crítico
-            }
+            } catch (Throwable $e) { /* não é crítico */ }
 
-            // Lembrar só o e-mail em cookie (60 dias)
             if ($lembrar) {
                 setcookie('am_email', $email, [
                     'expires'  => time() + 60*60*24*60,
@@ -92,277 +76,313 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="utf-8">
-    <title>Login - <?= h($courseTitle) ?></title>
+    <title>Acesso — <?= h($courseTitle) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        :root{
-            --bg: <?= h($bgColor) ?>;
-            --card:#020617;
-            --border:#1f2937;
+        :root {
+            --bg:      <?= h($bgColor) ?>;
             --primary: <?= h($primary) ?>;
-            --text:#e5e7eb;
-            --muted:#9ca3af;
+            --card:    #0d1b33;
+            --border:  #1a2540;
+            --text:    #e2e8f0;
+            --muted:   #64748b;
+            --dim:     #475569;
+            --danger:  #ef4444;
+            --r:       10px;
+            --font:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
-        *{box-sizing:border-box;margin:0;padding:0;}
-        body{
-            font-family:Arial, sans-serif;
-            background:radial-gradient(circle at top, rgba(250,204,21,.12), transparent 60%), var(--bg);
-            color:var(--text);
-            min-height:100vh;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            padding:16px 12px;
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { height: 100%; }
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            -webkit-font-smoothing: antialiased;
+            background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(250,204,21,.08), transparent);
         }
-        a{text-decoration:none;color:inherit;}
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
 
-        .shell{
-            width:100%;
-            max-width:960px;
-            display:grid;
-            grid-template-columns: minmax(0,1.2fr) minmax(0,1fr);
-            gap:28px;
-            align-items:center;
+        /* ===== SHELL ===== */
+        .shell {
+            width: 100%;
+            max-width: 900px;
+            display: grid;
+            grid-template-columns: 1.1fr 1fr;
+            gap: 32px;
+            align-items: center;
         }
-        @media (max-width:820px){
-            .shell{
-                grid-template-columns:1fr;
-                gap:16px;
-            }
-            /* No celular, logo + nome do curso em cima e a caixa de login abaixo */
-            .side-info{
-                order:1;
-                text-align:center;
-            }
-            .card{
-                order:2;
-            }
-        }
-
-        .side-info{
-            padding:8px 4px;
-        }
-        .logo-circle{
-            width:52px;
-            height:52px;
-            border-radius:999px;
-            border:1px solid rgba(148,163,184,.3);
-            background:#020617;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            overflow:hidden;
-            color:var(--primary);
-            font-size:22px;
-            margin-bottom:10px;
-        }
-        .logo-circle img{
-            max-width:100%;
-            max-height:100%;
-            object-fit:contain;
-        }
-        .big-title{
-            font-size:22px;
-            font-weight:bold;
-            margin-bottom:8px;
-        }
-        .big-sub{
-            font-size:13px;
-            color:var(--muted);
-            max-width:380px;
+        @media (max-width: 780px) {
+            .shell { grid-template-columns: 1fr; gap: 24px; }
+            .side-info { text-align: center; }
+            .side-info .bullet-list { text-align: left; max-width: 340px; margin: 0 auto; }
         }
 
-        .card{
-            background:rgba(15,23,42,.98);
-            border-radius:18px;
-            border:1px solid rgba(31,41,55,.9);
-            padding:20px 16px 18px;
-            box-shadow:0 22px 60px rgba(0,0,0,.9);
+        /* ===== LEFT SIDE ===== */
+        .side-info { padding: 8px 0; }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
         }
-        .card-title{
-            font-size:16px;
-            font-weight:bold;
-            margin-bottom:4px;
+        @media (max-width: 780px) { .brand { justify-content: center; } }
+        .brand-logo {
+            width: 46px; height: 46px;
+            border-radius: 12px;
+            background: rgba(250,204,21,.1);
+            border: 1px solid rgba(250,204,21,.2);
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
+            flex-shrink: 0;
+            color: var(--primary);
         }
-        .card-sub{
-            font-size:12px;
-            color:var(--muted);
-            margin-bottom:12px;
-        }
-        .field{
-            margin-bottom:10px;
-        }
-        label{
-            display:block;
-            font-size:12px;
-            color:var(--muted);
-            margin-bottom:4px;
-        }
-        input[type="email"],
-        input[type="password"]{
-            width:100%;
-            padding:8px 10px;
-            border-radius:10px;
-            border:1px solid var(--border);
-            background:#020617;
-            color:var(--text);
-            font-size:13px;
-        }
-        input::placeholder{
-            color:#6b7280;
-        }
-        .remember-line{
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            gap:10px;
-            margin-top:4px;
-            margin-bottom:6px;
-        }
-        .remember-left{
-            display:flex;
-            align-items:center;
-            gap:6px;
-            font-size:11px;
-            color:var(--muted);
-        }
-        .remember-left input[type="checkbox"]{
-            width:14px;
-            height:14px;
-        }
-        .forgot-link{
-            font-size:11px;
-            color:#fca5a5;
-            cursor:pointer;
-        }
-        .forgot-link:hover{
-            text-decoration:underline;
-        }
-        .btn-primary{
-            width:100%;
-            margin-top:4px;
-            padding:9px 16px;
-            border-radius:999px;
-            border:none;
-            background:var(--primary);
-            color:#111827;
-            font-weight:bold;
-            font-size:13px;
-            cursor:pointer;
-        }
-        .btn-primary:hover{filter:brightness(1.05);}
+        .brand-logo img { width: 100%; height: 100%; object-fit: contain; }
+        .brand-logo svg { width: 22px; height: 22px; }
+        .brand-name { font-size: 15px; font-weight: 700; color: var(--text); }
+        .brand-tag  { font-size: 11px; color: var(--muted); margin-top: 1px; }
 
-        .msg-erro{
-            margin-bottom:8px;
-            padding:8px 10px;
-            border-radius:10px;
-            background:rgba(239,68,68,.16);
-            border:1px solid #ef4444;
-            color:#fecaca;
-            font-size:12px;
+        .side-headline {
+            font-size: 28px;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 12px;
+            letter-spacing: -.02em;
+        }
+        .side-sub {
+            font-size: 14px;
+            color: var(--muted);
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .bullet-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .bullet-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--dim);
+        }
+        .bullet-dot {
+            width: 22px; height: 22px;
+            border-radius: var(--r);
+            background: rgba(250,204,21,.1);
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            color: var(--primary);
+        }
+        .bullet-dot svg { width: 12px; height: 12px; }
+
+        /* ===== CARD ===== */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px 28px;
+            box-shadow: 0 30px 80px rgba(0,0,0,.5);
+        }
+        .card-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+        .card-sub   { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+
+        .form-group { margin-bottom: 14px; }
+        .form-label {
+            display: block;
+            font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: .06em;
+            color: var(--muted); margin-bottom: 5px;
+        }
+        input[type="email"], input[type="password"] {
+            width: 100%; padding: 10px 13px;
+            border-radius: var(--r);
+            border: 1px solid var(--border);
+            background: #07101f;
+            color: var(--text);
+            font-size: 14px; font-family: var(--font);
+            outline: none;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(250,204,21,.12);
+        }
+        input::placeholder { color: var(--dim); }
+
+        .hint-box {
+            background: rgba(56,189,248,.07);
+            border: 1px solid rgba(56,189,248,.15);
+            border-radius: var(--r);
+            padding: 9px 12px;
+            font-size: 12px;
+            color: #7dd3fc;
+            margin-bottom: 16px;
         }
 
-        .help-block{
-            margin-top:10px;
-            font-size:11px;
-            color:var(--muted);
-            text-align:center;
+        .actions-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 16px;
         }
-        .help-block a{
-            color:#facc15;
-            font-weight:bold;
+        .remember-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted);
+            cursor: pointer;
         }
-    
-    .password-hint{
-        margin-top:8px;
-        font-size:12px;
-        color: rgba(226,232,240,.78);
-        line-height:1.25;
-    }
-    .password-hint b{ color: #e5e7eb; }
-</style>
+        .remember-label input[type="checkbox"] {
+            width: 14px; height: 14px;
+            accent-color: var(--primary);
+        }
+        .help-link {
+            font-size: 12px;
+            color: #fca5a5;
+        }
+        .help-link:hover { text-decoration: underline; }
+
+        .btn-submit {
+            width: 100%;
+            padding: 11px;
+            border-radius: 999px;
+            border: none;
+            background: var(--primary);
+            color: #111827;
+            font-weight: 700; font-size: 14px;
+            font-family: var(--font);
+            cursor: pointer;
+            transition: filter .15s;
+        }
+        .btn-submit:hover { filter: brightness(1.07); }
+        .btn-submit:active { filter: brightness(.94); }
+
+        .error-box {
+            background: rgba(239,68,68,.1);
+            border: 1px solid rgba(239,68,68,.3);
+            color: #fca5a5;
+            border-radius: var(--r);
+            padding: 10px 13px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .card-footer {
+            margin-top: 18px;
+            font-size: 12px;
+            color: var(--muted);
+            text-align: center;
+            line-height: 1.6;
+        }
+    </style>
 </head>
 <body>
 <div class="shell">
 
+    <!-- LEFT: BRANDING -->
     <div class="side-info">
-        <div class="logo-circle">
-            <?php if ($logoUrl): ?>
-                <img src="<?= h($logoUrl) ?>" alt="Logo">
-            <?php else: ?>
-                EL
-            <?php endif; ?>
+        <div class="brand">
+            <div class="brand-logo">
+                <?php if ($logoUrl): ?>
+                    <img src="<?= h($logoUrl) ?>" alt="Logo">
+                <?php else: ?>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                        <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+                    </svg>
+                <?php endif; ?>
+            </div>
+            <div>
+                <div class="brand-name"><?= h($courseTitle) ?></div>
+                <div class="brand-tag">Área de Membros</div>
+            </div>
         </div>
-        <div class="big-title"><?= h($courseTitle) ?></div>
-        <div class="big-sub">
-            Acesse a sua área de aulas com o e-mail cadastrado e a senha enviada pela equipe.
-            Se tiver qualquer dificuldade, use o botão <strong>"Não consigo acessar"</strong>.
+
+        <div class="side-headline">Bem-vindo<br>de volta!</div>
+        <div class="side-sub">Acesse sua área de aulas e continue de onde parou. Todo o conteúdo exclusivo em um só lugar.</div>
+
+        <div class="bullet-list">
+            <div class="bullet-item">
+                <div class="bullet-dot">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                Aulas liberadas no seu ritmo
+            </div>
+            <div class="bullet-item">
+                <div class="bullet-dot">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                Certificado de conclusão
+            </div>
+            <div class="bullet-item">
+                <div class="bullet-dot">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                Acesso em qualquer dispositivo
+            </div>
         </div>
     </div>
 
+    <!-- RIGHT: FORM -->
     <div class="card">
         <div class="card-title">Entrar na área de membros</div>
-        <div class="card-sub">Digite seus dados de acesso para continuar.</div>
+        <div class="card-sub">Use o e-mail e a senha que recebeu ao se cadastrar.</div>
 
         <?php if ($mensagemErro): ?>
-            <div class="msg-erro"><?= h($mensagemErro) ?></div>
+            <div class="error-box"><?= h($mensagemErro) ?></div>
         <?php endif; ?>
 
         <form method="post" action="">
-            <div class="field">
-                <label for="email">E-mail</label>
-                <input
-                    type="email"
-                    id="email"
-                    name="email"
-                    value="<?= h($emailForm) ?>"
-                    placeholder="seuemail@exemplo.com"
-                    required
-                >
+            <div class="form-group">
+                <label class="form-label" for="email">E-mail</label>
+                <input type="email" id="email" name="email"
+                       value="<?= h($emailForm) ?>"
+                       placeholder="seuemail@exemplo.com" required autofocus>
             </div>
-            <div class="field">
-                <label for="senha">Senha</label>
-                <input
-                    type="password"
-                    id="senha"
-                    name="senha"
-                    placeholder="Digite sua senha"
-                    required
-                >
-            </div>
-            <div class="password-hint">Dica: sua senha é seu <b>telefone com DDD</b>, só números (sem espaços). Ex: <b>31985278215</b>.</div>
 
-            <div class="remember-line">
-                <label class="remember-left">
-                    <input
-                        type="checkbox"
-                        name="lembrar_email"
-                        value="1"
-                        <?= $lembrarMarcado ? 'checked' : '' ?>
-                    >
-                    <span>Manter meus dados salvos neste dispositivo</span>
+            <div class="form-group">
+                <label class="form-label" for="senha">Senha</label>
+                <input type="password" id="senha" name="senha"
+                       placeholder="Digite sua senha" required>
+            </div>
+
+            <div class="hint-box">
+                Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>31985278215</strong>
+            </div>
+
+            <div class="actions-row">
+                <label class="remember-label">
+                    <input type="checkbox" name="lembrar_email" value="1" <?= $lembrarMarcado ? 'checked' : '' ?>>
+                    Lembrar meu e-mail
                 </label>
-
-                <?php
-                    $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
-                ?>
-                <a class="forgot-link" href="<?= h($finalHelpUrl) ?>" target="_blank" rel="noopener">
+                <a class="help-link" href="<?= h($finalHelpUrl) ?>" target="_blank" rel="noopener">
                     Não consigo acessar
                 </a>
             </div>
 
-            <button type="submit" class="btn-primary">Entrar</button>
+            <button type="submit" class="btn-submit">Entrar</button>
         </form>
 
-        <div class="help-block">
-            Caso não tenha recebido os dados de acesso ou esteja com dificuldades,
-            clique em <a href="mailto:suporte@professoremersonleite.com?subject=N%C3%A3o%20consigo%20acessar%20a%20%C3%A1rea%20de%20membros" target="_blank">Não consigo acessar</a>
-            para falar com a equipe.
+        <div class="card-footer">
+            Dificuldades para acessar?
+            <a href="<?= h($finalHelpUrl) ?>" target="_blank" rel="noopener">Fale com a equipe de suporte</a>
         </div>
     </div>
 

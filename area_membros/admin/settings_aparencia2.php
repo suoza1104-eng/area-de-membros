@@ -212,14 +212,14 @@ include __DIR__ . '/_header.php';
         width:32px;
         height:32px;
         border-radius:999px;
-        background:#020617;
-        border:1px solid #1f2937;
+        background:var(--bg);
+        border:1px solid var(--border);
         display:flex;
         align-items:center;
         justify-content:center;
         font-size:12px;
         font-weight:bold;
-        color:#e5e7eb;
+        color:var(--text);
         overflow:hidden;
     }
     .preview-logo img{
@@ -254,9 +254,9 @@ include __DIR__ . '/_header.php';
         width:100%;
         padding:6px 8px;
         border-radius:6px;
-        border:1px solid #4b5563;
-        background:#020617;
-        color:#e5e7eb;
+        border:1px solid var(--border-light);
+        background:#f8fafc;
+        color:var(--text);
         font-size:13px;
     }
     .field-small{
