@@ -1,0 +1,229 @@
+<?php
+// FILE: app/funcoes.php
+declare(strict_types=1);
+
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/webhook_dispatcher.php';
+require_once __DIR__ . '/superfuncionario_dispatcher.php';
+
+function proteger_aluno(): void {
+    if (empty($_SESSION['aluno_id'])) {
+        header('Location: ' . BASE_URL . '/login.php');
+        exit;
+    }
+}
+
+function proteger_admin(): void {
+    if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
+        header('Location: ' . BASE_URL_ADMIN . '/index.php');
+        exit;
+    }
+}
+
+function redirecionar(string $url): void {
+    header('Location: ' . $url);
+    exit;
+}
+
+function limpar_telefone(string $tel): string {
+    return preg_replace('/\D+/', '', $tel);
+}
+
+function buscar_usuario_por_email(string $email): ?array {
+    $pdo = getPDO();
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :e LIMIT 1");
+    $stmt->execute([':e' => $email]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function buscar_usuario_por_id(int $id): ?array {
+    $pdo = getPDO();
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function adicionar_tag_ao_usuario(int $user_id, int $tag_id, string $origem = 'manual', ?int $referencia_id = null): void {
+    $pdo = getPDO();
+
+    // evita duplicar user_tag
+    $stmt = $pdo->prepare("SELECT id FROM user_tags WHERE user_id = :u AND tag_id = :t");
+    $stmt->execute([':u' => $user_id, ':t' => $tag_id]);
+    if ($stmt->fetch()) {
+        return;
+    }
+
+    $ins = $pdo->prepare("
+        INSERT INTO user_tags (user_id, tag_id, origem, referencia_id, created_at)
+        VALUES (:u, :t, :o, :r, NOW())
+    ");
+    $ins->execute([
+        ':u' => $user_id,
+        ':t' => $tag_id,
+        ':o' => $origem,
+        ':r' => $referencia_id,
+    ]);
+}
+
+
+/**
+ * Garante que uma tag exista (por NOME) e retorna o id.
+ * - Se não existir, cria.
+ */
+function obter_ou_criar_tag_id(string $tag_nome): int {
+    $tag_nome = trim($tag_nome);
+    if ($tag_nome === '') return 0;
+
+    $pdo = getPDO();
+
+    // 1) tenta buscar
+    $st = $pdo->prepare("SELECT id FROM tags WHERE nome = :n LIMIT 1");
+    $st->execute([':n' => $tag_nome]);
+    $id = (int)($st->fetchColumn() ?: 0);
+    if ($id > 0) return $id;
+
+    // 2) tenta criar (duas tentativas: com/sem created_at)
+    try {
+        $ins = $pdo->prepare("INSERT INTO tags (nome) VALUES (:n)");
+        $ins->execute([':n' => $tag_nome]);
+    } catch (Throwable $e1) {
+        try {
+            $ins = $pdo->prepare("INSERT INTO tags (nome, created_at) VALUES (:n, NOW())");
+            $ins->execute([':n' => $tag_nome]);
+        } catch (Throwable $e2) {
+            // se houve corrida (outro processo criou), tenta buscar novamente
+        }
+    }
+
+    $st = $pdo->prepare("SELECT id FROM tags WHERE nome = :n LIMIT 1");
+    $st->execute([':n' => $tag_nome]);
+    return (int)($st->fetchColumn() ?: 0);
+}
+
+/**
+ * Adiciona uma tag ao usuário por NOME (criando a tag se necessário).
+ * Retorna true quando a operação foi bem-sucedida.
+ */
+function adicionar_tag(int $user_id, string $tag_nome, string $origem = 'manual', ?int $referencia_id = null): bool {
+    if ($user_id <= 0) return false;
+
+    try {
+        $tag_id = obter_ou_criar_tag_id($tag_nome);
+        if ($tag_id <= 0) return false;
+
+        adicionar_tag_ao_usuario($user_id, $tag_id, $origem, $referencia_id);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+
+/**
+ * Dispara webhooks para um determinado evento.
+ *
+ * $evento  - código do evento (ex.: CERT_EMITIDO, ASSISTIU_ALGUMA_AULA, etc.)
+ * $user_id - id do usuário (opcional)
+ * $extra   - dados extras específicos do evento
+ */
+function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = []): void {
+    $pdo = getPDO();
+
+    // Monta dados básicos do usuário (se informado)
+    $user = [];
+    if ($user_id !== null) {
+        $u = buscar_usuario_por_id($user_id);
+        if ($u) {
+            $user = [
+                'id'       => $u['id'] ?? null,
+                'nome'     => $u['nome'] ?? null,
+                'email'    => $u['email'] ?? null,
+                'telefone' => $u['telefone'] ?? null,
+            ];
+        }
+    }
+
+    // Usa o dispatcher central para enviar para todos os webhooks ativos
+    disparar_evento_webhooks($pdo, $evento, $user, $extra);
+
+    // Disparo opcional para SuperFuncionário (se houver regras ativas)
+    sf_disparar_evento($pdo, $evento, $user, $extra);
+}
+
+/**
+ * Log genérico de sistema.
+ */
+function log_sistema(string $nivel, string $origem, string $mensagem, array $contexto = [], ?string $stack = null): void {
+    $pdo = getPDO();
+    $stmt = $pdo->prepare("
+        INSERT INTO system_logs (nivel, origem, mensagem, stack_trace, contexto_json, created_at)
+        VALUES (:n, :o, :m, :s, :c, NOW())
+    ");
+    $stmt->execute([
+        ':n' => $nivel,
+        ':o' => $origem,
+        ':m' => $mensagem,
+        ':s' => $stack,
+        ':c' => json_encode($contexto, JSON_UNESCAPED_UNICODE),
+    ]);
+}
+
+function get_setting(string $chave, ?string $default = null): ?string {
+    static $cache = null;
+    if ($cache === null) {
+        $cache = [];
+        try {
+            $pdo = getPDO();
+            $stmt = $pdo->query("SELECT chave, valor FROM settings");
+            foreach ($stmt as $row) {
+                $cache[$row['chave']] = $row['valor'];
+            }
+        } catch (Throwable $e) {
+            // banco ainda não criado etc.
+            return $default;
+        }
+    }
+    return $cache[$chave] ?? $default;
+}
+
+function set_setting(string $chave, string $valor): void {
+    $pdo = getPDO();
+    $stmt = $pdo->prepare("
+        INSERT INTO settings (chave, valor) VALUES (:c, :v)
+        ON DUPLICATE KEY UPDATE valor = VALUES(valor)
+    ");
+    $stmt->execute([':c' => $chave, ':v' => $valor]);
+}
+
+/**
+/**
+ * Gera um código UID de 36 caracteres com letras minúsculas, números e traços.
+ */
+function gerar_codigo_uid(): string {
+    $data = bin2hex(random_bytes(16)); // 32 chars hex
+    return substr($data, 0, 8) . '-' .
+           substr($data, 8, 4) . '-' .
+           substr($data, 12, 4) . '-' .
+           substr($data, 16, 4) . '-' .
+           substr($data, 20);
+}
+
+function theme_inline_css_vars(): string {
+    $bg_main   = get_setting('theme_bg_main', '#0b1120');
+    $bg_card   = get_setting('theme_bg_card', '#020617');
+    $primary   = get_setting('theme_primary', '#facc15');
+    $secondary = get_setting('theme_secondary', '#38bdf8');
+    $text      = get_setting('theme_text', '#f9fafb');
+    $fontScale = (int) get_setting('theme_font_scale', '100');
+
+    return ":root{
+        --bg-main: {$bg_main};
+        --bg-card: {$bg_card};
+        --primary: {$primary};
+        --secondary: {$secondary};
+        --text-main: {$text};
+        --font-scale: {$fontScale};
+    }";
+}
