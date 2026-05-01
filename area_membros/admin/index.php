@@ -34,8 +34,8 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
             body {
                 font-family: 'Inter', -apple-system, sans-serif;
-                background: #07101f;
-                color: #e2e8f0;
+                background: #f1f5f9;
+                color: #0f172a;
                 min-height: 100vh;
                 display: flex;
                 align-items: center;
@@ -45,26 +45,27 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             .login-box {
                 width: 100%;
                 max-width: 380px;
-                background: #0d1b33;
-                border: 1px solid #1a2540;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
                 border-radius: 18px;
                 padding: 36px 32px;
-                box-shadow: 0 20px 60px rgba(0,0,0,.5);
+                box-shadow: 0 4px 24px rgba(0,0,0,.08);
             }
             .login-logo {
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 width: 48px; height: 48px;
-                background: rgba(250,204,21,.1);
+                background: rgba(250,204,21,.15);
                 border-radius: 12px;
                 margin: 0 auto 20px;
-                color: #facc15;
+                color: #ca8a04;
             }
             .login-logo svg { width: 22px; height: 22px; }
             h2 {
                 font-size: 20px; font-weight: 700;
                 text-align: center; margin-bottom: 6px;
+                color: #0f172a;
             }
             .login-sub {
                 font-size: 13px; color: #64748b;
@@ -81,9 +82,9 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
                 width: 100%;
                 padding: 9px 12px;
                 border-radius: 9px;
-                border: 1px solid #1e3050;
-                background: #07101f;
-                color: #e2e8f0;
+                border: 1px solid #cbd5e1;
+                background: #f8fafc;
+                color: #0f172a;
                 font-size: 14px;
                 font-family: inherit;
                 outline: none;
@@ -92,7 +93,7 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             }
             input:focus {
                 border-color: #facc15;
-                box-shadow: 0 0 0 3px rgba(250,204,21,.12);
+                box-shadow: 0 0 0 3px rgba(250,204,21,.15);
             }
             button[type="submit"] {
                 width: 100%;
@@ -110,9 +111,9 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             }
             button[type="submit"]:hover { filter: brightness(1.07); }
             .erro {
-                background: rgba(239,68,68,.12);
-                border: 1px solid rgba(239,68,68,.3);
-                color: #fca5a5;
+                background: rgba(239,68,68,.08);
+                border: 1px solid rgba(239,68,68,.2);
+                color: #dc2626;
                 border-radius: 8px;
                 padding: 9px 12px;
                 font-size: 13px;
@@ -458,7 +459,7 @@ include __DIR__ . '/_header.php';
     if (typeof Chart === 'undefined') return;
 
     Chart.defaults.color = '#64748b';
-    Chart.defaults.borderColor = '#1a2540';
+    Chart.defaults.borderColor = '#e2e8f0';
     Chart.defaults.font.family = "'Inter', sans-serif";
 
     // Inscrições por dia
@@ -485,8 +486,8 @@ include __DIR__ . '/_header.php';
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
-                    x: { ticks: { maxTicksLimit: 8, font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
-                    y: { ticks: { font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' }, beginAtZero: true }
+                    x: { ticks: { maxTicksLimit: 8, font: { size: 11 } }, grid: { color: 'rgba(226,232,240,.8)' } },
+                    y: { ticks: { font: { size: 11 } }, grid: { color: 'rgba(226,232,240,.8)' }, beginAtZero: true }
                 }
             }
         });
@@ -501,8 +502,8 @@ include __DIR__ . '/_header.php';
                 labels: ['Só inscritos', 'Em progresso', 'Concluíram tudo'],
                 datasets: [{
                     data: [<?= $onlyInscritos ?>, <?= $estagioUma ?>, <?= $estagioFull ?>],
-                    backgroundColor: ['rgba(100,116,139,.5)', 'rgba(56,189,248,.8)', 'rgba(34,197,94,.8)'],
-                    borderColor: '#07101f',
+                    backgroundColor: ['rgba(100,116,139,.25)', 'rgba(14,165,233,.7)', 'rgba(34,197,94,.75)'],
+                    borderColor: '#ffffff',
                     borderWidth: 3,
                     hoverOffset: 5
                 }]
@@ -517,33 +518,36 @@ include __DIR__ . '/_header.php';
         });
     }
 
-    // Funil de aulas
+    // Funil de conclusão por aula
     var labelsFunil = <?= json_encode($labelsFunil, JSON_UNESCAPED_UNICODE) ?>;
     var dataFunil   = <?= json_encode($dataFunil) ?>;
     var cFunil = document.getElementById('chartFunil');
     if (cFunil && labelsFunil.length) {
+        var funnelColors = dataFunil.map(function(_, i) {
+            var alpha = 0.9 - (i / Math.max(dataFunil.length - 1, 1)) * 0.5;
+            return 'rgba(250,204,21,' + alpha.toFixed(2) + ')';
+        });
         new Chart(cFunil, {
-            type: 'bar',
+            type: 'funnel',
             data: {
                 labels: labelsFunil,
                 datasets: [{
                     data: dataFunil,
-                    backgroundColor: function(ctx) {
-                        var gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 200);
-                        gradient.addColorStop(0, 'rgba(250,204,21,.9)');
-                        gradient.addColorStop(1, 'rgba(250,204,21,.35)');
-                        return gradient;
-                    },
-                    borderRadius: 6,
-                    borderSkipped: false
+                    backgroundColor: funnelColors,
+                    borderWidth: 0,
                 }]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { ticks: { font: { size: 11 } }, grid: { display: false } },
-                    y: { ticks: { font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' }, beginAtZero: true }
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ' ' + ctx.raw.toLocaleString('pt-BR') + ' alunos';
+                            }
+                        }
+                    }
                 }
             }
         });

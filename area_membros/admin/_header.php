@@ -45,40 +45,41 @@ function __esc(string $v): string {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
 <style>
 /* ===== THEME (from admin settings) ===== */
 <?= theme_inline_css_vars(); ?>
 
 /* ===== EXTENDED DESIGN SYSTEM ===== */
 :root {
-  --bg:             var(--bg-main, #07101f);
-  --bg-card:        var(--bg-card, #0d1b33);
-  --bg-sidebar:     #060d1a;
-  --bg-hover:       rgba(255,255,255,.04);
-  --border:         #1a2540;
-  --border-light:   #1e3050;
+  --bg:             #f1f5f9;
+  --bg-card:        #ffffff;
+  --bg-sidebar:     #0f1f3a;
+  --bg-hover:       rgba(15,23,42,.05);
+  --border:         #e2e8f0;
+  --border-light:   #cbd5e1;
   --primary:        var(--primary, #facc15);
-  --primary-dim:    rgba(250,204,21,.08);
-  --primary-soft:   rgba(250,204,21,.15);
-  --text:           var(--text-main, #e2e8f0);
-  --muted:          var(--text-muted, #64748b);
-  --dim:            #475569;
+  --primary-dim:    rgba(250,204,21,.15);
+  --primary-soft:   rgba(250,204,21,.22);
+  --text:           #0f172a;
+  --muted:          #64748b;
+  --dim:            #94a3b8;
   --success:        #22c55e;
-  --success-dim:    rgba(34,197,94,.12);
+  --success-dim:    rgba(34,197,94,.1);
   --danger:         #ef4444;
-  --danger-dim:     rgba(239,68,68,.12);
-  --info:           #38bdf8;
-  --info-dim:       rgba(56,189,248,.12);
+  --danger-dim:     rgba(239,68,68,.1);
+  --info:           #0ea5e9;
+  --info-dim:       rgba(14,165,233,.1);
   --warning:        #f59e0b;
-  --warning-dim:    rgba(245,158,11,.12);
+  --warning-dim:    rgba(245,158,11,.1);
   --sidebar-w:      252px;
   --topbar-h:       60px;
   --r:              10px;
   --r-lg:           14px;
   --r-xl:           18px;
   --r-full:         999px;
-  --shadow:         0 4px 20px rgba(0,0,0,.45);
-  --shadow-lg:      0 10px 40px rgba(0,0,0,.55);
+  --shadow:         0 1px 3px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.06);
+  --shadow-lg:      0 8px 32px rgba(0,0,0,.1);
   --font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --t:              .15s ease;
 }
@@ -102,8 +103,8 @@ img { max-width: 100%; display: block; }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: var(--r-full); }
-::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* ===== LAYOUT ===== */
 #layout { display: flex; min-height: 100vh; }
@@ -226,6 +227,24 @@ img { max-width: 100%; display: block; }
 .sb-logout:hover { color: var(--danger); }
 .sb-logout svg { width: 15px; height: 15px; }
 
+/* ===== SIDEBAR DARK OVERRIDES ===== */
+#sidebar { background: #0f1f3a; border-right: 1px solid rgba(255,255,255,.05); }
+.sb-logo { border-bottom-color: rgba(255,255,255,.06) !important; }
+.sb-logo-img { background: rgba(255,255,255,.05) !important; border-color: rgba(255,255,255,.1) !important; }
+.sb-logo-name { color: #e2e8f0 !important; }
+.sb-logo-badge { color: #475569 !important; background: rgba(255,255,255,.04) !important; border-color: rgba(255,255,255,.08) !important; }
+.sb-section { color: #334155 !important; }
+.sb-item { color: #94a3b8 !important; }
+.sb-item:hover { background: rgba(255,255,255,.06) !important; color: #e2e8f0 !important; }
+.sb-item.active { background: rgba(250,204,21,.1) !important; color: #facc15 !important; }
+.sb-item.active::before { background: #facc15; }
+.sb-footer { border-top-color: rgba(255,255,255,.06) !important; }
+.sb-user { background: rgba(255,255,255,.04) !important; }
+.sb-user-name { color: #e2e8f0 !important; }
+.sb-user-role { color: #475569 !important; }
+.sb-logout { color: #475569 !important; }
+.sb-logout:hover { color: #ef4444 !important; }
+
 /* ===== MAIN WRAPPER ===== */
 #main-wrapper {
   margin-left: var(--sidebar-w);
@@ -235,7 +254,7 @@ img { max-width: 100%; display: block; }
 /* ===== TOPBAR ===== */
 #topbar {
   height: var(--topbar-h);
-  background: var(--bg);
+  background: #ffffff;
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 20px;
@@ -289,6 +308,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow);
 }
 .card-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -311,6 +331,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   position: relative; overflow: hidden;
+  box-shadow: var(--shadow);
 }
 .kpi::after {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -346,6 +367,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow);
 }
 .panel-title {
   font-size: 11px; font-weight: 700;
@@ -385,7 +407,7 @@ input[type="time"], select, textarea {
   width: 100%; padding: 8px 12px;
   border-radius: var(--r);
   border: 1px solid var(--border-light);
-  background: var(--bg); color: var(--text);
+  background: #f8fafc; color: var(--text);
   font-size: 13px; font-family: var(--font);
   transition: border-color var(--t), box-shadow var(--t);
   outline: none;
@@ -439,21 +461,21 @@ button:not([class]):hover { filter: brightness(1.07); }
   padding: 2px 8px; border-radius: var(--r-full);
   font-size: 11px; font-weight: 500;
 }
-.badge-success { background: var(--success-dim); color: #86efac; }
-.badge-danger  { background: var(--danger-dim);  color: #fca5a5; }
-.badge-info    { background: var(--info-dim);     color: #7dd3fc; }
-.badge-warning { background: var(--warning-dim);  color: #fcd34d; }
-.badge-neutral { background: rgba(100,116,139,.15); color: var(--muted); }
-.badge-primary { background: var(--primary-dim);  color: var(--primary); }
+.badge-success { background: rgba(34,197,94,.12);  color: #15803d; }
+.badge-danger  { background: rgba(239,68,68,.1);   color: #dc2626; }
+.badge-info    { background: rgba(14,165,233,.1);   color: #0284c7; }
+.badge-warning { background: rgba(245,158,11,.1);   color: #d97706; }
+.badge-neutral { background: rgba(100,116,139,.1);  color: #475569; }
+.badge-primary { background: var(--primary-dim);    color: #ca8a04; }
 
 /* ===== ALERTS ===== */
 .alert {
   padding: 10px 14px; border-radius: var(--r);
   font-size: 13px; margin-bottom: 14px;
 }
-.alert-ok    { background: var(--success-dim); border: 1px solid rgba(34,197,94,.3); color: #86efac; }
-.alert-error { background: var(--danger-dim);  border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
-.alert-info  { background: var(--info-dim);    border: 1px solid rgba(56,189,248,.3); color: #7dd3fc; }
+.alert-ok    { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.22); color: #15803d; }
+.alert-error { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22); color: #dc2626; }
+.alert-info  { background: rgba(14,165,233,.08);border: 1px solid rgba(14,165,233,.22); color: #0284c7; }
 
 /* ===== FILTER BAR ===== */
 .filter-bar {
@@ -463,6 +485,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
 }
 .filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
 .filter-group label {
@@ -512,9 +535,9 @@ button:not([class]):hover { filter: brightness(1.07); }
 .mb-4   { margin-bottom: 16px; }
 .code {
   font-family: monospace; font-size: 12px;
-  background: var(--bg); padding: 1px 6px;
+  background: #f1f5f9; padding: 1px 6px;
   border-radius: 5px; border: 1px solid var(--border);
-  color: var(--info);
+  color: #0284c7;
 }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

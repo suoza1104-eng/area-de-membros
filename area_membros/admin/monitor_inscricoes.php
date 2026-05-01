@@ -224,15 +224,16 @@ include __DIR__ . '/_header.php';
     padding:6px 10px;
     border-radius:10px;
     font-size:12px;
-    border:1px solid rgba(255,255,255,.12);
-    background:#0b1220;
-    color:#e5e7eb;
+    border:1px solid var(--border);
+    background:var(--bg-card);
+    color:var(--text);
     cursor:pointer;
+    transition:background var(--t);
   }
-  .btn-mini:hover{ filter:brightness(1.08); }
+  .btn-mini:hover{ background:var(--bg); }
   .row-details td{
-    background:rgba(0,0,0,.18);
-    border-top:1px dashed rgba(255,255,255,.12);
+    background:var(--bg);
+    border-top:1px dashed var(--border-light);
     padding:0 !important;
   }
   .payload-box{

@@ -217,19 +217,19 @@ include __DIR__ . '/_header.php';
         width:100%;
         padding:9px 10px;
         border-radius:10px;
-        border:1px solid #374151;
-        background:#020617;
-        color:#e5e7eb;
+        border:1px solid var(--border-light);
+        background:#f8fafc;
+        color:var(--text);
         font-size:13px;
         outline:none;
     }
     .ap-field input[type="text"]:focus,
     .ap-field input[type="number"]:focus,
-    .ap-field input[type="url"]:focus{border-color:#64748b;box-shadow:0 0 0 3px rgba(148,163,184,.18);}
+    .ap-field input[type="url"]:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
 
     .ap-color{display:flex;align-items:center;gap:10px;}
     .ap-color input[type="color"]{width:48px;height:38px;border:none;background:transparent;padding:0;}
-    .ap-color code{font-size:12px;color:#cbd5e1;background:#0b1220;border:1px solid #1f2937;padding:6px 8px;border-radius:10px;}
+    .ap-color code{font-size:12px;color:var(--text);background:var(--bg);border:1px solid var(--border);padding:6px 8px;border-radius:10px;}
 
     .ap-brand{display:grid;grid-template-columns:1.4fr .6fr;gap:14px;align-items:center;}
     .ap-logo-preview{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
@@ -238,14 +238,14 @@ include __DIR__ . '/_header.php';
         width:46px;
         height:46px;
         border-radius:999px;
-        background:#020617;
-        border:1px solid #1f2937;
+        background:var(--bg);
+        border:1px solid var(--border);
         display:flex;
         align-items:center;
         justify-content:center;
         font-size:13px;
         font-weight:800;
-        color:#e5e7eb;
+        color:var(--text);
         overflow:hidden;
     }
     .preview-logo img{width:100%;height:100%;object-fit:contain;}
@@ -254,9 +254,9 @@ include __DIR__ . '/_header.php';
         margin-top:10px;
         padding:10px 12px;
         border-radius:12px;
-        border:1px dashed #334155;
-        background:rgba(2,6,23,.35);
-        color:#cbd5e1;
+        border:1px dashed var(--border-light);
+        background:var(--bg);
+        color:var(--muted);
         font-size:12px;
         line-height:1.5;
     }
