@@ -247,19 +247,22 @@ function h(string $v): string {
         }
         .cert-btn {
             display: inline-flex; align-items: center; gap: 8px;
-            padding: 12px 20px; border-radius: var(--r-xl);
+            padding: 11px 22px; border-radius: var(--r-full);
             background: var(--primary); color: #111827;
-            font-weight: 700; font-size: 14px;
+            font-weight: 800; font-size: 13px; letter-spacing: .01em;
             border: none; cursor: pointer; white-space: nowrap;
-            transition: filter .15s;
+            transition: filter .15s, transform .15s;
             text-decoration: none;
+            box-shadow: 0 4px 16px rgba(250,204,21,.35);
         }
-        .cert-btn:hover { filter: brightness(1.07); text-decoration: none; }
-        .cert-btn-pulse { animation: pulseCert 1.8s infinite; }
+        .cert-btn:hover { filter: brightness(1.08); transform: translateY(-1px); text-decoration: none; }
+        .cert-btn:active { transform: translateY(0); }
+        .cert-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+        .cert-btn-pulse { animation: pulseCert 2s infinite; }
         @keyframes pulseCert {
-            0%   { box-shadow: 0 0 0 0 rgba(250,204,21,.45); }
-            70%  { box-shadow: 0 0 0 14px rgba(250,204,21,0); }
-            100% { box-shadow: 0 0 0 0 rgba(250,204,21,0); }
+            0%   { box-shadow: 0 4px 16px rgba(250,204,21,.35), 0 0 0 0 rgba(250,204,21,.45); }
+            70%  { box-shadow: 0 4px 16px rgba(250,204,21,.35), 0 0 0 16px rgba(250,204,21,0); }
+            100% { box-shadow: 0 4px 16px rgba(250,204,21,.35), 0 0 0 0 rgba(250,204,21,0); }
         }
 
         /* ===== SECTION HEADING ===== */
@@ -320,7 +323,7 @@ function h(string $v): string {
         .card-thumb::before { content: ''; display: block; padding-top: 56.25%; }
         .card-thumb img {
             position: absolute; inset: 0;
-            width: 100%; height: 100%; object-fit: cover;
+            width: 100%; height: 100%; object-fit: contain;
         }
         .thumb-placeholder {
             position: absolute; inset: 0;
