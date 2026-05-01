@@ -216,9 +216,9 @@ include __DIR__ . '/_header.php';
         width:100%;
         padding:7px 9px;
         border-radius:10px;
-        border:1px solid #1f2937;
-        background:#020617;
-        color:#e5e7eb;
+        border:1px solid var(--border-light);
+        background:var(--bg);
+        color:var(--text);
         font-size:13px;
     }
     input[type="file"]{
@@ -261,18 +261,18 @@ include __DIR__ . '/_header.php';
         margin-bottom:8px;
         padding:8px 10px;
         border-radius:10px;
-        background:rgba(34,197,94,.12);
-        border:1px solid #22c55e;
-        color:#bbf7d0;
+        background:rgba(34,197,94,.08);
+        border:1px solid rgba(34,197,94,.25);
+        color:#15803d;
         font-size:12px;
     }
     .msg-erro{
         margin-bottom:8px;
         padding:8px 10px;
         border-radius:10px;
-        background:rgba(239,68,68,.12);
-        border:1px solid #ef4444;
-        color:#fecaca;
+        background:rgba(239,68,68,.08);
+        border:1px solid rgba(239,68,68,.25);
+        color:#dc2626;
         font-size:12px;
     }
     table{
@@ -282,15 +282,18 @@ include __DIR__ . '/_header.php';
     }
     th,td{
         padding:6px 6px;
-        border-bottom:1px solid #111827;
+        border-bottom:1px solid var(--border);
     }
     th{
         text-align:left;
-        color:#9ca3af;
-        font-weight:normal;
+        color:var(--muted);
+        font-weight:600;
+        font-size:10.5px;
+        text-transform:uppercase;
+        letter-spacing:.05em;
     }
     tr:hover td{
-        background:#020617;
+        background:var(--bg);
     }
     .pill{
         padding:2px 6px;
@@ -298,12 +301,12 @@ include __DIR__ . '/_header.php';
         font-size:11px;
     }
     .pill-on{
-        background:rgba(34,197,94,.2);
-        color:#bbf7d0;
+        background:rgba(34,197,94,.12);
+        color:#15803d;
     }
     .pill-off{
-        background:rgba(148,163,184,.2);
-        color:#e5e7eb;
+        background:rgba(100,116,139,.1);
+        color:var(--muted);
     }
     .actions a{
         color:var(--primary);

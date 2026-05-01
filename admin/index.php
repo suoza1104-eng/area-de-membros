@@ -34,7 +34,7 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
             body {
                 font-family: 'Inter', -apple-system, sans-serif;
-                background: #07101f;
+                background: #080e1a;
                 color: #e2e8f0;
                 min-height: 100vh;
                 display: flex;
@@ -45,26 +45,27 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             .login-box {
                 width: 100%;
                 max-width: 380px;
-                background: #0d1b33;
-                border: 1px solid #1a2540;
+                background: #0d1526;
+                border: 1px solid rgba(255,255,255,.08);
                 border-radius: 18px;
                 padding: 36px 32px;
-                box-shadow: 0 20px 60px rgba(0,0,0,.5);
+                box-shadow: 0 4px 24px rgba(0,0,0,.45);
             }
             .login-logo {
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 width: 48px; height: 48px;
-                background: rgba(250,204,21,.1);
+                background: rgba(250,204,21,.15);
                 border-radius: 12px;
                 margin: 0 auto 20px;
-                color: #facc15;
+                color: #ca8a04;
             }
             .login-logo svg { width: 22px; height: 22px; }
             h2 {
                 font-size: 20px; font-weight: 700;
                 text-align: center; margin-bottom: 6px;
+                color: #e2e8f0;
             }
             .login-sub {
                 font-size: 13px; color: #64748b;
@@ -81,8 +82,8 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
                 width: 100%;
                 padding: 9px 12px;
                 border-radius: 9px;
-                border: 1px solid #1e3050;
-                background: #07101f;
+                border: 1px solid rgba(255,255,255,.1);
+                background: #080e1a;
                 color: #e2e8f0;
                 font-size: 14px;
                 font-family: inherit;
@@ -92,7 +93,7 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             }
             input:focus {
                 border-color: #facc15;
-                box-shadow: 0 0 0 3px rgba(250,204,21,.12);
+                box-shadow: 0 0 0 3px rgba(250,204,21,.15);
             }
             button[type="submit"] {
                 width: 100%;
@@ -110,9 +111,9 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             }
             button[type="submit"]:hover { filter: brightness(1.07); }
             .erro {
-                background: rgba(239,68,68,.12);
-                border: 1px solid rgba(239,68,68,.3);
-                color: #fca5a5;
+                background: rgba(239,68,68,.08);
+                border: 1px solid rgba(239,68,68,.2);
+                color: #dc2626;
                 border-radius: 8px;
                 padding: 9px 12px;
                 font-size: 13px;
@@ -299,6 +300,30 @@ foreach ($funil as $f) {
 
 $pctConclusao = ($totalAlunos > 0) ? round(($estagioFull / $totalAlunos) * 100, 1) : 0;
 
+// ========================
+// 5) DADOS DO FUNIL HTML/CSS
+// ========================
+$funnelData = [];
+$funnelData[] = ['label' => 'Total Inscritos',       'count' => $totalAlunos];
+$funnelData[] = ['label' => 'Assistiram alguma aula', 'count' => $alunosAlguma];
+foreach ($funil as $f) {
+    $funnelData[] = [
+        'label' => 'Aula ' . $f['ordem'] . ' — ' . mb_strimwidth($f['titulo'], 0, 30, '…'),
+        'count' => (int)$f['concluintes'],
+    ];
+}
+$funnelData[] = ['label' => 'Certificado emitido', 'count' => $totalCert];
+
+$funnelMax = max(1, (int)($funnelData[0]['count'] ?? 1));
+foreach ($funnelData as $fi => &$fstep) {
+    $fstep['pct_bar'] = max(6, (int)round(($fstep['count'] / $funnelMax) * 100));
+    $prev = $fi > 0 ? (int)$funnelData[$fi - 1]['count'] : null;
+    $fstep['drop'] = ($prev !== null && $prev > 0)
+        ? round((($prev - $fstep['count']) / $prev) * 100, 1)
+        : null;
+}
+unset($fstep);
+
 ?>
 <?php
 $menu = 'dashboard';
@@ -406,15 +431,45 @@ include __DIR__ . '/_header.php';
     </div>
 </div>
 
-<!-- CHART ROW 2: Funil de aulas -->
-<?php if ($funil): ?>
+<!-- FUNIL HTML/CSS -->
 <div class="panel mb-4">
-    <div class="panel-title">
-        Funil de conclusão por aula
+    <div class="panel-title">Funil de conversão</div>
+    <div style="display:flex;flex-direction:column;gap:6px;padding:4px 0">
+    <?php foreach ($funnelData as $fi => $fstep):
+        $alpha = round(1 - ($fi / max(count($funnelData) - 1, 1)) * 0.55, 2);
+    ?>
+        <div style="display:flex;align-items:center;gap:10px">
+            <!-- Barra proporcional -->
+            <div style="flex:1;min-width:0">
+                <div style="
+                    width:<?= $fstep['pct_bar'] ?>%;
+                    min-width:min(280px,100%);
+                    background:rgba(250,204,21,<?= $alpha ?>);
+                    border-radius:8px;
+                    padding:9px 14px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:space-between;
+                    gap:10px;
+                    transition:width .4s ease;
+                ">
+                    <span style="font-size:13px;font-weight:600;color:#111827;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                        <?= htmlspecialchars($fstep['label']) ?>
+                    </span>
+                    <span style="font-size:13px;font-weight:700;color:#111827;white-space:nowrap;margin-left:8px">
+                        <?= number_format($fstep['count']) ?>
+                    </span>
+                    <?php if ($fstep['drop'] !== null): ?>
+                    <span style="font-size:11px;font-weight:500;color:rgba(17,24,39,.7);white-space:nowrap;padding:2px 7px;background:rgba(0,0,0,.15);border-radius:999px;flex-shrink:0">
+                        ↓ <?= $fstep['drop'] ?>%
+                    </span>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    <?php endforeach; ?>
     </div>
-    <canvas id="chartFunil" style="max-height:240px"></canvas>
 </div>
-<?php endif; ?>
 
 <!-- TABLE: Detalhamento das aulas -->
 <?php if ($funil): ?>
@@ -501,7 +556,7 @@ include __DIR__ . '/_header.php';
                 labels: ['Só inscritos', 'Em progresso', 'Concluíram tudo'],
                 datasets: [{
                     data: [<?= $onlyInscritos ?>, <?= $estagioUma ?>, <?= $estagioFull ?>],
-                    backgroundColor: ['rgba(100,116,139,.5)', 'rgba(56,189,248,.8)', 'rgba(34,197,94,.8)'],
+                    backgroundColor: ['rgba(100,116,139,.25)', 'rgba(14,165,233,.7)', 'rgba(34,197,94,.75)'],
                     borderColor: '#07101f',
                     borderWidth: 3,
                     hoverOffset: 5
@@ -517,37 +572,7 @@ include __DIR__ . '/_header.php';
         });
     }
 
-    // Funil de aulas
-    var labelsFunil = <?= json_encode($labelsFunil, JSON_UNESCAPED_UNICODE) ?>;
-    var dataFunil   = <?= json_encode($dataFunil) ?>;
-    var cFunil = document.getElementById('chartFunil');
-    if (cFunil && labelsFunil.length) {
-        new Chart(cFunil, {
-            type: 'bar',
-            data: {
-                labels: labelsFunil,
-                datasets: [{
-                    data: dataFunil,
-                    backgroundColor: function(ctx) {
-                        var gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 200);
-                        gradient.addColorStop(0, 'rgba(250,204,21,.9)');
-                        gradient.addColorStop(1, 'rgba(250,204,21,.35)');
-                        return gradient;
-                    },
-                    borderRadius: 6,
-                    borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { ticks: { font: { size: 11 } }, grid: { display: false } },
-                    y: { ticks: { font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' }, beginAtZero: true }
-                }
-            }
-        });
-    }
+
 })();
 </script>
 

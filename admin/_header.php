@@ -45,24 +45,25 @@ function __esc(string $v): string {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
 <style>
 /* ===== THEME (from admin settings) ===== */
 <?= theme_inline_css_vars(); ?>
 
 /* ===== EXTENDED DESIGN SYSTEM ===== */
 :root {
-  --bg:             var(--bg-main, #07101f);
-  --bg-card:        var(--bg-card, #0d1b33);
-  --bg-sidebar:     #060d1a;
-  --bg-hover:       rgba(255,255,255,.04);
-  --border:         #1a2540;
-  --border-light:   #1e3050;
+  --bg:             #080e1a;
+  --bg-card:        #0d1526;
+  --bg-sidebar:     #060c18;
+  --bg-hover:       rgba(255,255,255,.05);
+  --border:         rgba(255,255,255,.08);
+  --border-light:   rgba(255,255,255,.12);
   --primary:        var(--primary, #facc15);
-  --primary-dim:    rgba(250,204,21,.08);
-  --primary-soft:   rgba(250,204,21,.15);
-  --text:           var(--text-main, #e2e8f0);
-  --muted:          var(--text-muted, #64748b);
-  --dim:            #475569;
+  --primary-dim:    rgba(250,204,21,.1);
+  --primary-soft:   rgba(250,204,21,.18);
+  --text:           #e2e8f0;
+  --muted:          #64748b;
+  --dim:            #334155;
   --success:        #22c55e;
   --success-dim:    rgba(34,197,94,.12);
   --danger:         #ef4444;
@@ -289,6 +290,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow);
 }
 .card-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -311,6 +313,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   position: relative; overflow: hidden;
+  box-shadow: var(--shadow);
 }
 .kpi::after {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -346,6 +349,7 @@ img { max-width: 100%; display: block; }
   border-radius: var(--r-xl);
   padding: 16px 18px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow);
 }
 .panel-title {
   font-size: 11px; font-weight: 700;
@@ -439,21 +443,21 @@ button:not([class]):hover { filter: brightness(1.07); }
   padding: 2px 8px; border-radius: var(--r-full);
   font-size: 11px; font-weight: 500;
 }
-.badge-success { background: var(--success-dim); color: #86efac; }
-.badge-danger  { background: var(--danger-dim);  color: #fca5a5; }
-.badge-info    { background: var(--info-dim);     color: #7dd3fc; }
-.badge-warning { background: var(--warning-dim);  color: #fcd34d; }
-.badge-neutral { background: rgba(100,116,139,.15); color: var(--muted); }
-.badge-primary { background: var(--primary-dim);  color: var(--primary); }
+.badge-success { background: rgba(34,197,94,.12);  color: #86efac; }
+.badge-danger  { background: rgba(239,68,68,.1);   color: #fca5a5; }
+.badge-info    { background: rgba(14,165,233,.1);   color: #7dd3fc; }
+.badge-warning { background: rgba(245,158,11,.1);   color: #fcd34d; }
+.badge-neutral { background: rgba(100,116,139,.1);  color: #94a3b8; }
+.badge-primary { background: var(--primary-dim);    color: var(--primary); }
 
 /* ===== ALERTS ===== */
 .alert {
   padding: 10px 14px; border-radius: var(--r);
   font-size: 13px; margin-bottom: 14px;
 }
-.alert-ok    { background: var(--success-dim); border: 1px solid rgba(34,197,94,.3); color: #86efac; }
-.alert-error { background: var(--danger-dim);  border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
-.alert-info  { background: var(--info-dim);    border: 1px solid rgba(56,189,248,.3); color: #7dd3fc; }
+.alert-ok    { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.22); color: #86efac; }
+.alert-error { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22); color: #fca5a5; }
+.alert-info  { background: rgba(14,165,233,.08);border: 1px solid rgba(14,165,233,.22); color: #7dd3fc; }
 
 /* ===== FILTER BAR ===== */
 .filter-bar {
@@ -463,6 +467,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
 }
 .filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
 .filter-group label {
@@ -512,7 +517,7 @@ button:not([class]):hover { filter: brightness(1.07); }
 .mb-4   { margin-bottom: 16px; }
 .code {
   font-family: monospace; font-size: 12px;
-  background: var(--bg); padding: 1px 6px;
+  background: rgba(255,255,255,.06); padding: 1px 6px;
   border-radius: 5px; border: 1px solid var(--border);
   color: var(--info);
 }

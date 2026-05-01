@@ -163,8 +163,8 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
     <style>
         :root {
             --bg:      <?= h($bgColor) ?>;
-            --card:    #0d1b33;
-            --border:  #1a2540;
+            --card:    #111827;
+            --border:  #1f2937;
             --primary: <?= h($primary) ?>;
             --success: <?= h($secondary) ?>;
             --text:    #e2e8f0;
@@ -343,7 +343,7 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             position: relative; width: 100%; background: #0a1628;
         }
         .lc-thumb::before { content: ''; display: block; padding-top: 56.25%; }
-        .lc-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        .lc-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
         .lc-thumb-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
         .lc-thumb-placeholder svg { width: 22px; height: 22px; opacity: .3; }
         .lc-lock {
@@ -395,9 +395,9 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             overflow: hidden; scroll-snap-align: start;
             display: flex; flex-direction: column;
         }
-        .rec-thumb { position: relative; width: 100%; background: #0a1628; }
+        .rec-thumb { position: relative; width: 100%; background: #0d1117; }
         .rec-thumb::before { content: ''; display: block; padding-top: 56.25%; }
-        .rec-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        .rec-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
         .rec-body  { padding: 10px 13px 12px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
         .rec-title { font-size: 13px; font-weight: 600; }
         .rec-desc  { font-size: 11px; color: var(--muted); flex: 1; line-height: 1.4; }
