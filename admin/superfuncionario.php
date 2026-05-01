@@ -385,7 +385,34 @@ include __DIR__ . '/_header.php';
     /* event dropdown */
     .evento-wrapper { position: relative; }
     .evento-input-row { display: flex; gap: 4px; }
-    .evento-input-row select { flex: 1; }
+    .evento-input-row input { flex: 1; cursor: pointer; caret-color: transparent; }
+    .evento-toggle-btn {
+        border-radius: 10px; border: 1px solid var(--border); background: #07101f;
+        color: var(--text); padding: 0 14px; font-size: 12px; cursor: pointer;
+        display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0;
+    }
+    .evento-toggle-btn:hover { background: #0f1f3d; }
+    .evento-dropdown {
+        position: absolute; left: 0; right: 0; margin-top: 4px;
+        background: #0b1120; border-radius: 12px; border: 1px solid var(--border);
+        max-height: 290px; overflow-y: auto; padding: 8px;
+        box-shadow: 0 20px 48px rgba(0,0,0,.75); display: none; z-index: 50;
+    }
+    .evento-dropdown.aberto { display: block; }
+    .ev-group-label {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+        color: var(--muted); padding: 6px 8px 4px; margin-top: 4px;
+    }
+    .ev-group-label:first-child { margin-top: 0; }
+    .evento-opcao {
+        padding: 7px 10px; border-radius: 8px; cursor: pointer;
+        display: flex; flex-direction: column; gap: 2px; transition: background .1s;
+        border: 1px solid transparent;
+    }
+    .evento-opcao:hover { background: rgba(255,255,255,.06); }
+    .evento-opcao.selecionado { background: rgba(250,204,21,.06); border-color: rgba(250,204,21,.2); }
+    .evento-opcao strong { font-size: 11px; color: var(--text); }
+    .evento-opcao em    { font-size: 10px; color: var(--muted); font-style: normal; }
     .ev-pill {
         display: inline-block; padding: 1px 6px; border-radius: 999px;
         font-size: 9px; font-weight: 700; text-transform: uppercase;
@@ -394,6 +421,7 @@ include __DIR__ . '/_header.php';
     .ev-pill.cert  { background: rgba(168,85,247,.15); color: #d8b4fe; border: 1px solid rgba(168,85,247,.3); }
     .ev-pill.aluno { background: rgba(59,130,246,.15);  color: #93c5fd; border: 1px solid rgba(59,130,246,.3); }
     .ev-pill.live  { background: rgba(249,115,22,.15);  color: #fdba74; border: 1px solid rgba(249,115,22,.3); }
+    .ev-pill.aula  { background: rgba(34,197,94,.15);   color: #86efac; border: 1px solid rgba(34,197,94,.3); }
 
     /* field rows */
     .field-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -543,30 +571,60 @@ include __DIR__ . '/_header.php';
                         </div>
                         <div>
                             <label class="lbl">Gatilho (evento)</label>
-                            <select name="evento" id="sf-evento-sel">
-                                <optgroup label="Aluno">
-                                    <option value="INSCRITO" <?= ($edit && $edit['evento']==='INSCRITO')?'selected':'' ?>>INSCRITO — Cadastro na área</option>
-                                    <option value="ASSISTIU_ALGUMA_AULA" <?= ($edit && $edit['evento']==='ASSISTIU_ALGUMA_AULA')?'selected':'' ?>>ASSISTIU_ALGUMA_AULA</option>
-                                    <option value="CONCLUIU_TRILHA" <?= ($edit && $edit['evento']==='CONCLUIU_TRILHA')?'selected':'' ?>>CONCLUIU_TRILHA</option>
-                                </optgroup>
-                                <optgroup label="Certificado">
-                                    <option value="CERT_EMITIDO" <?= ($edit && $edit['evento']==='CERT_EMITIDO')?'selected':'' ?>>CERT_EMITIDO</option>
-                                    <option value="CERT_SENHA_ERRADA" <?= ($edit && $edit['evento']==='CERT_SENHA_ERRADA')?'selected':'' ?>>CERT_SENHA_ERRADA</option>
-                                </optgroup>
-                                <optgroup label="⚡ Live">
-                                    <option value="LIVE_TURMA" <?= ($edit && $edit['evento']==='LIVE_TURMA')?'selected':'' ?>>LIVE_TURMA — Disparo por turma</option>
-                                </optgroup>
-                                <?php if ($eventOptions): ?>
-                                <optgroup label="Aulas">
-                                    <?php foreach ($eventOptions as $code => $label):
-                                        if (strpos($code, 'VIU_AULA_') !== 0) continue; ?>
-                                        <option value="<?= h($code) ?>" <?= ($edit && (string)$edit['evento']===(string)$code)?'selected':'' ?>>
-                                            <?= h($code) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </optgroup>
-                                <?php endif; ?>
-                            </select>
+                            <?php $sfEvAtual = (string)($edit['evento'] ?? 'INSCRITO'); ?>
+                            <div class="evento-wrapper">
+                                <div class="evento-input-row">
+                                    <input type="text" name="evento" id="sf-evento-input"
+                                           value="<?= h($sfEvAtual) ?>"
+                                           placeholder="Selecione o evento gatilho"
+                                           readonly>
+                                    <button type="button" class="evento-toggle-btn" id="sf-btn-ev-toggle">▼ Ver eventos</button>
+                                </div>
+                                <div class="evento-dropdown" id="sf-ev-dropdown">
+                                    <div class="ev-group-label">Aluno</div>
+                                    <div class="evento-opcao" data-value="INSCRITO">
+                                        <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando um novo aluno se cadastra na área de membros.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="ASSISTIU_ALGUMA_AULA">
+                                        <strong>ASSISTIU_ALGUMA_AULA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="CONCLUIU_TRILHA">
+                                        <strong>CONCLUIU_TRILHA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando o aluno finaliza todas as aulas obrigatórias.</em>
+                                    </div>
+                                    <div class="ev-group-label">Certificado</div>
+                                    <div class="evento-opcao" data-value="CERT_EMITIDO">
+                                        <strong>CERT_EMITIDO <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o aluno acerta a senha e o certificado é gerado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="CERT_SENHA_ERRADA">
+                                        <strong>CERT_SENHA_ERRADA <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o aluno tenta uma senha inválida.</em>
+                                    </div>
+                                    <div class="ev-group-label">⚡ Live</div>
+                                    <div class="evento-opcao" data-value="LIVE_TURMA">
+                                        <strong>LIVE_TURMA <span class="ev-pill live">Live</span></strong>
+                                        <em>Regra global: disparada para cada aluno da turma quando a data/hora de disparo chega.</em>
+                                    </div>
+                                    <?php
+                                    $hasLessons = false;
+                                    foreach ($eventOptions as $code => $label) {
+                                        if (strpos($code, 'VIU_AULA_') !== 0) continue;
+                                        if (!$hasLessons) {
+                                            echo '<div class="ev-group-label">Aulas</div>';
+                                            $hasLessons = true;
+                                        }
+                                        echo '<div class="evento-opcao" data-value="' . h($code) . '">';
+                                        echo '<strong>' . h($code) . ' <span class="ev-pill aula">Aula</span></strong>';
+                                        echo '<em>' . h($label) . '</em>';
+                                        echo '</div>';
+                                    }
+                                    ?>
+                                </div>
+                            </div>
+                            <div class="note" style="margin-top:5px;">Clique para selecionar o evento. Apenas um evento por regra.</div>
                         </div>
                     </div>
 
@@ -968,16 +1026,49 @@ function addRow() {
 
 var eventHints = <?= json_encode($eventHints, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 function updateEventHint() {
-    var sel = document.getElementById('sf-evento-sel');
+    var input  = document.getElementById('sf-evento-input');
     var hintDiv = document.getElementById('sf-event-hint');
-    if (!sel || !hintDiv) return;
-    var hint = eventHints[sel.value];
+    if (!input || !hintDiv) return;
+    var hint = eventHints[input.value];
     if (hint) { hintDiv.innerHTML = hint; hintDiv.style.display = 'block'; }
     else { hintDiv.style.display = 'none'; }
 }
-(function() {
-    var sel = document.getElementById('sf-evento-sel');
-    if (sel) { sel.addEventListener('change', updateEventHint); updateEventHint(); }
+
+// ===== Dropdown de eventos =====
+document.addEventListener('DOMContentLoaded', function () {
+    var input = document.getElementById('sf-evento-input');
+    var btn   = document.getElementById('sf-btn-ev-toggle');
+    var drop  = document.getElementById('sf-ev-dropdown');
+    if (!input || !btn || !drop) return;
+
+    function markSelected() {
+        drop.querySelectorAll('.evento-opcao').forEach(function(o) {
+            o.classList.toggle('selecionado', o.dataset.value === input.value);
+        });
+    }
+
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        drop.classList.toggle('aberto');
+        if (drop.classList.contains('aberto')) markSelected();
+    });
+
+    drop.querySelectorAll('.evento-opcao').forEach(function(opcao) {
+        opcao.addEventListener('click', function(e) {
+            e.stopPropagation();
+            input.value = this.dataset.value;
+            drop.classList.remove('aberto');
+            markSelected();
+            updateEventHint();
+        });
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!drop.contains(e.target) && e.target !== btn) drop.classList.remove('aberto');
+    });
+
+    markSelected();
+    updateEventHint();
 })();
 
 document.getElementById('form-rule').addEventListener('submit', function(e) {
