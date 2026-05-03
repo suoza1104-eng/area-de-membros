@@ -5,6 +5,36 @@ proteger_admin();
 
 $currentMenu = $menu ?? 'dashboard';
 
+// ─── Equipe permission gate ────────────────────────────────────────────────
+$__isEquipe    = !empty($_SESSION['equipe_id']);
+$__equipePerms = $__isEquipe
+    ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
+    : [];
+
+// Dashboard é sempre acessível (evita loop de redirect pós-login)
+if ($__isEquipe && $currentMenu !== 'dashboard') {
+    if (empty($__equipePerms[$currentMenu]['acesso'])) {
+        header('Location: ' . BASE_URL_ADMIN . '/index.php?sem_acesso=1');
+        exit;
+    }
+}
+
+// $podeEscrever: as páginas podem usar para esconder botões de edição
+$podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever']);
+
+// Visibilidade dos itens do sidebar
+$__sbV = [];
+foreach (['dashboard','alunos','aulas','turmas','cursos','certificado',
+          'webhooks','superfuncionario','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+    $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
+}
+
+// Informações do usuário logado para o sidebar
+$__sbNome    = $__isEquipe ? ($_SESSION['equipe_nome']  ?? 'Membro') : 'Administrador';
+$__sbRole    = $__isEquipe ? 'Equipe' : 'Admin logado';
+$__sbInitial = strtoupper(substr($__sbNome, 0, 1));
+// ──────────────────────────────────────────────────────────────────────────
+
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'alunos'           => 'Alunos',
@@ -567,8 +597,11 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
+    <?php if ($__sbV['dashboard'] || $__sbV['alunos'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['dashboard']): ?>
     <a href="index.php" class="sb-item <?= $currentMenu === 'dashboard' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="7" height="7" rx="1.5"/>
@@ -578,7 +611,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Dashboard
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['alunos']): ?>
     <a href="alunos.php" class="sb-item <?= $currentMenu === 'alunos' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -587,7 +622,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Alunos
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['aulas']): ?>
     <a href="aulas.php" class="sb-item <?= $currentMenu === 'aulas' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="10"/>
@@ -595,7 +632,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Aulas
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['turmas']): ?>
     <a href="turmas.php" class="sb-item <?= $currentMenu === 'turmas' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="4" width="18" height="18" rx="2"/>
@@ -605,9 +644,13 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Turmas
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['cursos'] || $__sbV['certificado']): ?>
     <div class="sb-section">Conteúdo</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['cursos']): ?>
     <a href="cursos_recomendados.php" class="sb-item <?= $currentMenu === 'cursos' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
@@ -615,7 +658,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Cursos Recom.
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['certificado']): ?>
     <a href="certificado_config.php" class="sb-item <?= $currentMenu === 'certificado' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="8" r="6"/>
@@ -623,16 +668,22 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Certificado
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario']): ?>
     <div class="sb-section">Integrações</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['webhooks']): ?>
     <a href="webhooks.php" class="sb-item <?= $currentMenu === 'webhooks' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
       </svg>
       Webhooks
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['superfuncionario']): ?>
     <a href="superfuncionario.php" class="sb-item <?= $currentMenu === 'superfuncionario' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -640,16 +691,22 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       SuperFuncionário
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['monitor']): ?>
     <a href="monitor_inscricoes.php" class="sb-item <?= $currentMenu === 'monitor' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
       Rastreamento
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['logs']): ?>
     <a href="logs.php" class="sb-item <?= $currentMenu === 'logs' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -660,7 +717,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Logs
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['aparencia']): ?>
     <a href="settings_aparencia.php" class="sb-item <?= $currentMenu === 'aparencia' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -668,7 +727,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Aparência
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['config_app']): ?>
     <a href="config_app.php" class="sb-item <?= $currentMenu === 'config_app' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -676,7 +737,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Configurações
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['equipe']): ?>
     <a href="equipe.php" class="sb-item <?= $currentMenu === 'equipe' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -685,14 +748,15 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Equipe
     </a>
+    <?php endif; ?>
   </nav>
 
   <div class="sb-footer">
     <div class="sb-user">
-      <div class="sb-avatar">A</div>
+      <div class="sb-avatar"><?= __esc($__sbInitial) ?></div>
       <div class="sb-user-info">
-        <div class="sb-user-name">Administrador</div>
-        <div class="sb-user-role">Admin logado</div>
+        <div class="sb-user-name"><?= __esc($__sbNome) ?></div>
+        <div class="sb-user-role"><?= __esc($__sbRole) ?></div>
       </div>
       <a href="index.php?logout=1" class="sb-logout" title="Sair">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

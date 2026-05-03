@@ -404,6 +404,12 @@ $menu = 'dashboard';
 include __DIR__ . '/_header.php';
 ?>
 
+<?php if (!empty($_GET['sem_acesso'])): ?>
+<div class="alert alert-error" style="margin-bottom:18px">
+    🚫 Você não tem permissão para acessar essa página.
+</div>
+<?php endif; ?>
+
 <div class="d-flex align-center justify-between mb-4">
     <div></div>
     <a href="alunos.php" class="btn btn-ghost btn-sm">
