@@ -11,6 +11,68 @@ function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+define('AM_TOKEN_DAYS', 400); // máximo suportado pelos browsers modernos
+
+function am_token_table(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS remember_tokens (
+            id         INT AUTO_INCREMENT PRIMARY KEY,
+            user_id    INT NOT NULL,
+            token      VARCHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT NOW(),
+            UNIQUE KEY uk_token (token),
+            INDEX idx_rt_user (user_id)
+        )
+    ");
+}
+
+function am_set_token(PDO $pdo, int $userId): void {
+    am_token_table($pdo);
+    $pdo->prepare("DELETE FROM remember_tokens WHERE user_id = :uid")->execute([':uid' => $userId]);
+    $token = bin2hex(random_bytes(32));
+    $exp   = date('Y-m-d H:i:s', time() + 60 * 60 * 24 * AM_TOKEN_DAYS);
+    $pdo->prepare("INSERT INTO remember_tokens (user_id, token, expires_at) VALUES (:uid, :tok, :exp)")
+        ->execute([':uid' => $userId, ':tok' => $token, ':exp' => $exp]);
+    setcookie('am_token', $token, [
+        'expires'  => time() + 60 * 60 * 24 * AM_TOKEN_DAYS,
+        'path'     => '/',
+        'secure'   => isset($_SERVER['HTTPS']),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+}
+
+// Auto-login via token salvo no cookie
+if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
+    try {
+        am_token_table($pdo);
+        // limpeza ocasional de tokens expirados (1% das requisições)
+        if (rand(1, 100) === 1) {
+            $pdo->exec("DELETE FROM remember_tokens WHERE expires_at < NOW()");
+        }
+        $stTok = $pdo->prepare("
+            SELECT user_id FROM remember_tokens
+            WHERE token = :tok AND expires_at > NOW()
+            LIMIT 1
+        ");
+        $stTok->execute([':tok' => $_COOKIE['am_token']]);
+        $tokRow = $stTok->fetch();
+        if ($tokRow) {
+            $_SESSION['aluno_id'] = (int)$tokRow['user_id'];
+            am_set_token($pdo, (int)$tokRow['user_id']); // renova
+            try {
+                $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
+                    ->execute(['id' => (int)$tokRow['user_id']]);
+            } catch (Throwable $e) {}
+            header('Location: trilha.php');
+            exit;
+        } else {
+            setcookie('am_token', '', time() - 3600, '/');
+        }
+    } catch (Throwable $e) { /* não impede o fluxo normal */ }
+}
+
 if (!empty($_SESSION['aluno_id'])) {
     header('Location: trilha.php');
     exit;
@@ -58,17 +120,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stUp->execute(['id' => $user['id']]);
             } catch (Throwable $e) { /* não é crítico */ }
 
-            if ($lembrar) {
-                setcookie('am_email', $email, [
-                    'expires'  => time() + 60*60*24*60,
-                    'path'     => '/',
-                    'secure'   => isset($_SERVER['HTTPS']),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ]);
-            } else {
-                setcookie('am_email', '', time() - 3600, '/');
-            }
+            // Salva token de auto-login (renova a cada login)
+            try {
+                am_set_token($pdo, (int)$user['id']);
+            } catch (Throwable $e) { /* não crítico */ }
+
+            // Cookie de e-mail para pré-preenchimento
+            setcookie('am_email', $email, [
+                'expires'  => time() + 60 * 60 * 24 * AM_TOKEN_DAYS,
+                'path'     => '/',
+                'secure'   => isset($_SERVER['HTTPS']),
+                'httponly' => false,
+                'samesite' => 'Lax',
+            ]);
 
             header('Location: trilha.php');
             exit;
