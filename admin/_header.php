@@ -3,10 +3,17 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 proteger_admin();
 
+// Sessões criadas antes do sistema de equipe não têm admin_tipo → força novo login
+if (!isset($_SESSION['admin_tipo'])) {
+    session_destroy();
+    header('Location: ' . BASE_URL_ADMIN . '/index.php');
+    exit;
+}
+
 $currentMenu = $menu ?? 'dashboard';
 
 // ─── Equipe permission gate ────────────────────────────────────────────────
-$__isEquipe    = !empty($_SESSION['equipe_id']);
+$__isEquipe    = ($_SESSION['admin_tipo'] === 'equipe');
 $__equipePerms = $__isEquipe
     ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
     : [];
