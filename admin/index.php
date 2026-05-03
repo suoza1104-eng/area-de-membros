@@ -359,40 +359,58 @@ try { $pdo->query("SELECT utm_source FROM users LIMIT 0"); $hasUtmCols = true; }
 
 if ($hasWHL) {
     try {
+        // Chave canônica: agrupa pelo email (se preenchido) ou telefone normalizado,
+        // assim o mesmo lead que se cadastrou N vezes aparece como uma única linha.
         $utmSel = $hasUtmCols
-            ? "u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content,"
+            ? "MAX(u.utm_source) AS utm_source, MAX(u.utm_medium) AS utm_medium, MAX(u.utm_campaign) AS utm_campaign, MAX(u.utm_content) AS utm_content,"
             : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
 
         $rankSql = "
             SELECT
-                u.id, u.nome, u.email, u.telefone,
+                COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
+                GROUP_CONCAT(DISTINCT u.id ORDER BY u.id SEPARATOR ',') AS user_ids_str,
+                MIN(u.id)       AS id,
+                MIN(u.nome)     AS nome,
+                MIN(u.email)    AS email,
+                MIN(u.telefone) AS telefone,
                 $utmSel
                 COUNT(DISTINCT DATE(wl.created_at)) AS qtd_inscricoes,
                 MIN(wl.created_at) AS primeiro_cadastro,
                 MAX(wl.created_at) AS ultimo_cadastro
             FROM users u
             JOIN webhook_logs wl ON wl.user_id = u.id AND wl.evento = 'INSCRITO'
-            GROUP BY u.id
+            GROUP BY chave
             ORDER BY qtd_inscricoes DESC, ultimo_cadastro DESC
             LIMIT 30
         ";
         $rankingRows = $pdo->query($rankSql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         if ($rankingRows) {
-            $uids = array_map('intval', array_column($rankingRows, 'id'));
-            $in   = implode(',', $uids);
+            // Coleta todos os user_ids de todos os grupos para a query de histórico
+            $allRkUids = [];
+            foreach ($rankingRows as $row) {
+                foreach (explode(',', (string)($row['user_ids_str'] ?? '')) as $uid) {
+                    $uid = (int)$uid;
+                    if ($uid > 0) $allRkUids[] = $uid;
+                }
+            }
+            $in = implode(',', array_unique($allRkUids));
+
+            // Histórico também agrupado pela mesma chave canônica
             $histSql = "
-                SELECT wl.user_id,
-                       DATE(wl.created_at) AS data_dia,
-                       MIN(wl.created_at)  AS hora,
-                       MIN(wl.payload_json) AS payload_raw
+                SELECT
+                    COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
+                    DATE(wl.created_at) AS data_dia,
+                    MIN(wl.created_at)  AS hora,
+                    MIN(wl.payload_json) AS payload_raw
                 FROM webhook_logs wl
+                JOIN users u ON u.id = wl.user_id
                 WHERE wl.user_id IN ($in) AND wl.evento = 'INSCRITO'
-                GROUP BY wl.user_id, DATE(wl.created_at)
-                ORDER BY wl.user_id ASC, data_dia ASC
+                GROUP BY chave, DATE(wl.created_at)
+                ORDER BY chave ASC, data_dia ASC
             ";
             foreach ($pdo->query($histSql)->fetchAll(PDO::FETCH_ASSOC) as $h) {
-                $rankHistorico[(int)$h['user_id']][] = $h;
+                $rankHistorico[$h['chave']][] = $h;
             }
         }
     } catch (Throwable $e) {
@@ -797,8 +815,10 @@ include __DIR__ . '/_header.php';
             try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
         }
         foreach ($rankingRows as $ri => $rk):
-            $uid   = (int)$rk['id'];
-            $qtd   = (int)$rk['qtd_inscricoes'];
+            $uid       = (int)$rk['id'];
+            $chave     = (string)($rk['chave'] ?? '');
+            $qtd       = (int)$rk['qtd_inscricoes'];
+            $userCount = count(array_filter(explode(',', (string)($rk['user_ids_str'] ?? ''))));
             $rankN = $ri + 1;
             if ($rankN === 1)      $rankCls = 'rank-1';
             elseif ($rankN === 2)  $rankCls = 'rank-2';
@@ -808,7 +828,7 @@ include __DIR__ . '/_header.php';
             elseif ($qtd >= 3)     $countColor = 'color:#fdba74;background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.25)';
             elseif ($qtd === 2)    $countColor = 'color:#fcd34d;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.2)';
             else                   $countColor = 'color:var(--muted);background:var(--bg-hover);border:1px solid var(--border)';
-            $hist = $rankHistorico[$uid] ?? [];
+            $hist = $rankHistorico[$chave] ?? [];
         ?>
         <tr class="main-row" id="rkrow-<?= $ri ?>" onclick="rkToggle(<?= $ri ?>)">
             <td><span class="rk-expand-icon">▶</span></td>
@@ -816,6 +836,9 @@ include __DIR__ . '/_header.php';
             <td>
                 <div style="font-weight:600;color:var(--text)"><?= htmlspecialchars((string)($rk['nome']??'-')) ?></div>
                 <div style="font-size:11px;color:var(--muted)"><?= htmlspecialchars((string)($rk['email']??'-')) ?></div>
+                <?php if ($userCount > 1): ?>
+                <div style="font-size:10px;color:var(--warning);margin-top:2px">⚠ <?= $userCount ?> cadastros mesclados</div>
+                <?php endif; ?>
             </td>
             <td style="font-size:12px;color:var(--muted)"><?= htmlspecialchars(trim((string)($rk['telefone']??''))) ?: '—' ?></td>
             <td style="text-align:center">
