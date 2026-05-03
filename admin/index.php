@@ -350,17 +350,52 @@ unset($fstep);
 // ========================
 // 6) RANKING MÚLTIPLAS INSCRIÇÕES
 // ========================
-$rankingRows = [];
-$rankHistorico = []; // [user_id => [ [data_dia, hora, payload] ]]
-$hasWHL = false;
-try { $pdo->query("SELECT 1 FROM webhook_logs LIMIT 0"); $hasWHL = true; } catch (Throwable $e) {}
-$hasUtmCols = false;
+$rankingRows   = [];
+$rankHistorico = [];
+$hasIL         = false;
+$hasWHL        = false;
+$hasUtmCols    = false;
 try { $pdo->query("SELECT utm_source FROM users LIMIT 0"); $hasUtmCols = true; } catch (Throwable $e) {}
+try { $pdo->query("SELECT 1 FROM webhook_logs LIMIT 0"); $hasWHL = true; } catch (Throwable $e) {}
 
-if ($hasWHL) {
+// Garante tabela inscricao_logs; na primeira vez, migra dados históricos do webhook_logs
+try {
     try {
-        // Chave canônica: agrupa pelo email (se preenchido) ou telefone normalizado,
-        // assim o mesmo lead que se cadastrou N vezes aparece como uma única linha.
+        $pdo->query("SELECT 1 FROM inscricao_logs LIMIT 0");
+        $hasIL = true;
+    } catch (Throwable $e) {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS inscricao_logs (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                user_id      INT NOT NULL,
+                codigo_turma VARCHAR(100) NULL,
+                utm_source   VARCHAR(255) NULL,
+                utm_medium   VARCHAR(255) NULL,
+                utm_campaign VARCHAR(255) NULL,
+                utm_term     VARCHAR(255) NULL,
+                utm_content  VARCHAR(255) NULL,
+                is_novo      TINYINT(1)   NOT NULL DEFAULT 0,
+                created_at   DATETIME     NOT NULL DEFAULT NOW(),
+                INDEX idx_il_user (user_id),
+                INDEX idx_il_date (created_at)
+            )
+        ");
+        if ($hasWHL) {
+            // Migração única: importa um registro por inscrição distinta (user + dia)
+            $pdo->exec("
+                INSERT INTO inscricao_logs (user_id, is_novo, created_at)
+                SELECT user_id, 1, MIN(created_at)
+                FROM webhook_logs
+                WHERE evento = 'INSCRITO'
+                GROUP BY user_id, DATE(created_at)
+            ");
+        }
+        $hasIL = true;
+    }
+} catch (Throwable $e) { /* ignorado */ }
+
+if ($hasIL) {
+    try {
         $utmSel = $hasUtmCols
             ? "MAX(u.utm_source) AS utm_source, MAX(u.utm_medium) AS utm_medium, MAX(u.utm_campaign) AS utm_campaign, MAX(u.utm_content) AS utm_content,"
             : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
@@ -374,11 +409,11 @@ if ($hasWHL) {
                 MIN(u.email)    AS email,
                 MIN(u.telefone) AS telefone,
                 $utmSel
-                COUNT(DISTINCT DATE(wl.created_at)) AS qtd_inscricoes,
-                MIN(wl.created_at) AS primeiro_cadastro,
-                MAX(wl.created_at) AS ultimo_cadastro
+                COUNT(DISTINCT DATE(il.created_at)) AS qtd_inscricoes,
+                MIN(il.created_at) AS primeiro_cadastro,
+                MAX(il.created_at) AS ultimo_cadastro
             FROM users u
-            JOIN webhook_logs wl ON wl.user_id = u.id AND wl.evento = 'INSCRITO'
+            JOIN inscricao_logs il ON il.user_id = u.id
             GROUP BY chave
             ORDER BY qtd_inscricoes DESC, ultimo_cadastro DESC
             LIMIT 30
@@ -386,7 +421,6 @@ if ($hasWHL) {
         $rankingRows = $pdo->query($rankSql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         if ($rankingRows) {
-            // Coleta todos os user_ids de todos os grupos para a query de histórico
             $allRkUids = [];
             foreach ($rankingRows as $row) {
                 foreach (explode(',', (string)($row['user_ids_str'] ?? '')) as $uid) {
@@ -396,18 +430,21 @@ if ($hasWHL) {
             }
             $in = implode(',', array_unique($allRkUids));
 
-            // Histórico também agrupado pela mesma chave canônica
             $histSql = "
                 SELECT
                     COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
-                    DATE(wl.created_at) AS data_dia,
-                    MIN(wl.created_at)  AS hora,
-                    MIN(wl.payload_json) AS payload_raw
-                FROM webhook_logs wl
-                JOIN users u ON u.id = wl.user_id
-                WHERE wl.user_id IN ($in) AND wl.evento = 'INSCRITO'
-                GROUP BY chave, DATE(wl.created_at)
-                ORDER BY chave ASC, data_dia ASC
+                    DATE(il.created_at) AS data_dia,
+                    il.created_at       AS hora,
+                    il.utm_source,
+                    il.utm_medium,
+                    il.utm_campaign,
+                    il.utm_content,
+                    il.codigo_turma,
+                    il.is_novo
+                FROM inscricao_logs il
+                JOIN users u ON u.id = il.user_id
+                WHERE il.user_id IN ($in)
+                ORDER BY chave ASC, il.created_at ASC
             ";
             foreach ($pdo->query($histSql)->fetchAll(PDO::FETCH_ASSOC) as $h) {
                 $rankHistorico[$h['chave']][] = $h;
@@ -888,16 +925,15 @@ include __DIR__ . '/_header.php';
                         <?php if ($hist): ?>
                         <div class="rk-insc-grid">
                             <?php foreach ($hist as $hi => $h):
-                                $payload = json_decode((string)($h['payload_raw']??'{}'), true) ?: [];
-                                // tenta extrair dados do payload (estrutura pode variar)
-                                $pa = $payload['aluno'] ?? $payload['user'] ?? $payload['data'] ?? [];
                                 $pUtms = [
-                                    'source'   => $pa['utm_source']   ?? $payload['utm_source']   ?? '',
-                                    'medium'   => $pa['utm_medium']   ?? $payload['utm_medium']   ?? '',
-                                    'campaign' => $pa['utm_campaign'] ?? $payload['utm_campaign'] ?? '',
-                                    'content'  => $pa['utm_content']  ?? $payload['utm_content']  ?? '',
+                                    'source'   => trim((string)($h['utm_source']   ?? '')),
+                                    'medium'   => trim((string)($h['utm_medium']   ?? '')),
+                                    'campaign' => trim((string)($h['utm_campaign'] ?? '')),
+                                    'content'  => trim((string)($h['utm_content']  ?? '')),
                                 ];
-                                $hasPayloadUtm = array_filter($pUtms, function($v) { return $v !== ''; });
+                                $hasPayloadUtm = array_filter($pUtms, fn($v) => $v !== '');
+                                $isNovo = (int)($h['is_novo'] ?? 1);
+                                $turmaH = trim((string)($h['codigo_turma'] ?? ''));
                             ?>
                             <div class="rk-insc-card">
                                 <div class="rk-insc-date">
@@ -905,10 +941,19 @@ include __DIR__ . '/_header.php';
                                     <?= rkDt((string)($h['data_dia']??'')) ?>
                                     <span><?= htmlspecialchars(substr((string)($h['hora']??''),11,5)) ?></span>
                                     <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi+1 ?></span>
+                                    <?php if (!$isNovo): ?>
+                                    <span style="margin-left:4px;font-size:10px;background:rgba(99,102,241,.12);color:#818cf8;padding:1px 6px;border-radius:999px">re-inscrição</span>
+                                    <?php endif; ?>
                                 </div>
+                                <?php if ($turmaH !== ''): ?>
+                                <div class="rk-insc-row">
+                                    <span class="rk-insc-k">Turma</span>
+                                    <span class="rk-insc-v"><?= htmlspecialchars($turmaH) ?></span>
+                                </div>
+                                <?php endif; ?>
                                 <?php if ($hasPayloadUtm): ?>
                                     <?php foreach (['source'=>'Source','medium'=>'Medium','campaign'=>'Campaign','content'=>'Content'] as $pk=>$pl):
-                                        $pv = trim((string)($pUtms[$pk]??''));
+                                        $pv = $pUtms[$pk];
                                         if ($pv==='') continue;
                                     ?>
                                     <div class="rk-insc-row">
@@ -917,7 +962,7 @@ include __DIR__ . '/_header.php';
                                     </div>
                                     <?php endforeach; ?>
                                 <?php else: ?>
-                                    <div style="font-size:11px;color:var(--dim)">UTMs não registrados no payload</div>
+                                    <div style="font-size:11px;color:var(--dim)">UTMs não disponíveis</div>
                                 <?php endif; ?>
                             </div>
                             <?php endforeach; ?>
@@ -934,9 +979,9 @@ include __DIR__ . '/_header.php';
     </table>
     </div>
 
-    <?php if (!$hasWHL): ?>
+    <?php if (!$hasIL): ?>
     <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
-        Tabela <code class="code">webhook_logs</code> não encontrada — o ranking requer que webhooks estejam ativos.
+        Sem dados de inscrições registrados ainda.
     </div>
     <?php endif; ?>
 </div>

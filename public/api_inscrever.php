@@ -143,6 +143,29 @@ try {
     }
 
     $pdo = getPDO();
+
+    // Garante existência da tabela de histórico de inscrições
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS inscricao_logs (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                user_id      INT NOT NULL,
+                codigo_turma VARCHAR(100) NULL,
+                utm_source   VARCHAR(255) NULL,
+                utm_medium   VARCHAR(255) NULL,
+                utm_campaign VARCHAR(255) NULL,
+                utm_term     VARCHAR(255) NULL,
+                utm_content  VARCHAR(255) NULL,
+                is_novo      TINYINT(1)   NOT NULL DEFAULT 0,
+                created_at   DATETIME     NOT NULL DEFAULT NOW(),
+                INDEX idx_il_user (user_id),
+                INDEX idx_il_date (created_at)
+            )
+        ");
+    } catch (Throwable $e) {
+        // não impede o fluxo
+    }
+
     $pdo->beginTransaction();
 
     // pega turma pela janela atual
@@ -242,6 +265,33 @@ try {
             'user_id' => $user_id,
             'erro' => $e->getMessage(),
         ]);
+    }
+
+    // Historiza a inscrição (nova ou re-inscrição) — dentro da mesma transação
+    if ($user_id > 0) {
+        try {
+            $logIns = $pdo->prepare("
+                INSERT INTO inscricao_logs
+                    (user_id, codigo_turma, utm_source, utm_medium, utm_campaign, utm_term, utm_content, is_novo, created_at)
+                VALUES
+                    (:uid, :ct, :us, :um, :uc, :ut, :uco, :novo, NOW())
+            ");
+            $logIns->execute([
+                ':uid'  => $user_id,
+                ':ct'   => $codigo_turma,
+                ':us'   => $utm_source,
+                ':um'   => $utm_medium,
+                ':uc'   => $utm_campaign,
+                ':ut'   => $utm_term,
+                ':uco'  => $utm_content,
+                ':novo' => $foi_cadastrado ? 1 : 0,
+            ]);
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao registrar inscricao_log', [
+                'user_id' => $user_id,
+                'erro'    => $e->getMessage(),
+            ]);
+        }
     }
 
     // COMMIT DO CADASTRO PRINCIPAL
