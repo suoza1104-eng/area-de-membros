@@ -47,9 +47,6 @@ function __esc(string $v): string {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
 <style>
-/* ===== THEME (from admin settings) ===== */
-<?= theme_inline_css_vars(); ?>
-
 /* ===== EXTENDED DESIGN SYSTEM ===== */
 :root {
   --bg:             #080e1a;
@@ -58,7 +55,7 @@ function __esc(string $v): string {
   --bg-hover:       rgba(255,255,255,.05);
   --border:         rgba(255,255,255,.08);
   --border-light:   rgba(255,255,255,.12);
-  --primary:        var(--primary, #facc15);
+  --primary:        #facc15;
   --primary-dim:    rgba(250,204,21,.1);
   --primary-soft:   rgba(250,204,21,.18);
   --text:           #e2e8f0;
@@ -541,6 +538,8 @@ button:not([class]):hover { filter: brightness(1.07); }
   .filter-group { min-width: 100%; }
 }
 </style>
+<!-- Theme overrides from DB (runs after defaults so it wins the cascade) -->
+<style><?= theme_inline_css_vars(); ?></style>
 </head>
 <body>
 

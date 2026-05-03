@@ -171,6 +171,16 @@ require __DIR__ . '/_header.php';
 .status-badge.off { background:rgba(100,116,139,.1); color:var(--muted); }
 .field-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 @media(max-width:640px) { .field-row { grid-template-columns:1fr; } }
+.pw-wrap { position:relative; }
+.pw-wrap input { padding-right:38px; }
+.pw-eye {
+    position:absolute; right:10px; top:50%; transform:translateY(-50%);
+    background:none; border:none; color:var(--muted); cursor:pointer; padding:4px;
+    display:flex; align-items:center; justify-content:center;
+    transition:color var(--t);
+}
+.pw-eye:hover { color:var(--text); }
+.pw-eye svg { width:16px; height:16px; }
 </style>
 
 <?php if ($msg): ?>
@@ -204,7 +214,15 @@ require __DIR__ . '/_header.php';
 
         <div class="form-group" style="margin-bottom:18px">
             <label class="form-label">Senha <?= $modo === 'editar' ? '(deixe em branco para manter)' : '*' ?></label>
-            <input type="password" name="senha" <?= $modo === 'novo' ? 'required' : '' ?> placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+            <div class="pw-wrap">
+                <input type="password" id="campo-senha" name="senha" <?= $modo === 'novo' ? 'required' : '' ?> placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                <button type="button" class="pw-eye" onclick="toggleSenha()" title="Mostrar/ocultar senha">
+                    <svg id="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
+            </div>
         </div>
 
         <!-- Tabela de permissões -->
@@ -221,13 +239,17 @@ require __DIR__ . '/_header.php';
                     <thead>
                         <tr>
                             <th>Tela</th>
-                            <th style="text-align:center;width:110px">
-                                Pode acessar
-                                <div><button type="button" class="toggle-all-btn" onclick="toggleCol('pa_', true)">todos</button> / <button type="button" class="toggle-all-btn" onclick="toggleCol('pa_', false)">nenhum</button></div>
-                            </th>
-                            <th style="text-align:center;width:110px">
-                                Pode alterar
-                                <div><button type="button" class="toggle-all-btn" onclick="toggleCol('pe_', true)">todos</button> / <button type="button" class="toggle-all-btn" onclick="toggleCol('pe_', false)">nenhum</button></div>
+                            <th style="width:200px">
+                                <div style="display:flex;align-items:center;gap:18px;justify-content:flex-start;padding-left:4px">
+                                    <span style="width:70px;text-align:center">
+                                        Visualizar
+                                        <div><button type="button" class="toggle-all-btn" onclick="toggleCol('pa_', true)">todos</button> / <button type="button" class="toggle-all-btn" onclick="toggleCol('pa_', false)">nenhum</button></div>
+                                    </span>
+                                    <span style="width:70px;text-align:center">
+                                        Editar
+                                        <div><button type="button" class="toggle-all-btn" onclick="toggleCol('pe_', true)">todos</button> / <button type="button" class="toggle-all-btn" onclick="toggleCol('pe_', false)">nenhum</button></div>
+                                    </span>
+                                </div>
                             </th>
                         </tr>
                     </thead>
@@ -243,11 +265,15 @@ require __DIR__ . '/_header.php';
                         ?>
                         <tr>
                             <td style="font-weight:500"><?= h($label) ?></td>
-                            <td class="perm-check">
-                                <input type="checkbox" name="pa_<?= h($pag) ?>" id="pa_<?= h($pag) ?>" <?= $temAcesso ? 'checked' : '' ?>>
-                            </td>
-                            <td class="perm-check">
-                                <input type="checkbox" name="pe_<?= h($pag) ?>" id="pe_<?= h($pag) ?>" <?= $temEscrever ? 'checked' : '' ?>>
+                            <td>
+                                <div style="display:flex;align-items:center;gap:18px;padding-left:4px">
+                                    <div style="width:70px;display:flex;align-items:center;justify-content:center">
+                                        <input type="checkbox" name="pa_<?= h($pag) ?>" id="pa_<?= h($pag) ?>" <?= $temAcesso ? 'checked' : '' ?> style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer">
+                                    </div>
+                                    <div style="width:70px;display:flex;align-items:center;justify-content:center">
+                                        <input type="checkbox" name="pe_<?= h($pag) ?>" id="pe_<?= h($pag) ?>" <?= $temEscrever ? 'checked' : '' ?> style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer">
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -364,5 +390,18 @@ document.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
         }
     });
 });
+
+function toggleSenha() {
+    var inp = document.getElementById('campo-senha');
+    var ico = document.getElementById('eye-icon');
+    if (!inp) return;
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        ico.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    } else {
+        inp.type = 'password';
+        ico.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+}
 </script>
 <?php require __DIR__ . '/_footer.php'; ?>

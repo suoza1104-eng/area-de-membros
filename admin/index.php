@@ -14,12 +14,33 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
         $pass = trim($_POST['senha']   ?? '');
 
         if ($user === ADMIN_USER && $pass === ADMIN_PASS) {
-            $_SESSION['admin_logado'] = true;
+            $_SESSION['admin_logado']   = true;
+            $_SESSION['equipe_id']      = null;
+            $_SESSION['equipe_nome']    = 'Administrador';
+            $_SESSION['equipe_email']   = $user;
+            $_SESSION['equipe_perms']   = null;
             header('Location: ' . BASE_URL_ADMIN . '/index.php');
             exit;
-        } else {
-            $erro = 'Usuário ou senha inválidos.';
         }
+
+        // Verificar membros da equipe (email = usuário)
+        try {
+            $pdo_l = getPDO();
+            $st = $pdo_l->prepare("SELECT * FROM admin_equipe WHERE email = :e AND ativo = 1 LIMIT 1");
+            $st->execute([':e' => $user]);
+            $membro = $st->fetch(PDO::FETCH_ASSOC);
+            if ($membro && password_verify($pass, (string)($membro['senha_hash'] ?? ''))) {
+                $_SESSION['admin_logado']  = true;
+                $_SESSION['equipe_id']     = (int)$membro['id'];
+                $_SESSION['equipe_nome']   = $membro['nome'];
+                $_SESSION['equipe_email']  = $membro['email'];
+                $_SESSION['equipe_perms']  = $membro['permissoes'];
+                header('Location: ' . BASE_URL_ADMIN . '/index.php');
+                exit;
+            }
+        } catch (Throwable $e) {}
+
+        $erro = 'Usuário ou senha inválidos.';
     }
     ?>
     <!DOCTYPE html>
