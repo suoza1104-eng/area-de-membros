@@ -4,6 +4,8 @@ require __DIR__ . '/../app/funcoes.php';
 
 proteger_admin();
 
+$menu = 'certificado';
+
 include __DIR__ . '/_header.php';
 
 function h(?string $v): string {
