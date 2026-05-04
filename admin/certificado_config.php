@@ -432,7 +432,7 @@ if (!is_array($initPartes)) $initPartes = [];
                                 <span class="font-label">Campo</span>
                                 <select id="add-front-field" onchange="updateFontLabel('front')">
                                     <option value="nome">Nome do aluno</option>
-                                    <option value="data">Data de emissão</option>
+                                    <option value="data_emissao">Data de emissão</option>
                                     <option value="curso">Nome do curso</option>
                                     <option value="qr">QR Code de autenticação</option>
                                 </select>
@@ -498,7 +498,7 @@ if (!is_array($initPartes)) $initPartes = [];
                                 <span class="font-label">Campo</span>
                                 <select id="add-back-field" onchange="updateFontLabel('back')">
                                     <option value="nome">Nome do aluno</option>
-                                    <option value="data">Data de emissão</option>
+                                    <option value="data_emissao">Data de emissão</option>
                                     <option value="curso">Nome do curso</option>
                                     <option value="qr">QR Code de autenticação</option>
                                 </select>
@@ -751,10 +751,11 @@ if (!is_array($initPartes)) $initPartes = [];
     };
 
     const fieldLabels = {
-        nome:  'Nome do aluno',
-        data:  'Data de emissão',
-        curso: 'Nome do curso',
-        qr:    'QR Code',
+        nome:         'Nome do aluno',
+        data:         'Data de emissão',
+        data_emissao: 'Data de emissão',
+        curso:        'Nome do curso',
+        qr:           'QR Code',
     };
 
     // Converts old pixel-based QR size (>100) to percentage; new values are already %.

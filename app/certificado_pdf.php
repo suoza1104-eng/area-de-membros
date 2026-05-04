@@ -67,10 +67,11 @@ function gerar_pdf_certificado(array $aluno, array $cert, array $config): string
     $verifyUrl = $basePublic . '/verificar_certificado.php?c=' . urlencode($codigoUid);
 
     $fieldValues = [
-        'nome'  => $nomeAluno,
-        'data'  => $dataEmissao,
-        'qr'    => $verifyUrl,
-        'curso' => $cursoNome,
+        'nome'         => $nomeAluno,
+        'data'         => $dataEmissao,   // chave legada
+        'data_emissao' => $dataEmissao,   // chave atual
+        'qr'           => $verifyUrl,
+        'curso'        => $cursoNome,
     ];
 
     ob_start();
@@ -202,8 +203,10 @@ body { font-family: "DejaVu Sans", Arial, Helvetica, sans-serif; }
         @mkdir($dir, 0755, true);
     }
 
-    $filename = $codigoUid . '.pdf';
-    $filepath = $dir . '/' . $filename;
+    // Hash dos 8 primeiros chars do layout: muda quando o config muda, forçando novo PDF
+    $layoutHash = substr(md5($config['layout_json'] ?? ''), 0, 8);
+    $filename   = $codigoUid . '_' . $layoutHash . '.pdf';
+    $filepath   = $dir . '/' . $filename;
     file_put_contents($filepath, $dompdf->output());
 
     $pdfUrl = $baseRoot . '/uploads/certificates/' . $filename;
