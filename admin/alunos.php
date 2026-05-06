@@ -28,6 +28,7 @@ function fmtDt(?string $d): string {
 $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pdo,'users','turma') ? 'turma' : '');
 $colCreated = col_ok($pdo,'users','created_at')   ? 'created_at'   : (col_ok($pdo,'users','criado_em') ? 'criado_em' : '');
 $hasWHL     = table_ok($pdo, 'webhook_logs');
+$hasIL      = table_ok($pdo, 'inscricao_logs');
 $hasCerts   = table_ok($pdo, 'certificados');
 $hasSenha   = col_ok($pdo,'users','senha');
 $hasPassword = col_ok($pdo,'users','password');
@@ -143,11 +144,15 @@ $selUtm     = $hasUtm
     ? "u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content,"
     : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
 
-// Usa COUNT(DISTINCT DATE) para não contar múltiplos webhooks do mesmo cadastro como cadastros separados
-$selWhl = $hasWHL
-    ? "(SELECT COUNT(DISTINCT DATE(wl.created_at)) FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = 'INSCRITO') AS qtd_cadastros,
-       (SELECT MAX(wl2.created_at) FROM webhook_logs wl2 WHERE wl2.user_id = u.id AND wl2.evento = 'INSCRITO') AS ultimo_cadastro,"
-    : "1 AS qtd_cadastros, NULL AS ultimo_cadastro,";
+if ($hasIL) {
+    $selWhl = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) AS qtd_cadastros,
+               (SELECT MAX(il2.created_at) FROM inscricao_logs il2 WHERE il2.user_id = u.id) AS ultimo_cadastro,";
+} elseif ($hasWHL) {
+    $selWhl = "(SELECT COUNT(DISTINCT DATE(wl.created_at)) FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = 'INSCRITO') AS qtd_cadastros,
+               (SELECT MAX(wl2.created_at) FROM webhook_logs wl2 WHERE wl2.user_id = u.id AND wl2.evento = 'INSCRITO') AS ultimo_cadastro,";
+} else {
+    $selWhl = "1 AS qtd_cadastros, NULL AS ultimo_cadastro,";
+}
 
 $selCert = $hasCerts
     ? "(SELECT codigo_uid FROM certificados WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS cert_codigo,"
