@@ -409,7 +409,7 @@ if ($hasIL) {
                 MIN(u.email)    AS email,
                 MIN(u.telefone) AS telefone,
                 $utmSel
-                COUNT(DISTINCT DATE(il.created_at)) AS qtd_inscricoes,
+                COUNT(il.id) AS qtd_inscricoes,
                 MIN(il.created_at) AS primeiro_cadastro,
                 MAX(il.created_at) AS ultimo_cadastro
             FROM users u
