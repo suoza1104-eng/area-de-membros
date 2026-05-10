@@ -295,6 +295,22 @@ if ($acao !== '') {
 
     switch ($acao) {
 
+        // Diagnóstico (temporário)
+        case 'diag':
+            $info = [];
+            $info['certificates_exists'] = dpTableExists($pdo, 'certificates');
+            $info['certificados_exists']  = dpTableExists($pdo, 'certificados');
+            try {
+                $info['certificates_count'] = (int)$pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+                $row = $pdo->query("SELECT * FROM certificates LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+                $info['certificates_sample'] = $row ?: null;
+            } catch (Throwable $e) { $info['certificates_err'] = $e->getMessage(); }
+            try {
+                $info['users_count'] = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+            } catch (Throwable $e) { $info['users_err'] = $e->getMessage(); }
+            echo json_encode($info);
+            exit;
+
         // Contar audiência (preview de contagem)
         case 'preview':
             $filtros = json_decode($_POST['filtros_json'] ?? '{}', true) ?: [];
@@ -302,7 +318,7 @@ if ($acao !== '') {
             try {
                 $st = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
                 $st->execute($aw['params']);
-                echo json_encode(['ok' => true, 'total' => (int)$st->fetchColumn()]);
+                echo json_encode(['ok' => true, 'total' => (int)$st->fetchColumn(), '_where' => $aw['where']]);
             } catch (Throwable $e) {
                 echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
             }
