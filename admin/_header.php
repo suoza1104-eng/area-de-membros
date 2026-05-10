@@ -32,7 +32,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','alunos','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','disparos','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -677,7 +677,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -697,6 +697,16 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M2 12h2M20 12h2M12 2v2M12 20v2"/>
       </svg>
       SuperFuncionário
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['disparos']): ?>
+    <a href="disparos.php" class="sb-item <?= $currentMenu === 'disparos' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      Disparos
     </a>
     <?php endif; ?>
 

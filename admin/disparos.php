@@ -1,0 +1,1055 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../app/config.php';
+
+session_start();
+if (empty($_SESSION['admin_logado'])) {
+    header('Location: login.php'); exit;
+}
+
+$pdo = getPDO();
+
+// ── Garantir tabelas ──────────────────────────────────────────────────────────
+$pdo->exec("CREATE TABLE IF NOT EXISTS disparos (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    nome            VARCHAR(200) NOT NULL,
+    status          ENUM('rascunho','aguardando','executando','pausado','concluido','erro') NOT NULL DEFAULT 'rascunho',
+    tipo            ENUM('instantaneo','agendado') NOT NULL DEFAULT 'instantaneo',
+    agendado_em     DATETIME NULL,
+    intervalo_seg   INT UNSIGNED NOT NULL DEFAULT 0,
+    filtros_json    MEDIUMTEXT NULL,
+    acoes_json      MEDIUMTEXT NULL,
+    total_enviados  INT UNSIGNED NOT NULL DEFAULT 0,
+    total_erros     INT UNSIGNED NOT NULL DEFAULT 0,
+    criado_em       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS disparo_execucoes (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    disparo_id  INT NOT NULL,
+    user_id     INT NOT NULL,
+    status      ENUM('ok','erro') NOT NULL DEFAULT 'ok',
+    resposta    TEXT NULL,
+    executado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX (disparo_id),
+    INDEX (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+// ── AJAX handlers ─────────────────────────────────────────────────────────────
+$acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
+
+if ($acao !== '') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // Helper: constrói WHERE de audiência a partir de filtros_json
+    function buildAudienceWhere(array $f, PDO $pdo): array {
+        $inc = $f['inclusao'] ?? [];
+        $exc = $f['exclusao'] ?? [];
+        $logic = strtoupper($f['logica_inclusao'] ?? 'AND');
+        if (!in_array($logic, ['AND','OR'], true)) $logic = 'AND';
+
+        $incClauses = [];
+        $params = [];
+        $p = 0;
+        $nextP = function() use (&$p): string { return ':p' . (++$p); };
+
+        foreach ($inc as $regra) {
+            $tipo = $regra['tipo'] ?? '';
+            switch ($tipo) {
+                case 'turma':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM inscricao_logs il WHERE il.user_id = u.id AND il.codigo_turma = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'tag_sf':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM user_tags ut WHERE ut.user_id = u.id AND ut.tag = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'tag_sistema':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'inscricao_de':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM inscricao_logs il WHERE il.user_id = u.id AND DATE(il.created_at) >= $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'inscricao_ate':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM inscricao_logs il WHERE il.user_id = u.id AND DATE(il.created_at) <= $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'ultimo_de':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM inscricao_logs il WHERE il.user_id = u.id AND DATE(il.created_at) >= $pk ORDER BY il.created_at DESC LIMIT 1)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'ultimo_ate':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "(SELECT MAX(DATE(il.created_at)) FROM inscricao_logs il WHERE il.user_id = u.id) <= $pk";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'qtd_min':
+                    if (isset($regra['valor']) && $regra['valor'] !== '') {
+                        $pk = $nextP();
+                        $incClauses[] = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) >= $pk";
+                        $params[$pk] = (int)$regra['valor'];
+                    }
+                    break;
+                case 'qtd_max':
+                    if (isset($regra['valor']) && $regra['valor'] !== '') {
+                        $pk = $nextP();
+                        $incClauses[] = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) <= $pk";
+                        $params[$pk] = (int)$regra['valor'];
+                    }
+                    break;
+                case 'tem_cert':
+                    $incClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    break;
+                case 'nao_tem_cert':
+                    $incClauses[] = "NOT EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    break;
+                case 'evento_webhook':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "EXISTS(SELECT 1 FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+            }
+        }
+
+        $excClauses = [];
+        foreach ($exc as $regra) {
+            $tipo = $regra['tipo'] ?? '';
+            switch ($tipo) {
+                case 'tem_cert':
+                    $excClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    break;
+                case 'tag_sf':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "EXISTS(SELECT 1 FROM user_tags ut WHERE ut.user_id = u.id AND ut.tag = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'tag_sistema':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'turma':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "EXISTS(SELECT 1 FROM inscricao_logs il WHERE il.user_id = u.id AND il.codigo_turma = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'qtd_min':
+                    if (isset($regra['valor']) && $regra['valor'] !== '') {
+                        $pk = $nextP();
+                        $excClauses[] = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) >= $pk";
+                        $params[$pk] = (int)$regra['valor'];
+                    }
+                    break;
+                case 'evento_webhook':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "EXISTS(SELECT 1 FROM webhook_logs wl WHERE wl.user_id = u.id AND wl.evento = $pk)";
+                        $params[$pk] = $regra['valor'];
+                    }
+                    break;
+                case 'ja_recebeu':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "EXISTS(SELECT 1 FROM disparo_execucoes de2 WHERE de2.user_id = u.id AND de2.disparo_id = $pk AND de2.status = 'ok')";
+                        $params[$pk] = (int)$regra['valor'];
+                    }
+                    break;
+            }
+        }
+
+        $where = 'u.ativo = 1';
+        if ($incClauses) {
+            $where .= ' AND (' . implode(" $logic ", $incClauses) . ')';
+        }
+        if ($excClauses) {
+            $where .= ' AND NOT (' . implode(' OR ', $excClauses) . ')';
+        }
+        return ['where' => $where, 'params' => $params];
+    }
+
+    // Helper: envia via SF
+    function enviarSF(array $usuario, array $acoes, PDO $pdo): array {
+        try {
+            $cfg = $pdo->query("SELECT * FROM superfuncionario_config WHERE id=1 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { $cfg = null; }
+
+        if (!$cfg || empty($cfg['is_enabled'])) return ['ok' => false, 'msg' => 'SF desabilitado'];
+        if (empty($cfg['base_url']) || empty($cfg['token'])) return ['ok' => false, 'msg' => 'SF sem config'];
+
+        $sfAcoes = [];
+        foreach ($acoes as $a) {
+            if ($a['tipo'] === 'flow' && !empty($a['valor'])) {
+                foreach (array_filter(array_map('trim', explode(',', (string)$a['valor']))) as $fid) {
+                    $sfAcoes[] = ['action' => 'send_flow', 'flow_id' => (int)$fid];
+                }
+            } elseif ($a['tipo'] === 'tag_sf' && !empty($a['valor'])) {
+                $sfAcoes[] = ['action' => 'add_tag', 'tag_name' => $a['valor']];
+            }
+        }
+        if (empty($sfAcoes)) return ['ok' => true, 'msg' => 'sem_acao_sf'];
+
+        $payload = json_encode([
+            'email'      => $usuario['email'] ?? '',
+            'phone'      => $usuario['telefone'] ?? '',
+            'first_name' => $usuario['nome'] ?? '',
+            'actions'    => $sfAcoes,
+        ]);
+
+        $url = rtrim($cfg['base_url'], '/') . '/' . ltrim($cfg['default_endpoint'] ?? '', '/');
+        $headerMode = $cfg['header_mode'] ?? 'X-ACCESS-TOKEN';
+        $authHeader = ($headerMode === 'Bearer')
+            ? 'Authorization: Bearer ' . $cfg['token']
+            : 'X-ACCESS-TOKEN: ' . $cfg['token'];
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => (int)($cfg['timeout_seconds'] ?? 10),
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', $authHeader],
+        ]);
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return ['ok' => $code >= 200 && $code < 300, 'msg' => (string)$resp];
+    }
+
+    // Helper: aplica tags do sistema
+    function aplicarTagSistema(int $userId, array $acoes, PDO $pdo): void {
+        foreach ($acoes as $a) {
+            if ($a['tipo'] === 'tag_sistema' && !empty($a['valor'])) {
+                try {
+                    $pdo->prepare("INSERT IGNORE INTO user_tags_sistema (user_id, tag, criado_em) VALUES (:uid, :tag, NOW())")
+                        ->execute([':uid' => $userId, ':tag' => $a['valor']]);
+                } catch (Throwable $e) {}
+            }
+        }
+    }
+
+    switch ($acao) {
+
+        // Contar audiência (preview)
+        case 'preview':
+            $filtros = json_decode($_POST['filtros_json'] ?? '{}', true) ?: [];
+            $aw = buildAudienceWhere($filtros, $pdo);
+            try {
+                $st = $pdo->prepare("SELECT COUNT(*) FROM usuarios u WHERE {$aw['where']}");
+                $st->execute($aw['params']);
+                echo json_encode(['ok' => true, 'total' => (int)$st->fetchColumn()]);
+            } catch (Throwable $e) {
+                echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
+            }
+            exit;
+
+        // Salvar (criar ou editar)
+        case 'salvar':
+            $id   = (int)($_POST['id'] ?? 0);
+            $nome = trim($_POST['nome'] ?? '');
+            $tipo = in_array($_POST['tipo'] ?? '', ['instantaneo','agendado']) ? $_POST['tipo'] : 'instantaneo';
+            $agendado_em   = !empty($_POST['agendado_em'])   ? $_POST['agendado_em']   : null;
+            $intervalo_seg = (int)($_POST['intervalo_seg'] ?? 0);
+            $filtros_json  = $_POST['filtros_json']  ?? '{}';
+            $acoes_json    = $_POST['acoes_json']    ?? '[]';
+            $status        = ($id > 0) ? ($_POST['status'] ?? 'rascunho') : 'rascunho';
+
+            if ($nome === '') { echo json_encode(['ok' => false, 'msg' => 'Nome obrigatório']); exit; }
+
+            if ($id > 0) {
+                $st = $pdo->prepare("UPDATE disparos SET nome=:nome, tipo=:tipo, agendado_em=:ag, intervalo_seg=:iv, filtros_json=:fj, acoes_json=:aj, status=:st WHERE id=:id");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_seg,':fj'=>$filtros_json,':aj'=>$acoes_json,':st'=>$status,':id'=>$id]);
+            } else {
+                $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_seg, filtros_json, acoes_json) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj)");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_seg,':fj'=>$filtros_json,':aj'=>$acoes_json]);
+                $id = (int)$pdo->lastInsertId();
+            }
+            echo json_encode(['ok' => true, 'id' => $id]);
+            exit;
+
+        // Deletar
+        case 'deletar':
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id = :id")->execute([':id'=>$id]);
+                $pdo->prepare("DELETE FROM disparos WHERE id = :id")->execute([':id'=>$id]);
+            }
+            echo json_encode(['ok' => true]);
+            exit;
+
+        // Clonar
+        case 'clonar':
+            $id = (int)($_POST['id'] ?? 0);
+            $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $row->execute([':id'=>$id]);
+            $row = $row->fetch(PDO::FETCH_ASSOC);
+            if (!$row) { echo json_encode(['ok' => false, 'msg' => 'Não encontrado']); exit; }
+            $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_seg, filtros_json, acoes_json, status) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,'rascunho')");
+            $st->execute([':nome'=>'[Cópia] '.$row['nome'],':tipo'=>$row['tipo'],':ag'=>$row['agendado_em'],':iv'=>$row['intervalo_seg'],':fj'=>$row['filtros_json'],':aj'=>$row['acoes_json']]);
+            echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]);
+            exit;
+
+        // Mudar status (pausar, retomar, desativar, ativar)
+        case 'set_status':
+            $id     = (int)($_POST['id'] ?? 0);
+            $novoSt = $_POST['status'] ?? '';
+            $allowed = ['rascunho','aguardando','pausado','concluido'];
+            if ($id > 0 && in_array($novoSt, $allowed, true)) {
+                $pdo->prepare("UPDATE disparos SET status = :st WHERE id = :id")->execute([':st'=>$novoSt,':id'=>$id]);
+            }
+            echo json_encode(['ok' => true]);
+            exit;
+
+        // Buscar um disparo (para edição)
+        case 'get':
+            $id  = (int)($_GET['id'] ?? 0);
+            $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $row->execute([':id'=>$id]);
+            $row = $row->fetch(PDO::FETCH_ASSOC);
+            echo $row ? json_encode(['ok'=>true,'data'=>$row]) : json_encode(['ok'=>false]);
+            exit;
+
+        // Listar
+        case 'listar':
+            $rows = $pdo->query("SELECT id, nome, status, tipo, agendado_em, total_enviados, total_erros, criado_em FROM disparos ORDER BY criado_em DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
+            echo json_encode(['ok'=>true,'data'=>$rows]);
+            exit;
+
+        // Executar lote de um disparo (chamado progressivamente via JS)
+        case 'executar_batch':
+            $id     = (int)($_POST['id'] ?? 0);
+            $offset = (int)($_POST['offset'] ?? 0);
+            $limit  = 20;
+
+            $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $row->execute([':id'=>$id]);
+            $row = $row->fetch(PDO::FETCH_ASSOC);
+            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
+
+            $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
+            $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
+
+            // Marcar como executando na primeira chamada
+            if ($offset === 0) {
+                $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+            }
+
+            $aw = buildAudienceWhere($filtros, $pdo);
+            // Contar total apenas no primeiro batch
+            $totalGeral = null;
+            if ($offset === 0) {
+                $stCnt = $pdo->prepare("SELECT COUNT(*) FROM usuarios u WHERE {$aw['where']}");
+                $stCnt->execute($aw['params']);
+                $totalGeral = (int)$stCnt->fetchColumn();
+            }
+
+            // Buscar batch
+            $stUsers = $pdo->prepare("SELECT u.id, u.nome, u.email, u.telefone FROM usuarios u WHERE {$aw['where']} LIMIT $limit OFFSET $offset");
+            $stUsers->execute($aw['params']);
+            $usuarios = $stUsers->fetchAll(PDO::FETCH_ASSOC);
+
+            $enviados = 0;
+            $erros    = 0;
+            foreach ($usuarios as $usr) {
+                $r = enviarSF($usr, $acoes, $pdo);
+                aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
+                $status = $r['ok'] ? 'ok' : 'erro';
+                $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
+                    ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,1000)]);
+                if ($r['ok']) $enviados++; else $erros++;
+            }
+
+            $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
+                ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
+
+            $done = count($usuarios) < $limit;
+            if ($done) {
+                $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
+            }
+
+            echo json_encode([
+                'ok'          => true,
+                'processados' => count($usuarios),
+                'enviados'    => $enviados,
+                'erros'       => $erros,
+                'done'        => $done,
+                'next_offset' => $offset + $limit,
+                'total'       => $totalGeral,
+            ]);
+            exit;
+
+        default:
+            echo json_encode(['ok'=>false,'msg'=>'Ação desconhecida']);
+            exit;
+    }
+}
+
+// ── Carrega turmas para o filtro ──────────────────────────────────────────────
+$turmas = [];
+try {
+    $turmas = $pdo->query("SELECT codigo, nome FROM turmas ORDER BY nome")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {}
+
+$currentMenu = 'disparos';
+$page_title  = 'Disparos';
+require_once __DIR__ . '/_header.php';
+?>
+<style>
+/* ── Layout ── */
+.dp-wrap { display: flex; gap: 24px; align-items: flex-start; }
+.dp-list-panel { flex: 1; min-width: 0; }
+.dp-form-panel {
+    width: 520px; flex-shrink: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    position: sticky; top: 24px;
+}
+@media (max-width: 1100px) {
+    .dp-wrap { flex-direction: column; }
+    .dp-form-panel { width: 100%; position: static; }
+}
+
+/* ── Cards de disparo ── */
+.dp-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 14px;
+}
+.dp-card-info { flex: 1; min-width: 0; }
+.dp-card-nome { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp-card-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.dp-card-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* Badges de status */
+.badge-rascunho   { background: #3a3a4a; color: #aaa; }
+.badge-aguardando { background: #1e3a5f; color: #60a5fa; }
+.badge-executando { background: #1a3a2a; color: #4ade80; }
+.badge-pausado    { background: #3a2e10; color: #fbbf24; }
+.badge-concluido  { background: #1a3520; color: #34d399; }
+.badge-erro       { background: #3a1a1a; color: #f87171; }
+.badge-st { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+
+/* ── Filtro builder ── */
+.filter-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+.filter-group-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .5px;
+    margin-bottom: 10px;
+}
+.filter-row {
+    display: flex; gap: 6px; align-items: center; margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+.filter-row select, .filter-row input {
+    background: var(--input-bg, #1e1e2e);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 8px;
+    font-size: 13px;
+}
+.filter-row select { min-width: 150px; }
+.filter-row input  { flex: 1; min-width: 80px; }
+.filter-row .btn-rm {
+    background: none; border: 1px solid #553; color: #f87171;
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 13px; line-height: 1;
+}
+.btn-add-filter {
+    background: none; border: 1px dashed var(--border); color: var(--text-muted);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; width: 100%;
+    margin-top: 4px;
+}
+.btn-add-filter:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Ações ── */
+.acao-row {
+    display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;
+}
+.acao-row select { min-width: 130px; background: var(--input-bg,#1e1e2e); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 5px 8px; font-size: 13px; }
+.acao-row input  { flex: 1; min-width: 80px; background: var(--input-bg,#1e1e2e); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 5px 8px; font-size: 13px; }
+
+/* ── Progress modal ── */
+.dp-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; display: none;
+}
+.dp-modal-overlay.visible { display: flex; }
+.dp-modal-box {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; width: 480px; max-width: 95vw;
+    text-align: center;
+}
+.dp-progress-bar-wrap { background: #1a1a2a; border-radius: 8px; height: 12px; margin: 16px 0; overflow: hidden; }
+.dp-progress-bar { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 8px; transition: width .3s; }
+.dp-modal-stats { display: flex; gap: 24px; justify-content: center; margin-top: 10px; }
+.dp-stat { text-align: center; }
+.dp-stat-val { font-size: 22px; font-weight: 700; }
+.dp-stat-lbl { font-size: 11px; color: var(--text-muted); }
+
+/* ── Misc ── */
+.logic-toggle { display: flex; gap: 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.logic-toggle button {
+    background: none; border: none; padding: 4px 12px; cursor: pointer;
+    font-size: 12px; font-weight: 700; color: var(--text-muted);
+}
+.logic-toggle button.active { background: var(--accent, #6366f1); color: #fff; }
+.form-row { margin-bottom: 14px; }
+.form-row label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; font-weight: 600; }
+.form-row input, .form-row select, .form-row textarea {
+    width: 100%; box-sizing: border-box;
+    background: var(--input-bg,#1e1e2e); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); padding: 8px 12px; font-size: 14px;
+}
+.preview-badge {
+    display: inline-block; background: #1e2a3a; color: #60a5fa;
+    padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 700;
+    margin-left: 8px;
+}
+.dp-empty { text-align: center; color: var(--text-muted); padding: 48px 0; font-size: 15px; }
+</style>
+
+<div class="main-content">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Disparos</h1>
+      <p class="page-subtitle">Gerencie campanhas instantâneas e agendadas</p>
+    </div>
+    <button class="btn btn-primary" onclick="dpNovoDisparo()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;margin-right:6px;vertical-align:-3px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Novo Disparo
+    </button>
+  </div>
+
+  <div class="dp-wrap">
+    <!-- Lista -->
+    <div class="dp-list-panel">
+      <div id="dpListContainer">
+        <div class="dp-empty">Carregando…</div>
+      </div>
+    </div>
+
+    <!-- Painel de edição / criação -->
+    <div class="dp-form-panel" id="dpFormPanel" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h3 style="margin:0;font-size:16px" id="dpFormTitle">Novo Disparo</h3>
+        <button onclick="dpFecharForm()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+      </div>
+
+      <input type="hidden" id="dpId" value="0">
+
+      <div class="form-row">
+        <label>Nome do disparo</label>
+        <input type="text" id="dpNome" placeholder="Ex: Black Friday — inscritos turma A">
+      </div>
+
+      <div class="form-row" style="display:flex;gap:12px">
+        <div style="flex:1">
+          <label>Tipo</label>
+          <select id="dpTipo" onchange="dpToggleTipo()">
+            <option value="instantaneo">Instantâneo</option>
+            <option value="agendado">Agendado</option>
+          </select>
+        </div>
+        <div style="flex:1" id="dpAgendadoWrap">
+          <label>Data / hora</label>
+          <input type="datetime-local" id="dpAgendadoEm">
+        </div>
+      </div>
+
+      <div class="form-row" id="dpIntervaloWrap">
+        <label>Intervalo entre envios (segundos) <span style="color:var(--text-muted)">[0 = sem intervalo]</span></label>
+        <input type="number" id="dpIntervaloSeg" value="0" min="0">
+      </div>
+
+      <!-- FILTROS INCLUSÃO -->
+      <div class="filter-group">
+        <div class="filter-group-header">
+          <span>Incluir quem:</span>
+          <div class="logic-toggle" id="logicaToggle">
+            <button id="btnAnd" class="active" onclick="dpSetLogica('AND')">E (AND)</button>
+            <button id="btnOr"  onclick="dpSetLogica('OR')">OU (OR)</button>
+          </div>
+          <span id="dpPreviewBadge" class="preview-badge" style="margin-left:auto">? leads</span>
+        </div>
+        <div id="dpFiltrosInc"></div>
+        <button class="btn-add-filter" onclick="dpAddFiltroInc()">+ Adicionar filtro de inclusão</button>
+      </div>
+
+      <!-- FILTROS EXCLUSÃO -->
+      <div class="filter-group">
+        <div class="filter-group-header" style="color:#f87171">Excluir quem: (sempre AND NOT)</div>
+        <div id="dpFiltrosExc"></div>
+        <button class="btn-add-filter" onclick="dpAddFiltroExc()">+ Adicionar filtro de exclusão</button>
+      </div>
+
+      <!-- AÇÕES -->
+      <div class="filter-group">
+        <div class="filter-group-header">Ações</div>
+        <div id="dpAcoes"></div>
+        <button class="btn-add-filter" onclick="dpAddAcao()">+ Adicionar ação</button>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn btn-primary" style="flex:1" onclick="dpSalvar(false)">Salvar rascunho</button>
+        <button class="btn btn-success" style="flex:1" onclick="dpSalvarExecutar()" id="btnSalvarExecutar">Salvar e Disparar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de progresso -->
+<div class="dp-modal-overlay" id="dpProgressModal">
+  <div class="dp-modal-box">
+    <div style="font-size:18px;font-weight:700;margin-bottom:8px" id="dpProgressTitle">Disparando…</div>
+    <div style="font-size:13px;color:var(--text-muted)" id="dpProgressSub">Aguarde…</div>
+    <div class="dp-progress-bar-wrap">
+      <div class="dp-progress-bar" id="dpProgressBar" style="width:0%"></div>
+    </div>
+    <div class="dp-modal-stats">
+      <div class="dp-stat"><div class="dp-stat-val" id="dpStatEnv">0</div><div class="dp-stat-lbl">Enviados</div></div>
+      <div class="dp-stat"><div class="dp-stat-val" id="dpStatErr" style="color:#f87171">0</div><div class="dp-stat-lbl">Erros</div></div>
+      <div class="dp-stat"><div class="dp-stat-val" id="dpStatTot">—</div><div class="dp-stat-lbl">Total</div></div>
+    </div>
+    <button class="btn" style="margin-top:24px;display:none" id="dpProgressClose" onclick="dpFecharModal()">Fechar</button>
+  </div>
+</div>
+
+<script>
+const TURMAS = <?= json_encode($turmas) ?>;
+let dpLogica = 'AND';
+let dpPreviewTimer = null;
+
+// ── Inicialização ────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    dpCarregarLista();
+    dpToggleTipo();
+});
+
+// ── Lista ────────────────────────────────────────────────────────────────────
+async function dpCarregarLista() {
+    const r = await fetch('disparos.php?acao=listar');
+    const j = await r.json();
+    const cont = document.getElementById('dpListContainer');
+    if (!j.ok || !j.data.length) {
+        cont.innerHTML = '<div class="dp-empty">Nenhum disparo criado ainda.<br>Clique em <strong>Novo Disparo</strong> para começar.</div>';
+        return;
+    }
+    cont.innerHTML = j.data.map(d => {
+        const meta = [
+            `<span>${d.tipo === 'agendado' ? '📅 ' + (d.agendado_em || '—') : '⚡ Instantâneo'}</span>`,
+            `<span>Enviados: ${d.total_enviados}</span>`,
+            d.total_erros > 0 ? `<span style="color:#f87171">Erros: ${d.total_erros}</span>` : '',
+            `<span>${dpFmtDate(d.criado_em)}</span>`,
+        ].filter(Boolean).join('');
+
+        const canRun  = ['rascunho','pausado','aguardando'].includes(d.status);
+        const canPause= d.status === 'executando' || d.status === 'aguardando';
+        const canResume= d.status === 'pausado';
+
+        return `<div class="dp-card" id="dpCard${d.id}">
+            <div class="dp-card-info">
+                <div class="dp-card-nome">${dpEsc(d.nome)}</div>
+                <div class="dp-card-meta">
+                    <span class="badge-st badge-${d.status}">${d.status}</span>
+                    ${meta}
+                </div>
+            </div>
+            <div class="dp-card-actions">
+                ${canRun  ? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Disparar">▶</button>` : ''}
+                ${canPause? `<button class="btn btn-sm" onclick="dpSetStatus(${d.id},'pausado')" title="Pausar">⏸</button>` : ''}
+                ${canResume?`<button class="btn btn-sm" onclick="dpSetStatus(${d.id},'aguardando')" title="Retomar">▶</button>` : ''}
+                <button class="btn btn-sm" onclick="dpEditarDisparo(${d.id})" title="Editar">✏️</button>
+                <button class="btn btn-sm" onclick="dpClonarDisparo(${d.id})" title="Clonar">🗐</button>
+                <button class="btn btn-sm btn-danger" onclick="dpDeletar(${d.id})" title="Excluir">🗑</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// ── Form ──────────────────────────────────────────────────────────────────────
+function dpNovoDisparo() {
+    document.getElementById('dpId').value = 0;
+    document.getElementById('dpNome').value = '';
+    document.getElementById('dpTipo').value = 'instantaneo';
+    document.getElementById('dpAgendadoEm').value = '';
+    document.getElementById('dpIntervaloSeg').value = 0;
+    document.getElementById('dpFiltrosInc').innerHTML = '';
+    document.getElementById('dpFiltrosExc').innerHTML = '';
+    document.getElementById('dpAcoes').innerHTML = '';
+    dpLogica = 'AND';
+    dpRenderLogica();
+    document.getElementById('dpFormTitle').textContent = 'Novo Disparo';
+    document.getElementById('dpFormPanel').style.display = '';
+    dpToggleTipo();
+    dpAtualizarPreview();
+}
+
+async function dpEditarDisparo(id) {
+    const r = await fetch(`disparos.php?acao=get&id=${id}`);
+    const j = await r.json();
+    if (!j.ok) return alert('Erro ao carregar disparo');
+    const d = j.data;
+    document.getElementById('dpId').value = d.id;
+    document.getElementById('dpNome').value = d.nome;
+    document.getElementById('dpTipo').value = d.tipo;
+    document.getElementById('dpAgendadoEm').value = d.agendado_em ? d.agendado_em.replace(' ','T').slice(0,16) : '';
+    document.getElementById('dpIntervaloSeg').value = d.intervalo_seg || 0;
+    document.getElementById('dpFormTitle').textContent = 'Editar: ' + d.nome;
+    document.getElementById('dpFormPanel').style.display = '';
+    dpToggleTipo();
+
+    // Restaurar filtros / ações
+    const filtros = JSON.parse(d.filtros_json || '{}');
+    const acoes   = JSON.parse(d.acoes_json   || '[]');
+    dpLogica = filtros.logica_inclusao || 'AND';
+    dpRenderLogica();
+    document.getElementById('dpFiltrosInc').innerHTML = '';
+    document.getElementById('dpFiltrosExc').innerHTML = '';
+    document.getElementById('dpAcoes').innerHTML = '';
+    (filtros.inclusao || []).forEach(f => dpAddFiltroInc(f));
+    (filtros.exclusao || []).forEach(f => dpAddFiltroExc(f));
+    acoes.forEach(a => dpAddAcao(a));
+    dpAtualizarPreview();
+}
+
+function dpFecharForm() {
+    document.getElementById('dpFormPanel').style.display = 'none';
+}
+
+function dpToggleTipo() {
+    const t = document.getElementById('dpTipo').value;
+    document.getElementById('dpAgendadoWrap').style.display = t === 'agendado' ? '' : 'none';
+}
+
+function dpSetLogica(l) {
+    dpLogica = l;
+    dpRenderLogica();
+    dpAtualizarPreview();
+}
+
+function dpRenderLogica() {
+    document.getElementById('btnAnd').className = dpLogica === 'AND' ? 'active' : '';
+    document.getElementById('btnOr').className  = dpLogica === 'OR'  ? 'active' : '';
+}
+
+// ── Filtros ──────────────────────────────────────────────────────────────────
+const INC_TIPOS = [
+    {v:'turma',       l:'Turma'},
+    {v:'tag_sf',      l:'Tag SF'},
+    {v:'tag_sistema', l:'Tag sistema'},
+    {v:'inscricao_de',l:'Inscrição a partir de'},
+    {v:'inscricao_ate',l:'Inscrição até'},
+    {v:'ultimo_de',   l:'Último cadastro a partir de'},
+    {v:'ultimo_ate',  l:'Último cadastro até'},
+    {v:'qtd_min',     l:'Mín. inscrições'},
+    {v:'qtd_max',     l:'Máx. inscrições'},
+    {v:'tem_cert',    l:'Tem certificado'},
+    {v:'nao_tem_cert',l:'Não tem certificado'},
+    {v:'evento_webhook',l:'Evento webhook'},
+];
+const EXC_TIPOS = [
+    {v:'tem_cert',    l:'Tem certificado'},
+    {v:'tag_sf',      l:'Tag SF'},
+    {v:'tag_sistema', l:'Tag sistema'},
+    {v:'turma',       l:'Turma'},
+    {v:'qtd_min',     l:'Mín. inscrições'},
+    {v:'evento_webhook',l:'Evento webhook'},
+    {v:'ja_recebeu',  l:'Já recebeu este disparo (ID)'},
+];
+const ACAO_TIPOS = [
+    {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
+    {v:'tag_sf',     l:'Inserir tag SF'},
+    {v:'tag_sistema',l:'Inserir tag sistema'},
+];
+
+function dpBuildSelect(tipos, val) {
+    return '<select onchange="dpAtualizarPreview()" style="min-width:160px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
+        + tipos.map(t => `<option value="${t.v}"${val===t.v?' selected':''}>${t.l}</option>`).join('')
+        + '</select>';
+}
+
+function dpBuildValueInput(tipo, valor) {
+    if (tipo === 'turma') {
+        return '<select onchange="dpAtualizarPreview()" style="flex:1;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px"><option value="">-- turma --</option>'
+            + TURMAS.map(t => `<option value="${t.codigo}"${valor===t.codigo?' selected':''}>${t.nome || t.codigo}</option>`).join('')
+            + '</select>';
+    }
+    if (['tem_cert','nao_tem_cert'].includes(tipo)) return '';
+    let ph = tipo.includes('de') || tipo.includes('ate') ? 'YYYY-MM-DD' : 'valor';
+    let inputType = (tipo.includes('de') || tipo.includes('ate')) ? 'date' : 'text';
+    if (tipo.includes('qtd')) inputType = 'number';
+    return `<input type="${inputType}" placeholder="${ph}" value="${dpEsc(valor||'')}" oninput="dpAtualizarPreview()" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
+}
+
+function dpAddFiltroInc(data) {
+    const cont = document.getElementById('dpFiltrosInc');
+    const div  = document.createElement('div');
+    div.className = 'filter-row';
+    const tipo  = data ? data.tipo  : 'turma';
+    const valor = data ? data.valor : '';
+    div.innerHTML = dpBuildSelect(INC_TIPOS, tipo) + dpBuildValueInput(tipo, valor)
+        + '<button class="btn-rm" onclick="this.parentNode.remove();dpAtualizarPreview()">×</button>';
+    // Ao trocar o tipo, recriar o input de valor
+    div.querySelector('select').addEventListener('change', function() {
+        const vInput = div.querySelector('input,select:last-of-type');
+        const newInput = document.createElement('div');
+        newInput.innerHTML = dpBuildValueInput(this.value, '');
+        const ni = newInput.firstChild;
+        if (vInput) div.replaceChild(ni || document.createElement('span'), vInput);
+        else if (ni) div.insertBefore(ni, div.querySelector('.btn-rm'));
+    });
+    cont.appendChild(div);
+    dpAtualizarPreview();
+}
+
+function dpAddFiltroExc(data) {
+    const cont = document.getElementById('dpFiltrosExc');
+    const div  = document.createElement('div');
+    div.className = 'filter-row';
+    const tipo  = data ? data.tipo  : 'tem_cert';
+    const valor = data ? data.valor : '';
+    div.innerHTML = dpBuildSelect(EXC_TIPOS, tipo) + dpBuildValueInput(tipo, valor)
+        + '<button class="btn-rm" onclick="this.parentNode.remove();dpAtualizarPreview()">×</button>';
+    div.querySelector('select').addEventListener('change', function() {
+        const vInput = div.querySelector('input,select:last-of-type');
+        const newInput = document.createElement('div');
+        newInput.innerHTML = dpBuildValueInput(this.value, '');
+        const ni = newInput.firstChild;
+        if (vInput) div.replaceChild(ni || document.createElement('span'), vInput);
+        else if (ni) div.insertBefore(ni, div.querySelector('.btn-rm'));
+    });
+    cont.appendChild(div);
+    dpAtualizarPreview();
+}
+
+function dpAddAcao(data) {
+    const cont = document.getElementById('dpAcoes');
+    const div  = document.createElement('div');
+    div.className = 'acao-row';
+    const tipo  = data ? data.tipo  : 'flow';
+    const valor = data ? data.valor : '';
+    div.innerHTML = '<select style="min-width:160px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
+        + ACAO_TIPOS.map(t => `<option value="${t.v}"${tipo===t.v?' selected':''}>${t.l}</option>`).join('')
+        + `</select><input type="text" value="${dpEsc(valor)}" placeholder="valor" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`
+        + '<button class="btn-rm" onclick="this.parentNode.remove()">×</button>';
+    cont.appendChild(div);
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────────
+function dpAtualizarPreview() {
+    clearTimeout(dpPreviewTimer);
+    dpPreviewTimer = setTimeout(async () => {
+        const badge = document.getElementById('dpPreviewBadge');
+        badge.textContent = '…';
+        const fd = new FormData();
+        fd.append('acao', 'preview');
+        fd.append('filtros_json', JSON.stringify(dpColetarFiltros()));
+        try {
+            const r = await fetch('disparos.php', {method:'POST', body:fd});
+            const j = await r.json();
+            badge.textContent = j.ok ? `${j.total} leads` : '?';
+        } catch { badge.textContent = '?'; }
+    }, 600);
+}
+
+// ── Coleta de dados do form ───────────────────────────────────────────────────
+function dpColetarFiltros() {
+    const inc = [];
+    document.querySelectorAll('#dpFiltrosInc .filter-row').forEach(row => {
+        const tipo  = row.querySelector('select')?.value || '';
+        const vEl   = row.querySelector('input') || row.querySelectorAll('select')[1];
+        const valor = vEl ? vEl.value : '';
+        if (tipo) inc.push({tipo, valor});
+    });
+    const exc = [];
+    document.querySelectorAll('#dpFiltrosExc .filter-row').forEach(row => {
+        const tipo  = row.querySelector('select')?.value || '';
+        const vEl   = row.querySelector('input') || row.querySelectorAll('select')[1];
+        const valor = vEl ? vEl.value : '';
+        if (tipo) exc.push({tipo, valor});
+    });
+    return {logica_inclusao: dpLogica, inclusao: inc, exclusao: exc};
+}
+
+function dpColetarAcoes() {
+    const acoes = [];
+    document.querySelectorAll('#dpAcoes .acao-row').forEach(row => {
+        const tipo  = row.querySelector('select')?.value || '';
+        const valor = row.querySelector('input')?.value || '';
+        if (tipo) acoes.push({tipo, valor});
+    });
+    return acoes;
+}
+
+// ── Salvar ────────────────────────────────────────────────────────────────────
+async function dpSalvar(retornaId) {
+    const nome = document.getElementById('dpNome').value.trim();
+    if (!nome) { alert('Informe um nome para o disparo'); return null; }
+
+    const fd = new FormData();
+    fd.append('acao',          'salvar');
+    fd.append('id',            document.getElementById('dpId').value);
+    fd.append('nome',          nome);
+    fd.append('tipo',          document.getElementById('dpTipo').value);
+    fd.append('agendado_em',   document.getElementById('dpAgendadoEm').value);
+    fd.append('intervalo_seg', document.getElementById('dpIntervaloSeg').value);
+    fd.append('filtros_json',  JSON.stringify(dpColetarFiltros()));
+    fd.append('acoes_json',    JSON.stringify(dpColetarAcoes()));
+
+    const r = await fetch('disparos.php', {method:'POST', body:fd});
+    const j = await r.json();
+    if (!j.ok) { alert('Erro: ' + (j.msg||'desconhecido')); return null; }
+    document.getElementById('dpId').value = j.id;
+    dpCarregarLista();
+    if (retornaId) return j.id;
+    else dpFecharForm();
+    return null;
+}
+
+async function dpSalvarExecutar() {
+    const id = await dpSalvar(true);
+    if (!id) return;
+    dpIniciarDisparo(id);
+}
+
+// ── Execução progressiva ──────────────────────────────────────────────────────
+async function dpIniciarDisparo(id) {
+    dpFecharForm();
+    document.getElementById('dpProgressTitle').textContent = 'Disparando…';
+    document.getElementById('dpProgressSub').textContent   = 'Preparando…';
+    document.getElementById('dpProgressBar').style.width   = '0%';
+    document.getElementById('dpStatEnv').textContent = '0';
+    document.getElementById('dpStatErr').textContent = '0';
+    document.getElementById('dpStatTot').textContent = '—';
+    document.getElementById('dpProgressClose').style.display = 'none';
+    document.getElementById('dpProgressModal').classList.add('visible');
+
+    let offset = 0;
+    let totalEnv = 0, totalErr = 0, totalGeral = null;
+
+    while (true) {
+        const fd = new FormData();
+        fd.append('acao',   'executar_batch');
+        fd.append('id',     id);
+        fd.append('offset', offset);
+        let j;
+        try {
+            const r = await fetch('disparos.php', {method:'POST', body:fd});
+            j = await r.json();
+        } catch (e) {
+            document.getElementById('dpProgressSub').textContent = 'Erro de rede: ' + e.message;
+            break;
+        }
+        if (!j.ok) {
+            document.getElementById('dpProgressSub').textContent = 'Erro: ' + (j.msg||'desconhecido');
+            break;
+        }
+        if (j.total !== null && j.total !== undefined) totalGeral = j.total;
+        totalEnv += j.enviados;
+        totalErr += j.erros;
+        offset    = j.next_offset;
+
+        document.getElementById('dpStatEnv').textContent = totalEnv;
+        document.getElementById('dpStatErr').textContent = totalErr;
+        if (totalGeral !== null) {
+            document.getElementById('dpStatTot').textContent = totalGeral;
+            const pct = totalGeral > 0 ? Math.min(100, Math.round(offset / totalGeral * 100)) : 100;
+            document.getElementById('dpProgressBar').style.width = pct + '%';
+            document.getElementById('dpProgressSub').textContent = `${offset} / ${totalGeral} processados`;
+        }
+
+        if (j.done) {
+            document.getElementById('dpProgressTitle').textContent = 'Concluído!';
+            document.getElementById('dpProgressSub').textContent   = `${totalEnv} enviados, ${totalErr} erros`;
+            document.getElementById('dpProgressBar').style.width   = '100%';
+            document.getElementById('dpProgressClose').style.display = '';
+            dpCarregarLista();
+            break;
+        }
+        // Intervalo entre batches (não bloqueia o browser)
+        await new Promise(res => setTimeout(res, 300));
+    }
+}
+
+function dpFecharModal() {
+    document.getElementById('dpProgressModal').classList.remove('visible');
+}
+
+// ── Ações rápidas ─────────────────────────────────────────────────────────────
+async function dpDeletar(id) {
+    if (!confirm('Excluir este disparo e todo seu histórico?')) return;
+    const fd = new FormData(); fd.append('acao','deletar'); fd.append('id',id);
+    await fetch('disparos.php', {method:'POST',body:fd});
+    dpCarregarLista();
+}
+
+async function dpClonarDisparo(id) {
+    const fd = new FormData(); fd.append('acao','clonar'); fd.append('id',id);
+    const r  = await fetch('disparos.php', {method:'POST',body:fd});
+    const j  = await r.json();
+    if (j.ok) { dpCarregarLista(); dpEditarDisparo(j.id); }
+}
+
+async function dpSetStatus(id, st) {
+    const fd = new FormData(); fd.append('acao','set_status'); fd.append('id',id); fd.append('status',st);
+    await fetch('disparos.php', {method:'POST',body:fd});
+    dpCarregarLista();
+}
+
+// ── Utilitários ───────────────────────────────────────────────────────────────
+function dpEsc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function dpFmtDate(dt) {
+    if (!dt) return '';
+    const d = new Date(dt.replace(' ','T'));
+    return d.toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+</script>
+
+<?php require_once __DIR__ . '/_footer.php'; ?>
