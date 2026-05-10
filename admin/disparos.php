@@ -314,11 +314,21 @@ if ($acao !== '') {
         // Contar audiência (preview de contagem)
         case 'preview':
             $filtros = json_decode($_POST['filtros_json'] ?? '{}', true) ?: [];
-            $aw = buildAudienceWhere($filtros, $pdo);
+            // Inclusão apenas (sem exclusões) → badge do topo
+            $filtrosSemExc = $filtros; $filtrosSemExc['exclusao'] = [];
+            $awInc = buildAudienceWhere($filtrosSemExc, $pdo);
+            // Inclusão + exclusão → badge da prévia
+            $awFull = buildAudienceWhere($filtros, $pdo);
             try {
-                $st = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
-                $st->execute($aw['params']);
-                echo json_encode(['ok' => true, 'total' => (int)$st->fetchColumn(), '_where' => $aw['where']]);
+                $stInc = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$awInc['where']}");
+                $stInc->execute($awInc['params']);
+                $totalInc = (int)$stInc->fetchColumn();
+
+                $stFull = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$awFull['where']}");
+                $stFull->execute($awFull['params']);
+                $totalFull = (int)$stFull->fetchColumn();
+
+                echo json_encode(['ok' => true, 'total_inclusao' => $totalInc, 'total' => $totalFull]);
             } catch (Throwable $e) {
                 echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
             }
@@ -1056,7 +1066,7 @@ function dpAtualizarPreview() {
         const fd = new FormData(); fd.append('acao','preview'); fd.append('filtros_json', fj);
         try {
             const j = await (await fetch('disparos.php', {method:'POST',body:fd})).json();
-            badge.textContent = j.ok ? `${j.total} leads` : '?';
+            badge.textContent = j.ok ? `${j.total_inclusao} leads` : '?';
             document.getElementById('dpPreviewContatosCount').textContent = j.ok ? `${j.total} contatos` : '?';
         } catch { badge.textContent = '?'; }
         if (dpPreviewContatosOpen) dpCarregarPreviewContatos();
