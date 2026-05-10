@@ -952,6 +952,7 @@ function dpFecharForm() {
 function dpToggleTipo() {
     const t = document.getElementById('dpTipo').value;
     document.getElementById('dpAgendadoWrap').style.display = t === 'agendado' ? '' : 'none';
+    document.getElementById('btnSalvarExecutar').textContent = t === 'agendado' ? 'Salvar e Agendar' : 'Salvar e Disparar';
 }
 
 function dpToggleHorario() {
@@ -1171,9 +1172,16 @@ async function dpSalvar(retornaId) {
 }
 
 async function dpSalvarExecutar() {
-    const id = await dpSalvar(true);
+    const tipo = document.getElementById('dpTipo').value;
+    const id   = await dpSalvar(true);
     if (!id) return;
-    dpIniciarDisparo(id);
+    if (tipo === 'agendado') {
+        // Apenas marca como aguardando, não dispara
+        await dpSetStatus(id, 'aguardando');
+        dpFecharForm();
+    } else {
+        dpIniciarDisparo(id);
+    }
 }
 
 // ── Janela de horário ─────────────────────────────────────────────────────────
