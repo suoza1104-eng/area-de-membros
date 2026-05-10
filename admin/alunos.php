@@ -29,7 +29,7 @@ $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pd
 $colCreated = col_ok($pdo,'users','created_at')   ? 'created_at'   : (col_ok($pdo,'users','criado_em') ? 'criado_em' : '');
 $hasWHL     = table_ok($pdo, 'webhook_logs');
 $hasIL      = table_ok($pdo, 'inscricao_logs');
-$hasCerts   = table_ok($pdo, 'certificados');
+$hasCerts   = table_ok($pdo, 'certificates');
 $hasSenha   = col_ok($pdo,'users','senha');
 $hasPassword = col_ok($pdo,'users','password');
 $senhaCol   = $hasSenha ? 'senha' : ($hasPassword ? 'password' : '');
@@ -155,7 +155,7 @@ if ($hasIL) {
 }
 
 $selCert = $hasCerts
-    ? "(SELECT codigo_uid FROM certificados WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS cert_codigo,"
+    ? "(SELECT codigo_uid FROM certificates WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS cert_codigo,"
     : "NULL AS cert_codigo,";
 
 // Count total (sem limit)
