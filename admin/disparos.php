@@ -62,6 +62,16 @@ $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 if ($acao !== '') {
     header('Content-Type: application/json; charset=utf-8');
 
+    // Helper: verifica se tabela existe (cached por chamada)
+    function dpTableExists(PDO $pdo, string $t): bool {
+        static $cache = [];
+        if (!isset($cache[$t])) {
+            try { $pdo->query("SELECT 1 FROM `$t` LIMIT 0"); $cache[$t] = true; }
+            catch (Throwable $e) { $cache[$t] = false; }
+        }
+        return $cache[$t];
+    }
+
     // Helper: constrói WHERE de audiência a partir de filtros_json
     function buildAudienceWhere(array $f, PDO $pdo): array {
         $inc = $f['inclusao'] ?? [];
@@ -141,10 +151,12 @@ if ($acao !== '') {
                     }
                     break;
                 case 'tem_cert':
-                    $incClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificados'))
+                        $incClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
                     break;
                 case 'nao_tem_cert':
-                    $incClauses[] = "NOT EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificados'))
+                        $incClauses[] = "NOT EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
                     break;
                 case 'evento_webhook':
                     if (!empty($regra['valor'])) {
@@ -161,7 +173,8 @@ if ($acao !== '') {
             $tipo = $regra['tipo'] ?? '';
             switch ($tipo) {
                 case 'tem_cert':
-                    $excClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificados'))
+                        $excClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
                     break;
                 case 'tag_sf':
                     if (!empty($regra['valor'])) {
