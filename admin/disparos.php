@@ -419,7 +419,11 @@ if ($acao !== '') {
 // ── Carrega turmas para o filtro ──────────────────────────────────────────────
 $turmas = [];
 try {
-    $turmas = $pdo->query("SELECT codigo, nome FROM turmas ORDER BY nome")->fetchAll(PDO::FETCH_ASSOC);
+    $turmas = $pdo->query(
+        "SELECT codigo,
+                CONCAT(codigo, IF(janela_inicio IS NOT NULL AND janela_inicio != '', CONCAT(' (', LEFT(janela_inicio,10), ')'), '')) AS nome
+         FROM turmas ORDER BY janela_inicio DESC"
+    )->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {}
 
 $currentMenu = 'disparos';
