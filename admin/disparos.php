@@ -36,6 +36,26 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS disparo_execucoes (
     INDEX (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+$pdo->exec("CREATE TABLE IF NOT EXISTS user_tags_sistema (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    user_id    INT NOT NULL,
+    tag        VARCHAR(200) NOT NULL,
+    criado_em  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_tag (user_id, tag),
+    INDEX (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+// Migração de colunas — cada ALTER ignorado se coluna já existir
+foreach ([
+    'intervalo_ms INT UNSIGNED NOT NULL DEFAULT 0',
+    'horario_ativo TINYINT(1) NOT NULL DEFAULT 0',
+    'horario_inicio TIME NULL',
+    'horario_fim TIME NULL',
+    "dias_semana VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5,6,7'",
+] as $col) {
+    try { $pdo->exec("ALTER TABLE disparos ADD COLUMN $col"); } catch (Throwable $e) {}
+}
+
 // ── AJAX handlers ─────────────────────────────────────────────────────────────
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 
@@ -67,7 +87,7 @@ if ($acao !== '') {
                 case 'tag_sf':
                     if (!empty($regra['valor'])) {
                         $pk = $nextP();
-                        $incClauses[] = "EXISTS(SELECT 1 FROM user_tags ut WHERE ut.user_id = u.id AND ut.tag = $pk)";
+                        $incClauses[] = "EXISTS(SELECT 1 FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = u.id AND t.nome = $pk)";
                         $params[$pk] = $regra['valor'];
                     }
                     break;
@@ -146,7 +166,7 @@ if ($acao !== '') {
                 case 'tag_sf':
                     if (!empty($regra['valor'])) {
                         $pk = $nextP();
-                        $excClauses[] = "EXISTS(SELECT 1 FROM user_tags ut WHERE ut.user_id = u.id AND ut.tag = $pk)";
+                        $excClauses[] = "EXISTS(SELECT 1 FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = u.id AND t.nome = $pk)";
                         $params[$pk] = $regra['valor'];
                     }
                     break;
@@ -188,7 +208,7 @@ if ($acao !== '') {
             }
         }
 
-        $where = 'u.ativo = 1';
+        $where = 'u.id > 0';
         if ($incClauses) {
             $where .= ' AND (' . implode(" $logic ", $incClauses) . ')';
         }
@@ -262,14 +282,33 @@ if ($acao !== '') {
 
     switch ($acao) {
 
-        // Contar audiência (preview)
+        // Contar audiência (preview de contagem)
         case 'preview':
             $filtros = json_decode($_POST['filtros_json'] ?? '{}', true) ?: [];
             $aw = buildAudienceWhere($filtros, $pdo);
             try {
-                $st = $pdo->prepare("SELECT COUNT(*) FROM usuarios u WHERE {$aw['where']}");
+                $st = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
                 $st->execute($aw['params']);
                 echo json_encode(['ok' => true, 'total' => (int)$st->fetchColumn()]);
+            } catch (Throwable $e) {
+                echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
+            }
+            exit;
+
+        // Preview lista de contatos (até 50)
+        case 'preview_contatos':
+            $filtros = json_decode($_POST['filtros_json'] ?? '{}', true) ?: [];
+            $aw = buildAudienceWhere($filtros, $pdo);
+            try {
+                $stP = $pdo->prepare(
+                    "SELECT u.id, u.nome, u.email, u.telefone,
+                            (SELECT MAX(il.created_at) FROM inscricao_logs il WHERE il.user_id = u.id) AS ultimo_cadastro,
+                            (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
+                            (SELECT COUNT(*) FROM inscricao_logs il3 WHERE il3.user_id = u.id) AS qtd_inscricoes
+                     FROM users u WHERE {$aw['where']} ORDER BY u.id DESC LIMIT 50"
+                );
+                $stP->execute($aw['params']);
+                echo json_encode(['ok' => true, 'data' => $stP->fetchAll(PDO::FETCH_ASSOC)]);
             } catch (Throwable $e) {
                 echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
             }
@@ -281,19 +320,23 @@ if ($acao !== '') {
             $nome = trim($_POST['nome'] ?? '');
             $tipo = in_array($_POST['tipo'] ?? '', ['instantaneo','agendado']) ? $_POST['tipo'] : 'instantaneo';
             $agendado_em   = !empty($_POST['agendado_em'])   ? $_POST['agendado_em']   : null;
-            $intervalo_seg = (int)($_POST['intervalo_seg'] ?? 0);
+            $intervalo_ms  = (int)($_POST['intervalo_ms'] ?? 0);
             $filtros_json  = $_POST['filtros_json']  ?? '{}';
             $acoes_json    = $_POST['acoes_json']    ?? '[]';
             $status        = ($id > 0) ? ($_POST['status'] ?? 'rascunho') : 'rascunho';
+            $horario_ativo = (int)($_POST['horario_ativo'] ?? 0);
+            $horario_inicio = !empty($_POST['horario_inicio']) ? $_POST['horario_inicio'] : null;
+            $horario_fim   = !empty($_POST['horario_fim'])    ? $_POST['horario_fim']    : null;
+            $dias_semana   = preg_replace('/[^0-9,]/', '', $_POST['dias_semana'] ?? '1,2,3,4,5,6,7');
 
             if ($nome === '') { echo json_encode(['ok' => false, 'msg' => 'Nome obrigatório']); exit; }
 
             if ($id > 0) {
-                $st = $pdo->prepare("UPDATE disparos SET nome=:nome, tipo=:tipo, agendado_em=:ag, intervalo_seg=:iv, filtros_json=:fj, acoes_json=:aj, status=:st WHERE id=:id");
-                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_seg,':fj'=>$filtros_json,':aj'=>$acoes_json,':st'=>$status,':id'=>$id]);
+                $st = $pdo->prepare("UPDATE disparos SET nome=:nome, tipo=:tipo, agendado_em=:ag, intervalo_ms=:iv, filtros_json=:fj, acoes_json=:aj, status=:st, horario_ativo=:ha, horario_inicio=:hi, horario_fim=:hf, dias_semana=:ds WHERE id=:id");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':fj'=>$filtros_json,':aj'=>$acoes_json,':st'=>$status,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana,':id'=>$id]);
             } else {
-                $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_seg, filtros_json, acoes_json) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj)");
-                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_seg,':fj'=>$filtros_json,':aj'=>$acoes_json]);
+                $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, filtros_json, acoes_json, horario_ativo, horario_inicio, horario_fim, dias_semana) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,:ha,:hi,:hf,:ds)");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':fj'=>$filtros_json,':aj'=>$acoes_json,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana]);
                 $id = (int)$pdo->lastInsertId();
             }
             echo json_encode(['ok' => true, 'id' => $id]);
@@ -349,65 +392,66 @@ if ($acao !== '') {
 
         // Executar lote de um disparo (chamado progressivamente via JS)
         case 'executar_batch':
-            $id     = (int)($_POST['id'] ?? 0);
-            $offset = (int)($_POST['offset'] ?? 0);
-            $limit  = 20;
+            try {
+                $id     = (int)($_POST['id'] ?? 0);
+                $offset = (int)($_POST['offset'] ?? 0);
+                $limit  = 20;
 
-            $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
-            $row->execute([':id'=>$id]);
-            $row = $row->fetch(PDO::FETCH_ASSOC);
-            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
+                $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+                $row->execute([':id'=>$id]);
+                $row = $row->fetch(PDO::FETCH_ASSOC);
+                if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
 
-            $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
-            $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
+                $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
+                $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
 
-            // Marcar como executando na primeira chamada
-            if ($offset === 0) {
-                $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+                if ($offset === 0) {
+                    $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+                }
+
+                $aw = buildAudienceWhere($filtros, $pdo);
+                $totalGeral = null;
+                if ($offset === 0) {
+                    $stCnt = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
+                    $stCnt->execute($aw['params']);
+                    $totalGeral = (int)$stCnt->fetchColumn();
+                }
+
+                $stUsers = $pdo->prepare("SELECT u.id, u.nome, u.email, u.telefone FROM users u WHERE {$aw['where']} LIMIT $limit OFFSET $offset");
+                $stUsers->execute($aw['params']);
+                $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
+
+                $enviados = 0;
+                $erros    = 0;
+                foreach ($userList as $usr) {
+                    $r = enviarSF($usr, $acoes, $pdo);
+                    aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
+                    $status = $r['ok'] ? 'ok' : 'erro';
+                    $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
+                        ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,1000)]);
+                    if ($r['ok']) $enviados++; else $erros++;
+                }
+
+                $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
+                    ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
+
+                $done = count($userList) < $limit;
+                if ($done) {
+                    $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
+                }
+
+                echo json_encode([
+                    'ok'          => true,
+                    'processados' => count($userList),
+                    'enviados'    => $enviados,
+                    'erros'       => $erros,
+                    'done'        => $done,
+                    'next_offset' => $offset + $limit,
+                    'total'       => $totalGeral,
+                ]);
+            } catch (Throwable $e) {
+                echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
             }
-
-            $aw = buildAudienceWhere($filtros, $pdo);
-            // Contar total apenas no primeiro batch
-            $totalGeral = null;
-            if ($offset === 0) {
-                $stCnt = $pdo->prepare("SELECT COUNT(*) FROM usuarios u WHERE {$aw['where']}");
-                $stCnt->execute($aw['params']);
-                $totalGeral = (int)$stCnt->fetchColumn();
-            }
-
-            // Buscar batch
-            $stUsers = $pdo->prepare("SELECT u.id, u.nome, u.email, u.telefone FROM usuarios u WHERE {$aw['where']} LIMIT $limit OFFSET $offset");
-            $stUsers->execute($aw['params']);
-            $usuarios = $stUsers->fetchAll(PDO::FETCH_ASSOC);
-
-            $enviados = 0;
-            $erros    = 0;
-            foreach ($usuarios as $usr) {
-                $r = enviarSF($usr, $acoes, $pdo);
-                aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
-                $status = $r['ok'] ? 'ok' : 'erro';
-                $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
-                    ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,1000)]);
-                if ($r['ok']) $enviados++; else $erros++;
-            }
-
-            $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
-                ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
-
-            $done = count($usuarios) < $limit;
-            if ($done) {
-                $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
-            }
-
-            echo json_encode([
-                'ok'          => true,
-                'processados' => count($usuarios),
-                'enviados'    => $enviados,
-                'erros'       => $erros,
-                'done'        => $done,
-                'next_offset' => $offset + $limit,
-                'total'       => $totalGeral,
-            ]);
             exit;
 
         default:
@@ -551,9 +595,52 @@ require_once __DIR__ . '/_header.php';
 .preview-badge {
     display: inline-block; background: #1e2a3a; color: #60a5fa;
     padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 700;
-    margin-left: 8px;
+    margin-left: auto;
 }
 .dp-empty { text-align: center; color: var(--text-muted); padding: 48px 0; font-size: 15px; }
+
+/* ── Preview contatos ── */
+.dp-preview-panel {
+    border: 1px solid #2a2a4a; border-radius: 8px;
+    margin-bottom: 12px; overflow: hidden;
+}
+.dp-preview-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; cursor: pointer;
+    background: #14142a; font-size: 12px; font-weight: 600;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px;
+    user-select: none;
+}
+.dp-preview-header:hover { background: #1a1a36; }
+.dp-preview-body {
+    max-height: 260px; overflow-y: auto;
+    display: none;
+}
+.dp-preview-body.open { display: block; }
+.dp-preview-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dp-preview-table th { background: #1a1a2e; color: var(--text-muted); padding: 6px 10px; text-align: left; font-weight: 600; position: sticky; top: 0; }
+.dp-preview-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); }
+.dp-preview-table tr:hover td { background: rgba(99,102,241,.06); }
+
+/* ── Horário de execução ── */
+.horario-wrap {
+    background: #14142a; border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; margin-top: 8px;
+}
+.day-check { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; font-size: 12px; cursor: pointer; }
+.toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #333; border-radius: 20px; transition: .2s;
+}
+.toggle-slider:before {
+    content: ''; position: absolute;
+    width: 14px; height: 14px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: .2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: #6366f1; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(16px); }
 </style>
 
 <div class="main-content">
@@ -604,9 +691,41 @@ require_once __DIR__ . '/_header.php';
         </div>
       </div>
 
-      <div class="form-row" id="dpIntervaloWrap">
-        <label>Intervalo entre envios (segundos) <span style="color:var(--text-muted)">[0 = sem intervalo]</span></label>
-        <input type="number" id="dpIntervaloSeg" value="0" min="0">
+      <div class="form-row">
+        <label>Intervalo entre lotes (ms) <span style="color:var(--text-muted)">[0 = sem pausa | ex: 2000 = 2s entre cada lote de 20]</span></label>
+        <input type="number" id="dpIntervaloMs" value="0" min="0" step="100">
+      </div>
+
+      <div class="form-row">
+        <div style="display:flex;align-items:center;gap:10px">
+          <label class="toggle-switch">
+            <input type="checkbox" id="dpHorarioAtivo" onchange="dpToggleHorario()">
+            <span class="toggle-slider"></span>
+          </label>
+          <span style="font-size:13px;font-weight:600">Restringir horário de envio</span>
+        </div>
+        <div class="horario-wrap" id="dpHorarioWrap" style="display:none">
+          <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center">
+            <div style="flex:1">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">De</label>
+              <input type="time" id="dpHorarioInicio" value="08:00" style="width:100%;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:13px">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Até</label>
+              <input type="time" id="dpHorarioFim" value="21:00" style="width:100%;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:13px">
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:600">DIAS DA SEMANA</div>
+            <div id="dpDiasSemana">
+              <?php foreach (['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'] as $di => $dn): ?>
+              <label class="day-check">
+                <input type="checkbox" class="dp-dia" value="<?= $di ?>"> <?= $dn ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- FILTROS INCLUSÃO -->
@@ -628,6 +747,19 @@ require_once __DIR__ . '/_header.php';
         <div class="filter-group-header" style="color:#f87171">Excluir quem: (sempre AND NOT)</div>
         <div id="dpFiltrosExc"></div>
         <button class="btn-add-filter" onclick="dpAddFiltroExc()">+ Adicionar filtro de exclusão</button>
+      </div>
+
+      <!-- PREVIEW CONTATOS -->
+      <div class="dp-preview-panel">
+        <div class="dp-preview-header" onclick="dpTogglePreviewContatos()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          <span>Prévia dos contatos inclusos</span>
+          <span id="dpPreviewContatosCount" style="margin-left:auto;font-size:11px;color:#60a5fa">—</span>
+          <span id="dpPreviewArrow" style="font-size:14px">▶</span>
+        </div>
+        <div class="dp-preview-body" id="dpPreviewBody">
+          <div id="dpPreviewContatosContent" style="padding:12px;color:var(--text-muted);font-size:12px">Carregando…</div>
+        </div>
       </div>
 
       <!-- AÇÕES -->
@@ -666,14 +798,18 @@ require_once __DIR__ . '/_header.php';
 const TURMAS = <?= json_encode($turmas) ?>;
 let dpLogica = 'AND';
 let dpPreviewTimer = null;
+let dpPreviewContatosOpen = false;
+let dpExecutando = false; // flag global para parar loop
 
-// ── Inicialização ────────────────────────────────────────────────────────────
+// ── Inicialização ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     dpCarregarLista();
     dpToggleTipo();
+    // Marcar todos dias por padrão
+    document.querySelectorAll('.dp-dia').forEach(cb => cb.checked = true);
 });
 
-// ── Lista ────────────────────────────────────────────────────────────────────
+// ── Lista ─────────────────────────────────────────────────────────────────────
 async function dpCarregarLista() {
     const r = await fetch('disparos.php?acao=listar');
     const j = await r.json();
@@ -684,14 +820,14 @@ async function dpCarregarLista() {
     }
     cont.innerHTML = j.data.map(d => {
         const meta = [
-            `<span>${d.tipo === 'agendado' ? '📅 ' + (d.agendado_em || '—') : '⚡ Instantâneo'}</span>`,
+            `<span>${d.tipo === 'agendado' ? '📅 ' + dpFmtDate(d.agendado_em) : '⚡ Instantâneo'}</span>`,
             `<span>Enviados: ${d.total_enviados}</span>`,
             d.total_erros > 0 ? `<span style="color:#f87171">Erros: ${d.total_erros}</span>` : '',
             `<span>${dpFmtDate(d.criado_em)}</span>`,
         ].filter(Boolean).join('');
 
-        const canRun  = ['rascunho','pausado','aguardando'].includes(d.status);
-        const canPause= d.status === 'executando' || d.status === 'aguardando';
+        const canRun   = ['rascunho','pausado','aguardando'].includes(d.status);
+        const canPause = d.status === 'executando';
         const canResume= d.status === 'pausado';
 
         return `<div class="dp-card" id="dpCard${d.id}">
@@ -703,9 +839,9 @@ async function dpCarregarLista() {
                 </div>
             </div>
             <div class="dp-card-actions">
-                ${canRun  ? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Disparar">▶</button>` : ''}
-                ${canPause? `<button class="btn btn-sm" onclick="dpSetStatus(${d.id},'pausado')" title="Pausar">⏸</button>` : ''}
-                ${canResume?`<button class="btn btn-sm" onclick="dpSetStatus(${d.id},'aguardando')" title="Retomar">▶</button>` : ''}
+                ${canRun   ? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Disparar">▶</button>` : ''}
+                ${canPause ? `<button class="btn btn-sm" onclick="dpPararDisparo()" title="Pausar">⏸</button>` : ''}
+                ${canResume? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Retomar">▶</button>` : ''}
                 <button class="btn btn-sm" onclick="dpEditarDisparo(${d.id})" title="Editar">✏️</button>
                 <button class="btn btn-sm" onclick="dpClonarDisparo(${d.id})" title="Clonar">🗐</button>
                 <button class="btn btn-sm btn-danger" onclick="dpDeletar(${d.id})" title="Excluir">🗑</button>
@@ -720,7 +856,11 @@ function dpNovoDisparo() {
     document.getElementById('dpNome').value = '';
     document.getElementById('dpTipo').value = 'instantaneo';
     document.getElementById('dpAgendadoEm').value = '';
-    document.getElementById('dpIntervaloSeg').value = 0;
+    document.getElementById('dpIntervaloMs').value = 0;
+    document.getElementById('dpHorarioAtivo').checked = false;
+    document.getElementById('dpHorarioInicio').value = '08:00';
+    document.getElementById('dpHorarioFim').value = '21:00';
+    document.querySelectorAll('.dp-dia').forEach(cb => cb.checked = true);
     document.getElementById('dpFiltrosInc').innerHTML = '';
     document.getElementById('dpFiltrosExc').innerHTML = '';
     document.getElementById('dpAcoes').innerHTML = '';
@@ -729,6 +869,7 @@ function dpNovoDisparo() {
     document.getElementById('dpFormTitle').textContent = 'Novo Disparo';
     document.getElementById('dpFormPanel').style.display = '';
     dpToggleTipo();
+    dpToggleHorario();
     dpAtualizarPreview();
 }
 
@@ -741,12 +882,17 @@ async function dpEditarDisparo(id) {
     document.getElementById('dpNome').value = d.nome;
     document.getElementById('dpTipo').value = d.tipo;
     document.getElementById('dpAgendadoEm').value = d.agendado_em ? d.agendado_em.replace(' ','T').slice(0,16) : '';
-    document.getElementById('dpIntervaloSeg').value = d.intervalo_seg || 0;
+    document.getElementById('dpIntervaloMs').value = d.intervalo_ms || 0;
+    document.getElementById('dpHorarioAtivo').checked = parseInt(d.horario_ativo || 0) === 1;
+    document.getElementById('dpHorarioInicio').value = d.horario_inicio ? d.horario_inicio.slice(0,5) : '08:00';
+    document.getElementById('dpHorarioFim').value    = d.horario_fim    ? d.horario_fim.slice(0,5)    : '21:00';
+    const dias = (d.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
+    document.querySelectorAll('.dp-dia').forEach(cb => { cb.checked = dias.includes(parseInt(cb.value)); });
     document.getElementById('dpFormTitle').textContent = 'Editar: ' + d.nome;
     document.getElementById('dpFormPanel').style.display = '';
     dpToggleTipo();
+    dpToggleHorario();
 
-    // Restaurar filtros / ações
     const filtros = JSON.parse(d.filtros_json || '{}');
     const acoes   = JSON.parse(d.acoes_json   || '[]');
     dpLogica = filtros.logica_inclusao || 'AND';
@@ -769,6 +915,11 @@ function dpToggleTipo() {
     document.getElementById('dpAgendadoWrap').style.display = t === 'agendado' ? '' : 'none';
 }
 
+function dpToggleHorario() {
+    const on = document.getElementById('dpHorarioAtivo').checked;
+    document.getElementById('dpHorarioWrap').style.display = on ? '' : 'none';
+}
+
 function dpSetLogica(l) {
     dpLogica = l;
     dpRenderLogica();
@@ -780,7 +931,7 @@ function dpRenderLogica() {
     document.getElementById('btnOr').className  = dpLogica === 'OR'  ? 'active' : '';
 }
 
-// ── Filtros ──────────────────────────────────────────────────────────────────
+// ── Filtros ───────────────────────────────────────────────────────────────────
 const INC_TIPOS = [
     {v:'turma',       l:'Turma'},
     {v:'tag_sf',      l:'Tag SF'},
@@ -823,52 +974,35 @@ function dpBuildValueInput(tipo, valor) {
             + '</select>';
     }
     if (['tem_cert','nao_tem_cert'].includes(tipo)) return '';
-    let ph = tipo.includes('de') || tipo.includes('ate') ? 'YYYY-MM-DD' : 'valor';
     let inputType = (tipo.includes('de') || tipo.includes('ate')) ? 'date' : 'text';
-    if (tipo.includes('qtd')) inputType = 'number';
+    if (tipo.includes('qtd') || tipo === 'ja_recebeu') inputType = 'number';
+    let ph = inputType === 'date' ? 'YYYY-MM-DD' : 'valor';
     return `<input type="${inputType}" placeholder="${ph}" value="${dpEsc(valor||'')}" oninput="dpAtualizarPreview()" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
 }
 
-function dpAddFiltroInc(data) {
-    const cont = document.getElementById('dpFiltrosInc');
+function dpMakeFilterRow(tipos, data, cont) {
     const div  = document.createElement('div');
     div.className = 'filter-row';
-    const tipo  = data ? data.tipo  : 'turma';
+    const tipo  = data ? data.tipo  : tipos[0].v;
     const valor = data ? data.valor : '';
-    div.innerHTML = dpBuildSelect(INC_TIPOS, tipo) + dpBuildValueInput(tipo, valor)
+    div.innerHTML = dpBuildSelect(tipos, tipo) + dpBuildValueInput(tipo, valor)
         + '<button class="btn-rm" onclick="this.parentNode.remove();dpAtualizarPreview()">×</button>';
-    // Ao trocar o tipo, recriar o input de valor
     div.querySelector('select').addEventListener('change', function() {
-        const vInput = div.querySelector('input,select:last-of-type');
-        const newInput = document.createElement('div');
-        newInput.innerHTML = dpBuildValueInput(this.value, '');
-        const ni = newInput.firstChild;
-        if (vInput) div.replaceChild(ni || document.createElement('span'), vInput);
-        else if (ni) div.insertBefore(ni, div.querySelector('.btn-rm'));
+        const oldV = div.querySelectorAll('select')[1] || div.querySelector('input');
+        const tmp  = document.createElement('div');
+        tmp.innerHTML = dpBuildValueInput(this.value, '');
+        const ni = tmp.firstChild;
+        const rm = div.querySelector('.btn-rm');
+        if (oldV) div.replaceChild(ni || document.createTextNode(''), oldV);
+        else if (ni) div.insertBefore(ni, rm);
+        dpAtualizarPreview();
     });
     cont.appendChild(div);
     dpAtualizarPreview();
 }
 
-function dpAddFiltroExc(data) {
-    const cont = document.getElementById('dpFiltrosExc');
-    const div  = document.createElement('div');
-    div.className = 'filter-row';
-    const tipo  = data ? data.tipo  : 'tem_cert';
-    const valor = data ? data.valor : '';
-    div.innerHTML = dpBuildSelect(EXC_TIPOS, tipo) + dpBuildValueInput(tipo, valor)
-        + '<button class="btn-rm" onclick="this.parentNode.remove();dpAtualizarPreview()">×</button>';
-    div.querySelector('select').addEventListener('change', function() {
-        const vInput = div.querySelector('input,select:last-of-type');
-        const newInput = document.createElement('div');
-        newInput.innerHTML = dpBuildValueInput(this.value, '');
-        const ni = newInput.firstChild;
-        if (vInput) div.replaceChild(ni || document.createElement('span'), vInput);
-        else if (ni) div.insertBefore(ni, div.querySelector('.btn-rm'));
-    });
-    cont.appendChild(div);
-    dpAtualizarPreview();
-}
+function dpAddFiltroInc(data) { dpMakeFilterRow(INC_TIPOS, data || null, document.getElementById('dpFiltrosInc')); }
+function dpAddFiltroExc(data) { dpMakeFilterRow(EXC_TIPOS, data || null, document.getElementById('dpFiltrosExc')); }
 
 function dpAddAcao(data) {
     const cont = document.getElementById('dpAcoes');
@@ -883,21 +1017,56 @@ function dpAddAcao(data) {
     cont.appendChild(div);
 }
 
-// ── Preview ───────────────────────────────────────────────────────────────────
+// ── Preview badge + contatos ──────────────────────────────────────────────────
 function dpAtualizarPreview() {
     clearTimeout(dpPreviewTimer);
     dpPreviewTimer = setTimeout(async () => {
         const badge = document.getElementById('dpPreviewBadge');
+        const fj = JSON.stringify(dpColetarFiltros());
         badge.textContent = '…';
-        const fd = new FormData();
-        fd.append('acao', 'preview');
-        fd.append('filtros_json', JSON.stringify(dpColetarFiltros()));
+        const fd = new FormData(); fd.append('acao','preview'); fd.append('filtros_json', fj);
         try {
-            const r = await fetch('disparos.php', {method:'POST', body:fd});
-            const j = await r.json();
+            const j = await (await fetch('disparos.php', {method:'POST',body:fd})).json();
             badge.textContent = j.ok ? `${j.total} leads` : '?';
+            document.getElementById('dpPreviewContatosCount').textContent = j.ok ? `${j.total} contatos` : '?';
         } catch { badge.textContent = '?'; }
+        if (dpPreviewContatosOpen) dpCarregarPreviewContatos();
     }, 600);
+}
+
+function dpTogglePreviewContatos() {
+    const body  = document.getElementById('dpPreviewBody');
+    const arrow = document.getElementById('dpPreviewArrow');
+    dpPreviewContatosOpen = !dpPreviewContatosOpen;
+    body.classList.toggle('open', dpPreviewContatosOpen);
+    arrow.textContent = dpPreviewContatosOpen ? '▼' : '▶';
+    if (dpPreviewContatosOpen) dpCarregarPreviewContatos();
+}
+
+async function dpCarregarPreviewContatos() {
+    const cont = document.getElementById('dpPreviewContatosContent');
+    cont.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px">Carregando…</div>';
+    const fd = new FormData(); fd.append('acao','preview_contatos'); fd.append('filtros_json', JSON.stringify(dpColetarFiltros()));
+    try {
+        const j = await (await fetch('disparos.php', {method:'POST',body:fd})).json();
+        if (!j.ok) { cont.innerHTML = `<div style="padding:12px;color:#f87171;font-size:12px">Erro: ${dpEsc(j.msg||'?')}</div>`; return; }
+        if (!j.data.length) { cont.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px">Nenhum contato encontrado com estes filtros.</div>'; return; }
+        cont.innerHTML = `<table class="dp-preview-table">
+            <thead><tr>
+                <th>Nome</th><th>E-mail</th><th>Telefone</th>
+                <th>Turma</th><th>Último cadastro</th><th>Inscrições</th>
+            </tr></thead>
+            <tbody>${j.data.map(u => `<tr>
+                <td>${dpEsc(u.nome||'—')}</td>
+                <td style="color:#60a5fa">${dpEsc(u.email||'—')}</td>
+                <td>${dpEsc(u.telefone||'—')}</td>
+                <td>${dpEsc(u.ultima_turma||'—')}</td>
+                <td style="font-size:11px">${dpEsc(u.ultimo_cadastro ? u.ultimo_cadastro.slice(0,16) : '—')}</td>
+                <td style="text-align:center">${u.qtd_inscricoes||0}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+        ${j.data.length === 50 ? '<div style="padding:6px 10px;font-size:11px;color:var(--text-muted)">Mostrando primeiros 50 contatos</div>' : ''}`;
+    } catch(e) { cont.innerHTML = `<div style="padding:12px;color:#f87171;font-size:12px">Erro: ${e.message}</div>`; }
 }
 
 // ── Coleta de dados do form ───────────────────────────────────────────────────
@@ -905,14 +1074,14 @@ function dpColetarFiltros() {
     const inc = [];
     document.querySelectorAll('#dpFiltrosInc .filter-row').forEach(row => {
         const tipo  = row.querySelector('select')?.value || '';
-        const vEl   = row.querySelector('input') || row.querySelectorAll('select')[1];
+        const vEl   = row.querySelectorAll('select')[1] || row.querySelector('input');
         const valor = vEl ? vEl.value : '';
         if (tipo) inc.push({tipo, valor});
     });
     const exc = [];
     document.querySelectorAll('#dpFiltrosExc .filter-row').forEach(row => {
         const tipo  = row.querySelector('select')?.value || '';
-        const vEl   = row.querySelector('input') || row.querySelectorAll('select')[1];
+        const vEl   = row.querySelectorAll('select')[1] || row.querySelector('input');
         const valor = vEl ? vEl.value : '';
         if (tipo) exc.push({tipo, valor});
     });
@@ -929,20 +1098,28 @@ function dpColetarAcoes() {
     return acoes;
 }
 
+function dpColetarDias() {
+    return Array.from(document.querySelectorAll('.dp-dia:checked')).map(cb => cb.value).join(',');
+}
+
 // ── Salvar ────────────────────────────────────────────────────────────────────
 async function dpSalvar(retornaId) {
     const nome = document.getElementById('dpNome').value.trim();
     if (!nome) { alert('Informe um nome para o disparo'); return null; }
 
     const fd = new FormData();
-    fd.append('acao',          'salvar');
-    fd.append('id',            document.getElementById('dpId').value);
-    fd.append('nome',          nome);
-    fd.append('tipo',          document.getElementById('dpTipo').value);
-    fd.append('agendado_em',   document.getElementById('dpAgendadoEm').value);
-    fd.append('intervalo_seg', document.getElementById('dpIntervaloSeg').value);
-    fd.append('filtros_json',  JSON.stringify(dpColetarFiltros()));
-    fd.append('acoes_json',    JSON.stringify(dpColetarAcoes()));
+    fd.append('acao',           'salvar');
+    fd.append('id',             document.getElementById('dpId').value);
+    fd.append('nome',           nome);
+    fd.append('tipo',           document.getElementById('dpTipo').value);
+    fd.append('agendado_em',    document.getElementById('dpAgendadoEm').value);
+    fd.append('intervalo_ms',   document.getElementById('dpIntervaloMs').value);
+    fd.append('filtros_json',   JSON.stringify(dpColetarFiltros()));
+    fd.append('acoes_json',     JSON.stringify(dpColetarAcoes()));
+    fd.append('horario_ativo',  document.getElementById('dpHorarioAtivo').checked ? 1 : 0);
+    fd.append('horario_inicio', document.getElementById('dpHorarioInicio').value);
+    fd.append('horario_fim',    document.getElementById('dpHorarioFim').value);
+    fd.append('dias_semana',    dpColetarDias());
 
     const r = await fetch('disparos.php', {method:'POST', body:fd});
     const j = await r.json();
@@ -960,9 +1137,48 @@ async function dpSalvarExecutar() {
     dpIniciarDisparo(id);
 }
 
+// ── Janela de horário ─────────────────────────────────────────────────────────
+function dpDentroDoHorario(disparo) {
+    if (!parseInt(disparo.horario_ativo || 0)) return true;
+    const now  = new Date();
+    const dow  = now.getDay(); // 0=dom
+    const dias = (disparo.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
+    if (!dias.includes(dow)) return false;
+    const hm   = now.getHours() * 60 + now.getMinutes();
+    const ini  = dpHmToMin(disparo.horario_inicio || '00:00');
+    const fim  = dpHmToMin(disparo.horario_fim    || '23:59');
+    return hm >= ini && hm <= fim;
+}
+
+function dpHmToMin(hm) {
+    const [h, m] = hm.split(':').map(Number);
+    return h * 60 + (m || 0);
+}
+
+function dpProximoHorario(disparo) {
+    const ini = disparo.horario_inicio || '08:00';
+    const dias = (disparo.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
+    const now  = new Date();
+    for (let i = 0; i < 8; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() + i);
+        if (dias.includes(d.getDay())) return `${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()]} às ${ini}`;
+    }
+    return ini;
+}
+
 // ── Execução progressiva ──────────────────────────────────────────────────────
 async function dpIniciarDisparo(id) {
+    // Buscar dados do disparo para verificar janela de horário
+    let disparo = {};
+    try {
+        const r = await fetch(`disparos.php?acao=get&id=${id}`);
+        const j = await r.json();
+        if (j.ok) disparo = j.data;
+    } catch(e) {}
+
     dpFecharForm();
+    dpExecutando = true;
     document.getElementById('dpProgressTitle').textContent = 'Disparando…';
     document.getElementById('dpProgressSub').textContent   = 'Preparando…';
     document.getElementById('dpProgressBar').style.width   = '0%';
@@ -974,22 +1190,38 @@ async function dpIniciarDisparo(id) {
 
     let offset = 0;
     let totalEnv = 0, totalErr = 0, totalGeral = null;
+    const intervaloMs = Math.max(0, parseInt(disparo.intervalo_ms || 0));
 
-    while (true) {
+    while (dpExecutando) {
+        // Verificar janela de horário antes de cada lote
+        if (!dpDentroDoHorario(disparo)) {
+            const prox = dpProximoHorario(disparo);
+            document.getElementById('dpProgressTitle').textContent = 'Aguardando horário…';
+            document.getElementById('dpProgressSub').textContent   = `Fora da faixa de envio. Próximo: ${prox}`;
+            // Aguardar 60s e tentar novamente
+            await new Promise(res => setTimeout(res, 60000));
+            if (!dpExecutando) break;
+            continue;
+        }
+
         const fd = new FormData();
         fd.append('acao',   'executar_batch');
         fd.append('id',     id);
         fd.append('offset', offset);
         let j;
         try {
+            document.getElementById('dpProgressTitle').textContent = 'Executando…';
             const r = await fetch('disparos.php', {method:'POST', body:fd});
             j = await r.json();
         } catch (e) {
             document.getElementById('dpProgressSub').textContent = 'Erro de rede: ' + e.message;
+            document.getElementById('dpProgressClose').style.display = '';
             break;
         }
         if (!j.ok) {
-            document.getElementById('dpProgressSub').textContent = 'Erro: ' + (j.msg||'desconhecido');
+            document.getElementById('dpProgressTitle').textContent = 'Erro';
+            document.getElementById('dpProgressSub').textContent = j.msg || 'Erro desconhecido';
+            document.getElementById('dpProgressClose').style.display = '';
             break;
         }
         if (j.total !== null && j.total !== undefined) totalGeral = j.total;
@@ -1007,6 +1239,7 @@ async function dpIniciarDisparo(id) {
         }
 
         if (j.done) {
+            dpExecutando = false;
             document.getElementById('dpProgressTitle').textContent = 'Concluído!';
             document.getElementById('dpProgressSub').textContent   = `${totalEnv} enviados, ${totalErr} erros`;
             document.getElementById('dpProgressBar').style.width   = '100%';
@@ -1014,9 +1247,16 @@ async function dpIniciarDisparo(id) {
             dpCarregarLista();
             break;
         }
-        // Intervalo entre batches (não bloqueia o browser)
-        await new Promise(res => setTimeout(res, 300));
+        await new Promise(res => setTimeout(res, Math.max(300, intervaloMs)));
     }
+}
+
+function dpPararDisparo() {
+    dpExecutando = false;
+    document.getElementById('dpProgressTitle').textContent = 'Pausado';
+    document.getElementById('dpProgressSub').textContent   = 'Disparo pausado pelo usuário';
+    document.getElementById('dpProgressClose').style.display = '';
+    dpCarregarLista();
 }
 
 function dpFecharModal() {
