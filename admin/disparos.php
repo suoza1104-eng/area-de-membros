@@ -151,12 +151,12 @@ if ($acao !== '') {
                     }
                     break;
                 case 'tem_cert':
-                    if (dpTableExists($pdo, 'certificados'))
-                        $incClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificates'))
+                        $incClauses[] = "EXISTS(SELECT 1 FROM certificates c WHERE c.user_id = u.id)";
                     break;
                 case 'nao_tem_cert':
-                    if (dpTableExists($pdo, 'certificados'))
-                        $incClauses[] = "NOT EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificates'))
+                        $incClauses[] = "NOT EXISTS(SELECT 1 FROM certificates c WHERE c.user_id = u.id)";
                     break;
                 case 'evento_webhook':
                     if (!empty($regra['valor'])) {
@@ -173,8 +173,8 @@ if ($acao !== '') {
             $tipo = $regra['tipo'] ?? '';
             switch ($tipo) {
                 case 'tem_cert':
-                    if (dpTableExists($pdo, 'certificados'))
-                        $excClauses[] = "EXISTS(SELECT 1 FROM certificados c WHERE c.user_id = u.id)";
+                    if (dpTableExists($pdo, 'certificates'))
+                        $excClauses[] = "EXISTS(SELECT 1 FROM certificates c WHERE c.user_id = u.id)";
                     break;
                 case 'tag_sf':
                     if (!empty($regra['valor'])) {
