@@ -22,68 +22,27 @@ function dt_local_value(?string $dbValue): string {
     return date('Y-m-d\TH:i', $ts);
 }
 
-// ===================== CLONE =====================
-if (isset($_GET['clone'])) {
-    $srcId = (int)$_GET['clone'];
-    try {
-        $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
-        $st->execute([':id' => $srcId]);
-        $src = $st->fetch(PDO::FETCH_ASSOC);
-        if ($src) {
-            // Determine new codigo
-            $baseCode = (string)$src['codigo'];
-            // Strip existing _COPIA or _COPIA_N suffix
-            $baseCodigo = preg_replace('/_COPIA(_\d+)?$/', '', $baseCode);
-            // Find a unique codigo
-            $newCodigo = $baseCodigo . '_COPIA';
-            $suffix = 1;
-            while (true) {
-                $check = $pdo->prepare("SELECT id FROM turmas WHERE codigo = :c LIMIT 1");
-                $check->execute([':c' => $newCodigo]);
-                if (!$check->fetchColumn()) break;
-                $suffix++;
-                $newCodigo = $baseCodigo . '_COPIA_' . $suffix;
-            }
-
-            // Build INSERT from all columns except id, created_at, live_disparada, live_disparo_data
-            $allCols = $pdo->query("SHOW COLUMNS FROM turmas")->fetchAll(PDO::FETCH_ASSOC);
-            $skipCols = ['id', 'created_at', 'live_disparada', 'live_disparo_data'];
-            $insertCols = [];
-            $insertVals = [];
-            $insertParams = [];
-            foreach ($allCols as $col) {
-                $name = (string)$col['Field'];
-                if (in_array($name, $skipCols, true)) continue;
-                $insertCols[] = "`$name`";
-                if ($name === 'codigo') {
-                    $insertVals[] = ':_codigo';
-                    $insertParams[':_codigo'] = $newCodigo;
-                } else {
-                    $key = ':_' . $name;
-                    $insertVals[] = $key;
-                    $insertParams[$key] = $src[$name] ?? null;
-                }
-            }
-            // Add back the skipped cols with new values
-            if (col_exists($pdo, 'turmas', 'created_at')) {
-                $insertCols[] = '`created_at`';
-                $insertVals[] = 'NOW()';
-            }
-            if (col_exists($pdo, 'turmas', 'live_disparada')) {
-                $insertCols[] = '`live_disparada`';
-                $insertVals[] = '0';
-            }
-            if (col_exists($pdo, 'turmas', 'live_disparo_data')) {
-                $insertCols[] = '`live_disparo_data`';
-                $insertVals[] = 'NULL';
-            }
-
-            $sql = "INSERT INTO turmas (" . implode(', ', $insertCols) . ") VALUES (" . implode(', ', $insertVals) . ")";
-            $pdo->prepare($sql)->execute($insertParams);
+// ===================== CLONE (pré-preenche formulário) =====================
+$cloneFill = null;
+if (isset($_GET['clone_fill'])) {
+    $srcId = (int)$_GET['clone_fill'];
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $srcId]);
+    $src = $st->fetch(PDO::FETCH_ASSOC);
+    if ($src) {
+        $baseCodigo = preg_replace('/_COPIA(_\d+)?$/', '', (string)$src['codigo']);
+        $newCodigo  = $baseCodigo . '_COPIA';
+        $suffix = 1;
+        while (true) {
+            $chk = $pdo->prepare("SELECT id FROM turmas WHERE codigo = :c LIMIT 1");
+            $chk->execute([':c' => $newCodigo]);
+            if (!$chk->fetchColumn()) break;
+            $newCodigo = $baseCodigo . '_COPIA_' . (++$suffix);
         }
-    } catch (Throwable $e) {}
-    header('Location: turmas.php');
-    exit;
+        $cloneFill = $src;
+        $cloneFill['codigo'] = $newCodigo;
+        $cloneFill['id']     = 0; // força criação nova
+    }
 }
 
 // ===================== SAVE =====================
@@ -176,6 +135,8 @@ if (isset($_GET['edit'])) {
     $st->execute([':id' => (int)$_GET['edit']]);
     $edit = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
+// Clone pré-preenche como nova turma
+if ($cloneFill) $edit = $cloneFill;
 
 $turmas = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -210,11 +171,19 @@ include __DIR__ . '/_header.php';
 
 <!-- ===== FORM ===== -->
 <div class="card">
-    <h4 style="margin:0 0 4px 0;"><?= $edit ? 'Editar turma' : 'Nova turma' ?></h4>
-    <p style="margin:0 0 16px 0;font-size:12px;color:var(--muted);">Campos básicos da turma. Webhook e SF configuram-se nas páginas dedicadas.</p>
+    <?php
+    $isEdit  = $edit && (int)($edit['id'] ?? 0) > 0;
+    $isClone = $cloneFill !== null;
+    ?>
+    <h4 style="margin:0 0 4px 0;">
+        <?= $isClone ? 'Clonar turma — revise e salve' : ($isEdit ? 'Editar turma' : 'Nova turma') ?>
+    </h4>
+    <p style="margin:0 0 16px 0;font-size:12px;color:var(--muted);">
+        <?= $isClone ? 'Dados pré-preenchidos da turma original. Ajuste o código e as datas antes de criar.' : 'Campos básicos da turma. Webhook e SF configuram-se nas páginas dedicadas.' ?>
+    </p>
 
     <form method="post" id="form-turma">
-        <input type="hidden" name="id" value="<?= (int)($edit['id'] ?? 0) ?>">
+        <input type="hidden" name="id" value="<?= $isEdit ? (int)$edit['id'] : 0 ?>">
 
         <!-- Identificação -->
         <p class="section-label">Identificação</p>
@@ -263,9 +232,13 @@ include __DIR__ . '/_header.php';
 
         <!-- Ações -->
         <div style="margin-top:18px;display:flex;gap:10px;align-items:center;">
-            <button class="btn" type="submit"><?= $edit ? 'Salvar alterações' : 'Criar turma' ?></button>
-            <?php if ($edit): ?>
+            <button class="btn" type="submit">
+                <?= $isClone ? 'Criar turma clonada' : ($isEdit ? 'Salvar alterações' : 'Criar turma') ?>
+            </button>
+            <?php if ($isEdit || $isClone): ?>
                 <a class="btn-secondary" href="turmas.php">Cancelar</a>
+            <?php endif; ?>
+            <?php if ($isEdit): ?>
                 <a class="btn-secondary" href="webhooks.php?live_edit=<?= (int)$edit['id'] ?>" style="margin-left:4px;">⚙️ Webhook</a>
                 <a class="btn-secondary" href="superfuncionario.php?sf_edit=<?= (int)$edit['id'] ?>" style="margin-left:4px;">⚙️ SF</a>
             <?php endif; ?>
@@ -338,7 +311,7 @@ include __DIR__ . '/_header.php';
                 </td>
                 <td style="white-space:nowrap;">
                     <a href="?edit=<?= (int)$t['id'] ?>" class="btn-sm">Editar</a>
-                    <a href="?clone=<?= (int)$t['id'] ?>" class="btn-sm" onclick="return confirm('Clonar esta turma?')">Clonar</a>
+                    <a href="?clone_fill=<?= (int)$t['id'] ?>" class="btn-sm">Clonar</a>
                     <a href="webhooks.php?live_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ Webhook</a>
                     <a href="superfuncionario.php?sf_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ SF</a>
                     <a href="?del=<?= (int)$t['id'] ?>" class="btn-sm btn-danger-sm" onclick="return confirm('Remover turma?')">Remover</a>
@@ -352,5 +325,9 @@ include __DIR__ . '/_header.php';
 </div>
 
 </div><!-- /.page-turmas -->
+
+<?php if ($cloneFill): ?>
+<script>document.getElementById('form-turma').scrollIntoView({behavior:'smooth',block:'start'});</script>
+<?php endif; ?>
 
 <?php include __DIR__ . '/_footer.php'; ?>
