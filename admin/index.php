@@ -217,6 +217,47 @@ try {
     $turmas = [];
 }
 
+// Codigo da turma selecionada (para filtros em inscricao_logs.codigo_turma)
+$codigoTurmaSel = '';
+if ($turmaId > 0) {
+    foreach ($turmas as $t) {
+        if ((int)$t['id'] === $turmaId) { $codigoTurmaSel = (string)$t['codigo']; break; }
+    }
+}
+
+// ── Métricas de inscrições x reinscrições (respeita filtros) ──
+$novosInsc      = 0;
+$reinscritos    = 0;
+$totalInscEvts  = 0;
+$uniqUsersInsc  = 0;
+$freqMedia      = 0.0;
+try {
+    $whIL  = [];
+    $prIL  = [];
+    if ($dataDe  !== '') { $whIL[] = 'il.created_at >= :il_de';  $prIL['il_de']  = $dataDe . ' 00:00:00'; }
+    if ($dataAte !== '') { $whIL[] = 'il.created_at <= :il_ate'; $prIL['il_ate'] = $dataAte . ' 23:59:59'; }
+    if ($codigoTurmaSel !== '') { $whIL[] = 'il.codigo_turma = :il_ct'; $prIL['il_ct'] = $codigoTurmaSel; }
+    $whIlSql = $whIL ? ('WHERE ' . implode(' AND ', $whIL)) : '';
+
+    $stIL = $pdo->prepare("
+        SELECT
+            SUM(CASE WHEN il.is_novo = 1 THEN 1 ELSE 0 END) AS novos,
+            SUM(CASE WHEN il.is_novo = 0 THEN 1 ELSE 0 END) AS reins,
+            COUNT(*) AS total_evts,
+            COUNT(DISTINCT il.user_id) AS uniq_users
+        FROM inscricao_logs il
+        $whIlSql
+    ");
+    $stIL->execute($prIL);
+    $rowIL = $stIL->fetch(PDO::FETCH_ASSOC) ?: [];
+    $novosInsc     = (int)($rowIL['novos']      ?? 0);
+    $reinscritos   = (int)($rowIL['reins']      ?? 0);
+    $totalInscEvts = (int)($rowIL['total_evts'] ?? 0);
+    $uniqUsersInsc = (int)($rowIL['uniq_users'] ?? 0);
+    $freqMedia     = $uniqUsersInsc > 0 ? round($totalInscEvts / $uniqUsersInsc, 2) : 0.0;
+} catch (Throwable $e) { /* tabela inexistente: deixa zero */ }
+$pctReinsc = $totalInscEvts > 0 ? round($reinscritos / $totalInscEvts * 100, 1) : 0;
+
 // ========================
 // 4) DADOS DO DASHBOARD
 // ========================
@@ -541,6 +582,59 @@ include __DIR__ . '/_header.php';
         <div class="kpi-value"><?= number_format($estagioFull) ?></div>
         <div class="kpi-sub"><?= $pctConclusao ?>% do total</div>
     </div>
+
+    <div class="kpi" style="border-color:rgba(168,85,247,.3)">
+        <div class="kpi-icon" style="background:rgba(168,85,247,.15);color:#a855f7">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+        </div>
+        <div class="kpi-label">Frequência média</div>
+        <div class="kpi-value"><?= number_format($freqMedia, 2, ',', '.') ?>x</div>
+        <div class="kpi-sub">inscrições por aluno</div>
+    </div>
+</div>
+
+<!-- CHARTS: Novos vs Reinscritos -->
+<div class="grid-2 mb-4">
+    <div class="panel">
+        <div class="panel-title">Novos vs Reinscritos</div>
+        <?php if ($totalInscEvts > 0): ?>
+            <canvas id="chartReinsc" style="max-height:220px"></canvas>
+            <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#38bdf8;display:inline-block"></span>
+                    <span><strong><?= number_format($novosInsc) ?></strong> novos (<?= 100 - $pctReinsc ?>%)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#a855f7;display:inline-block"></span>
+                    <span><strong><?= number_format($reinscritos) ?></strong> reinscritos (<?= $pctReinsc ?>%)</span>
+                </div>
+            </div>
+        <?php else: ?>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhuma inscrição no período</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Resumo de inscrições</div>
+        <div style="display:flex;flex-direction:column;gap:14px;padding:8px 4px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Total de eventos de inscrição</span>
+                <strong style="font-size:20px"><?= number_format($totalInscEvts) ?></strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Alunos únicos que se inscreveram</span>
+                <strong style="font-size:20px"><?= number_format($uniqUsersInsc) ?></strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Frequência média</span>
+                <strong style="font-size:20px;color:#a855f7"><?= number_format($freqMedia, 2, ',', '.') ?>x</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:13px;color:var(--muted)">% de reinscrições</span>
+                <strong style="font-size:20px;color:#a855f7"><?= $pctReinsc ?>%</strong>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- CHARTS ROW 1: Inscrições + Estágios -->
@@ -748,6 +842,40 @@ include __DIR__ . '/_header.php';
                 responsive: true, maintainAspectRatio: false,
                 plugins: {
                     legend: { labels: { color: '#94a3b8', font: { size: 12 }, padding: 14 } }
+                },
+                cutout: '65%'
+            }
+        });
+    }
+
+    // Novos vs Reinscritos
+    var cReinsc = document.getElementById('chartReinsc');
+    if (cReinsc) {
+        new Chart(cReinsc, {
+            type: 'doughnut',
+            data: {
+                labels: ['Novos', 'Reinscritos'],
+                datasets: [{
+                    data: [<?= $novosInsc ?>, <?= $reinscritos ?>],
+                    backgroundColor: ['rgba(56,189,248,.8)', 'rgba(168,85,247,.8)'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                                var pct = total > 0 ? Math.round(ctx.parsed / total * 100) : 0;
+                                return ctx.label + ': ' + ctx.parsed.toLocaleString('pt-BR') + ' (' + pct + '%)';
+                            }
+                        }
+                    }
                 },
                 cutout: '65%'
             }

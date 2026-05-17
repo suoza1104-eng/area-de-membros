@@ -103,7 +103,8 @@ $hooks = $pdo->query("SELECT * FROM webhooks ORDER BY id DESC")->fetchAll(PDO::F
 // Grupos de eventos
 $eventGroups = [
     'Aluno' => [
-        'INSCRITO'             => ['label' => 'Aluno inscrito',                'desc' => 'Disparado quando um novo aluno se cadastra na área de membros.', 'extra' => 'user.id, user.nome, user.email, user.telefone'],
+        'INSCRITO'             => ['label' => 'Aluno inscrito (novo)',         'desc' => 'Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.', 'extra' => 'extra.codigo_turma, extra.data_live, extra.qtd_inscricoes (=1), extra.primeira_inscricao, extra.eh_reinscrito (=0)'],
+        'REINSCRITO'           => ['label' => 'Aluno re-inscreveu',            'desc' => 'Disparado quando um aluno já existente se inscreve novamente. Útil para tratar pessoas que já passaram pelo funil.', 'extra' => 'extra.codigo_turma, extra.qtd_inscricoes, extra.primeira_inscricao, extra.data_inscricao_anterior, extra.turma_anterior, extra.eh_reinscrito (=1)'],
         'ASSISTIU_ALGUMA_AULA' => ['label' => 'Assistiu alguma aula',          'desc' => 'Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.', 'extra' => 'user.id, user.nome, extra.lesson_id'],
         'CONCLUIU_TRILHA'      => ['label' => 'Concluiu a trilha',             'desc' => 'Disparado quando o aluno finaliza todas as aulas obrigatórias.', 'extra' => 'user.id, user.nome'],
     ],

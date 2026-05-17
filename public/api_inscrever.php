@@ -308,6 +308,52 @@ try {
 
     api_flush_and_continue();
 
+    // ── Enriquece extras com histórico de inscrições ─────────────────────
+    $qtdInscricoes     = 0;
+    $primeiraInscricao = null;
+    $dataInscAnterior  = null;
+    $turmaAnterior     = null;
+    try {
+        $qtdSt = $pdo->prepare("SELECT COUNT(*), MIN(created_at) FROM inscricao_logs WHERE user_id = :uid");
+        $qtdSt->execute([':uid' => $user_id]);
+        $row = $qtdSt->fetch(PDO::FETCH_NUM);
+        if ($row) {
+            $qtdInscricoes     = (int)$row[0];
+            $primeiraInscricao = $row[1] ?: null;
+        }
+        if ($qtdInscricoes > 1) {
+            // pega a penúltima (a anterior à que acabou de ser registrada)
+            $antSt = $pdo->prepare("
+                SELECT created_at, codigo_turma
+                FROM inscricao_logs
+                WHERE user_id = :uid
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            ");
+            $antSt->execute([':uid' => $user_id]);
+            $ant = $antSt->fetch(PDO::FETCH_ASSOC);
+            if ($ant) {
+                $dataInscAnterior = $ant['created_at'] ?: null;
+                $turmaAnterior    = $ant['codigo_turma'] ?: null;
+            }
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao enriquecer extras', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
+
+    $extras = [
+        'codigo_turma'             => $codigo_turma,
+        'codigo_live'              => $codigo_turma,
+        'data_live'                => $data_live,
+        'qtd_inscricoes'           => $qtdInscricoes,
+        'primeira_inscricao'       => $primeiraInscricao,
+        'data_inscricao_anterior'  => $dataInscAnterior,
+        'turma_anterior'           => $turmaAnterior,
+        'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
+    ];
+
     // tarefas secundárias depois da resposta
     if ($foi_cadastrado) {
         try {
@@ -343,11 +389,7 @@ try {
 
         try {
             if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('INSCRITO', $user_id, [
-                    'codigo_turma' => $codigo_turma,
-                    'codigo_live'  => $codigo_turma,
-                    'data_live'    => $data_live,
-                ]);
+                disparar_webhooks('INSCRITO', $user_id, $extras);
             }
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao disparar webhooks INSCRITO', [
@@ -357,11 +399,44 @@ try {
             ]);
         }
     } else {
-        api_safe_log('info', 'api_inscrever', 'Inscricao recebida (usuario já existe)', [
+        // ── RE-INSCRIÇÃO ─────────────────────────────────────────────────
+        try {
+            if (function_exists('adicionar_tag')) {
+                adicionar_tag($user_id, 'REINSCRITO', 'reinscricao', null);
+            }
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao adicionar tag REINSCRITO', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
+        }
+
+        if ($codigo_turma) {
+            try {
+                if (function_exists('adicionar_tag')) {
+                    adicionar_tag($user_id, 'REINSCRITO_TURMA_' . $codigo_turma, 'reinscricao', null);
+                }
+            } catch (Throwable $e) {
+                api_safe_log('warning', 'api_inscrever', 'Falha ao adicionar tag REINSCRITO turma', [
+                    'user_id' => $user_id, 'codigo_turma' => $codigo_turma, 'erro' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        api_safe_log('info', 'api_inscrever', 'Reinscricao recebida', [
             'user_id' => $user_id,
             'turma' => $codigo_turma,
-            'payload' => $data,
+            'qtd' => $qtdInscricoes,
         ]);
+
+        try {
+            if (function_exists('disparar_webhooks')) {
+                disparar_webhooks('REINSCRITO', $user_id, $extras);
+            }
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao disparar webhooks REINSCRITO', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
+        }
     }
 
     exit;

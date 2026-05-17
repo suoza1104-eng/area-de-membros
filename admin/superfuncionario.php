@@ -19,7 +19,8 @@ sf_ensure_tables($pdo);
 
 // ===== eventos (mesmos do Webhooks) =====
 $eventOptions = [
-    'INSCRITO'              => 'Aluno se cadastrou na área de membros',
+    'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
+    'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
     'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
@@ -50,12 +51,18 @@ $fieldOptions = [
         'user.email'    => 'Email',
         'user.telefone' => 'Telefone',
     ],
-    'Extra — INSCRITO / LIVE' => [
-        'extra.codigo_live'    => 'codigo_live',
-        'extra.data_live'      => 'data_live',
-        'extra.andamento'      => 'andamento (% conclusão)',
-        'extra.aulas_concluidas' => 'aulas_concluidas',
-        'extra.aulas_totais'   => 'aulas_totais',
+    'Extra — INSCRITO / REINSCRITO / LIVE' => [
+        'extra.codigo_turma'              => 'codigo_turma',
+        'extra.codigo_live'               => 'codigo_live',
+        'extra.data_live'                 => 'data_live',
+        'extra.qtd_inscricoes'            => 'qtd_inscricoes (total de inscrições do aluno)',
+        'extra.primeira_inscricao'        => 'primeira_inscricao (data da 1ª inscrição)',
+        'extra.data_inscricao_anterior'   => 'data_inscricao_anterior (penúltima inscrição)',
+        'extra.turma_anterior'            => 'turma_anterior (turma da inscrição anterior)',
+        'extra.eh_reinscrito'             => 'eh_reinscrito (0 = novo / 1 = reinscrito)',
+        'extra.andamento'                 => 'andamento (% conclusão — LIVE_TURMA)',
+        'extra.aulas_concluidas'          => 'aulas_concluidas (LIVE_TURMA)',
+        'extra.aulas_totais'              => 'aulas_totais (LIVE_TURMA)',
     ],
     'Extra — CERT_EMITIDO' => [
         'extra.pdf_url'           => 'pdf_url (link do certificado)',
@@ -71,7 +78,8 @@ $fieldOptions = [
 
 // hints por evento — exibidos dinamicamente no formulário
 $eventHints = [
-    'INSCRITO'           => 'Extras disponíveis: <code>extra.codigo_live</code>, <code>extra.data_live</code>',
+    'INSCRITO'           => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
+    'REINSCRITO'         => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
     'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
     'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
     'CERT_SENHA_ERRADA'  => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',
