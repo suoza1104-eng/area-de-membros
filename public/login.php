@@ -17,11 +17,33 @@ define('AM_TOKEN_DAYS', 400); // máximo suportado pelos browsers modernos
 try { $pdo->exec("ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL"); } catch (Throwable $e) {}
 
 // Helper centralizado: registra evento de login (qualquer caminho)
+// Em primeiro login: marca tag PRIMEIRO_LOGIN + dispara webhook
 function am_touch_login(PDO $pdo, int $userId): void {
     if ($userId <= 0) return;
     try {
+        // Detecta se é o primeiro login (last_login_at ainda nulo)
+        $st = $pdo->prepare("SELECT last_login_at FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $row = $st->fetch();
+        $primeiroLogin = $row && empty($row['last_login_at']);
+
+        // Atualiza timestamp
         $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
             ->execute([':id' => $userId]);
+
+        // Tag + evento — só no primeiro login
+        if ($primeiroLogin) {
+            try {
+                if (function_exists('adicionar_tag')) {
+                    adicionar_tag($userId, 'PRIMEIRO_LOGIN', 'login', null);
+                }
+            } catch (Throwable $e) {}
+            try {
+                if (function_exists('disparar_webhooks')) {
+                    disparar_webhooks('PRIMEIRO_LOGIN', $userId, []);
+                }
+            } catch (Throwable $e) {}
+        }
     } catch (Throwable $e) { /* coluna inexistente — migração no topo cria */ }
 }
 

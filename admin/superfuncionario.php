@@ -21,6 +21,7 @@ sf_ensure_tables($pdo);
 $eventOptions = [
     'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
     'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
+    'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
     'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
@@ -81,6 +82,7 @@ $fieldOptions = [
 $eventHints = [
     'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
     'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
+    'PRIMEIRO_LOGIN'     => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a plataforma. Tag PRIMEIRO_LOGIN aplicada automaticamente. Disponíveis: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.magic_link</code>',
     'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
     'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
     'CERT_SENHA_ERRADA'  => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',
@@ -598,6 +600,10 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="REINSCRITO">
                                         <strong>REINSCRITO <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado quando um aluno já existente se inscreve novamente.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="PRIMEIRO_LOGIN">
+                                        <strong>PRIMEIRO_LOGIN <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado UMA ÚNICA VEZ na primeira vez que o aluno acessa a plataforma.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="ASSISTIU_ALGUMA_AULA">
                                         <strong>ASSISTIU_ALGUMA_AULA <span class="ev-pill aluno">Aluno</span></strong>
