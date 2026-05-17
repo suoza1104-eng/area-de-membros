@@ -16,6 +16,17 @@ define('AM_TOKEN_DAYS', 400); // máximo suportado pelos browsers modernos
 // Garante a coluna last_login_at — usada pelo KPI "Logaram" do dashboard
 try { $pdo->exec("ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL"); } catch (Throwable $e) {}
 
+// Helper: destino após login (?next=path) — só aceita paths relativos seguros
+function am_resolve_next(): string {
+    $n = (string)($_GET['next'] ?? $_POST['next'] ?? '');
+    if ($n === '') return 'trilha.php';
+    // Bloqueia: URLs absolutas, // protocol-relative, .. (subir diretórios)
+    if (strpos($n, '://') !== false) return 'trilha.php';
+    if (strpos($n, '//') === 0)      return 'trilha.php';
+    if (strpos($n, '..') !== false)  return 'trilha.php';
+    return ltrim($n, '/');
+}
+
 // Log simples para diagnosticar login (gravado em /tmp ou logs PHP)
 function login_dbg(string $msg): void {
     $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . "\n";
@@ -183,7 +194,7 @@ if (!empty($_GET['am'])) {
                 try { am_set_token($pdo, $uid); }
                 catch (Throwable $e) { login_dbg('set_token fail: ' . $e->getMessage()); }
                 login_dbg('magic link OK, redirect uid=' . $uid);
-                header('Location: trilha.php');
+                header('Location: ' . am_resolve_next());
                 exit;
             }
         } catch (Throwable $e) {
@@ -211,7 +222,7 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
             $_SESSION['aluno_id'] = (int)$tokRow['user_id'];
             am_set_token($pdo, (int)$tokRow['user_id']); // renova
             am_touch_login($pdo, (int)$tokRow['user_id']);
-            header('Location: trilha.php');
+            header('Location: ' . am_resolve_next());
             exit;
         } else {
             setcookie('am_token', '', time() - 3600, '/');
@@ -220,7 +231,7 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
 }
 
 if (!empty($_SESSION['aluno_id'])) {
-    header('Location: trilha.php');
+    header('Location: ' . am_resolve_next());
     exit;
 }
 
@@ -277,7 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'samesite' => 'Lax',
             ]);
 
-            header('Location: trilha.php');
+            header('Location: ' . am_resolve_next());
             exit;
         }
     }
@@ -557,6 +568,9 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
         <?php endif; ?>
 
         <form method="post" action="">
+            <?php if (!empty($_GET['next'])): ?>
+            <input type="hidden" name="next" value="<?= h((string)$_GET['next']) ?>">
+            <?php endif; ?>
             <div class="form-group">
                 <label class="form-label" for="email">E-mail</label>
                 <input type="email" id="email" name="email"

@@ -8,7 +8,13 @@ require_once __DIR__ . '/superfuncionario_dispatcher.php';
 
 function proteger_aluno(): void {
     if (empty($_SESSION['aluno_id'])) {
-        header('Location: ' . BASE_URL . '/login.php');
+        $next = '';
+        $reqUri = $_SERVER['REQUEST_URI'] ?? '';
+        // só aceita paths relativos dentro do próprio site (evita open redirect)
+        if ($reqUri !== '' && strpos($reqUri, '://') === false) {
+            $next = '?next=' . urlencode(ltrim($reqUri, '/'));
+        }
+        header('Location: ' . BASE_URL . '/login.php' . $next);
         exit;
     }
 }
