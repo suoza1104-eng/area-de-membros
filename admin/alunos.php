@@ -115,6 +115,27 @@ if ($fTag !== '') {
     $where[]       = "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON t2.id = ut2.tag_id WHERE ut2.user_id = u.id AND t2.nome LIKE :tag)";
     $params[':tag']= '%' . $fTag . '%';
 }
+
+// Filtros estruturados: tag_is[] e tag_not[]
+$tagsIs  = array_values(array_filter(array_map('trim', (array)($_GET['tag_is']  ?? []))));
+$tagsNot = array_values(array_filter(array_map('trim', (array)($_GET['tag_not'] ?? []))));
+foreach ($tagsIs as $i => $tg) {
+    $k = ':tg_is_' . $i;
+    $where[]   = "EXISTS (SELECT 1 FROM user_tags utI$i JOIN tags tI$i ON tI$i.id = utI$i.tag_id WHERE utI$i.user_id = u.id AND tI$i.nome = $k)";
+    $params[$k] = $tg;
+}
+foreach ($tagsNot as $i => $tg) {
+    $k = ':tg_not_' . $i;
+    $where[]   = "NOT EXISTS (SELECT 1 FROM user_tags utN$i JOIN tags tN$i ON tN$i.id = utN$i.tag_id WHERE utN$i.user_id = u.id AND tN$i.nome = $k)";
+    $params[$k] = $tg;
+}
+$temFiltroTagStruct = !empty($tagsIs) || !empty($tagsNot);
+
+// Lista todas as tags disponíveis (para o dropdown)
+$todasTags = [];
+try {
+    $todasTags = $pdo->query("SELECT nome FROM tags ORDER BY nome ASC")->fetchAll(PDO::FETCH_COLUMN);
+} catch (Throwable $e) {}
 if ($fDateFrom !== '' && $colCreated !== '') {
     $where[]           = "u.`$colCreated` >= :dfrom";
     $params[':dfrom']  = $fDateFrom . ' 00:00:00';
@@ -198,6 +219,62 @@ require __DIR__ . '/_header.php';
 .filter-toggle-btn:hover { border-color:var(--border-light); color:var(--text); background:var(--bg-hover); }
 .filter-toggle-btn.ativo { border-color:rgba(250,204,21,.4); color:var(--primary); background:var(--primary-dim); }
 
+/* ── Tag picker ── */
+.tag-picker {
+    border: 1px solid var(--border); border-radius: var(--r-md);
+    background: var(--bg-input, #0f172a); padding: 4px;
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    min-height: 32px;
+}
+.tag-chips { display: contents; }
+.tag-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 4px 2px 8px; border-radius: 999px;
+    background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.35);
+    color: #4ade80; font-size: 11px; font-weight: 600; font-family: var(--font);
+}
+.tag-chip.is-not {
+    background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35);
+    color: #f87171;
+}
+.tag-chip .tc-op {
+    background: rgba(255,255,255,.08); border: none; color: inherit;
+    font-size: 9px; font-weight: 700; cursor: pointer; padding: 2px 6px;
+    border-radius: 999px; font-family: var(--font); text-transform: uppercase;
+    letter-spacing: .04em;
+}
+.tag-chip .tc-op:hover { background: rgba(255,255,255,.15); }
+.tag-chip .tc-rm {
+    background: none; border: none; color: inherit; font-size: 13px; cursor: pointer;
+    line-height: 1; padding: 0 4px; opacity: .7;
+}
+.tag-chip .tc-rm:hover { opacity: 1; }
+.tag-add-btn {
+    background: none; border: 1px dashed var(--border); color: var(--muted);
+    border-radius: 999px; padding: 4px 10px; cursor: pointer; font-size: 11px;
+    font-family: var(--font);
+}
+.tag-add-btn:hover { border-color: var(--primary); color: var(--primary); }
+.tag-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    margin-top: 4px; padding: 6px; z-index: 50;
+    max-height: 280px; overflow: hidden; display: flex; flex-direction: column;
+}
+.tag-dropdown input {
+    background: var(--bg-input,#0f172a); border: 1px solid var(--border);
+    border-radius: var(--r-sm); color: var(--text); padding: 5px 8px;
+    font-size: 12px; margin-bottom: 6px; font-family: var(--font);
+}
+.tag-list { overflow-y: auto; max-height: 220px; }
+.tag-list-item {
+    padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer;
+    font-size: 12px; color: var(--text);
+}
+.tag-list-item:hover, .tag-list-item.focused { background: var(--bg-hover); color: var(--primary); }
+.tag-list-empty { padding: 8px; color: var(--muted); font-size: 11px; text-align: center; }
+
 /* ── Tabela ───────────────────────────────────────────────── */
 .al-table { width:100%; border-collapse:collapse; font-size:13px; }
 .al-table thead th {
@@ -279,13 +356,26 @@ require __DIR__ . '/_header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="filter-group" style="min-width:140px">
-                <label>Tag</label>
-                <input type="text" name="tag" value="<?= h($fTag) ?>" placeholder="Ex: inscrito">
+            <div class="filter-group" style="min-width:240px;position:relative">
+                <label>Tags</label>
+                <div class="tag-picker" id="tagPicker">
+                    <div class="tag-chips" id="tagChips"></div>
+                    <button type="button" class="tag-add-btn" onclick="tpToggleDropdown(event)">
+                        <span id="tpAddLabel">+ Adicionar tag</span>
+                    </button>
+                    <div class="tag-dropdown" id="tagDropdown" style="display:none">
+                        <input type="text" id="tpSearch" placeholder="Buscar tag..." oninput="tpRenderList()" onkeydown="tpKey(event)">
+                        <div class="tag-list" id="tpList"></div>
+                    </div>
+                </div>
+                <div id="tagHidden"></div>
+                <?php if ($fTag !== ''): ?>
+                <input type="hidden" name="tag" value="<?= h($fTag) ?>">
+                <?php endif; ?>
             </div>
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
-                <?php if ($q||$fTurma||$fTag||$temFiltroUtm||$temFiltroData): ?>
+                <?php if ($q||$fTurma||$fTag||$temFiltroTagStruct||$temFiltroUtm||$temFiltroData): ?>
                 <a href="alunos.php" class="reset-link">Limpar</a>
                 <?php endif; ?>
             </div>
@@ -565,6 +655,93 @@ function togglePanel(id, btn) {
     el.classList.toggle('open');
     btn.classList.toggle('ativo', el.classList.contains('open'));
 }
+
+// ── Tag Picker ───────────────────────────────────────────────────────────────
+const ALL_TAGS = <?= json_encode($todasTags, JSON_UNESCAPED_UNICODE) ?>;
+const TAG_INIT_IS  = <?= json_encode($tagsIs,  JSON_UNESCAPED_UNICODE) ?>;
+const TAG_INIT_NOT = <?= json_encode($tagsNot, JSON_UNESCAPED_UNICODE) ?>;
+let tpSelected = []; // [{nome, op: 'is'|'not'}, ...]
+
+function tpInit() {
+    TAG_INIT_IS.forEach(n => tpSelected.push({nome:n, op:'is'}));
+    TAG_INIT_NOT.forEach(n => tpSelected.push({nome:n, op:'not'}));
+    tpRenderChips();
+}
+function tpRenderChips() {
+    const cont = document.getElementById('tagChips');
+    cont.innerHTML = tpSelected.map((t, i) => {
+        const label = t.op === 'is' ? 'É' : 'NÃO É';
+        const cls   = t.op === 'is' ? '' : 'is-not';
+        return `<span class="tag-chip ${cls}">
+            <button type="button" class="tc-op" onclick="tpToggleOp(${i})" title="Clique para inverter">${label}</button>
+            <span>${tpEsc(t.nome)}</span>
+            <button type="button" class="tc-rm" onclick="tpRemove(${i})" title="Remover">×</button>
+        </span>`;
+    }).join('');
+    tpRenderHidden();
+}
+function tpRenderHidden() {
+    const cont = document.getElementById('tagHidden');
+    cont.innerHTML = tpSelected.map(t => {
+        const name = t.op === 'is' ? 'tag_is[]' : 'tag_not[]';
+        return `<input type="hidden" name="${name}" value="${tpEsc(t.nome)}">`;
+    }).join('');
+}
+function tpToggleOp(i) {
+    if (!tpSelected[i]) return;
+    tpSelected[i].op = tpSelected[i].op === 'is' ? 'not' : 'is';
+    tpRenderChips();
+}
+function tpRemove(i) {
+    tpSelected.splice(i, 1);
+    tpRenderChips();
+}
+function tpToggleDropdown(ev) {
+    ev && ev.stopPropagation();
+    const d = document.getElementById('tagDropdown');
+    const open = d.style.display !== 'none';
+    d.style.display = open ? 'none' : 'flex';
+    if (!open) {
+        document.getElementById('tpSearch').value = '';
+        tpRenderList();
+        setTimeout(() => document.getElementById('tpSearch').focus(), 30);
+    }
+}
+function tpRenderList() {
+    const q = (document.getElementById('tpSearch').value || '').trim().toLowerCase();
+    const selectedNames = tpSelected.map(t => t.nome.toLowerCase());
+    const items = ALL_TAGS.filter(n =>
+        (!q || n.toLowerCase().includes(q)) &&
+        !selectedNames.includes(n.toLowerCase())
+    );
+    const list = document.getElementById('tpList');
+    if (!items.length) {
+        list.innerHTML = '<div class="tag-list-empty">' + (q ? 'Nenhuma tag encontrada' : 'Todas as tags já selecionadas') + '</div>';
+        return;
+    }
+    list.innerHTML = items.map(n => `<div class="tag-list-item" onclick="tpAdd('${tpEsc(n).replace(/'/g,"\\'")}')">${tpEsc(n)}</div>`).join('');
+}
+function tpAdd(nome) {
+    tpSelected.push({nome, op:'is'});
+    tpRenderChips();
+    document.getElementById('tpSearch').value = '';
+    tpRenderList();
+    setTimeout(() => document.getElementById('tpSearch').focus(), 10);
+}
+function tpKey(ev) {
+    if (ev.key === 'Escape') { tpToggleDropdown(); }
+}
+function tpEsc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// Fecha dropdown ao clicar fora
+document.addEventListener('click', function(ev) {
+    const p = document.getElementById('tagPicker');
+    if (p && !p.contains(ev.target)) {
+        document.getElementById('tagDropdown').style.display = 'none';
+    }
+});
+document.addEventListener('DOMContentLoaded', tpInit);
 function changeLimit(val) {
     document.getElementById('limit-hidden').value = val;
     document.getElementById('fform').submit();
