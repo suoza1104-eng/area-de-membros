@@ -13,6 +13,18 @@ function h(string $v): string {
 
 define('AM_TOKEN_DAYS', 400); // máximo suportado pelos browsers modernos
 
+// Garante a coluna last_login_at — usada pelo KPI "Logaram" do dashboard
+try { $pdo->exec("ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL"); } catch (Throwable $e) {}
+
+// Helper centralizado: registra evento de login (qualquer caminho)
+function am_touch_login(PDO $pdo, int $userId): void {
+    if ($userId <= 0) return;
+    try {
+        $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
+            ->execute([':id' => $userId]);
+    } catch (Throwable $e) { /* coluna inexistente — migração no topo cria */ }
+}
+
 function am_token_table(PDO $pdo): void {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS remember_tokens (
@@ -81,10 +93,7 @@ if (!empty($_GET['am'])) {
                     ->execute([':id' => (int)$ml['id']]);
                 // Define cookie de longa duração também
                 am_set_token($pdo, $uid);
-                try {
-                    $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
-                        ->execute(['id' => $uid]);
-                } catch (Throwable $e) {}
+                am_touch_login($pdo, $uid);
                 header('Location: trilha.php');
                 exit;
             }
@@ -110,10 +119,7 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
         if ($tokRow) {
             $_SESSION['aluno_id'] = (int)$tokRow['user_id'];
             am_set_token($pdo, (int)$tokRow['user_id']); // renova
-            try {
-                $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
-                    ->execute(['id' => (int)$tokRow['user_id']]);
-            } catch (Throwable $e) {}
+            am_touch_login($pdo, (int)$tokRow['user_id']);
             header('Location: trilha.php');
             exit;
         } else {
@@ -164,10 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
 
-            try {
-                $stUp = $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id");
-                $stUp->execute(['id' => $user['id']]);
-            } catch (Throwable $e) { /* não é crítico */ }
+            am_touch_login($pdo, (int)$user['id']);
 
             // Salva token de auto-login (renova a cada login)
             try {
