@@ -359,76 +359,89 @@ $liveOferta  = dash_count_live($pdo, 'oferta',  $whereUsers, $paramsUsers);
 $liveCompra  = dash_count_live($pdo, 'compra',  $whereUsers, $paramsUsers);
 
 // ── Dados para o gráfico comparativo POR TURMA ──
-// Computa cada métrica agrupada por turma_id, respeitando filtro de data
-$barTurmaData = [];
+// Detecta qual coluna em users referencia a turma
+$turmaCol = null;
 try {
+    if ($pdo->query("SHOW COLUMNS FROM users LIKE 'codigo_turma'")->fetch()) $turmaCol = 'codigo_turma';
+    elseif ($pdo->query("SHOW COLUMNS FROM users LIKE 'turma_id'")->fetch()) $turmaCol = 'turma_id';
+} catch (Throwable $e) {}
+
+$barTurmaData = [];
+if ($turmaCol) {
     $whereSemTurma = array_values(array_filter($whereUsers, fn($w) => strpos($w, 'turma_id') === false));
     $paramsSemTurma = $paramsUsers; unset($paramsSemTurma['turma_id']);
     $whereSemTurmaSql = $whereSemTurma ? (' WHERE ' . implode(' AND ', $whereSemTurma)) : '';
+    $extraWhere      = $whereSemTurma ? (' AND ' . implode(' AND ', $whereSemTurma)) : '';
 
     // Inscritos por turma
-    $sqlT = "SELECT u.turma_id AS tid, COUNT(*) AS n FROM users u $whereSemTurmaSql GROUP BY u.turma_id";
-    $st = $pdo->prepare($sqlT); $st->execute($paramsSemTurma);
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $tid = (int)$r['tid']; if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
-        $barTurmaData[$tid]['inscritos'] = (int)$r['n'];
-    }
+    try {
+        $sqlT = "SELECT u.`$turmaCol` AS tid, COUNT(*) AS n FROM users u $whereSemTurmaSql GROUP BY u.`$turmaCol`";
+        $st = $pdo->prepare($sqlT); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['inscritos'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
 
     // Logaram
-    $sqlL = "SELECT u.turma_id AS tid, COUNT(*) AS n FROM users u WHERE u.last_login_at IS NOT NULL"
-          . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
-          . " GROUP BY u.turma_id";
-    try { $st = $pdo->prepare($sqlL); $st->execute($paramsSemTurma);
+    try {
+        $sqlL = "SELECT u.`$turmaCol` AS tid, COUNT(*) AS n FROM users u WHERE u.last_login_at IS NOT NULL$extraWhere GROUP BY u.`$turmaCol`";
+        $st = $pdo->prepare($sqlL); $st->execute($paramsSemTurma);
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $tid = (int)$r['tid']; $barTurmaData[$tid]['logaram'] = (int)$r['n'];
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['logaram'] = (int)$r['n'];
         }
     } catch (Throwable $e) {}
 
     // Viram alguma aula
-    $sqlA = "SELECT u.turma_id AS tid, COUNT(DISTINCT u.id) AS n
-             FROM users u JOIN lesson_progress lp ON lp.user_id = u.id
-             WHERE lp.status = 'completed'"
-          . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
-          . " GROUP BY u.turma_id";
-    $st = $pdo->prepare($sqlA); $st->execute($paramsSemTurma);
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $tid = (int)$r['tid']; $barTurmaData[$tid]['aula'] = (int)$r['n'];
-    }
+    try {
+        $sqlA = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT u.id) AS n
+                 FROM users u JOIN lesson_progress lp ON lp.user_id = u.id
+                 WHERE lp.status = 'completed'$extraWhere GROUP BY u.`$turmaCol`";
+        $st = $pdo->prepare($sqlA); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['aula'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
 
     // LIVE: acessou / oferta / compra
     foreach (['acessou','oferta','compra'] as $tp) {
-        $sqlV = "SELECT u.turma_id AS tid, COUNT(DISTINCT ler.user_id) AS n
-                 FROM live_event_recebimentos ler
-                 JOIN live_events le ON le.id = ler.event_id
-                 JOIN users u ON u.id = ler.user_id
-                 WHERE ler.status='processado' AND ler.user_id IS NOT NULL AND le.tipo = :tipo"
-                . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
-                . " GROUP BY u.turma_id";
-        try { $st = $pdo->prepare($sqlV); $st->execute(array_merge([':tipo' => $tp], $paramsSemTurma));
+        try {
+            $sqlV = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT ler.user_id) AS n
+                     FROM live_event_recebimentos ler
+                     JOIN live_events le ON le.id = ler.event_id
+                     JOIN users u ON u.id = ler.user_id
+                     WHERE ler.status='processado' AND ler.user_id IS NOT NULL AND le.tipo = :tipo$extraWhere
+                     GROUP BY u.`$turmaCol`";
+            $st = $pdo->prepare($sqlV); $st->execute(array_merge([':tipo' => $tp], $paramsSemTurma));
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
-                $tid = (int)$r['tid']; $barTurmaData[$tid]['live_'.$tp] = (int)$r['n'];
+                $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+                $barTurmaData[$tid]['live_'.$tp] = (int)$r['n'];
             }
         } catch (Throwable $e) {}
     }
 
     // Certificados
     try {
-        $sqlC = "SELECT u.turma_id AS tid, COUNT(*) AS n
-                 FROM certificates c JOIN users u ON u.id = c.user_id"
-              . $whereSemTurmaSql . " GROUP BY u.turma_id";
+        $sqlC = "SELECT u.`$turmaCol` AS tid, COUNT(*) AS n
+                 FROM certificates c JOIN users u ON u.id = c.user_id $whereSemTurmaSql GROUP BY u.`$turmaCol`";
         $st = $pdo->prepare($sqlC); $st->execute($paramsSemTurma);
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $tid = (int)$r['tid']; $barTurmaData[$tid]['cert'] = (int)$r['n'];
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['cert'] = (int)$r['n'];
         }
     } catch (Throwable $e) {}
-} catch (Throwable $e) { /* tabelas inexistentes em instâncias parciais */ }
+}
 
-// Mapa id → label das turmas
+// Mapa de label das turmas — chaves: id (int) E codigo (string)
 $turmasLabel = [];
 foreach ($turmas as $t) {
-    $turmasLabel[(int)$t['id']] = (string)($t['codigo'] ?? $t['nome'] ?? ('Turma ' . $t['id']));
+    $label = (string)($t['codigo'] ?? $t['nome'] ?? ('Turma ' . $t['id']));
+    $turmasLabel[(string)$t['id']]     = $label;
+    if (!empty($t['codigo'])) $turmasLabel[(string)$t['codigo']] = $label;
 }
-$turmasLabel[0] = 'Sem turma';
+$turmasLabel[''] = 'Sem turma';
 
 $sqlFull = "
     SELECT u.id, COUNT(DISTINCT lp.lesson_id) AS qtd
@@ -863,9 +876,8 @@ include __DIR__ . '/_header.php';
 <?php endif; ?>
 
 <!-- ═══ LIVE: Funil exclusivo + cards ═══ -->
-<?php if ($liveAcessou > 0 || $liveOferta > 0 || $liveCompra > 0): ?>
 <div class="panel mb-4">
-    <div class="panel-title">Funil de Live</div>
+    <div class="panel-title">Funil de Live<?= ($liveAcessou + $liveOferta + $liveCompra) === 0 ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — configure eventos em Integrações → Eventos Live)</span>' : '' ?></div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
         <div class="kpi" style="border-color:rgba(96,165,250,.3)">
             <div class="kpi-icon" style="background:rgba(96,165,250,.15);color:#60a5fa">
@@ -913,13 +925,11 @@ include __DIR__ . '/_header.php';
         <?php endforeach; ?>
     </div>
 </div>
-<?php endif; ?>
 
 <!-- ═══ Comparativo POR TURMA (barras) ═══ -->
-<?php if (!empty($barTurmaData)): ?>
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span>Comparativo por turma</span>
+        <span>Comparativo por turma<?= empty($barTurmaData) ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — verifique se há turmas com inscritos no período)</span>' : '' ?></span>
         <span style="font-size:11px;color:var(--muted);font-weight:400">selecione turmas e modo (qtd ou %)</span>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
@@ -933,7 +943,6 @@ include __DIR__ . '/_header.php';
     </div>
     <canvas id="chartBarTurmas" style="max-height:380px"></canvas>
 </div>
-<?php endif; ?>
 
 <!-- TABLE: Detalhamento das aulas -->
 <?php if ($funil): ?>
@@ -1073,7 +1082,7 @@ include __DIR__ . '/_header.php';
     // ── Gráfico comparativo por turma ────────────────────────────────────
     const BAR_TURMA_DATA  = <?= json_encode($barTurmaData, JSON_UNESCAPED_UNICODE) ?>;
     const TURMAS_LABEL    = <?= json_encode($turmasLabel,  JSON_UNESCAPED_UNICODE) ?>;
-    const TURMA_FILTRADA  = <?= (int)$turmaId ?>;
+    const TURMA_FILTRADA  = <?= json_encode((string)$turmaId) ?>;
     const BAR_STAGES = [
         {key:'inscritos', label:'Inscritos',  color:'#facc15'},
         {key:'logaram',   label:'Logaram',    color:'#a855f7'},
@@ -1090,18 +1099,21 @@ include __DIR__ . '/_header.php';
     function btInit() {
         const picker = document.getElementById('turmasPicker');
         if (!picker) return;
-        const turmaIds = Object.keys(BAR_TURMA_DATA).map(Number).sort((a,b)=>{
+        const turmaIds = Object.keys(BAR_TURMA_DATA).sort((a,b)=>{
             return (BAR_TURMA_DATA[b].inscritos||0) - (BAR_TURMA_DATA[a].inscritos||0);
         });
-        if (!turmaIds.length) return;
+        if (!turmaIds.length) {
+            picker.innerHTML += '<span style="color:var(--muted);font-size:12px;padding:8px">Nenhuma turma com inscritos no período.</span>';
+            return;
+        }
         // Pré-seleciona top 3 turmas com mais inscritos OU a turma filtrada
-        if (TURMA_FILTRADA > 0 && BAR_TURMA_DATA[TURMA_FILTRADA]) {
+        if (TURMA_FILTRADA && BAR_TURMA_DATA[TURMA_FILTRADA]) {
             btSelectedTurmas = [TURMA_FILTRADA];
         } else {
             btSelectedTurmas = turmaIds.slice(0, Math.min(3, turmaIds.length));
         }
         turmaIds.forEach(tid => {
-            const label = TURMAS_LABEL[tid] || ('Turma ' + tid);
+            const label = TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid));
             const sel = btSelectedTurmas.includes(tid);
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -1150,7 +1162,7 @@ include __DIR__ . '/_header.php';
             });
             const hue = (idx * 47 + 200) % 360;
             return {
-                label: TURMAS_LABEL[tid] || ('Turma ' + tid),
+                label: TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid)),
                 data,
                 backgroundColor: `hsla(${hue},75%,60%,.7)`,
                 borderColor:     `hsla(${hue},75%,55%,1)`,
