@@ -18,9 +18,13 @@ $turmaCodigo = (string)($_SESSION['turma_codigo'] ?? '');
 $turmaLiveAt = null;
 
 try {
-    $stUser = $pdo->prepare("SELECT turma_codigo, turma_live_at FROM users WHERE id = :id LIMIT 1");
+    $stUser = $pdo->prepare("SELECT nome, turma_codigo, turma_live_at FROM users WHERE id = :id LIMIT 1");
     $stUser->execute(['id' => $alunoId]);
     if ($rowUser = $stUser->fetch(PDO::FETCH_ASSOC)) {
+        if (!empty($rowUser['nome'])) {
+            $alunoNome = (string)$rowUser['nome'];
+            $_SESSION['aluno_nome'] = $alunoNome;
+        }
         if (!empty($rowUser['turma_codigo']) && $turmaCodigo === '') {
             $turmaCodigo = (string)$rowUser['turma_codigo'];
         }
@@ -29,6 +33,10 @@ try {
         }
     }
 } catch (Throwable $e) {}
+
+// Usa só o primeiro nome no cabeçalho (mais pessoal)
+$primeiroNome = trim((string)preg_split('/\s+/', trim($alunoNome))[0] ?? '');
+if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
 $aluno = ['id' => $alunoId, 'nome' => $alunoNome, 'turma_codigo' => $turmaCodigo];
 
@@ -716,7 +724,7 @@ width: 100%;
             <div class="course-texts">
                 <div class="course-title"><?= h($courseTitle) ?></div>
                 <div class="course-sub">
-                    Bem-vindo, <?= h($aluno['nome'] ?? 'Aluno') ?>
+                    Bem-vindo, <strong><?= h($primeiroNome) ?></strong>
                 </div>
             </div>
         </div>
@@ -734,7 +742,7 @@ width: 100%;
                         Sua aula ao vivo será: <strong><?= h($liveDataBr) ?></strong>
                     </div>
                     <div class="live-line-secondary" id="live-countdown-text">
-                        Faltam -- horas -- minutos -- segundos
+                        Faltam -- dias -- horas -- minutos -- segundos
                     </div>
                 </div>
             </div>
@@ -997,16 +1005,18 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const totalSeconds = Math.floor(diff / 1000);
-        const totalHours   = Math.floor(totalSeconds / 3600);
+        const days         = Math.floor(totalSeconds / 86400);
+        const hours        = Math.floor((totalSeconds % 86400) / 3600);
         const mins         = Math.floor((totalSeconds % 3600) / 60);
         const secs         = totalSeconds % 60;
 
         if (elText) {
-            elText.textContent =
-                'Faltam ' +
-                totalHours.toString() + ' horas ' +
-                mins.toString().padStart(2,'0') + ' minutos ' +
-                secs.toString().padStart(2,'0') + ' segundos';
+            const parts = [];
+            if (days > 0) parts.push(days + ' ' + (days === 1 ? 'dia' : 'dias'));
+            parts.push(hours.toString().padStart(2,'0') + ' ' + (hours === 1 ? 'hora' : 'horas'));
+            parts.push(mins.toString().padStart(2,'0') + ' ' + (mins === 1 ? 'minuto' : 'minutos'));
+            parts.push(secs.toString().padStart(2,'0') + ' ' + (secs === 1 ? 'segundo' : 'segundos'));
+            elText.textContent = 'Faltam ' + parts.join(' ');
         }
     }
 
