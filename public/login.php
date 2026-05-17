@@ -16,35 +16,73 @@ define('AM_TOKEN_DAYS', 400); // máximo suportado pelos browsers modernos
 // Garante a coluna last_login_at — usada pelo KPI "Logaram" do dashboard
 try { $pdo->exec("ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL"); } catch (Throwable $e) {}
 
+// Log simples para diagnosticar login (gravado em /tmp ou logs PHP)
+function login_dbg(string $msg): void {
+    $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . "\n";
+    $f = __DIR__ . '/../uploads/login_debug.log';
+    try { @file_put_contents($f, $line, FILE_APPEND | LOCK_EX); } catch (Throwable $e) {}
+}
+
+// Endpoint de diagnóstico: /login.php?dbg_login=email@dominio.com
+if (!empty($_GET['dbg_login'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $email = (string)$_GET['dbg_login'];
+    $info  = ['email' => $email];
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM users LIKE 'last_login_at'")->fetchAll(PDO::FETCH_ASSOC);
+        $info['column_last_login_at_existe'] = !empty($cols);
+    } catch (Throwable $e) { $info['column_err'] = $e->getMessage(); }
+    try {
+        $st = $pdo->prepare("SELECT id, nome, email, last_login_at, created_at FROM users WHERE email = :e LIMIT 1");
+        $st->execute([':e' => $email]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        $info['user'] = $row ?: null;
+        if ($row) {
+            $tgs = $pdo->prepare("SELECT t.nome FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = :u");
+            $tgs->execute([':u' => (int)$row['id']]);
+            $info['tags'] = array_column($tgs->fetchAll(PDO::FETCH_ASSOC), 'nome');
+            $ml = $pdo->prepare("SELECT id, token, expires_at, used_at, one_shot, created_at FROM magic_links WHERE user_id = :u ORDER BY id DESC LIMIT 5");
+            $ml->execute([':u' => (int)$row['id']]);
+            $info['magic_links_recentes'] = $ml->fetchAll(PDO::FETCH_ASSOC);
+        }
+    } catch (Throwable $e) { $info['err'] = $e->getMessage(); }
+    $info['debug_log_path'] = realpath(__DIR__ . '/../uploads/login_debug.log') ?: '(arquivo não existe ainda)';
+    echo json_encode($info, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 // Helper centralizado: registra evento de login (qualquer caminho)
 // Em primeiro login: marca tag PRIMEIRO_LOGIN + dispara webhook
 function am_touch_login(PDO $pdo, int $userId): void {
-    if ($userId <= 0) return;
+    if ($userId <= 0) { login_dbg('touch_login uid=0, skip'); return; }
     try {
-        // Detecta se é o primeiro login (last_login_at ainda nulo)
         $st = $pdo->prepare("SELECT last_login_at FROM users WHERE id = :id LIMIT 1");
         $st->execute([':id' => $userId]);
         $row = $st->fetch();
         $primeiroLogin = $row && empty($row['last_login_at']);
+        login_dbg('touch_login uid=' . $userId . ' primeiro=' . ($primeiroLogin ? 'sim' : 'nao') . ' last_atual=' . ($row['last_login_at'] ?? 'null'));
 
-        // Atualiza timestamp
         $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
             ->execute([':id' => $userId]);
+        login_dbg('touch_login UPDATE feito uid=' . $userId);
 
-        // Tag + evento — só no primeiro login
         if ($primeiroLogin) {
             try {
                 if (function_exists('adicionar_tag')) {
-                    adicionar_tag($userId, 'PRIMEIRO_LOGIN', 'login', null);
+                    $ok = adicionar_tag($userId, 'PRIMEIRO_LOGIN', 'login', null);
+                    login_dbg('add_tag PRIMEIRO_LOGIN uid=' . $userId . ' result=' . ($ok ? 'ok' : 'falhou'));
+                } else {
+                    login_dbg('adicionar_tag NAO existe');
                 }
-            } catch (Throwable $e) {}
+            } catch (Throwable $e) { login_dbg('add_tag erro: ' . $e->getMessage()); }
             try {
                 if (function_exists('disparar_webhooks')) {
                     disparar_webhooks('PRIMEIRO_LOGIN', $userId, []);
+                    login_dbg('webhook PRIMEIRO_LOGIN disparado uid=' . $userId);
                 }
-            } catch (Throwable $e) {}
+            } catch (Throwable $e) { login_dbg('webhook erro: ' . $e->getMessage()); }
         }
-    } catch (Throwable $e) { /* coluna inexistente — migração no topo cria */ }
+    } catch (Throwable $e) { login_dbg('touch_login ERRO: ' . $e->getMessage()); }
 }
 
 function am_token_table(PDO $pdo): void {
@@ -83,9 +121,9 @@ function am_set_token(PDO $pdo, int $userId): void {
 // para garantir que o login fique registrado (last_login_at).
 if (!empty($_GET['am'])) {
     $tok = preg_replace('/[^a-f0-9]/i', '', (string)$_GET['am']);
+    login_dbg('magic link recebido, token_len=' . strlen($tok));
     if (strlen($tok) === 64) {
         try {
-            // Garante tabela (caso o link seja clicado antes de gerar_magic_link rodar)
             $pdo->exec("
                 CREATE TABLE IF NOT EXISTS magic_links (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -107,19 +145,21 @@ if (!empty($_GET['am'])) {
             ");
             $stML->execute([':t' => $tok]);
             $ml = $stML->fetch();
+            login_dbg('magic link lookup: ' . ($ml ? 'achou uid=' . $ml['user_id'] : 'nao achou'));
             if ($ml && !((int)$ml['one_shot'] === 1 && !empty($ml['used_at']))) {
                 $uid = (int)$ml['user_id'];
                 $_SESSION['aluno_id'] = $uid;
-                // Marca como usado
                 $pdo->prepare("UPDATE magic_links SET used_at = NOW() WHERE id = :id")
                     ->execute([':id' => (int)$ml['id']]);
-                // Define cookie de longa duração também
                 am_set_token($pdo, $uid);
                 am_touch_login($pdo, $uid);
+                login_dbg('magic link OK, redirect uid=' . $uid);
                 header('Location: trilha.php');
                 exit;
             }
-        } catch (Throwable $e) { /* fallback: segue para tela normal */ }
+        } catch (Throwable $e) {
+            login_dbg('magic link ERRO: ' . $e->getMessage());
+        }
     }
 }
 
