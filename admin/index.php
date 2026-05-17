@@ -192,6 +192,13 @@ $dataDe  = trim($_GET['data_de']  ?? '');
 $dataAte = trim($_GET['data_ate'] ?? '');
 $turmaId = (int)($_GET['turma_id'] ?? 0);
 
+// Detecta coluna de turma no users (varia entre instâncias)
+$turmaColTop = null;
+try {
+    if ($pdo->query("SHOW COLUMNS FROM users LIKE 'codigo_turma'")->fetch()) $turmaColTop = 'codigo_turma';
+    elseif ($pdo->query("SHOW COLUMNS FROM users LIKE 'turma_id'")->fetch()) $turmaColTop = 'turma_id';
+} catch (Throwable $e) {}
+
 $whereUsers  = [];
 $paramsUsers = [];
 
@@ -203,18 +210,36 @@ if ($dataAte !== '') {
     $whereUsers[]            = 'u.created_at <= :data_ate';
     $paramsUsers['data_ate'] = $dataAte . ' 23:59:59';
 }
-if ($turmaId > 0) {
-    $whereUsers[]            = 'u.turma_id = :turma_id';
-    $paramsUsers['turma_id'] = $turmaId;
+// Filtro por turma — se a coluna é codigo_turma, faz lookup do codigo
+if ($turmaId > 0 && $turmaColTop) {
+    $turmaCodigoSel = '';
+    if ($turmaColTop === 'codigo_turma') {
+        try {
+            $stT = $pdo->prepare("SELECT codigo FROM turmas WHERE id = :id LIMIT 1");
+            $stT->execute([':id' => $turmaId]);
+            $turmaCodigoSel = (string)($stT->fetchColumn() ?: '');
+        } catch (Throwable $e) {}
+        if ($turmaCodigoSel !== '') {
+            $whereUsers[]               = "u.`codigo_turma` = :turma_codigo";
+            $paramsUsers['turma_codigo'] = $turmaCodigoSel;
+        }
+    } else {
+        $whereUsers[]            = "u.`$turmaColTop` = :turma_id";
+        $paramsUsers['turma_id'] = $turmaId;
+    }
 }
 
 $whereUsersSql = $whereUsers ? ('WHERE ' . implode(' AND ', $whereUsers)) : '';
 
 $turmas = [];
 try {
-    $turmas = $pdo->query("SELECT id, codigo, nome FROM turmas ORDER BY codigo ASC")->fetchAll();
+    // Tenta com nome (instâncias antigas)
+    $turmas = $pdo->query("SELECT id, codigo, nome FROM turmas ORDER BY codigo DESC")->fetchAll();
 } catch (Throwable $e) {
-    $turmas = [];
+    // Fallback sem nome
+    try {
+        $turmas = $pdo->query("SELECT id, codigo, '' AS nome FROM turmas ORDER BY codigo DESC")->fetchAll();
+    } catch (Throwable $e2) { $turmas = []; }
 }
 
 // Codigo da turma selecionada (para filtros em inscricao_logs.codigo_turma)
@@ -368,8 +393,11 @@ try {
 
 $barTurmaData = [];
 if ($turmaCol) {
-    $whereSemTurma = array_values(array_filter($whereUsers, fn($w) => strpos($w, 'turma_id') === false));
-    $paramsSemTurma = $paramsUsers; unset($paramsSemTurma['turma_id']);
+    $whereSemTurma = array_values(array_filter($whereUsers, function($w) {
+        return strpos($w, 'turma_id') === false && strpos($w, 'codigo_turma') === false;
+    }));
+    $paramsSemTurma = $paramsUsers;
+    unset($paramsSemTurma['turma_id'], $paramsSemTurma['turma_codigo']);
     $whereSemTurmaSql = $whereSemTurma ? (' WHERE ' . implode(' AND ', $whereSemTurma)) : '';
     $extraWhere      = $whereSemTurma ? (' AND ' . implode(' AND ', $whereSemTurma)) : '';
 
