@@ -32,7 +32,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','alunos','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','disparos','live_events','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -677,7 +677,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -717,6 +717,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <circle cx="12" cy="12" r="9"/>
       </svg>
       Eventos Live
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['inbound_webhooks']): ?>
+    <a href="inbound_webhooks.php" class="sb-item <?= $currentMenu === 'inbound_webhooks' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Entrada (Webhooks)
     </a>
     <?php endif; ?>
 
