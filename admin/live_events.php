@@ -275,11 +275,17 @@ require_once __DIR__ . '/_header.php';
       </div>
 
       <div class="form-row">
-        <label>Mapeamento do payload <span style="color:var(--text-muted);font-weight:400">(de → para)</span></label>
+        <label>Mapeamento do payload</label>
+        <div style="display:flex;gap:6px;font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;padding:0 4px">
+          <span style="flex:1">Campo interno (nosso sistema)</span>
+          <span style="width:24px"></span>
+          <span style="flex:1">Campo enviado pela ferramenta externa</span>
+          <span style="width:32px"></span>
+        </div>
         <div id="leMap"></div>
         <button type="button" onclick="leAddMap()" style="background:none;border:1px dashed var(--border);color:var(--text-muted);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:11px;margin-top:4px">+ Adicionar mapeamento</button>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
-          Define como os campos do payload externo mapeiam para os campos internos. Padrão: nome→nome, email→email, telefone→telefone.
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;background:#14142a;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+          <strong style="color:#60a5fa">Como funciona:</strong> O sistema procura o aluno pelo <strong>email</strong> ou <strong>telefone</strong> vindos no payload externo. Se a ferramenta envia <code>{"email":"x@x.com"}</code>, o padrão (<code>email ← email</code>) já funciona. Se ela envia algo como <code>{"user_email":"x@x.com"}</code>, ajuste para <code>email ← user_email</code>.
         </div>
       </div>
 
@@ -387,9 +393,9 @@ function leAddMap(from, to) {
     const div = document.createElement('div');
     div.className = 'map-row';
     div.innerHTML = `
-        <input type="text" value="${esc(from||'')}" placeholder="campo interno (nome)" class="map-from">
-        <span style="color:var(--text-muted)">←</span>
-        <input type="text" value="${esc(to||'')}" placeholder="campo no payload externo" class="map-to">
+        <input type="text" value="${esc(from||'')}" placeholder="nome | email | telefone" class="map-from" title="Campo interno do nosso sistema">
+        <span style="color:var(--text-muted);font-size:14px">←</span>
+        <input type="text" value="${esc(to||'')}" placeholder="chave no JSON externo" class="map-to" title="Nome do campo no payload que a ferramenta externa envia">
         <button type="button" onclick="this.parentNode.remove()" style="background:none;border:1px solid #553;color:#f87171;border-radius:4px;padding:3px 8px;cursor:pointer">×</button>
     `;
     cont.appendChild(div);
