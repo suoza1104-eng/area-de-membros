@@ -216,6 +216,8 @@ $senhaVideoUrl     = trim((string)($certCfg['senha_video_url']          ?? ''));
 $senhaVideoEnabled = !empty($certCfg['senha_video_enabled']  ?? 0) || $senhaVideoUrl !== '';
 $erroVideoUrl      = trim((string)($certCfg['senha_error_video_url']    ?? ''));
 $erroVideoEnabled  = !empty($certCfg['senha_error_video_enabled'] ?? 0) || $erroVideoUrl !== '';
+$incompletoVideoUrl     = trim((string)($certCfg['incompleto_video_url']     ?? ''));
+$incompletoVideoEnabled = !empty($certCfg['incompleto_video_enabled'] ?? 0) || $incompletoVideoUrl !== '';
 
 function normalizar_video_url(string $url): string {
     $url = trim($url);
@@ -487,7 +489,7 @@ function normalizar_video_url(string $url): string {
                     <?= h($btnLabel) ?>
                 </a>
             </div>
-        <?php else: ?>
+        <?php elseif ($temTudoConcluido): ?>
             <form method="post" action="" id="certForm">
                 <div class="form-group">
                     <label class="form-label" for="senha_certificado">Senha do certificado</label>
@@ -500,7 +502,17 @@ function normalizar_video_url(string $url): string {
             </form>
         <?php endif; ?>
 
-        <?php if ($etapa === 'form' && $introVideoEnabled && $introVideoUrl !== ''): ?>
+        <?php if ($etapa === 'form' && !$temTudoConcluido && $incompletoVideoEnabled && $incompletoVideoUrl !== ''): ?>
+            <div class="video-box">
+                <div class="video-inner">
+                    <?php if (stripos($incompletoVideoUrl, '<iframe') !== false): ?>
+                        <?= $incompletoVideoUrl ?>
+                    <?php else: ?>
+                        <iframe src="<?= h(normalizar_video_url($incompletoVideoUrl)) ?>" title="Vídeo trilha incompleta" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php elseif ($etapa === 'form' && $temTudoConcluido && $introVideoEnabled && $introVideoUrl !== ''): ?>
             <div class="video-box">
                 <div class="video-inner">
                     <?php if (stripos($introVideoUrl, '<iframe') !== false): ?>

@@ -20,6 +20,8 @@ foreach ([
     "ALTER TABLE certificate_config ADD COLUMN senha_mode VARCHAR(20) NOT NULL DEFAULT 'fixa'",
     "ALTER TABLE certificate_config ADD COLUMN senha_fixa VARCHAR(255) NOT NULL DEFAULT ''",
     "ALTER TABLE certificate_config ADD COLUMN senha_partes_fixas TEXT NULL",
+    "ALTER TABLE certificate_config ADD COLUMN incompleto_video_enabled TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE certificate_config ADD COLUMN incompleto_video_url VARCHAR(500) NOT NULL DEFAULT ''",
 ] as $ddl) {
     try { $pdo->exec($ddl); } catch (Throwable $e) {}
 }
@@ -47,6 +49,8 @@ $config = array_merge([
     'senha_video_url'           => '',
     'senha_error_video_enabled' => 0,
     'senha_error_video_url'     => '',
+    'incompleto_video_enabled'  => 0,
+    'incompleto_video_url'      => '',
     'certificado_button_label'  => 'Quero receber meu certificado',
     'certificado_button_link'   => '',
     'senha_tipo'                => 'unica',
@@ -79,6 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $senhaVideoUrl          = trim($_POST['senha_video_url'] ?? '');
         $senhaErrorVideoEnabled = isset($_POST['senha_error_video_enabled']) ? 1 : 0;
         $senhaErrorVideoUrl     = trim($_POST['senha_error_video_url'] ?? '');
+        $incompletoVideoEnabled = isset($_POST['incompleto_video_enabled']) ? 1 : 0;
+        $incompletoVideoUrl     = trim($_POST['incompleto_video_url'] ?? '');
 
         $btnLabel   = trim($_POST['certificado_button_label'] ?? '');
         $btnLink    = trim($_POST['certificado_button_link'] ?? '');
@@ -123,6 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 senha_video_url              = :senha_video_url,
                 senha_error_video_enabled    = :senha_error_video_enabled,
                 senha_error_video_url        = :senha_error_video_url,
+                incompleto_video_enabled     = :incompleto_video_enabled,
+                incompleto_video_url         = :incompleto_video_url,
                 certificado_button_label     = :certificado_button_label,
                 certificado_button_link      = :certificado_button_link,
                 senha_tipo                   = :senha_tipo,
@@ -144,6 +152,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ':senha_video_url'           => $senhaVideoUrl,
             ':senha_error_video_enabled' => $senhaErrorVideoEnabled,
             ':senha_error_video_url'     => $senhaErrorVideoUrl,
+            ':incompleto_video_enabled'  => $incompletoVideoEnabled,
+            ':incompleto_video_url'      => $incompletoVideoUrl,
             ':certificado_button_label'  => $btnLabel,
             ':certificado_button_link'   => $btnLink,
             ':senha_tipo'                => $senhaTipo,
@@ -688,6 +698,21 @@ if (!is_array($initPartes)) $initPartes = [];
                     <div class="spacer-sm"></div>
                     <label class="lbl">URL do vídeo (senha errada)</label>
                     <input type="url" name="senha_error_video_url" placeholder="https://www.youtube.com/embed/..." value="<?= h($config['senha_error_video_url'] ?? '') ?>">
+                </div>
+            </div>
+
+            <div class="spacer"></div>
+
+            <div class="grid-2">
+                <div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="incompleto_video_enabled" name="incompleto_video_enabled" <?= !empty($config['incompleto_video_enabled']) ? 'checked' : '' ?>>
+                        <label for="incompleto_video_enabled">Vídeo quando aluno não concluiu a trilha</label>
+                    </div>
+                    <div class="spacer-sm"></div>
+                    <label class="lbl">URL do vídeo (trilha incompleta)</label>
+                    <input type="url" name="incompleto_video_url" placeholder="https://www.youtube.com/embed/..." value="<?= h($config['incompleto_video_url'] ?? '') ?>">
+                    <div class="note">Exibido na tela do certificado para alunos que ainda não terminaram todas as aulas obrigatórias. O campo de senha fica oculto nesse caso.</div>
                 </div>
             </div>
         </div>
