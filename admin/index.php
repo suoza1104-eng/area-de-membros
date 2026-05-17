@@ -188,9 +188,15 @@ $pdo = getPDO();
 // ========================
 // 3) FILTROS (datas / turma)
 // ========================
+// Default: últimos 30 dias (só aplica quando não vier filtro algum, evita prender ao clicar "Limpar")
+$temFiltroNaUrl = isset($_GET['data_de']) || isset($_GET['data_ate']) || isset($_GET['turma_id']);
 $dataDe  = trim($_GET['data_de']  ?? '');
 $dataAte = trim($_GET['data_ate'] ?? '');
 $turmaId = (int)($_GET['turma_id'] ?? 0);
+if (!$temFiltroNaUrl) {
+    $dataDe  = date('Y-m-d', strtotime('-30 days'));
+    $dataAte = date('Y-m-d');
+}
 
 // Detecta coluna de turma no users (varia entre instâncias)
 $turmaColTop = null;
