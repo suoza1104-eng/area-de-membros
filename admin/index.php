@@ -328,6 +328,17 @@ $stmt = $pdo->prepare($sqlAlguma);
 $stmt->execute($paramsUsers);
 $alunosAlguma = (int)$stmt->fetchColumn();
 
+// Alunos que pelo menos logaram (last_login_at IS NOT NULL)
+$alunosLogaram = 0;
+try {
+    $sqlLog = "SELECT COUNT(*) FROM users u WHERE u.last_login_at IS NOT NULL";
+    if ($whereUsers) $sqlLog .= ' AND ' . implode(' AND ', $whereUsers);
+    $stmt = $pdo->prepare($sqlLog);
+    $stmt->execute($paramsUsers);
+    $alunosLogaram = (int)$stmt->fetchColumn();
+} catch (Throwable $e) { /* coluna pode não existir em instâncias antigas */ }
+$pctLogaram = $totalAlunos > 0 ? round($alunosLogaram / $totalAlunos * 100, 1) : 0;
+
 $sqlFull = "
     SELECT u.id, COUNT(DISTINCT lp.lesson_id) AS qtd
     FROM users u
@@ -565,11 +576,20 @@ include __DIR__ . '/_header.php';
         <div class="kpi-sub">emitidos</div>
     </div>
 
+    <div class="kpi" style="border-color:rgba(20,184,166,.3)">
+        <div class="kpi-icon" style="background:rgba(20,184,166,.15);color:#14b8a6">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </div>
+        <div class="kpi-label">Logaram</div>
+        <div class="kpi-value"><?= number_format($alunosLogaram) ?></div>
+        <div class="kpi-sub"><?= $pctLogaram ?>% acessaram a plataforma</div>
+    </div>
+
     <div class="kpi kpi-b">
         <div class="kpi-icon b">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </div>
-        <div class="kpi-label">Acessaram</div>
+        <div class="kpi-label">Viram aula</div>
         <div class="kpi-value"><?= number_format($alunosAlguma) ?></div>
         <div class="kpi-sub">viram pelo menos 1 aula</div>
     </div>
