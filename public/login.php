@@ -45,7 +45,9 @@ function am_set_token(PDO $pdo, int $userId): void {
 
 // ── Magic-link via URL (?am=<token>) ─────────────────────────────────────────
 // Aceita link direto do tipo /login.php?am=<token> — loga e redireciona.
-if (empty($_SESSION['aluno_id']) && !empty($_GET['am'])) {
+// Processa sempre que ?am= vier na URL, mesmo se já tiver sessão ativa,
+// para garantir que o login fique registrado (last_login_at).
+if (!empty($_GET['am'])) {
     $tok = preg_replace('/[^a-f0-9]/i', '', (string)$_GET['am']);
     if (strlen($tok) === 64) {
         try {
