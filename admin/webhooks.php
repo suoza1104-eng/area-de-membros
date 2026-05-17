@@ -119,6 +119,26 @@ $eventGroups = [
             'desc'  => 'Disparado para cada aluno da turma quando a data/hora de disparo configurada chega. Use para regras globais que valem para todas as turmas.',
             'extra' => 'extra.codigo_turma, extra.codigo_live, extra.data_live, extra.andamento, extra.aulas_concluidas, extra.aulas_totais',
         ],
+        'LIVE_ACESSOU' => [
+            'label' => 'Live — aluno acessou',
+            'desc'  => 'Disparado quando o sistema externo (Eventos Live) notifica que um aluno acessou a live. A tag configurada no evento é aplicada automaticamente.',
+            'extra' => 'extra.live_event_id, extra.live_event_nome, extra.live_event_tag, extra.payload_raw',
+        ],
+        'LIVE_OFERTA' => [
+            'label' => 'Live — ficou até a oferta',
+            'desc'  => 'Disparado quando o aluno permaneceu na live até o momento da oferta.',
+            'extra' => 'extra.live_event_id, extra.live_event_nome, extra.live_event_tag, extra.payload_raw',
+        ],
+        'LIVE_COMPRA' => [
+            'label' => 'Live — clicou na compra',
+            'desc'  => 'Disparado quando o aluno clicou no botão de compra durante a live.',
+            'extra' => 'extra.live_event_id, extra.live_event_nome, extra.live_event_tag, extra.payload_raw',
+        ],
+        'LIVE_EVENTO' => [
+            'label' => 'Live — evento customizado',
+            'desc'  => 'Disparado por eventos de live do tipo "Customizado".',
+            'extra' => 'extra.live_event_id, extra.live_event_nome, extra.live_event_tag, extra.payload_raw',
+        ],
     ],
 ];
 

@@ -27,6 +27,10 @@ $eventOptions = [
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
     'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
     'LIVE_TURMA'            => 'Disparo de live por turma (regra global)',
+    'LIVE_ACESSOU'          => 'Live — aluno acessou (via webhook externo)',
+    'LIVE_OFERTA'           => 'Live — ficou até a oferta',
+    'LIVE_COMPRA'           => 'Live — clicou na compra',
+    'LIVE_EVENTO'           => 'Live — evento customizado',
 ];
 
 // dinâmico por aula
@@ -626,6 +630,22 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="LIVE_TURMA">
                                         <strong>LIVE_TURMA <span class="ev-pill live">Live</span></strong>
                                         <em>Regra global: disparada para cada aluno da turma quando a data/hora de disparo chega.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_ACESSOU">
+                                        <strong>LIVE_ACESSOU <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno acessou a sala da live (via webhook externo configurado em "Eventos Live").</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_OFERTA">
+                                        <strong>LIVE_OFERTA <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno ficou até o momento da oferta.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_COMPRA">
+                                        <strong>LIVE_COMPRA <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno clicou no botão de compra durante a live.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_EVENTO">
+                                        <strong>LIVE_EVENTO <span class="ev-pill live">Live</span></strong>
+                                        <em>Evento customizado vindo de Eventos Live.</em>
                                     </div>
                                     <?php
                                     $hasLessons = false;
