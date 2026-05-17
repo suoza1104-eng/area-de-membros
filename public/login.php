@@ -23,6 +23,20 @@ function login_dbg(string $msg): void {
     try { @file_put_contents($f, $line, FILE_APPEND | LOCK_EX); } catch (Throwable $e) {}
 }
 
+// Endpoint para ler o log: /login.php?dbg_log=1
+if (!empty($_GET['dbg_log'])) {
+    header('Content-Type: text/plain; charset=utf-8');
+    $f = __DIR__ . '/../uploads/login_debug.log';
+    if (is_file($f)) {
+        $lines = file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        $tail  = array_slice($lines, -50);
+        echo implode("\n", $tail);
+    } else {
+        echo '(log file ainda não existe — clique em um magic link primeiro)';
+    }
+    exit;
+}
+
 // Endpoint de diagnóstico: /login.php?dbg_login=email@dominio.com
 if (!empty($_GET['dbg_login'])) {
     header('Content-Type: application/json; charset=utf-8');
@@ -149,10 +163,14 @@ if (!empty($_GET['am'])) {
             if ($ml && !((int)$ml['one_shot'] === 1 && !empty($ml['used_at']))) {
                 $uid = (int)$ml['user_id'];
                 $_SESSION['aluno_id'] = $uid;
-                $pdo->prepare("UPDATE magic_links SET used_at = NOW() WHERE id = :id")
-                    ->execute([':id' => (int)$ml['id']]);
-                am_set_token($pdo, $uid);
-                am_touch_login($pdo, $uid);
+                // Cada passo isolado para que uma falha não bloqueie os outros
+                try { $pdo->prepare("UPDATE magic_links SET used_at = NOW() WHERE id = :id")->execute([':id' => (int)$ml['id']]); }
+                catch (Throwable $e) { login_dbg('used_at fail: ' . $e->getMessage()); }
+                // touch_login PRIMEIRO — garante last_login_at + tag mesmo se set_token falhar
+                try { am_touch_login($pdo, $uid); }
+                catch (Throwable $e) { login_dbg('touch_login fail: ' . $e->getMessage()); }
+                try { am_set_token($pdo, $uid); }
+                catch (Throwable $e) { login_dbg('set_token fail: ' . $e->getMessage()); }
                 login_dbg('magic link OK, redirect uid=' . $uid);
                 header('Location: trilha.php');
                 exit;
