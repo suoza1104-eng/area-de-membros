@@ -296,12 +296,12 @@ function normalizar_video_url(string $url): string {
         .course-sub  { font-size: 11px; color: var(--muted); }
         .btn-back {
             display: inline-flex; align-items: center; gap: 6px;
-            padding: 7px 14px; border-radius: var(--r-full);
-            border: 1px solid var(--border); background: transparent;
-            color: var(--muted); font-size: 12px; font-weight: 500; font-family: var(--font);
-            cursor: pointer; transition: background .15s, color .15s;
+            padding: 8px 16px; border-radius: var(--r-full);
+            border: 1px solid var(--primary); background: var(--primary);
+            color: #07101f; font-size: 12px; font-weight: 700; font-family: var(--font);
+            cursor: pointer; transition: filter .15s, transform .15s;
         }
-        .btn-back:hover { background: rgba(255,255,255,.06); color: var(--text); }
+        .btn-back:hover { filter: brightness(1.08); transform: translateY(-1px); }
         .btn-back svg { width: 13px; height: 13px; }
 
         /* PAGE */
