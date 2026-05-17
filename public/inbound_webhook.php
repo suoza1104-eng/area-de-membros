@@ -148,6 +148,18 @@ try {
     $criar  = (int)$ihw['criar_se_nao_existir'] === 1;
     $codigoTurmaCfg = trim((string)($ihw['codigo_turma'] ?? ''));
 
+    // Fallback: se não há turma fixa, pega a com janela aberta agora (mesma lógica do api_inscrever)
+    if ($codigoTurmaCfg === '') {
+        try {
+            $stT = $pdo->prepare("SELECT codigo FROM turmas
+                                  WHERE janela_inicio <= NOW() AND janela_fim >= NOW()
+                                  ORDER BY janela_inicio DESC LIMIT 1");
+            $stT->execute();
+            $tmpCod = (string)($stT->fetchColumn() ?: '');
+            if ($tmpCod !== '') $codigoTurmaCfg = $tmpCod;
+        } catch (Throwable $e) {}
+    }
+
     // Para INSCRITO sempre cria se não existir (caso Hotmart/Kiwify)
     $forcaCriar = ($evento === 'INSCRITO');
 

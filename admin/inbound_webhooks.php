@@ -252,13 +252,16 @@ require_once __DIR__ . '/_header.php';
       </div>
 
       <div class="form-row" id="iwTurmaWrap">
-        <label>Turma a atribuir <span style="color:var(--text-muted);font-weight:400">(opcional, INSCRITO)</span></label>
+        <label>Turma a atribuir <span style="color:var(--text-muted);font-weight:400">(opcional)</span></label>
         <select id="iwCodigoTurma">
-          <option value="">-- nenhuma --</option>
+          <option value="">-- automática (turma com janela aberta na hora do webhook) --</option>
           <?php foreach ($turmas as $tc): ?>
           <option value="<?= htmlspecialchars((string)$tc) ?>"><?= htmlspecialchars((string)$tc) ?></option>
           <?php endforeach; ?>
         </select>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+          Se nada for selecionado, o sistema usa a turma cuja <strong>janela de inscrição</strong> estiver aberta no momento do recebimento (mesma regra das inscrições orgânicas).
+        </div>
       </div>
 
       <div class="form-row">
