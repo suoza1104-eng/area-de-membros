@@ -129,6 +129,10 @@ function sf_get_user_row(PDO $pdo, array $user): array
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (is_array($row) && $row) {
             $row['id'] = $row['id'] ?? $id;
+            // Enriquece com magic_link (gerado sob demanda)
+            if (function_exists('gerar_magic_link')) {
+                try { $row['magic_link'] = gerar_magic_link($id, 30, false); } catch (Throwable $e) {}
+            }
             return $row;
         }
     } catch (Throwable $e) {

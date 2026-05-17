@@ -43,6 +43,53 @@ function am_set_token(PDO $pdo, int $userId): void {
     ]);
 }
 
+// ── Magic-link via URL (?am=<token>) ─────────────────────────────────────────
+// Aceita link direto do tipo /login.php?am=<token> — loga e redireciona.
+if (empty($_SESSION['aluno_id']) && !empty($_GET['am'])) {
+    $tok = preg_replace('/[^a-f0-9]/i', '', (string)$_GET['am']);
+    if (strlen($tok) === 64) {
+        try {
+            // Garante tabela (caso o link seja clicado antes de gerar_magic_link rodar)
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS magic_links (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id     INT NOT NULL,
+                    token       VARCHAR(64) NOT NULL,
+                    expires_at  DATETIME NOT NULL,
+                    one_shot    TINYINT(1) NOT NULL DEFAULT 0,
+                    used_at     DATETIME NULL,
+                    created_at  DATETIME NOT NULL DEFAULT NOW(),
+                    UNIQUE KEY uk_ml_token (token),
+                    INDEX idx_ml_user (user_id)
+                )
+            ");
+            $stML = $pdo->prepare("
+                SELECT id, user_id, one_shot, used_at, expires_at
+                FROM magic_links
+                WHERE token = :t AND expires_at > NOW()
+                LIMIT 1
+            ");
+            $stML->execute([':t' => $tok]);
+            $ml = $stML->fetch();
+            if ($ml && !((int)$ml['one_shot'] === 1 && !empty($ml['used_at']))) {
+                $uid = (int)$ml['user_id'];
+                $_SESSION['aluno_id'] = $uid;
+                // Marca como usado
+                $pdo->prepare("UPDATE magic_links SET used_at = NOW() WHERE id = :id")
+                    ->execute([':id' => (int)$ml['id']]);
+                // Define cookie de longa duração também
+                am_set_token($pdo, $uid);
+                try {
+                    $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")
+                        ->execute(['id' => $uid]);
+                } catch (Throwable $e) {}
+                header('Location: trilha.php');
+                exit;
+            }
+        } catch (Throwable $e) { /* fallback: segue para tela normal */ }
+    }
+}
+
 // Auto-login via token salvo no cookie
 if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
     try {

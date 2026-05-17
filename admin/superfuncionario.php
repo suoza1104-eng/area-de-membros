@@ -44,12 +44,13 @@ try {
 // ===== opções de campos (origem) =====
 $fieldOptions = [
     'Payload (fixo)' => [
-        'evento'        => 'Evento (código)',
-        'timestamp'     => 'Timestamp (ISO)',
-        'user.id'       => 'User ID',
-        'user.nome'     => 'Nome',
-        'user.email'    => 'Email',
-        'user.telefone' => 'Telefone',
+        'evento'          => 'Evento (código)',
+        'timestamp'       => 'Timestamp (ISO)',
+        'user.id'         => 'User ID',
+        'user.nome'       => 'Nome',
+        'user.email'      => 'Email',
+        'user.telefone'   => 'Telefone',
+        'user.magic_link' => 'Magic link (URL de auto-login, 30 dias)',
     ],
     'Extra — INSCRITO / REINSCRITO / LIVE' => [
         'extra.codigo_turma'              => 'codigo_turma',
@@ -78,8 +79,8 @@ $fieldOptions = [
 
 // hints por evento — exibidos dinamicamente no formulário
 $eventHints = [
-    'INSCRITO'           => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
-    'REINSCRITO'         => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
+    'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
+    'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
     'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
     'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
     'CERT_SENHA_ERRADA'  => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',

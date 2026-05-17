@@ -12,13 +12,20 @@ declare(strict_types=1);
  */
 function build_webhook_payload(string $evento, array $user, array $extra = []): array
 {
+    $uid = (int)($user['id'] ?? 0);
+    $magicLink = '';
+    if ($uid > 0 && function_exists('gerar_magic_link')) {
+        try { $magicLink = gerar_magic_link($uid, 30, false); } catch (Throwable $e) {}
+    }
+
     return [
         'evento'    => $evento,
         'user'      => [
-            'id'       => $user['id'] ?? null,
-            'nome'     => $user['nome'] ?? null,
-            'email'    => $user['email'] ?? null,
-            'telefone' => $user['telefone'] ?? null,
+            'id'         => $user['id'] ?? null,
+            'nome'       => $user['nome'] ?? null,
+            'email'      => $user['email'] ?? null,
+            'telefone'   => $user['telefone'] ?? null,
+            'magic_link' => $magicLink,
         ],
         'extra'     => $extra,
         'timestamp' => date('c'),

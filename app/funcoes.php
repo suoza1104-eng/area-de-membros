@@ -227,3 +227,45 @@ function theme_inline_css_vars(): string {
         --font-scale: {$fontScale};
     }";
 }
+
+/**
+ * Magic-link de auto-login
+ * - Cria tabela magic_links se não existir
+ * - Gera um token único de 64 chars (hex)
+ * - Retorna a URL completa pronta para enviar ao aluno
+ *
+ * @param int $userId       ID do usuário
+ * @param int $ttlDays      Dias de validade (padrão: 30)
+ * @param bool $oneShot     Se true, token expira ao primeiro uso (padrão: false)
+ */
+function gerar_magic_link(int $userId, int $ttlDays = 30, bool $oneShot = false): string {
+    if ($userId <= 0) return '';
+    try {
+        $pdo = getPDO();
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS magic_links (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                user_id     INT NOT NULL,
+                token       VARCHAR(64) NOT NULL,
+                expires_at  DATETIME NOT NULL,
+                one_shot    TINYINT(1) NOT NULL DEFAULT 0,
+                used_at     DATETIME NULL,
+                created_at  DATETIME NOT NULL DEFAULT NOW(),
+                UNIQUE KEY uk_ml_token (token),
+                INDEX idx_ml_user (user_id)
+            )
+        ");
+        $token = bin2hex(random_bytes(32));
+        $exp   = date('Y-m-d H:i:s', time() + 60 * 60 * 24 * $ttlDays);
+        $pdo->prepare("INSERT INTO magic_links (user_id, token, expires_at, one_shot) VALUES (:uid, :tok, :exp, :os)")
+            ->execute([
+                ':uid' => $userId,
+                ':tok' => $token,
+                ':exp' => $exp,
+                ':os'  => $oneShot ? 1 : 0,
+            ]);
+        return rtrim(BASE_URL, '/') . '/login.php?am=' . $token;
+    } catch (Throwable $e) {
+        return '';
+    }
+}
