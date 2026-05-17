@@ -592,7 +592,11 @@ include __DIR__ . '/_header.php';
                                     <div class="ev-group-label">Aluno</div>
                                     <div class="evento-opcao" data-value="INSCRITO">
                                         <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
-                                        <em>Disparado quando um novo aluno se cadastra na área de membros.</em>
+                                        <em>Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="REINSCRITO">
+                                        <strong>REINSCRITO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando um aluno já existente se inscreve novamente.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="ASSISTIU_ALGUMA_AULA">
                                         <strong>ASSISTIU_ALGUMA_AULA <span class="ev-pill aluno">Aluno</span></strong>
