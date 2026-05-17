@@ -339,6 +339,97 @@ try {
 } catch (Throwable $e) { /* coluna pode não existir em instâncias antigas */ }
 $pctLogaram = $totalAlunos > 0 ? round($alunosLogaram / $totalAlunos * 100, 1) : 0;
 
+// ── Métricas de LIVE (acessou / oferta / compra) ──
+// Conta usuários únicos com recebimentos processados em live_events do tipo
+function dash_count_live(PDO $pdo, string $tipo, array $whereUsers, array $paramsUsers): int {
+    try {
+        $sql = "SELECT COUNT(DISTINCT ler.user_id)
+                FROM live_event_recebimentos ler
+                JOIN live_events le ON le.id = ler.event_id
+                JOIN users u ON u.id = ler.user_id
+                WHERE ler.status = 'processado' AND ler.user_id IS NOT NULL AND le.tipo = :tipo";
+        if ($whereUsers) $sql .= ' AND ' . implode(' AND ', $whereUsers);
+        $st = $pdo->prepare($sql);
+        $st->execute(array_merge([':tipo' => $tipo], $paramsUsers));
+        return (int)$st->fetchColumn();
+    } catch (Throwable $e) { return 0; }
+}
+$liveAcessou = dash_count_live($pdo, 'acessou', $whereUsers, $paramsUsers);
+$liveOferta  = dash_count_live($pdo, 'oferta',  $whereUsers, $paramsUsers);
+$liveCompra  = dash_count_live($pdo, 'compra',  $whereUsers, $paramsUsers);
+
+// ── Dados para o gráfico comparativo POR TURMA ──
+// Computa cada métrica agrupada por turma_id, respeitando filtro de data
+$barTurmaData = [];
+try {
+    $whereSemTurma = array_values(array_filter($whereUsers, fn($w) => strpos($w, 'turma_id') === false));
+    $paramsSemTurma = $paramsUsers; unset($paramsSemTurma['turma_id']);
+    $whereSemTurmaSql = $whereSemTurma ? (' WHERE ' . implode(' AND ', $whereSemTurma)) : '';
+
+    // Inscritos por turma
+    $sqlT = "SELECT u.turma_id AS tid, COUNT(*) AS n FROM users u $whereSemTurmaSql GROUP BY u.turma_id";
+    $st = $pdo->prepare($sqlT); $st->execute($paramsSemTurma);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $tid = (int)$r['tid']; if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+        $barTurmaData[$tid]['inscritos'] = (int)$r['n'];
+    }
+
+    // Logaram
+    $sqlL = "SELECT u.turma_id AS tid, COUNT(*) AS n FROM users u WHERE u.last_login_at IS NOT NULL"
+          . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
+          . " GROUP BY u.turma_id";
+    try { $st = $pdo->prepare($sqlL); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (int)$r['tid']; $barTurmaData[$tid]['logaram'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
+
+    // Viram alguma aula
+    $sqlA = "SELECT u.turma_id AS tid, COUNT(DISTINCT u.id) AS n
+             FROM users u JOIN lesson_progress lp ON lp.user_id = u.id
+             WHERE lp.status = 'completed'"
+          . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
+          . " GROUP BY u.turma_id";
+    $st = $pdo->prepare($sqlA); $st->execute($paramsSemTurma);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $tid = (int)$r['tid']; $barTurmaData[$tid]['aula'] = (int)$r['n'];
+    }
+
+    // LIVE: acessou / oferta / compra
+    foreach (['acessou','oferta','compra'] as $tp) {
+        $sqlV = "SELECT u.turma_id AS tid, COUNT(DISTINCT ler.user_id) AS n
+                 FROM live_event_recebimentos ler
+                 JOIN live_events le ON le.id = ler.event_id
+                 JOIN users u ON u.id = ler.user_id
+                 WHERE ler.status='processado' AND ler.user_id IS NOT NULL AND le.tipo = :tipo"
+                . ($whereSemTurma ? ' AND ' . implode(' AND ', $whereSemTurma) : '')
+                . " GROUP BY u.turma_id";
+        try { $st = $pdo->prepare($sqlV); $st->execute(array_merge([':tipo' => $tp], $paramsSemTurma));
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $tid = (int)$r['tid']; $barTurmaData[$tid]['live_'.$tp] = (int)$r['n'];
+            }
+        } catch (Throwable $e) {}
+    }
+
+    // Certificados
+    try {
+        $sqlC = "SELECT u.turma_id AS tid, COUNT(*) AS n
+                 FROM certificates c JOIN users u ON u.id = c.user_id"
+              . $whereSemTurmaSql . " GROUP BY u.turma_id";
+        $st = $pdo->prepare($sqlC); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (int)$r['tid']; $barTurmaData[$tid]['cert'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
+} catch (Throwable $e) { /* tabelas inexistentes em instâncias parciais */ }
+
+// Mapa id → label das turmas
+$turmasLabel = [];
+foreach ($turmas as $t) {
+    $turmasLabel[(int)$t['id']] = (string)($t['codigo'] ?? $t['nome'] ?? ('Turma ' . $t['id']));
+}
+$turmasLabel[0] = 'Sem turma';
+
 $sqlFull = "
     SELECT u.id, COUNT(DISTINCT lp.lesson_id) AS qtd
     FROM users u
@@ -379,8 +470,12 @@ $pctConclusao = ($totalAlunos > 0) ? round(($estagioFull / $totalAlunos) * 100, 
 // 5) DADOS DO FUNIL HTML/CSS
 // ========================
 $funnelData = [];
-$funnelData[] = ['label' => 'Total Inscritos',       'count' => $totalAlunos];
+$funnelData[] = ['label' => 'Total Inscritos',        'count' => $totalAlunos];
+$funnelData[] = ['label' => 'Logaram na plataforma',  'count' => $alunosLogaram];
 $funnelData[] = ['label' => 'Assistiram alguma aula', 'count' => $alunosAlguma];
+if ($liveAcessou > 0) $funnelData[] = ['label' => 'Acessaram a live',     'count' => $liveAcessou];
+if ($liveOferta  > 0) $funnelData[] = ['label' => 'Ficaram até a oferta', 'count' => $liveOferta];
+if ($liveCompra  > 0) $funnelData[] = ['label' => 'Clicaram na compra',   'count' => $liveCompra];
 foreach ($funil as $f) {
     $funnelData[] = [
         'label' => 'Aula ' . $f['ordem'] . ' — ' . mb_strimwidth($f['titulo'], 0, 30, '…'),
@@ -767,6 +862,79 @@ include __DIR__ . '/_header.php';
 </div>
 <?php endif; ?>
 
+<!-- ═══ LIVE: Funil exclusivo + cards ═══ -->
+<?php if ($liveAcessou > 0 || $liveOferta > 0 || $liveCompra > 0): ?>
+<div class="panel mb-4">
+    <div class="panel-title">Funil de Live</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
+        <div class="kpi" style="border-color:rgba(96,165,250,.3)">
+            <div class="kpi-icon" style="background:rgba(96,165,250,.15);color:#60a5fa">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>
+            </div>
+            <div class="kpi-label">Acessaram a live</div>
+            <div class="kpi-value"><?= number_format($liveAcessou) ?></div>
+            <div class="kpi-sub"><?= $totalAlunos>0?round($liveAcessou/$totalAlunos*100,1):0 ?>% dos inscritos</div>
+        </div>
+        <div class="kpi" style="border-color:rgba(251,191,36,.3)">
+            <div class="kpi-icon" style="background:rgba(251,191,36,.15);color:#fbbf24">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <div class="kpi-label">Ficaram até a oferta</div>
+            <div class="kpi-value"><?= number_format($liveOferta) ?></div>
+            <div class="kpi-sub"><?= $liveAcessou>0?round($liveOferta/$liveAcessou*100,1):0 ?>% de quem acessou</div>
+        </div>
+        <div class="kpi" style="border-color:rgba(52,211,153,.3)">
+            <div class="kpi-icon" style="background:rgba(52,211,153,.15);color:#34d399">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
+            </div>
+            <div class="kpi-label">Clicaram na compra</div>
+            <div class="kpi-value"><?= number_format($liveCompra) ?></div>
+            <div class="kpi-sub"><?= $liveOferta>0?round($liveCompra/$liveOferta*100,1):0 ?>% de quem viu oferta</div>
+        </div>
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:2px;height:140px;padding:0 6px">
+        <?php
+        $liveFunnel = [
+            ['Acessou', $liveAcessou, '#60a5fa'],
+            ['Oferta',  $liveOferta,  '#fbbf24'],
+            ['Compra',  $liveCompra,  '#34d399'],
+        ];
+        $lfMax = max(1, $liveAcessou);
+        foreach ($liveFunnel as $lf):
+            $h = max(8, round($lf[1]/$lfMax*100));
+        ?>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%">
+            <div style="font-size:12px;font-weight:700;color:var(--text)"><?= number_format($lf[1]) ?></div>
+            <div style="flex:1;display:flex;align-items:flex-end;width:60%;max-width:120px">
+                <div style="width:100%;background:<?= $lf[2] ?>;border-radius:6px 6px 0 0;height:<?= $h ?>%;min-height:8px;opacity:.85"></div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em"><?= $lf[0] ?></div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+<?php endif; ?>
+
+<!-- ═══ Comparativo POR TURMA (barras) ═══ -->
+<?php if (!empty($barTurmaData)): ?>
+<div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span>Comparativo por turma</span>
+        <span style="font-size:11px;color:var(--muted);font-weight:400">selecione turmas e modo (qtd ou %)</span>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+                <button type="button" id="btnModeQtd" onclick="btSetMode('qtd')" class="bt-mode-btn active" style="background:var(--primary);color:#000;border:none;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700">Qtd</button>
+                <button type="button" id="btnModePct" onclick="btSetMode('pct')" class="bt-mode-btn" style="background:transparent;color:var(--muted);border:none;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700">%</button>
+            </div>
+        </div>
+    </div>
+    <div id="turmasPicker" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;padding:10px;background:#14142a;border-radius:8px;border:1px solid var(--border)">
+        <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;width:100%;margin-bottom:4px">Turmas a comparar:</span>
+    </div>
+    <canvas id="chartBarTurmas" style="max-height:380px"></canvas>
+</div>
+<?php endif; ?>
+
 <!-- TABLE: Detalhamento das aulas -->
 <?php if ($funil): ?>
 <div class="panel">
@@ -902,6 +1070,124 @@ include __DIR__ . '/_header.php';
         });
     }
 
+    // ── Gráfico comparativo por turma ────────────────────────────────────
+    const BAR_TURMA_DATA  = <?= json_encode($barTurmaData, JSON_UNESCAPED_UNICODE) ?>;
+    const TURMAS_LABEL    = <?= json_encode($turmasLabel,  JSON_UNESCAPED_UNICODE) ?>;
+    const TURMA_FILTRADA  = <?= (int)$turmaId ?>;
+    const BAR_STAGES = [
+        {key:'inscritos', label:'Inscritos',  color:'#facc15'},
+        {key:'logaram',   label:'Logaram',    color:'#a855f7'},
+        {key:'aula',      label:'Viu aula',   color:'#0ea5e9'},
+        {key:'live_acessou', label:'Live: Acessou', color:'#60a5fa'},
+        {key:'live_oferta',  label:'Live: Oferta',  color:'#fbbf24'},
+        {key:'live_compra',  label:'Live: Compra',  color:'#34d399'},
+        {key:'cert',      label:'Certificado', color:'#22c55e'},
+    ];
+    let btMode = 'qtd';
+    let btSelectedTurmas = [];
+    let btChart = null;
+
+    function btInit() {
+        const picker = document.getElementById('turmasPicker');
+        if (!picker) return;
+        const turmaIds = Object.keys(BAR_TURMA_DATA).map(Number).sort((a,b)=>{
+            return (BAR_TURMA_DATA[b].inscritos||0) - (BAR_TURMA_DATA[a].inscritos||0);
+        });
+        if (!turmaIds.length) return;
+        // Pré-seleciona top 3 turmas com mais inscritos OU a turma filtrada
+        if (TURMA_FILTRADA > 0 && BAR_TURMA_DATA[TURMA_FILTRADA]) {
+            btSelectedTurmas = [TURMA_FILTRADA];
+        } else {
+            btSelectedTurmas = turmaIds.slice(0, Math.min(3, turmaIds.length));
+        }
+        turmaIds.forEach(tid => {
+            const label = TURMAS_LABEL[tid] || ('Turma ' + tid);
+            const sel = btSelectedTurmas.includes(tid);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.tid = tid;
+            btn.style.cssText = 'padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;font-weight:600;'
+                + 'border:1px solid '+(sel?'var(--primary)':'var(--border)')+';'
+                + 'background:'+(sel?'rgba(250,204,21,.15)':'transparent')+';'
+                + 'color:'+(sel?'var(--primary)':'var(--muted)')+';';
+            btn.textContent = label + ' (' + (BAR_TURMA_DATA[tid].inscritos||0) + ')';
+            btn.onclick = () => btToggleTurma(tid, btn);
+            picker.appendChild(btn);
+        });
+        btRender();
+    }
+
+    function btToggleTurma(tid, btn) {
+        const i = btSelectedTurmas.indexOf(tid);
+        if (i >= 0) btSelectedTurmas.splice(i, 1);
+        else btSelectedTurmas.push(tid);
+        const sel = i < 0; // após toggle
+        btn.style.borderColor = sel ? 'var(--primary)' : 'var(--border)';
+        btn.style.background  = sel ? 'rgba(250,204,21,.15)' : 'transparent';
+        btn.style.color       = sel ? 'var(--primary)' : 'var(--muted)';
+        btRender();
+    }
+
+    function btSetMode(m) {
+        btMode = m;
+        document.getElementById('btnModeQtd').style.background = m==='qtd' ? 'var(--primary)' : 'transparent';
+        document.getElementById('btnModeQtd').style.color      = m==='qtd' ? '#000' : 'var(--muted)';
+        document.getElementById('btnModePct').style.background = m==='pct' ? 'var(--primary)' : 'transparent';
+        document.getElementById('btnModePct').style.color      = m==='pct' ? '#000' : 'var(--muted)';
+        btRender();
+    }
+
+    function btRender() {
+        const labels = BAR_STAGES.map(s => s.label);
+        const datasets = btSelectedTurmas.map((tid, idx) => {
+            const data = BAR_STAGES.map(s => {
+                const raw = (BAR_TURMA_DATA[tid] && BAR_TURMA_DATA[tid][s.key]) || 0;
+                if (btMode === 'pct') {
+                    const base = (BAR_TURMA_DATA[tid] && BAR_TURMA_DATA[tid].inscritos) || 0;
+                    return base > 0 ? Math.round(raw / base * 1000) / 10 : 0;
+                }
+                return raw;
+            });
+            const hue = (idx * 47 + 200) % 360;
+            return {
+                label: TURMAS_LABEL[tid] || ('Turma ' + tid),
+                data,
+                backgroundColor: `hsla(${hue},75%,60%,.7)`,
+                borderColor:     `hsla(${hue},75%,55%,1)`,
+                borderWidth: 1.5,
+            };
+        });
+
+        const ctx = document.getElementById('chartBarTurmas');
+        if (!ctx) return;
+        if (btChart) btChart.destroy();
+        btChart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position:'top', labels:{ color:'#cbd5e1', font:{size:11}, padding:10 } },
+                    tooltip: {
+                        callbacks: {
+                            label: c => c.dataset.label + ': ' + c.parsed.y + (btMode==='pct'?'%':'')
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks:{ color:'#94a3b8', font:{size:11} }, grid:{ color:'rgba(26,37,64,.4)' } },
+                    y: {
+                        beginAtZero:true,
+                        ticks:{ color:'#94a3b8', font:{size:11},
+                                callback: v => btMode==='pct' ? v+'%' : v },
+                        grid:{ color:'rgba(26,37,64,.4)' }
+                    }
+                }
+            }
+        });
+    }
+
+    btInit();
 
 })();
 </script>
