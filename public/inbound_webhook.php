@@ -39,6 +39,10 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     INDEX idx_iwr_recebido (recebido_em)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+// Migrações defensivas
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN oferta_codigo VARCHAR(500) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhook_recebimentos MODIFY COLUMN status ENUM('pendente','processado','erro','ignorado') NOT NULL DEFAULT 'pendente'"); } catch (Throwable $e) {}
+
 // Token
 $token = preg_replace('/[^a-f0-9]/i', '', (string)($_GET['t'] ?? $_GET['token'] ?? ''));
 if (strlen($token) !== 64) {
@@ -101,8 +105,23 @@ try {
         $tmp = json_decode($ihw['payload_map_json'], true);
         if (is_array($tmp)) $map = $tmp;
     }
-    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone'];
+    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta'];
     foreach ($defaults as $k => $v) if (!isset($map[$k])) $map[$k] = $v;
+
+    // ── FILTRO DE OFERTA ──
+    // Se oferta_codigo configurado, exige que o valor no payload corresponda
+    $ofertaCfg = trim((string)($ihw['oferta_codigo'] ?? ''));
+    if ($ofertaCfg !== '') {
+        $ofertaRecebida = iw_get_value($payload, (string)$map['oferta']) ?? '';
+        $ofertaRecebida = trim($ofertaRecebida);
+        $aceitas = array_filter(array_map('trim', explode(',', $ofertaCfg)));
+        $bateu = in_array($ofertaRecebida, $aceitas, true);
+        if (!$bateu) {
+            $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='ignorado', erro_msg=:m, processado_em=NOW() WHERE id=:i")
+                ->execute([':m' => 'Oferta nao corresponde. Recebida: ' . ($ofertaRecebida !== '' ? $ofertaRecebida : '(vazia)') . ' | Aceitas: ' . $ofertaCfg, ':i' => $recId]);
+            exit;
+        }
+    }
 
     $nome     = iw_get_value($payload, (string)$map['nome'])     ?? '';
     $email    = iw_get_value($payload, (string)$map['email'])    ?? '';

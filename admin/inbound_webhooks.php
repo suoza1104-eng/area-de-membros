@@ -23,6 +23,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
     atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_iw_token (token)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN oferta_codigo VARCHAR(500) NULL"); } catch (Throwable $e) {}
 $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     webhook_id INT NOT NULL,
@@ -36,6 +37,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     INDEX idx_iwr_status (status),
     INDEX idx_iwr_recebido (recebido_em)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+try { $pdo->exec("ALTER TABLE inbound_webhook_recebimentos MODIFY COLUMN status ENUM('pendente','processado','erro','ignorado') NOT NULL DEFAULT 'pendente'"); } catch (Throwable $e) {}
 
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 if ($acao !== '') {
@@ -49,20 +51,21 @@ if ($acao !== '') {
         $lessonId  = (int)($_POST['lesson_id'] ?? 0);
         $codTurma  = trim((string)($_POST['codigo_turma'] ?? ''));
         $tagExtra  = trim((string)($_POST['tag_extra'] ?? ''));
+        $ofertaCod = trim((string)($_POST['oferta_codigo'] ?? ''));
         $mapJson   = trim((string)($_POST['payload_map_json'] ?? ''));
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
-        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone']);
+        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta']);
         if ($nome === '' || $evento === '') { echo json_encode(['ok'=>false,'msg'=>'Nome e evento são obrigatórios']); exit; }
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
         if ($id > 0) {
-            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,payload_map_json=:m,criar_se_nao_existir=:cr WHERE id=:id")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':m'=>$mapJson,':cr'=>$criar,':id'=>$id]);
+            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,oferta_codigo=:of,payload_map_json=:m,criar_se_nao_existir=:cr WHERE id=:id")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':m'=>$mapJson,':cr'=>$criar,':id'=>$id]);
         } else {
             $token = bin2hex(random_bytes(32));
-            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,token,payload_map_json,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:tk,:m,:cr)")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':tk'=>$token,':m'=>$mapJson,':cr'=>$criar]);
+            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:cr)")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':tk'=>$token,':m'=>$mapJson,':cr'=>$criar]);
             $id = (int)$pdo->lastInsertId();
         }
         echo json_encode(['ok'=>true,'id'=>$id]); exit;
@@ -84,8 +87,8 @@ if ($acao !== '') {
         $row = $r->fetch(PDO::FETCH_ASSOC);
         if (!$row) { echo json_encode(['ok'=>false]); exit; }
         $token = bin2hex(random_bytes(32));
-        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,token,payload_map_json,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:tk,:m,:cr,1)")
-            ->execute([':n'=>'[Cópia] '.$row['nome'], ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':tk'=>$token, ':m'=>$row['payload_map_json'], ':cr'=>$row['criar_se_nao_existir']]);
+        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:cr,1)")
+            ->execute([':n'=>'[Cópia] '.$row['nome'], ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':of'=>$row['oferta_codigo']??null, ':tk'=>$token, ':m'=>$row['payload_map_json'], ':cr'=>$row['criar_se_nao_existir']]);
         echo json_encode(['ok'=>true,'id'=>(int)$pdo->lastInsertId()]); exit;
     }
 
@@ -103,7 +106,7 @@ if ($acao !== '') {
     }
 
     if ($acao === 'listar') {
-        $rows = $pdo->query("SELECT id,nome,descricao,evento,lesson_id,codigo_turma,tag_extra,token,ativo,total_recebidos,criado_em FROM inbound_webhooks ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $pdo->query("SELECT id,nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,ativo,total_recebidos,criado_em FROM inbound_webhooks ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
         echo json_encode(['ok'=>true,'data'=>$rows]); exit;
     }
 
@@ -191,6 +194,7 @@ require_once __DIR__ . '/_header.php';
 .iw-st-processado { color: #4ade80; }
 .iw-st-erro { color: #f87171; }
 .iw-st-pendente { color: #fbbf24; }
+.iw-st-ignorado { color: #94a3b8; }
 </style>
 
 <div class="main-content">
@@ -263,6 +267,14 @@ require_once __DIR__ . '/_header.php';
       </div>
 
       <div class="form-row">
+        <label>Código(s) da oferta <span style="color:var(--text-muted);font-weight:400">(opcional — múltiplos separados por vírgula)</span></label>
+        <input type="text" id="iwOfertaCodigo" placeholder="Ex: ZBF54VLP ou ZBF54VLP, OUTRA_OFF">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;background:#14142a;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+          <strong style="color:#fbbf24">Filtro de oferta:</strong> se preenchido, o sistema só processa o webhook quando o código vindo no campo <code>oferta</code> do mapeamento bater com algum dos valores listados aqui. <strong>Vazio = aceita todas as ofertas.</strong> Útil pra Hotmart quando um único webhook recebe várias ofertas mas você só quer liberar uma específica.
+        </div>
+      </div>
+
+      <div class="form-row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="iwCriarSeNaoExistir" checked>
           <span>Criar aluno automaticamente se não existir <span style="color:var(--text-muted);font-weight:400">(libera acesso instantâneo)</span></span>
@@ -328,6 +340,7 @@ async function iwCarregar() {
                         <span class="ev-pill ${evCls}">${w.evento}${w.lesson_id?(' #'+w.lesson_id):''}</span>
                         ${w.codigo_turma?`<span>turma: <strong>${esc(w.codigo_turma)}</strong></span>`:''}
                         ${w.tag_extra?`<span>tag: <strong>${esc(w.tag_extra)}</strong></span>`:''}
+                        ${w.oferta_codigo?`<span style="color:#fbbf24">oferta: <strong>${esc(w.oferta_codigo)}</strong></span>`:''}
                         <span>📥 ${w.total_recebidos||0} recebimentos</span>
                     </div>
                 </div>
@@ -356,9 +369,10 @@ function iwNovo() {
     document.getElementById('iwLessonId').value = 0;
     document.getElementById('iwCodigoTurma').value = '';
     document.getElementById('iwTagExtra').value = '';
+    document.getElementById('iwOfertaCodigo').value = '';
     document.getElementById('iwCriarSeNaoExistir').checked = true;
     document.getElementById('iwMap').innerHTML = '';
-    iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone');
+    iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
     document.getElementById('iwFormPanel').style.display = '';
     iwAtualizaCamposCondicionais();
@@ -375,11 +389,12 @@ async function iwEditar(id) {
     document.getElementById('iwLessonId').value = d.lesson_id || 0;
     document.getElementById('iwCodigoTurma').value = d.codigo_turma || '';
     document.getElementById('iwTagExtra').value = d.tag_extra || '';
+    document.getElementById('iwOfertaCodigo').value = d.oferta_codigo || '';
     document.getElementById('iwCriarSeNaoExistir').checked = parseInt(d.criar_se_nao_existir||0) === 1;
     document.getElementById('iwMap').innerHTML = '';
     const map = JSON.parse(d.payload_map_json || '{}');
     Object.entries(map).forEach(([k,v]) => iwAddMap(k,v));
-    if (!Object.keys(map).length) { iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); }
+    if (!Object.keys(map).length) { iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta'); }
     document.getElementById('iwFormTitle').textContent = 'Editar: ' + d.nome;
     document.getElementById('iwFormPanel').style.display = '';
     iwAtualizaCamposCondicionais();
@@ -427,6 +442,7 @@ async function iwSalvar() {
     fd.append('lesson_id', document.getElementById('iwLessonId').value);
     fd.append('codigo_turma', document.getElementById('iwCodigoTurma').value);
     fd.append('tag_extra', document.getElementById('iwTagExtra').value);
+    fd.append('oferta_codigo', document.getElementById('iwOfertaCodigo').value);
     if (document.getElementById('iwCriarSeNaoExistir').checked) fd.append('criar_se_nao_existir','1');
     fd.append('payload_map_json', JSON.stringify(iwColetarMap()));
     const j = await (await fetch('inbound_webhooks.php',{method:'POST',body:fd})).json();
