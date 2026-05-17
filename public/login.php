@@ -24,7 +24,8 @@ function am_resolve_next(): string {
     if (strpos($n, '://') !== false) return 'trilha.php';
     if (strpos($n, '//') === 0)      return 'trilha.php';
     if (strpos($n, '..') !== false)  return 'trilha.php';
-    return ltrim($n, '/');
+    // Retorna como path absoluto (com / inicial) — Location: relativa quebra
+    return '/' . ltrim($n, '/');
 }
 
 // Log simples para diagnosticar login (gravado em /tmp ou logs PHP)
