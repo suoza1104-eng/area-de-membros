@@ -111,6 +111,17 @@ function am_token_table(PDO $pdo): void {
             INDEX idx_rt_user (user_id)
         )
     ");
+    // Migração defensiva — caso tabela existente esteja com schema antigo
+    foreach ([
+        "ALTER TABLE remember_tokens ADD COLUMN user_id INT NOT NULL",
+        "ALTER TABLE remember_tokens ADD COLUMN token VARCHAR(64) NOT NULL",
+        "ALTER TABLE remember_tokens ADD COLUMN expires_at DATETIME NOT NULL",
+        "ALTER TABLE remember_tokens ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE remember_tokens ADD UNIQUE KEY uk_token (token)",
+        "ALTER TABLE remember_tokens ADD INDEX idx_rt_user (user_id)",
+    ] as $ddl) {
+        try { $pdo->exec($ddl); } catch (Throwable $e) { /* já existe */ }
+    }
 }
 
 function am_set_token(PDO $pdo, int $userId): void {
