@@ -296,6 +296,15 @@ require_once __DIR__ . '/_header.php';
           <strong style="color:#60a5fa">Caminhos aninhados suportados.</strong> Para a Hotmart que envia <code>{"data":{"buyer":{"email":"..."}}}</code>, use <code>email ← data.buyer.email</code>.<br>
           O sistema procura aluno por email e telefone; se não achar e "Criar aluno" estiver marcado, cria com senha = telefone (só números).
         </div>
+        <div style="font-size:11px;color:var(--text);margin-top:8px;background:#1a2a1a;padding:10px 12px;border-radius:6px;border:1px solid rgba(52,211,153,.3)">
+          <strong style="color:#34d399">📌 Referência — Hotmart (event PURCHASE_APPROVED, v2.0.0):</strong>
+          <table style="margin-top:6px;font-size:11px;width:100%;border-collapse:collapse">
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted);width:80px">nome</td><td><code>data.buyer.name</code> <span style="color:var(--text-muted)">(ou <code>data.buyer.first_name</code> só primeiro nome)</span></td></tr>
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">email</td><td><code>data.buyer.email</code></td></tr>
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">telefone</td><td><code>data.buyer.checkout_phone</code> <span style="color:var(--text-muted)">(número completo com DDD)</span></td></tr>
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">oferta</td><td><code>data.purchase.offer.code</code> <span style="color:var(--text-muted)">(ou <code>data.product.ucode</code> p/ produto)</span></td></tr>
+          </table>
+        </div>
       </div>
 
       <div style="display:flex;gap:10px;margin-top:18px">
