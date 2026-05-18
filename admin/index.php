@@ -533,7 +533,8 @@ $funnelData[] = ['label' => 'Certificado emitido', 'count' => $totalCert];
 
 $funnelMax = max(1, (int)($funnelData[0]['count'] ?? 1));
 foreach ($funnelData as $fi => &$fstep) {
-    $fstep['pct_bar'] = max(6, (int)round(($fstep['count'] / $funnelMax) * 100));
+    $fstep['pct_bar']   = max(6, (int)round(($fstep['count'] / $funnelMax) * 100));
+    $fstep['pct_total'] = round(($fstep['count'] / $funnelMax) * 100, 1);
     $prev = $fi > 0 ? (int)$funnelData[$fi - 1]['count'] : null;
     $fstep['drop'] = ($prev !== null && $prev > 0)
         ? round((($prev - $fstep['count']) / $prev) * 100, 1)
@@ -897,10 +898,11 @@ include __DIR__ . '/_header.php';
             <?= number_format($fstep['count']) ?>
           </div>
           <?php if ($fstep['drop'] !== null): ?>
-          <div style="font-size:9.5px;font-weight:600;color:#fbbf24;margin-top:2px">↓ <?= $fstep['drop'] ?>%</div>
+          <div style="font-size:9.5px;font-weight:600;color:#fbbf24;margin-top:2px" title="Queda em relação à etapa anterior">↓ <?= $fstep['drop'] ?>%</div>
           <?php else: ?>
           <div style="font-size:9.5px;color:var(--muted);margin-top:2px">—</div>
           <?php endif; ?>
+          <div style="font-size:9.5px;font-weight:600;color:#60a5fa;margin-top:1px" title="% do total de inscritos"><?= $fstep['pct_total'] ?>% do total</div>
         </div>
         <?php endforeach; ?>
       </div>
