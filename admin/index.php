@@ -1296,11 +1296,38 @@ include __DIR__ . '/_header.php';
         const ctx = document.getElementById('chartBarTurmas');
         if (!ctx) return;
         if (btChart) btChart.destroy();
+
+        // Plugin inline: rótulo do valor em cima de cada barra
+        const dataLabelsPlugin = {
+            id: 'btDataLabels',
+            afterDatasetsDraw(chart) {
+                const c = chart.ctx;
+                chart.data.datasets.forEach((ds, di) => {
+                    const meta = chart.getDatasetMeta(di);
+                    meta.data.forEach((bar, idx) => {
+                        const v = ds.data[idx];
+                        if (v === null || v === undefined) return;
+                        const txt = btMode === 'pct'
+                            ? (v % 1 === 0 ? v + '%' : v.toFixed(1) + '%')
+                            : v.toLocaleString('pt-BR');
+                        c.save();
+                        c.fillStyle = '#e2e8f0';
+                        c.font = 'bold 10px system-ui, sans-serif';
+                        c.textAlign = 'center';
+                        c.textBaseline = 'bottom';
+                        c.fillText(txt, bar.x, bar.y - 4);
+                        c.restore();
+                    });
+                });
+            }
+        };
+
         btChart = new Chart(ctx, {
             type: 'bar',
             data: { labels, datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
+                layout: { padding: { top: 22 } }, // espaço para os rótulos
                 plugins: {
                     legend: { position:'top', labels:{ color:'#cbd5e1', font:{size:11}, padding:10 } },
                     tooltip: {
@@ -1318,7 +1345,8 @@ include __DIR__ . '/_header.php';
                         grid:{ color:'rgba(26,37,64,.4)' }
                     }
                 }
-            }
+            },
+            plugins: [dataLabelsPlugin]
         });
     }
 
