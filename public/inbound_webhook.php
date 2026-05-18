@@ -191,6 +191,24 @@ try {
         throw new RuntimeException('Usuário não encontrado e criação desabilitada');
     }
 
+    // Atualiza nome/telefone/email se vieram preenchidos no payload
+    // (sobrescreve só quando o payload traz algo — preserva valores existentes em caso contrário)
+    if ($nome !== '' || $telefone !== '' || $email !== '') {
+        try {
+            $pdo->prepare("UPDATE users
+                              SET nome     = CASE WHEN :n_set = 1 THEN :n ELSE nome END,
+                                  telefone = CASE WHEN :t_set = 1 THEN :t ELSE telefone END,
+                                  email    = CASE WHEN :e_set = 1 AND (email IS NULL OR email = '') THEN :e ELSE email END
+                            WHERE id = :id")
+                ->execute([
+                    ':n_set' => $nome     !== '' ? 1 : 0, ':n' => $nome,
+                    ':t_set' => $telefone !== '' ? 1 : 0, ':t' => $telefone,
+                    ':e_set' => $email    !== '' ? 1 : 0, ':e' => $email,
+                    ':id'    => $userId,
+                ]);
+        } catch (Throwable $e) { /* não crítico */ }
+    }
+
     // Tag extra (sempre aplicada se configurada)
     if (function_exists('adicionar_tag') && !empty($ihw['tag_extra'])) {
         adicionar_tag($userId, (string)$ihw['tag_extra'], 'inbound_webhook', (int)$ihw['id']);
