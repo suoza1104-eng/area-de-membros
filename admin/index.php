@@ -974,8 +974,22 @@ include __DIR__ . '/_header.php';
             </div>
         </div>
     </div>
-    <div id="turmasPicker" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;padding:10px;background:#14142a;border-radius:8px;border:1px solid var(--border)">
-        <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;width:100%;margin-bottom:4px">Turmas a comparar:</span>
+    <div style="margin-bottom:16px;position:relative" id="turmasPickerWrap">
+        <button type="button" id="btDropBtn" onclick="btDropToggle(event)"
+                style="width:100%;text-align:left;background:#14142a;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:space-between;font-family:var(--font, inherit)">
+            <span><strong style="color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.05em;margin-right:8px">Turmas a comparar:</strong><span id="btDropLabel">carregando…</span></span>
+            <span id="btDropArrow" style="color:var(--muted);font-size:11px">▼</span>
+        </button>
+        <div id="btDropPanel" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:8px;z-index:50;max-height:320px;overflow:hidden;flex-direction:column">
+            <input type="text" id="btDropSearch" placeholder="Buscar turma..." oninput="btDropFilter()"
+                   style="background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:12px;margin-bottom:6px;width:100%;box-sizing:border-box">
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+                <button type="button" onclick="btDropAll(true)" style="flex:1;background:none;border:1px solid var(--border);color:var(--text);padding:4px;border-radius:6px;cursor:pointer;font-size:11px">Selecionar todas</button>
+                <button type="button" onclick="btDropAll(false)" style="flex:1;background:none;border:1px solid var(--border);color:var(--text);padding:4px;border-radius:6px;cursor:pointer;font-size:11px">Limpar</button>
+            </div>
+            <div id="btDropList" style="overflow-y:auto;max-height:220px"></div>
+        </div>
+        <div id="btSelectedPills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
     </div>
     <canvas id="chartBarTurmas" style="max-height:380px"></canvas>
 </div>
@@ -1133,47 +1147,110 @@ include __DIR__ . '/_header.php';
     let btChart = null;
 
     function btInit() {
-        const picker = document.getElementById('turmasPicker');
-        if (!picker) return;
-        const turmaIds = Object.keys(BAR_TURMA_DATA).sort((a,b)=>{
+        const wrap = document.getElementById('turmasPickerWrap');
+        if (!wrap) return;
+        const turmaIds = Object.keys(BAR_TURMA_DATA).sort((a,b) => {
             return (BAR_TURMA_DATA[b].inscritos||0) - (BAR_TURMA_DATA[a].inscritos||0);
         });
         if (!turmaIds.length) {
-            picker.innerHTML += '<span style="color:var(--muted);font-size:12px;padding:8px">Nenhuma turma com inscritos no período.</span>';
+            document.getElementById('btDropLabel').textContent = 'nenhuma turma no período';
             return;
         }
-        // Pré-seleciona top 3 turmas com mais inscritos OU a turma filtrada
         if (TURMA_FILTRADA && BAR_TURMA_DATA[TURMA_FILTRADA]) {
             btSelectedTurmas = [TURMA_FILTRADA];
         } else {
             btSelectedTurmas = turmaIds.slice(0, Math.min(3, turmaIds.length));
         }
-        turmaIds.forEach(tid => {
-            const label = TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid));
-            const sel = btSelectedTurmas.includes(tid);
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.dataset.tid = tid;
-            btn.style.cssText = 'padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;font-weight:600;'
-                + 'border:1px solid '+(sel?'var(--primary)':'var(--border)')+';'
-                + 'background:'+(sel?'rgba(250,204,21,.15)':'transparent')+';'
-                + 'color:'+(sel?'var(--primary)':'var(--muted)')+';';
-            btn.textContent = label + ' (' + (BAR_TURMA_DATA[tid].inscritos||0) + ')';
-            btn.onclick = () => btToggleTurma(tid, btn);
-            picker.appendChild(btn);
-        });
+        btRenderDropList();
+        btRenderSelectedPills();
         btRender();
+
+        document.addEventListener('click', function(ev) {
+            const wrap = document.getElementById('turmasPickerWrap');
+            if (wrap && !wrap.contains(ev.target)) {
+                const p = document.getElementById('btDropPanel');
+                if (p && p.style.display === 'flex') { p.style.display = 'none'; document.getElementById('btDropArrow').textContent = '▼'; }
+            }
+        });
     }
 
-    function btToggleTurma(tid, btn) {
+    function btDropToggle(ev) {
+        if (ev) ev.stopPropagation();
+        const p = document.getElementById('btDropPanel');
+        const open = p.style.display === 'flex';
+        p.style.display = open ? 'none' : 'flex';
+        document.getElementById('btDropArrow').textContent = open ? '▼' : '▲';
+        if (!open) {
+            document.getElementById('btDropSearch').value = '';
+            btDropFilter();
+            setTimeout(() => document.getElementById('btDropSearch').focus(), 30);
+        }
+    }
+
+    function btRenderDropList() {
+        const turmaIds = Object.keys(BAR_TURMA_DATA).sort((a,b) =>
+            (BAR_TURMA_DATA[b].inscritos||0) - (BAR_TURMA_DATA[a].inscritos||0));
+        const q = (document.getElementById('btDropSearch')?.value || '').trim().toLowerCase();
+        const list = document.getElementById('btDropList');
+        const itens = turmaIds.filter(tid => {
+            const lbl = (TURMAS_LABEL[tid] || tid).toLowerCase();
+            return !q || lbl.includes(q);
+        });
+        if (!itens.length) {
+            list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px;text-align:center">Nenhuma turma encontrada</div>';
+            return;
+        }
+        list.innerHTML = itens.map(tid => {
+            const label = TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid));
+            const sel = btSelectedTurmas.includes(tid);
+            return `<div class="bt-drop-item" data-tid="${escAttr(tid)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text)">
+                <input type="checkbox" ${sel ? 'checked' : ''} style="cursor:pointer;accent-color:var(--primary)">
+                <span style="flex:1">${escHtml(label)}</span>
+                <span style="color:var(--muted);font-size:11px">${BAR_TURMA_DATA[tid].inscritos||0}</span>
+            </div>`;
+        }).join('');
+        list.querySelectorAll('.bt-drop-item').forEach(el => {
+            el.addEventListener('mouseenter', () => el.style.background = 'var(--bg-hover, rgba(255,255,255,.05))');
+            el.addEventListener('mouseleave', () => el.style.background = '');
+            el.addEventListener('click', () => btDropPick(el.dataset.tid));
+        });
+    }
+
+    function btDropFilter() { btRenderDropList(); }
+
+    function btDropPick(tid) {
         const i = btSelectedTurmas.indexOf(tid);
         if (i >= 0) btSelectedTurmas.splice(i, 1);
         else btSelectedTurmas.push(tid);
-        const sel = i < 0; // após toggle
-        btn.style.borderColor = sel ? 'var(--primary)' : 'var(--border)';
-        btn.style.background  = sel ? 'rgba(250,204,21,.15)' : 'transparent';
-        btn.style.color       = sel ? 'var(--primary)' : 'var(--muted)';
+        btRenderDropList();
+        btRenderSelectedPills();
         btRender();
+    }
+
+    function btDropAll(checkAll) {
+        const turmaIds = Object.keys(BAR_TURMA_DATA);
+        btSelectedTurmas = checkAll ? [...turmaIds] : [];
+        btRenderDropList();
+        btRenderSelectedPills();
+        btRender();
+    }
+
+    function btRenderSelectedPills() {
+        const cont = document.getElementById('btSelectedPills');
+        const lbl  = document.getElementById('btDropLabel');
+        if (!btSelectedTurmas.length) {
+            cont.innerHTML = '';
+            lbl.textContent = 'nenhuma selecionada';
+            return;
+        }
+        lbl.textContent = btSelectedTurmas.length + ' turma' + (btSelectedTurmas.length > 1 ? 's' : '') + ' selecionada' + (btSelectedTurmas.length > 1 ? 's' : '');
+        cont.innerHTML = btSelectedTurmas.map(tid => {
+            const label = TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid));
+            return `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(250,204,21,.15);border:1px solid var(--primary);color:var(--primary);padding:2px 4px 2px 10px;border-radius:999px;font-size:11px;font-weight:600">
+                ${escHtml(label)}
+                <button type="button" onclick="btDropPick('${escAttr(tid)}')" style="background:none;border:none;color:inherit;cursor:pointer;padding:0 6px;font-size:13px;line-height:1">×</button>
+            </span>`;
+        }).join('');
     }
 
     function btSetMode(m) {
@@ -1184,6 +1261,16 @@ include __DIR__ . '/_header.php';
         document.getElementById('btnModePct').style.color      = m==='pct' ? '#000' : 'var(--muted)';
         btRender();
     }
+
+    function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function escAttr(s) { return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+    // Expor globalmente (onclick inline precisa)
+    window.btSetMode = btSetMode;
+    window.btDropToggle = btDropToggle;
+    window.btDropFilter = btDropFilter;
+    window.btDropPick = btDropPick;
+    window.btDropAll = btDropAll;
 
     function btRender() {
         const labels = BAR_STAGES.map(s => s.label);
