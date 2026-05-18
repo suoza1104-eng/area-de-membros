@@ -131,6 +131,25 @@ foreach ($tagsNot as $i => $tg) {
 }
 $temFiltroTagStruct = !empty($tagsIs) || !empty($tagsNot);
 
+// Filtro de progresso: todos | so_inscrito | em_progresso | concluiram
+$fProgresso = trim((string)($_GET['progresso'] ?? ''));
+if (in_array($fProgresso, ['so_inscrito','em_progresso','concluiram'], true)) {
+    $progSubReq = "(SELECT COUNT(*) FROM lessons WHERE conta_para_conclusao = 1 AND ativo = 1)";
+    $progSubDone = "(SELECT COUNT(DISTINCT lp.lesson_id)
+                     FROM lesson_progress lp
+                     JOIN lessons l ON l.id = lp.lesson_id
+                     WHERE lp.user_id = u.id AND lp.status = 'completed'
+                       AND l.conta_para_conclusao = 1 AND l.ativo = 1)";
+    $progSubAny = "(SELECT COUNT(*) FROM lesson_progress lp WHERE lp.user_id = u.id AND lp.status = 'completed')";
+    if ($fProgresso === 'so_inscrito') {
+        $where[] = "$progSubAny = 0";
+    } elseif ($fProgresso === 'em_progresso') {
+        $where[] = "$progSubAny > 0 AND $progSubDone < $progSubReq";
+    } elseif ($fProgresso === 'concluiram') {
+        $where[] = "$progSubDone >= $progSubReq AND $progSubReq > 0";
+    }
+}
+
 // Lista todas as tags disponíveis (para o dropdown)
 $todasTags = [];
 try {
@@ -356,6 +375,15 @@ require __DIR__ . '/_header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
+            <div class="filter-group" style="min-width:170px">
+                <label>Progresso</label>
+                <select name="progresso">
+                    <option value="" <?= $fProgresso===''?'selected':'' ?>>Todos</option>
+                    <option value="so_inscrito"  <?= $fProgresso==='so_inscrito' ?'selected':'' ?>>Só inscritos (não viram aula)</option>
+                    <option value="em_progresso" <?= $fProgresso==='em_progresso'?'selected':'' ?>>Em progresso</option>
+                    <option value="concluiram"   <?= $fProgresso==='concluiram'  ?'selected':'' ?>>Concluíram a trilha</option>
+                </select>
+            </div>
             <div class="filter-group" style="min-width:240px;position:relative">
                 <label>Tags</label>
                 <div class="tag-picker" id="tagPicker">
@@ -375,7 +403,7 @@ require __DIR__ . '/_header.php';
             </div>
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
-                <?php if ($q||$fTurma||$fTag||$temFiltroTagStruct||$temFiltroUtm||$temFiltroData): ?>
+                <?php if ($q||$fTurma||$fTag||$temFiltroTagStruct||$temFiltroUtm||$temFiltroData||$fProgresso): ?>
                 <a href="alunos.php" class="reset-link">Limpar</a>
                 <?php endif; ?>
             </div>
