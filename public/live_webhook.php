@@ -90,6 +90,23 @@ if (function_exists('fastcgi_finish_request')) {
     @flush();
 }
 
+// Helper: pega valor de path com dot notation (data.buyer.email) — fallback flat
+function lw_get_value(array $data, string $path): ?string {
+    if ($path === '') return null;
+    // Tentativa 1: acesso direto (chave literal, mesmo que contenha pontos)
+    if (array_key_exists($path, $data) && is_scalar($data[$path])) return (string)$data[$path];
+    // Tentativa 2: dot notation
+    if (strpos($path, '.') !== false) {
+        $cur = $data;
+        foreach (explode('.', $path) as $p) {
+            if (!is_array($cur) || !array_key_exists($p, $cur)) return null;
+            $cur = $cur[$p];
+        }
+        return is_scalar($cur) ? (string)$cur : null;
+    }
+    return null;
+}
+
 // ── Processa este recebimento (síncrono após resposta) ────────────────────────
 try {
     // Aplica mapeamento de payload (se houver)
@@ -104,12 +121,17 @@ try {
         if (!isset($map[$k])) $map[$k] = $v;
     }
 
-    $nome     = isset($payload[$map['nome']])     ? trim((string)$payload[$map['nome']])     : '';
-    $email    = isset($payload[$map['email']])    ? trim((string)$payload[$map['email']])    : '';
-    $telefone = isset($payload[$map['telefone']]) ? trim((string)$payload[$map['telefone']]) : '';
+    $nome     = trim((string)(lw_get_value($payload, (string)$map['nome'])     ?? ''));
+    $email    = trim((string)(lw_get_value($payload, (string)$map['email'])    ?? ''));
+    $telefone = trim((string)(lw_get_value($payload, (string)$map['telefone']) ?? ''));
+
+    // Fallback: se mapeamento não achou, tenta chaves padrão diretamente
+    if ($nome     === '' && isset($payload['nome']))     $nome     = trim((string)$payload['nome']);
+    if ($email    === '' && isset($payload['email']))    $email    = trim((string)$payload['email']);
+    if ($telefone === '' && isset($payload['telefone'])) $telefone = trim((string)$payload['telefone']);
 
     if ($email === '' && $telefone === '') {
-        throw new RuntimeException('Payload sem email nem telefone');
+        throw new RuntimeException('Payload sem email nem telefone. Mapeamento usado: email=' . $map['email'] . ', telefone=' . $map['telefone'] . '. Chaves do payload: ' . implode(',', array_keys($payload)));
     }
 
     // Busca usuário existente
