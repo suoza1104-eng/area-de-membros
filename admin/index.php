@@ -520,16 +520,15 @@ $funnelData = [];
 $funnelData[] = ['label' => 'Total Inscritos',        'count' => $totalAlunos];
 $funnelData[] = ['label' => 'Logaram na plataforma',  'count' => $alunosLogaram];
 $funnelData[] = ['label' => 'Assistiram alguma aula', 'count' => $alunosAlguma];
-if ($liveAcessou > 0) $funnelData[] = ['label' => 'Acessaram a live',     'count' => $liveAcessou];
-if ($liveOferta  > 0) $funnelData[] = ['label' => 'Ficaram até a oferta', 'count' => $liveOferta];
-if ($liveCompra  > 0) $funnelData[] = ['label' => 'Clicaram na compra',   'count' => $liveCompra];
 foreach ($funil as $f) {
     $funnelData[] = [
         'label' => 'Aula ' . $f['ordem'] . ' — ' . mb_strimwidth($f['titulo'], 0, 30, '…'),
         'count' => (int)$f['concluintes'],
     ];
 }
+if ($liveAcessou > 0) $funnelData[] = ['label' => 'Acessaram a live',     'count' => $liveAcessou];
 $funnelData[] = ['label' => 'Certificado emitido', 'count' => $totalCert];
+if ($liveCompra  > 0) $funnelData[] = ['label' => 'Clicou na oferta',     'count' => $liveCompra];
 
 $funnelMax = max(1, (int)($funnelData[0]['count'] ?? 1));
 foreach ($funnelData as $fi => &$fstep) {
