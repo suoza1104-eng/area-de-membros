@@ -586,7 +586,7 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
             </div>
 
             <div class="hint-box">
-                Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>31985278215</strong>
+                Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>11987654321</strong>
             </div>
 
             <div class="actions-row">
