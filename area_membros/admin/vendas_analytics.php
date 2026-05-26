@@ -152,11 +152,12 @@ function buildFilters(
     return [$where, $params];
 }
 
-function fetchOptions(PDO $pdo, string $table, string $tableAlias, string $column, array $where, array $params): array {
+function fetchOptions(PDO $pdo, string $table, string $tableAlias, string $column, array $where, array $params, string $joinSql = ''): array {
     $sqlWhere = $where ? ("WHERE " . implode(" AND ", $where)) : "";
     $stmt = $pdo->prepare("
         SELECT DISTINCT COALESCE(NULLIF($tableAlias.$column,''),'(vazio)') AS v
         FROM `$table` $tableAlias
+        $joinSql
         $sqlWhere
         ORDER BY v ASC
         LIMIT 900
@@ -164,6 +165,17 @@ function fetchOptions(PDO $pdo, string $table, string $tableAlias, string $colum
     $stmt->execute($params);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     return array_map(function($r){ return (string)$r['v']; }, $rows);
+}
+
+function appendInFilter(array &$where, array &$params, string $expr, array $vals, string $prefix): void {
+    if (!$vals) return;
+    $ph = [];
+    foreach ($vals as $i => $v) {
+        $k = ':' . $prefix . $i;
+        $ph[] = $k;
+        $params[$k] = $v;
+    }
+    $where[] = "$expr IN (" . implode(',', $ph) . ")";
 }
 
 /**
@@ -181,6 +193,7 @@ $f_campaign = getArrayParam('f_campaign');
 $f_term     = getArrayParam('f_term');
 $f_content  = getArrayParam('f_content');
 $f_products = getArrayParam('f_products');
+$f_turmas   = getArrayParam('f_turmas');
 
 $limit = 25;
 
@@ -198,6 +211,28 @@ $leadDateCol = detectDateColumn($pdo, 'users', [
 $hasInscricaoLogs = tableExists($pdo, 'inscricao_logs');
 $userTurmaCol = detectColumn($pdo, 'users', ['codigo_turma','turma_codigo','turma','turma_id']);
 
+$approvedStatuses = ["'Aprovado'", "'Completo'"];
+$refundStatuses = ["'Reembolsado'", "'Chargeback'"];
+$approvedStatusSql = implode(',', $approvedStatuses);
+$refundStatusSql = implode(',', $refundStatuses);
+
+$turmaHistExprSales = $hasInscricaoLogs
+    ? "(SELECT il.codigo_turma
+          FROM inscricao_logs il
+         WHERE il.user_id = s.matched_user_id
+           AND il.codigo_turma IS NOT NULL
+           AND il.codigo_turma <> ''
+           AND (s.transaction_date IS NULL OR il.created_at <= s.transaction_date)
+         ORDER BY il.created_at DESC
+         LIMIT 1)"
+    : "NULL";
+$salesJoinUserForTurma = $userTurmaCol ? "LEFT JOIN users us ON us.id = s.matched_user_id" : "";
+$turmaCurrentExprSales = $userTurmaCol ? "us.`$userTurmaCol`" : "NULL";
+$salesTurmaExpr = "COALESCE(NULLIF($turmaHistExprSales,''), NULLIF($turmaCurrentExprSales,''), 'Sem turma')";
+
+$turmaCurrentExprLeads = $userTurmaCol ? "u.`$userTurmaCol`" : "NULL";
+$leadTurmaExpr = "COALESCE(NULLIF($turmaCurrentExprLeads,''), 'Sem turma')";
+
 /**
  * ===== VENDAS filtros =====
  */
@@ -207,6 +242,7 @@ list($whereSales, $paramsSales) = buildFilters(
     $f_products, true,
     null, true, $salesDateCol, true
 );
+appendInFilter($whereSales, $paramsSales, $salesTurmaExpr, $f_turmas, 'turma');
 $sqlWhereSales = $whereSales ? ("WHERE " . implode(" AND ", $whereSales)) : "";
 $sqlWhereSalesLag = $sqlWhereSales ? $sqlWhereSales : "WHERE 1=1";
 
@@ -219,6 +255,9 @@ list($whereLeads, $paramsLeads) = buildFilters(
     [], false,
     null, true, $leadDateCol, false
 );
+if ($userTurmaCol) {
+    appendInFilter($whereLeads, $paramsLeads, $leadTurmaExpr, $f_turmas, 'lturma');
+}
 $sqlWhereLeads = $whereLeads ? ("WHERE " . implode(" AND ", $whereLeads)) : "";
 
 /**
@@ -230,6 +269,7 @@ $stmtSalesAgg = $pdo->prepare("
     COUNT(*) AS vendas,
     COALESCE(SUM(s.producer_net),0) AS lucro
   FROM hotmart_sales s
+  $salesJoinUserForTurma
   $sqlWhereSales
   GROUP BY label
   ORDER BY vendas DESC
@@ -267,6 +307,7 @@ $leadsArr    = array_map(function($r){ return (int)$r['leads']; }, $dataLeads);
 $stmtSalesTotals = $pdo->prepare("
   SELECT COUNT(*) AS vendas_total, COALESCE(SUM(s.producer_net),0) AS lucro_total
   FROM hotmart_sales s
+  $salesJoinUserForTurma
   $sqlWhereSales
 ");
 $stmtSalesTotals->execute($paramsSales);
@@ -305,6 +346,7 @@ $stmtTable = $pdo->prepare("
         COUNT(*) AS vendas,
         COALESCE(SUM(s.producer_net),0) AS lucro
       FROM hotmart_sales s
+      $salesJoinUserForTurma
       $sqlWhereSales
       GROUP BY label
   ) t
@@ -334,23 +376,10 @@ $salesTurmaRows = [];
 $leadsByTurma = [];
 $turmaRows = [];
 
-$turmaHistExpr = $hasInscricaoLogs
-    ? "(SELECT il.codigo_turma
-          FROM inscricao_logs il
-         WHERE il.user_id = s.matched_user_id
-           AND il.codigo_turma IS NOT NULL
-           AND il.codigo_turma <> ''
-           AND (s.transaction_date IS NULL OR il.created_at <= s.transaction_date)
-         ORDER BY il.created_at DESC
-         LIMIT 1)"
-    : "NULL";
-$turmaCurrentExprSales = $userTurmaCol ? "u.`$userTurmaCol`" : "NULL";
-$turmaCurrentExprLeads = $userTurmaCol ? "u.`$userTurmaCol`" : "NULL";
-
 try {
     $stmtTurmaSales = $pdo->prepare("
         SELECT
-          COALESCE(NULLIF(x.turma_hist,''), NULLIF(x.turma_atual,''), 'Sem turma') AS turma,
+          x.turma,
           COUNT(*) AS vendas,
           COUNT(DISTINCT x.matched_user_id) AS compradores,
           COALESCE(SUM(x.producer_net),0) AS receita,
@@ -361,10 +390,11 @@ try {
           SELECT
             s.matched_user_id,
             s.producer_net,
-            $turmaHistExpr AS turma_hist,
-            $turmaCurrentExprSales AS turma_atual
+            $turmaHistExprSales AS turma_hist,
+            $turmaCurrentExprSales AS turma_atual,
+            $salesTurmaExpr AS turma
           FROM hotmart_sales s
-          LEFT JOIN users u ON u.id = s.matched_user_id
+          $salesJoinUserForTurma
           $sqlWhereSales
         ) x
         GROUP BY turma
@@ -381,7 +411,7 @@ if ($userTurmaCol) {
     try {
         $stmtTurmaLeads = $pdo->prepare("
             SELECT
-              COALESCE(NULLIF($turmaCurrentExprLeads,''), 'Sem turma') AS turma,
+              $leadTurmaExpr AS turma,
               COUNT(*) AS leads
             FROM users u
             $sqlWhereLeads
@@ -436,6 +466,7 @@ if (!$leadDateCol) {
           LEAST(365, DATEDIFF(DATE(s.transaction_date), DATE(u.`$leadDateCol`))) AS days_diff,
           COUNT(*) AS vendas
         FROM hotmart_sales s
+        $salesJoinUserForTurma
         INNER JOIN users u ON u.id = s.matched_user_id
         $sqlWhereSalesLag
           AND s.matched_user_id IS NOT NULL
@@ -468,6 +499,109 @@ if (!$leadDateCol) {
 }
 
 /**
+ * ===== Financeiro: reembolsos, faturamento semanal e comparativo mensal
+ * Usa status internos para nao esconder reembolsos quando o filtro de status estiver em aprovadas.
+ */
+list($whereFinance, $paramsFinance) = buildFilters(
+    's', 'todas', $dtIni, $dtFim, $includeOrganic,
+    $f_source, $f_medium, $f_campaign, $f_term, $f_content,
+    $f_products, true,
+    null, true, $salesDateCol, false
+);
+appendInFilter($whereFinance, $paramsFinance, $salesTurmaExpr, $f_turmas, 'fin_turma');
+$sqlWhereFinance = $whereFinance ? ("WHERE " . implode(" AND ", $whereFinance)) : "";
+$financeDateGuard = $sqlWhereFinance ? "AND s.transaction_date IS NOT NULL" : "WHERE s.transaction_date IS NOT NULL";
+
+$refundRows = [];
+$weeklyRows = [];
+$monthlyRows = [];
+try {
+    $stmtRefund = $pdo->prepare("
+        SELECT
+          $salesTurmaExpr AS turma,
+          SUM(CASE WHEN s.status IN ($approvedStatusSql) THEN 1 ELSE 0 END) AS vendas_validas,
+          SUM(CASE WHEN s.status IN ($refundStatusSql) THEN 1 ELSE 0 END) AS reembolsos_qtd,
+          COALESCE(SUM(CASE WHEN s.status IN ($refundStatusSql) THEN s.gross_revenue ELSE 0 END),0) AS reembolsos_valor
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereFinance
+        GROUP BY turma
+        ORDER BY reembolsos_valor DESC, reembolsos_qtd DESC, turma ASC
+        LIMIT 30
+    ");
+    $stmtRefund->execute($paramsFinance);
+    $refundRows = $stmtRefund->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $stmtWeekly = $pdo->prepare("
+        SELECT
+          DATE_FORMAT(s.transaction_date, '%Y-%m') AS ym,
+          LEAST(4, CEIL(DAYOFMONTH(s.transaction_date) / 7)) AS semana,
+          COALESCE(SUM(CASE WHEN s.status IN ($approvedStatusSql) THEN s.gross_revenue ELSE 0 END),0) AS bruto,
+          COALESCE(SUM(CASE WHEN s.status IN ($refundStatusSql) THEN s.gross_revenue ELSE 0 END),0) AS reembolso,
+          COALESCE(SUM(CASE WHEN s.status IN ($approvedStatusSql) THEN s.gross_revenue ELSE 0 END),0)
+            - COALESCE(SUM(CASE WHEN s.status IN ($refundStatusSql) THEN s.gross_revenue ELSE 0 END),0) AS liquido_pos_reembolso
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereFinance
+        $financeDateGuard
+        GROUP BY ym, semana
+        ORDER BY ym ASC, semana ASC
+        LIMIT 80
+    ");
+    $stmtWeekly->execute($paramsFinance);
+    $weeklyRows = $stmtWeekly->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $stmtMonthly = $pdo->prepare("
+        SELECT
+          DATE_FORMAT(s.transaction_date, '%Y-%m') AS ym,
+          COALESCE(SUM(CASE WHEN s.status IN ($approvedStatusSql) THEN s.gross_revenue ELSE 0 END),0) AS bruto,
+          COALESCE(SUM(CASE WHEN s.status IN ($approvedStatusSql) THEN s.producer_net ELSE 0 END),0) AS comissao_liquida
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereFinance
+        $financeDateGuard
+        GROUP BY ym
+        ORDER BY ym ASC
+        LIMIT 48
+    ");
+    $stmtMonthly->execute($paramsFinance);
+    $monthlyRows = $stmtMonthly->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (\Throwable $e) {
+    $refundRows = [];
+    $weeklyRows = [];
+    $monthlyRows = [];
+}
+
+$refundLabels = [];
+$refundQtdArr = [];
+$refundValorArr = [];
+$refundRateArr = [];
+foreach ($refundRows as $r) {
+    $validas = (int)($r['vendas_validas'] ?? 0);
+    $refundQtd = (int)($r['reembolsos_qtd'] ?? 0);
+    $refundLabels[] = (string)($r['turma'] ?? 'Sem turma');
+    $refundQtdArr[] = $refundQtd;
+    $refundValorArr[] = (float)($r['reembolsos_valor'] ?? 0);
+    $refundRateArr[] = ($validas + $refundQtd) > 0 ? round(($refundQtd / ($validas + $refundQtd)) * 100, 1) : 0;
+}
+
+$weeklyLabels = [];
+$weeklyNetArr = [];
+foreach ($weeklyRows as $r) {
+    $weeklyLabels[] = substr((string)$r['ym'], 5, 2) . '/' . substr((string)$r['ym'], 0, 4) . ' S' . (int)$r['semana'];
+    $weeklyNetArr[] = (float)$r['liquido_pos_reembolso'];
+}
+
+$monthlyLabels = [];
+$monthlyGrossArr = [];
+$monthlyCommissionArr = [];
+foreach ($monthlyRows as $r) {
+    $monthlyLabels[] = substr((string)$r['ym'], 5, 2) . '/' . substr((string)$r['ym'], 0, 4);
+    $monthlyGrossArr[] = (float)$r['bruto'];
+    $monthlyCommissionArr[] = (float)$r['comissao_liquida'];
+}
+
+/**
  * ===== Dropdown options (base vendas, já respeitando filtro de produto) =====
  */
 list($w_src, $p_src) = buildFilters('s', $status, $dtIni, $dtFim, $includeOrganic, $f_source, $f_medium, $f_campaign, $f_term, $f_content, $f_products, true, 'utm_source', true, $salesDateCol, true);
@@ -477,12 +611,39 @@ list($w_ter, $p_ter) = buildFilters('s', $status, $dtIni, $dtFim, $includeOrgani
 list($w_con, $p_con) = buildFilters('s', $status, $dtIni, $dtFim, $includeOrganic, $f_source, $f_medium, $f_campaign, $f_term, $f_content, $f_products, true, 'utm_content', true, $salesDateCol, true);
 list($w_prd, $p_prd) = buildFilters('s', $status, $dtIni, $dtFim, $includeOrganic, $f_source, $f_medium, $f_campaign, $f_term, $f_content, $f_products, true, 'product_name', true, $salesDateCol, true);
 
-$opt_source   = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_source',   $w_src, $p_src);
-$opt_medium   = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_medium',   $w_med, $p_med);
-$opt_campaign = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_campaign', $w_cam, $p_cam);
-$opt_term     = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_term',     $w_ter, $p_ter);
-$opt_content  = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_content',  $w_con, $p_con);
-$opt_products = fetchOptions($pdo, 'hotmart_sales', 's', 'product_name', $w_prd, $p_prd);
+appendInFilter($w_src, $p_src, $salesTurmaExpr, $f_turmas, 'osrc_turma');
+appendInFilter($w_med, $p_med, $salesTurmaExpr, $f_turmas, 'omed_turma');
+appendInFilter($w_cam, $p_cam, $salesTurmaExpr, $f_turmas, 'ocam_turma');
+appendInFilter($w_ter, $p_ter, $salesTurmaExpr, $f_turmas, 'oter_turma');
+appendInFilter($w_con, $p_con, $salesTurmaExpr, $f_turmas, 'ocon_turma');
+appendInFilter($w_prd, $p_prd, $salesTurmaExpr, $f_turmas, 'oprd_turma');
+
+$opt_source   = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_source',   $w_src, $p_src, $salesJoinUserForTurma);
+$opt_medium   = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_medium',   $w_med, $p_med, $salesJoinUserForTurma);
+$opt_campaign = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_campaign', $w_cam, $p_cam, $salesJoinUserForTurma);
+$opt_term     = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_term',     $w_ter, $p_ter, $salesJoinUserForTurma);
+$opt_content  = fetchOptions($pdo, 'hotmart_sales', 's', 'utm_content',  $w_con, $p_con, $salesJoinUserForTurma);
+$opt_products = fetchOptions($pdo, 'hotmart_sales', 's', 'product_name', $w_prd, $p_prd, $salesJoinUserForTurma);
+
+list($w_turma_opt, $p_turma_opt) = buildFilters('s', $status, $dtIni, $dtFim, $includeOrganic, $f_source, $f_medium, $f_campaign, $f_term, $f_content, $f_products, true, null, true, $salesDateCol, true);
+$sqlWhereTurmaOpt = $w_turma_opt ? ("WHERE " . implode(" AND ", $w_turma_opt)) : "";
+$opt_turmas = [];
+try {
+    $stmtTurmaOpt = $pdo->prepare("
+        SELECT $salesTurmaExpr AS v, COUNT(*) AS vendas, COALESCE(SUM(s.producer_net),0) AS receita
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereTurmaOpt
+        GROUP BY v
+        HAVING v IS NOT NULL AND v <> ''
+        ORDER BY vendas DESC, receita DESC, v ASC
+        LIMIT 900
+    ");
+    $stmtTurmaOpt->execute($p_turma_opt);
+    $opt_turmas = array_map(function($r){ return (string)$r['v']; }, $stmtTurmaOpt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+} catch (\Throwable $e) {
+    $opt_turmas = [];
+}
 
 /**
  * ===== Orgânicos não encontrados =====
@@ -495,6 +656,7 @@ list($whereOrg, $paramsOrg) = buildFilters(
 );
 $whereOrg[] = "s.match_method = 'none'";
 $whereOrg[] = "COALESCE(NULLIF(s.utm_source,''),'organico') = 'organico'";
+appendInFilter($whereOrg, $paramsOrg, $salesTurmaExpr, $f_turmas, 'org_turma');
 $sqlWhereOrg = $whereOrg ? ("WHERE " . implode(" AND ", $whereOrg)) : "";
 
 $stmtOrg = $pdo->prepare("
@@ -509,6 +671,7 @@ $stmtOrg = $pdo->prepare("
     s.buyer_phone_norm,
     s.transaction_code
   FROM hotmart_sales s
+  $salesJoinUserForTurma
   $sqlWhereOrg
   ORDER BY s.transaction_date DESC
   LIMIT 500
@@ -519,6 +682,7 @@ $organicRows = $stmtOrg->fetchAll(PDO::FETCH_ASSOC);
 $stmtOrgTotal = $pdo->prepare("
   SELECT COUNT(*) AS qtd, COALESCE(SUM(s.producer_net),0) AS lucro
   FROM hotmart_sales s
+  $salesJoinUserForTurma
   $sqlWhereOrg
 ");
 $stmtOrgTotal->execute($paramsOrg);
@@ -748,6 +912,9 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
         <option value="todas" <?= $status==='todas'?'selected':'' ?>>Todas</option>
         <option value="Aprovado" <?= $status==='Aprovado'?'selected':'' ?>>Aprovado</option>
         <option value="Completo" <?= $status==='Completo'?'selected':'' ?>>Completo</option>
+        <option value="Reembolsado" <?= $status==='Reembolsado'?'selected':'' ?>>Reembolsado</option>
+        <option value="Chargeback" <?= $status==='Chargeback'?'selected':'' ?>>Chargeback</option>
+        <option value="Cancelado" <?= $status==='Cancelado'?'selected':'' ?>>Cancelado</option>
       </select>
     </div>
 
@@ -799,6 +966,7 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
       // Cursos
       echo '<div style="grid-column: span 12;"></div>';
       $renderMS('Cursos / Produtos (Hotmart)', 'f_products[]', $opt_products, $f_products, 6);
+      $renderMS('Turmas', 'f_turmas[]', $opt_turmas, $f_turmas, 6);
     ?>
 
     <div style="grid-column: span 6; display:flex; gap:10px; justify-content:flex-end;">
@@ -876,6 +1044,42 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
     </div>
   <?php endif; ?>
 </div>
+
+    <div class="card-dark">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <h3 style="margin:0;">Taxa de reembolso por turma</h3>
+        <span class="badge-dark">Qtd + valor em R$</span>
+      </div>
+      <?php if (!$refundLabels): ?>
+        <div class="muted" style="margin-top:10px;">Sem reembolsos para os filtros atuais.</div>
+      <?php else: ?>
+        <div class="sales-chart"><canvas id="chartRefund"></canvas></div>
+      <?php endif; ?>
+    </div>
+
+    <div class="card-dark">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <h3 style="margin:0;">Faturamento liquido por semana</h3>
+        <span class="badge-dark">bruto aprovado - reembolsos</span>
+      </div>
+      <?php if (!$weeklyLabels): ?>
+        <div class="muted" style="margin-top:10px;">Sem dados semanais para os filtros atuais.</div>
+      <?php else: ?>
+        <div class="sales-chart"><canvas id="chartWeeklyNet"></canvas></div>
+      <?php endif; ?>
+    </div>
+
+    <div class="card-dark table-wide">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <h3 style="margin:0;">Faturamento bruto x comissao liquida por mes</h3>
+        <span class="badge-dark">comparativo mensal</span>
+      </div>
+      <?php if (!$monthlyLabels): ?>
+        <div class="muted" style="margin-top:10px;">Sem dados mensais para os filtros atuais.</div>
+      <?php else: ?>
+        <div class="sales-chart"><canvas id="chartMonthlyGrossNet"></canvas></div>
+      <?php endif; ?>
+    </div>
 
   <!-- Tabela UTM -->
   <div class="card-dark table-wide">
@@ -1131,6 +1335,81 @@ function makeBarChart(canvasId, labels, datasetLabel, data, isMoney=false){
   });
 }
 
+function makeGroupedBarChart(canvasId, labels, datasets, isMoney=false){
+  const el = document.getElementById(canvasId);
+  if (!el) return null;
+
+  return new Chart(el, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', boxWidth: 18, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const v = context.parsed.y ?? 0;
+              return `${context.dataset.label}: ${isMoney ? fmtBRL(v) : v}`;
+            }
+          }
+        },
+        datalabels: {
+          color: '#e2e8f0',
+          anchor: 'end',
+          align: 'end',
+          clamp: true,
+          formatter: (value) => isMoney ? fmtBRL(value) : value,
+          font: { weight: '700', size: 10 }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
+        y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } }
+      }
+    }
+  });
+}
+
+function makeRefundChart(canvasId, labels, valueData, countData, rateData){
+  const el = document.getElementById(canvasId);
+  if (!el) return null;
+
+  return new Chart(el, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'Valor reembolsado', data: valueData, yAxisID: 'money', backgroundColor: 'rgba(239,68,68,.62)', borderRadius: 4, maxBarThickness: 44 },
+        { type: 'line', label: 'Reembolsos (qtd)', data: countData, yAxisID: 'count', borderColor: '#f59e0b', backgroundColor: '#f59e0b', tension: .35, pointRadius: 3 },
+        { type: 'line', label: 'Taxa (%)', data: rateData, yAxisID: 'count', borderColor: '#a855f7', backgroundColor: '#a855f7', tension: .35, pointRadius: 3 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', boxWidth: 18, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const v = context.parsed.y ?? 0;
+              if (context.dataset.yAxisID === 'money') return `${context.dataset.label}: ${fmtBRL(v)}`;
+              return `${context.dataset.label}: ${v}`;
+            }
+          }
+        },
+        datalabels: { display: false }
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
+        money: { beginAtZero: true, position: 'left', ticks: { color: '#64748b', callback: (v) => fmtBRL(v), font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
+        count: { beginAtZero: true, position: 'right', ticks: { color: '#64748b', font: { size: 11 } }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+
 // Vendas/Lucro
 const labelsSales = <?= json_encode($labelsSales, JSON_UNESCAPED_UNICODE) ?>;
 const vendasArr   = <?= json_encode($vendasArr) ?>;
@@ -1148,6 +1427,28 @@ const lagLabels = <?= json_encode($lagLabels, JSON_UNESCAPED_UNICODE) ?>;
 const lagData   = <?= json_encode($lagData) ?>;
 if (document.getElementById('chartLag')) {
   makeBarChart('chartLag', lagLabels, 'Vendas', lagData, false);
+}
+
+const refundLabels = <?= json_encode($refundLabels, JSON_UNESCAPED_UNICODE) ?>;
+const refundQtdArr = <?= json_encode($refundQtdArr) ?>;
+const refundValorArr = <?= json_encode($refundValorArr) ?>;
+const refundRateArr = <?= json_encode($refundRateArr) ?>;
+if (document.getElementById('chartRefund')) {
+  makeRefundChart('chartRefund', refundLabels, refundValorArr, refundQtdArr, refundRateArr);
+}
+
+const weeklyLabels = <?= json_encode($weeklyLabels, JSON_UNESCAPED_UNICODE) ?>;
+const weeklyNetArr = <?= json_encode($weeklyNetArr) ?>;
+makeBarChart('chartWeeklyNet', weeklyLabels, 'Liquido pos-reembolso (R$)', weeklyNetArr, true);
+
+const monthlyLabels = <?= json_encode($monthlyLabels, JSON_UNESCAPED_UNICODE) ?>;
+const monthlyGrossArr = <?= json_encode($monthlyGrossArr) ?>;
+const monthlyCommissionArr = <?= json_encode($monthlyCommissionArr) ?>;
+if (document.getElementById('chartMonthlyGrossNet')) {
+  makeGroupedBarChart('chartMonthlyGrossNet', monthlyLabels, [
+    { label: 'Faturamento bruto', data: monthlyGrossArr, backgroundColor: 'rgba(56,189,248,.62)', borderRadius: 4, maxBarThickness: 44 },
+    { label: 'Comissao liquida', data: monthlyCommissionArr, backgroundColor: 'rgba(34,197,94,.62)', borderRadius: 4, maxBarThickness: 44 }
+  ], true);
 }
 </script>
 
