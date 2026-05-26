@@ -5,6 +5,9 @@ require_once __DIR__ . '/../app/funcoes.php';
 session_start();
 proteger_admin();
 
+$menu = 'vendas_analytics';
+$page_title = 'Analise de Vendas';
+
 $pdo = getPDO();
 
 /**
@@ -30,6 +33,30 @@ function safeDim(string $dim): string {
 }
 
 function detectDateColumn(PDO $pdo, string $table, array $candidates): ?string {
+    $cols = [];
+    try {
+        $stmt = $pdo->query("DESCRIBE `$table`");
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) $cols[] = (string)$r['Field'];
+    } catch (\Throwable $e) {
+        return null;
+    }
+    foreach ($candidates as $c) {
+        if (in_array($c, $cols, true)) return $c;
+    }
+    return null;
+}
+
+function tableExists(PDO $pdo, string $table): bool {
+    try {
+        $pdo->query("SELECT 1 FROM `$table` LIMIT 0");
+        return true;
+    } catch (\Throwable $e) {
+        return false;
+    }
+}
+
+function detectColumn(PDO $pdo, string $table, array $candidates): ?string {
     $cols = [];
     try {
         $stmt = $pdo->query("DESCRIBE `$table`");
@@ -168,6 +195,8 @@ $salesDateCol = 'transaction_date';
 $leadDateCol = detectDateColumn($pdo, 'users', [
     'created_at','data_cadastro','dt_cadastro','created','data','date_created','registered_at','cadastro_em'
 ]);
+$hasInscricaoLogs = tableExists($pdo, 'inscricao_logs');
+$userTurmaCol = detectColumn($pdo, 'users', ['codigo_turma','turma_codigo','turma','turma_id']);
 
 /**
  * ===== VENDAS filtros =====
@@ -292,6 +321,97 @@ $stmtTable = $pdo->prepare("
 ");
 $stmtTable->execute(array_merge($paramsSales, $paramsLeads));
 $tableRows = $stmtTable->fetchAll(PDO::FETCH_ASSOC);
+
+/**
+ * ===== Turmas (receita + conversao)
+ *
+ * Atribuicao da venda:
+ * 1) turma historica em inscricao_logs antes da compra;
+ * 2) turma atual do aluno em users;
+ * 3) Sem turma.
+ */
+$salesTurmaRows = [];
+$leadsByTurma = [];
+$turmaRows = [];
+
+$turmaHistExpr = $hasInscricaoLogs
+    ? "(SELECT il.codigo_turma
+          FROM inscricao_logs il
+         WHERE il.user_id = s.matched_user_id
+           AND il.codigo_turma IS NOT NULL
+           AND il.codigo_turma <> ''
+           AND (s.transaction_date IS NULL OR il.created_at <= s.transaction_date)
+         ORDER BY il.created_at DESC
+         LIMIT 1)"
+    : "NULL";
+$turmaCurrentExprSales = $userTurmaCol ? "u.`$userTurmaCol`" : "NULL";
+$turmaCurrentExprLeads = $userTurmaCol ? "u.`$userTurmaCol`" : "NULL";
+
+try {
+    $stmtTurmaSales = $pdo->prepare("
+        SELECT
+          COALESCE(NULLIF(x.turma_hist,''), NULLIF(x.turma_atual,''), 'Sem turma') AS turma,
+          COUNT(*) AS vendas,
+          COUNT(DISTINCT x.matched_user_id) AS compradores,
+          COALESCE(SUM(x.producer_net),0) AS receita,
+          SUM(CASE WHEN NULLIF(x.turma_hist,'') IS NOT NULL THEN 1 ELSE 0 END) AS vendas_historico,
+          SUM(CASE WHEN NULLIF(x.turma_hist,'') IS NULL AND NULLIF(x.turma_atual,'') IS NOT NULL THEN 1 ELSE 0 END) AS vendas_turma_atual,
+          SUM(CASE WHEN NULLIF(x.turma_hist,'') IS NULL AND NULLIF(x.turma_atual,'') IS NULL THEN 1 ELSE 0 END) AS vendas_sem_turma
+        FROM (
+          SELECT
+            s.matched_user_id,
+            s.producer_net,
+            $turmaHistExpr AS turma_hist,
+            $turmaCurrentExprSales AS turma_atual
+          FROM hotmart_sales s
+          LEFT JOIN users u ON u.id = s.matched_user_id
+          $sqlWhereSales
+        ) x
+        GROUP BY turma
+        ORDER BY receita DESC, vendas DESC
+        LIMIT 100
+    ");
+    $stmtTurmaSales->execute($paramsSales);
+    $salesTurmaRows = $stmtTurmaSales->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (\Throwable $e) {
+    $salesTurmaRows = [];
+}
+
+if ($userTurmaCol) {
+    try {
+        $stmtTurmaLeads = $pdo->prepare("
+            SELECT
+              COALESCE(NULLIF($turmaCurrentExprLeads,''), 'Sem turma') AS turma,
+              COUNT(*) AS leads
+            FROM users u
+            $sqlWhereLeads
+            GROUP BY turma
+        ");
+        $stmtTurmaLeads->execute($paramsLeads);
+        foreach (($stmtTurmaLeads->fetchAll(PDO::FETCH_ASSOC) ?: []) as $r) {
+            $leadsByTurma[(string)$r['turma']] = (int)$r['leads'];
+        }
+    } catch (\Throwable $e) {
+        $leadsByTurma = [];
+    }
+}
+
+foreach ($salesTurmaRows as $r) {
+    $turma = (string)$r['turma'];
+    $leads = $leadsByTurma[$turma] ?? 0;
+    $compradores = (int)($r['compradores'] ?? 0);
+    $turmaRows[] = [
+        'turma' => $turma,
+        'leads' => $leads,
+        'vendas' => (int)($r['vendas'] ?? 0),
+        'compradores' => $compradores,
+        'receita' => (float)($r['receita'] ?? 0),
+        'conversao' => $leads > 0 ? round(($compradores / $leads) * 100, 1) : null,
+        'vendas_historico' => (int)($r['vendas_historico'] ?? 0),
+        'vendas_turma_atual' => (int)($r['vendas_turma_atual'] ?? 0),
+        'vendas_sem_turma' => (int)($r['vendas_sem_turma'] ?? 0),
+    ];
+}
 
 
 /**
@@ -749,6 +869,53 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
           <?php endforeach; ?>
           <?php if (!$tableRows): ?>
             <tr><td colspan="4">Sem dados para os filtros selecionados.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tabela Turmas -->
+  <div class="card-dark" style="margin-top:14px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+      <h3 style="margin:0;">Receita por turma</h3>
+      <span class="badge-dark">Historico da inscricao; fallback: turma atual do aluno</span>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      Quando a venda nao encontra turma em <strong>inscricao_logs</strong> antes da compra, o sistema atribui pela turma atual em <strong>users</strong>.
+    </div>
+
+    <div style="overflow:auto; margin-top:10px;">
+      <table class="table table-striped" style="width:100%; min-width:1100px;">
+        <thead>
+          <tr>
+            <th>Turma</th>
+            <th>Leads</th>
+            <th>Vendas</th>
+            <th>Compradores</th>
+            <th>Conversao</th>
+            <th>Receita (R$)</th>
+            <th>Atribuicao</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($turmaRows as $r): ?>
+            <tr>
+              <td><?= htmlspecialchars((string)$r['turma']) ?></td>
+              <td><?= number_format((int)$r['leads'], 0, ',', '.') ?></td>
+              <td><?= number_format((int)$r['vendas'], 0, ',', '.') ?></td>
+              <td><?= number_format((int)$r['compradores'], 0, ',', '.') ?></td>
+              <td><?= $r['conversao'] === null ? '-' : number_format((float)$r['conversao'], 1, ',', '.') . '%' ?></td>
+              <td><?= number_format((float)$r['receita'], 2, ',', '.') ?></td>
+              <td>
+                historico: <?= number_format((int)$r['vendas_historico'], 0, ',', '.') ?> |
+                turma atual: <?= number_format((int)$r['vendas_turma_atual'], 0, ',', '.') ?> |
+                sem turma: <?= number_format((int)$r['vendas_sem_turma'], 0, ',', '.') ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+          <?php if (!$turmaRows): ?>
+            <tr><td colspan="7">Sem vendas com turma atribuida para os filtros selecionados.</td></tr>
           <?php endif; ?>
         </tbody>
       </table>

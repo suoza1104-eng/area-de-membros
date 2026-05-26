@@ -3,10 +3,48 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 proteger_admin();
 
+// Sessões criadas antes do sistema de equipe não têm admin_tipo → força novo login
+if (!isset($_SESSION['admin_tipo'])) {
+    session_destroy();
+    header('Location: ' . BASE_URL_ADMIN . '/index.php');
+    exit;
+}
+
 $currentMenu = $menu ?? 'dashboard';
+
+// ─── Equipe permission gate ────────────────────────────────────────────────
+$__isEquipe    = ($_SESSION['admin_tipo'] === 'equipe');
+$__equipePerms = $__isEquipe
+    ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
+    : [];
+
+// Dashboard é sempre acessível (evita loop de redirect pós-login)
+if ($__isEquipe && $currentMenu !== 'dashboard') {
+    if (empty($__equipePerms[$currentMenu]['acesso'])) {
+        header('Location: ' . BASE_URL_ADMIN . '/index.php?sem_acesso=1');
+        exit;
+    }
+}
+
+// $podeEscrever: as páginas podem usar para esconder botões de edição
+$podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever']);
+
+// Visibilidade dos itens do sidebar
+$__sbV = [];
+foreach (['dashboard','vendas_analytics','alunos','aulas','turmas','cursos','certificado',
+          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+    $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
+}
+
+// Informações do usuário logado para o sidebar
+$__sbNome    = $__isEquipe ? ($_SESSION['equipe_nome']  ?? 'Membro') : 'Administrador';
+$__sbRole    = $__isEquipe ? 'Equipe' : 'Admin logado';
+$__sbInitial = strtoupper(substr($__sbNome, 0, 1));
+// ──────────────────────────────────────────────────────────────────────────
 
 $titleMap = [
     'dashboard'        => 'Dashboard',
+    'vendas_analytics' => 'Analise de Vendas',
     'alunos'           => 'Alunos',
     'aulas'            => 'Aulas',
     'turmas'           => 'Turmas',
@@ -47,39 +85,36 @@ function __esc(string $v): string {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
 <style>
-/* ===== THEME (from admin settings) ===== */
-<?= theme_inline_css_vars(); ?>
-
 /* ===== EXTENDED DESIGN SYSTEM ===== */
 :root {
-  --bg:             #f1f5f9;
-  --bg-card:        #ffffff;
-  --bg-sidebar:     #0f1f3a;
-  --bg-hover:       rgba(15,23,42,.05);
-  --border:         #e2e8f0;
-  --border-light:   #cbd5e1;
-  --primary:        var(--primary, #facc15);
-  --primary-dim:    rgba(250,204,21,.15);
-  --primary-soft:   rgba(250,204,21,.22);
-  --text:           #0f172a;
+  --bg:             #080e1a;
+  --bg-card:        #0d1526;
+  --bg-sidebar:     #060c18;
+  --bg-hover:       rgba(255,255,255,.05);
+  --border:         rgba(255,255,255,.08);
+  --border-light:   rgba(255,255,255,.12);
+  --primary:        #facc15;
+  --primary-dim:    rgba(250,204,21,.1);
+  --primary-soft:   rgba(250,204,21,.18);
+  --text:           #e2e8f0;
   --muted:          #64748b;
-  --dim:            #94a3b8;
+  --dim:            #334155;
   --success:        #22c55e;
-  --success-dim:    rgba(34,197,94,.1);
+  --success-dim:    rgba(34,197,94,.12);
   --danger:         #ef4444;
-  --danger-dim:     rgba(239,68,68,.1);
-  --info:           #0ea5e9;
-  --info-dim:       rgba(14,165,233,.1);
+  --danger-dim:     rgba(239,68,68,.12);
+  --info:           #38bdf8;
+  --info-dim:       rgba(56,189,248,.12);
   --warning:        #f59e0b;
-  --warning-dim:    rgba(245,158,11,.1);
+  --warning-dim:    rgba(245,158,11,.12);
   --sidebar-w:      252px;
   --topbar-h:       60px;
   --r:              10px;
   --r-lg:           14px;
   --r-xl:           18px;
   --r-full:         999px;
-  --shadow:         0 1px 3px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.06);
-  --shadow-lg:      0 8px 32px rgba(0,0,0,.1);
+  --shadow:         0 4px 20px rgba(0,0,0,.45);
+  --shadow-lg:      0 10px 40px rgba(0,0,0,.55);
   --font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --t:              .15s ease;
 }
@@ -95,6 +130,7 @@ body {
   font-size: calc(14px * var(--font-scale, 100) / 100);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -103,8 +139,8 @@ img { max-width: 100%; display: block; }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: var(--r-full); }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
 
 /* ===== LAYOUT ===== */
 #layout { display: flex; min-height: 100vh; }
@@ -227,34 +263,17 @@ img { max-width: 100%; display: block; }
 .sb-logout:hover { color: var(--danger); }
 .sb-logout svg { width: 15px; height: 15px; }
 
-/* ===== SIDEBAR DARK OVERRIDES ===== */
-#sidebar { background: #0f1f3a; border-right: 1px solid rgba(255,255,255,.05); }
-.sb-logo { border-bottom-color: rgba(255,255,255,.06) !important; }
-.sb-logo-img { background: rgba(255,255,255,.05) !important; border-color: rgba(255,255,255,.1) !important; }
-.sb-logo-name { color: #e2e8f0 !important; }
-.sb-logo-badge { color: #475569 !important; background: rgba(255,255,255,.04) !important; border-color: rgba(255,255,255,.08) !important; }
-.sb-section { color: #334155 !important; }
-.sb-item { color: #94a3b8 !important; }
-.sb-item:hover { background: rgba(255,255,255,.06) !important; color: #e2e8f0 !important; }
-.sb-item.active { background: rgba(250,204,21,.1) !important; color: #facc15 !important; }
-.sb-item.active::before { background: #facc15; }
-.sb-footer { border-top-color: rgba(255,255,255,.06) !important; }
-.sb-user { background: rgba(255,255,255,.04) !important; }
-.sb-user-name { color: #e2e8f0 !important; }
-.sb-user-role { color: #475569 !important; }
-.sb-logout { color: #475569 !important; }
-.sb-logout:hover { color: #ef4444 !important; }
-
 /* ===== MAIN WRAPPER ===== */
 #main-wrapper {
   margin-left: var(--sidebar-w);
   flex: 1; display: flex; flex-direction: column; min-height: 100vh;
+  overflow-x: hidden; min-width: 0;
 }
 
 /* ===== TOPBAR ===== */
 #topbar {
   height: var(--topbar-h);
-  background: #ffffff;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 20px;
@@ -407,7 +426,7 @@ input[type="time"], select, textarea {
   width: 100%; padding: 8px 12px;
   border-radius: var(--r);
   border: 1px solid var(--border-light);
-  background: #f8fafc; color: var(--text);
+  background: var(--bg); color: var(--text);
   font-size: 13px; font-family: var(--font);
   transition: border-color var(--t), box-shadow var(--t);
   outline: none;
@@ -461,21 +480,21 @@ button:not([class]):hover { filter: brightness(1.07); }
   padding: 2px 8px; border-radius: var(--r-full);
   font-size: 11px; font-weight: 500;
 }
-.badge-success { background: rgba(34,197,94,.12);  color: #15803d; }
-.badge-danger  { background: rgba(239,68,68,.1);   color: #dc2626; }
-.badge-info    { background: rgba(14,165,233,.1);   color: #0284c7; }
-.badge-warning { background: rgba(245,158,11,.1);   color: #d97706; }
-.badge-neutral { background: rgba(100,116,139,.1);  color: #475569; }
-.badge-primary { background: var(--primary-dim);    color: #ca8a04; }
+.badge-success { background: rgba(34,197,94,.12);  color: #86efac; }
+.badge-danger  { background: rgba(239,68,68,.1);   color: #fca5a5; }
+.badge-info    { background: rgba(14,165,233,.1);   color: #7dd3fc; }
+.badge-warning { background: rgba(245,158,11,.1);   color: #fcd34d; }
+.badge-neutral { background: rgba(100,116,139,.1);  color: #94a3b8; }
+.badge-primary { background: var(--primary-dim);    color: var(--primary); }
 
 /* ===== ALERTS ===== */
 .alert {
   padding: 10px 14px; border-radius: var(--r);
   font-size: 13px; margin-bottom: 14px;
 }
-.alert-ok    { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.22); color: #15803d; }
-.alert-error { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22); color: #dc2626; }
-.alert-info  { background: rgba(14,165,233,.08);border: 1px solid rgba(14,165,233,.22); color: #0284c7; }
+.alert-ok    { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.22); color: #86efac; }
+.alert-error { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22); color: #fca5a5; }
+.alert-info  { background: rgba(14,165,233,.08);border: 1px solid rgba(14,165,233,.22); color: #7dd3fc; }
 
 /* ===== FILTER BAR ===== */
 .filter-bar {
@@ -535,9 +554,9 @@ button:not([class]):hover { filter: brightness(1.07); }
 .mb-4   { margin-bottom: 16px; }
 .code {
   font-family: monospace; font-size: 12px;
-  background: #f1f5f9; padding: 1px 6px;
+  background: rgba(255,255,255,.06); padding: 1px 6px;
   border-radius: 5px; border: 1px solid var(--border);
-  color: #0284c7;
+  color: var(--info);
 }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -557,6 +576,8 @@ button:not([class]):hover { filter: brightness(1.07); }
   .filter-group { min-width: 100%; }
 }
 </style>
+<!-- Theme overrides from DB (runs after defaults so it wins the cascade) -->
+<style><?= theme_inline_css_vars(); ?></style>
 </head>
 <body>
 
@@ -584,8 +605,11 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['dashboard']): ?>
     <a href="index.php" class="sb-item <?= $currentMenu === 'dashboard' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="7" height="7" rx="1.5"/>
@@ -595,7 +619,20 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Dashboard
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['vendas_analytics']): ?>
+    <a href="vendas_analytics.php" class="sb-item <?= $currentMenu === 'vendas_analytics' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="20" x2="12" y2="10"/>
+        <line x1="18" y1="20" x2="18" y2="4"/>
+        <line x1="6" y1="20" x2="6" y2="16"/>
+      </svg>
+      Vendas
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['alunos']): ?>
     <a href="alunos.php" class="sb-item <?= $currentMenu === 'alunos' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -604,7 +641,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Alunos
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['aulas']): ?>
     <a href="aulas.php" class="sb-item <?= $currentMenu === 'aulas' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="10"/>
@@ -612,7 +651,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Aulas
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['turmas']): ?>
     <a href="turmas.php" class="sb-item <?= $currentMenu === 'turmas' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="4" width="18" height="18" rx="2"/>
@@ -622,9 +663,13 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Turmas
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['cursos'] || $__sbV['certificado']): ?>
     <div class="sb-section">Conteúdo</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['cursos']): ?>
     <a href="cursos_recomendados.php" class="sb-item <?= $currentMenu === 'cursos' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
@@ -632,7 +677,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Cursos Recom.
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['certificado']): ?>
     <a href="certificado_config.php" class="sb-item <?= $currentMenu === 'certificado' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="8" r="6"/>
@@ -640,16 +687,22 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Certificado
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks']): ?>
     <div class="sb-section">Integrações</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['webhooks']): ?>
     <a href="webhooks.php" class="sb-item <?= $currentMenu === 'webhooks' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
       </svg>
       Webhooks
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['superfuncionario']): ?>
     <a href="superfuncionario.php" class="sb-item <?= $currentMenu === 'superfuncionario' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -657,16 +710,53 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       SuperFuncionário
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['disparos']): ?>
+    <a href="disparos.php" class="sb-item <?= $currentMenu === 'disparos' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      Disparos
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['live_events']): ?>
+    <a href="live_events.php" class="sb-item <?= $currentMenu === 'live_events' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <circle cx="12" cy="12" r="9"/>
+      </svg>
+      Eventos Live
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['inbound_webhooks']): ?>
+    <a href="inbound_webhooks.php" class="sb-item <?= $currentMenu === 'inbound_webhooks' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Entrada (Webhooks)
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
+    <?php endif; ?>
 
+    <?php if ($__sbV['monitor']): ?>
     <a href="monitor_inscricoes.php" class="sb-item <?= $currentMenu === 'monitor' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
       Rastreamento
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['logs']): ?>
     <a href="logs.php" class="sb-item <?= $currentMenu === 'logs' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -677,7 +767,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Logs
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['aparencia']): ?>
     <a href="settings_aparencia.php" class="sb-item <?= $currentMenu === 'aparencia' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -685,7 +777,9 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Aparência
     </a>
+    <?php endif; ?>
 
+    <?php if ($__sbV['config_app']): ?>
     <a href="config_app.php" class="sb-item <?= $currentMenu === 'config_app' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -693,14 +787,26 @@ button:not([class]):hover { filter: brightness(1.07); }
       </svg>
       Configurações
     </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['equipe']): ?>
+    <a href="equipe.php" class="sb-item <?= $currentMenu === 'equipe' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+      </svg>
+      Equipe
+    </a>
+    <?php endif; ?>
   </nav>
 
   <div class="sb-footer">
     <div class="sb-user">
-      <div class="sb-avatar">A</div>
+      <div class="sb-avatar"><?= __esc($__sbInitial) ?></div>
       <div class="sb-user-info">
-        <div class="sb-user-name">Administrador</div>
-        <div class="sb-user-role">Admin logado</div>
+        <div class="sb-user-name"><?= __esc($__sbNome) ?></div>
+        <div class="sb-user-role"><?= __esc($__sbRole) ?></div>
       </div>
       <a href="index.php?logout=1" class="sb-logout" title="Sair">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

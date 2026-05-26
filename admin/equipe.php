@@ -27,6 +27,7 @@ try {
 // Páginas controladas e suas labels
 $PAGINAS = [
     'dashboard'        => 'Dashboard',
+    'vendas_analytics' => 'Analise de Vendas',
     'alunos'           => 'Alunos',
     'aulas'            => 'Aulas',
     'turmas'           => 'Turmas',
