@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/certificado_pdf.php';
 proteger_admin();
 $pdo = getPDO();
 $menu       = 'alunos';
@@ -27,6 +28,77 @@ function fmtDtHora(?string $d): string {
     if (!$d || trim($d) === '') return '-';
     try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
 }
+function al_gerar_codigo_certificado(): string {
+    $chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    $result = '';
+    for ($i = 0; $i < 36; $i++) {
+        if ($i > 0 && $i % 9 === 0) $result .= '-';
+        else $result .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+    return $result;
+}
+function al_gerar_certificado_manual(PDO $pdo, int $userId): array {
+    $stU = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+    $stU->execute([':id' => $userId]);
+    $aluno = $stU->fetch(PDO::FETCH_ASSOC);
+    if (!$aluno) throw new RuntimeException('Aluno não encontrado.');
+
+    $appCfg = [];
+    $certCfg = [];
+    try {
+        $stApp = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
+        $appCfg = $stApp ? ($stApp->fetch(PDO::FETCH_ASSOC) ?: []) : [];
+    } catch (Throwable $e) {}
+    try {
+        $stCertCfg = $pdo->query("SELECT * FROM certificate_config WHERE id = 1 LIMIT 1");
+        $certCfg = $stCertCfg ? ($stCertCfg->fetch(PDO::FETCH_ASSOC) ?: []) : [];
+    } catch (Throwable $e) {}
+    $courseTitle = trim((string)($appCfg['course_title'] ?? 'Trilha de Aulas'));
+    if ($courseTitle === '') $courseTitle = 'Trilha de Aulas';
+
+    $pdo->beginTransaction();
+    try {
+        $st = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND course = :course ORDER BY id DESC LIMIT 1");
+        $st->execute([':uid' => $userId, ':course' => $courseTitle]);
+        $cert = $st->fetch(PDO::FETCH_ASSOC);
+
+        if (!$cert || (string)($cert['status'] ?? '') !== 'emitido') {
+            $codigo = al_gerar_codigo_certificado();
+            $emitidoEm = date('Y-m-d H:i:s');
+            $ins = $pdo->prepare("
+                INSERT INTO certificates (user_id, course, codigo_uid, emitido_em, status)
+                VALUES (:uid, :course, :codigo, :emitido, 'emitido')
+            ");
+            $ins->execute([
+                ':uid' => $userId,
+                ':course' => $courseTitle,
+                ':codigo' => $codigo,
+                ':emitido' => $emitidoEm,
+            ]);
+            $cert = [
+                'id' => (int)$pdo->lastInsertId(),
+                'user_id' => $userId,
+                'course' => $courseTitle,
+                'codigo_uid' => $codigo,
+                'emitido_em' => $emitidoEm,
+                'status' => 'emitido',
+                'pdf_url' => null,
+            ];
+        }
+
+        $pdfUrl = gerar_pdf_certificado($aluno, $cert, $certCfg);
+        $upd = $pdo->prepare("UPDATE certificates SET pdf_url = :pdf_url WHERE id = :id");
+        $upd->execute([':pdf_url' => $pdfUrl, ':id' => (int)$cert['id']]);
+        $cert['pdf_url'] = $pdfUrl;
+
+        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin_manual'); } catch (Throwable $e) {}
+        $pdo->commit();
+        return $cert;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
 
 // ── Detecta colunas e tabelas ─────────────────────────────────────────────
 $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pdo,'users','turma') ? 'turma' : '');
@@ -50,7 +122,19 @@ $msgPost = ''; $msgPostTipo = 'ok';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
 
-    if ($acao === 'trocar_senha' && $senhaCol !== '') {
+    if ($acao === 'gerar_cert_manual') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        if ($uid <= 0) {
+            $msgPost = 'Aluno inválido.'; $msgPostTipo = 'erro';
+        } else {
+            try {
+                al_gerar_certificado_manual($pdo, $uid);
+                $msgPost = 'Certificado gerado manualmente. Nenhum disparo foi enviado.';
+            } catch (Throwable $e) {
+                $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+            }
+        }
+    } elseif ($acao === 'trocar_senha' && $senhaCol !== '') {
         $uid = (int)($_POST['uid'] ?? 0);
         $ns  = trim((string)($_POST['nova_senha'] ?? ''));
         $ns2 = trim((string)($_POST['conf_senha']  ?? ''));
@@ -627,6 +711,11 @@ require __DIR__ . '/_header.php';
                                 <button type="button" class="btn btn-ghost btn-sm" onclick="abrirSenha(<?=(int)$a['id']?>,'<?=h((string)($a['nome']??''))?>')">🔑 Trocar senha</button>
                                 <button type="button" class="btn btn-ghost btn-sm" onclick="abrirLogin(<?=(int)$a['id']?>,'<?=h((string)($a['email']??''))?>')">📧 Trocar e-mail</button>
                                 <?php endif; ?>
+                                <form method="post" style="margin:0" onsubmit="return confirm('Gerar certificado manualmente para este aluno sem enviar disparos?')">
+                                    <input type="hidden" name="acao" value="gerar_cert_manual">
+                                    <input type="hidden" name="uid"  value="<?=(int)$a['id']?>">
+                                    <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--warning)">Gerar certificado manualmente</button>
+                                </form>
                                 <?php if($temCert): ?>
                                 <form method="post" style="margin:0" onsubmit="return confirm('Reenviar CERT_EMITIDO para este aluno?')">
                                     <input type="hidden" name="acao" value="reenviar_cert">

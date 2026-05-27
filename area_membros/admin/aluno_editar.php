@@ -518,7 +518,7 @@ require __DIR__ . '/_header.php';
         <form method="post" style="margin:0" onsubmit="return confirm('Gerar ou atualizar o PDF do certificado deste aluno?')">
             <input type="hidden" name="acao" value="gerar_certificado">
             <button type="submit" class="btn btn-ghost" style="border-color:rgba(34,197,94,.35);color:var(--success)">
-                Gerar certificado
+                Gerar certificado manualmente
             </button>
         </form>
         <?php if ($certAluno): ?>
