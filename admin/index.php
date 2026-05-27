@@ -192,7 +192,12 @@ $pdo = getPDO();
 $temFiltroNaUrl = isset($_GET['data_de']) || isset($_GET['data_ate']) || isset($_GET['turma_id']);
 $dataDe  = trim($_GET['data_de']  ?? '');
 $dataAte = trim($_GET['data_ate'] ?? '');
-$turmaId = (int)($_GET['turma_id'] ?? 0);
+$turmaRaw = $_GET['turma_id'] ?? [];
+if (!is_array($turmaRaw)) {
+    $turmaRaw = [$turmaRaw];
+}
+$turmaIds = array_values(array_unique(array_filter(array_map('intval', $turmaRaw), fn($id) => $id > 0)));
+$turmaId = (int)($turmaIds[0] ?? 0);
 if (!$temFiltroNaUrl) {
     $dataDe  = date('Y-m-d', strtotime('-30 days'));
     $dataAte = date('Y-m-d');
@@ -217,21 +222,38 @@ if ($dataAte !== '') {
     $paramsUsers['data_ate'] = $dataAte . ' 23:59:59';
 }
 // Filtro por turma — se a coluna é codigo_turma, faz lookup do codigo
-if ($turmaId > 0 && $turmaColTop) {
+if ($turmaIds && $turmaColTop) {
     $turmaCodigoSel = '';
     if ($turmaColTop === 'codigo_turma') {
         try {
-            $stT = $pdo->prepare("SELECT codigo FROM turmas WHERE id = :id LIMIT 1");
-            $stT->execute([':id' => $turmaId]);
-            $turmaCodigoSel = (string)($stT->fetchColumn() ?: '');
+            $ph = [];
+            $pr = [];
+            foreach ($turmaIds as $i => $id) {
+                $k = ':tid_lookup_' . $i;
+                $ph[] = $k;
+                $pr[$k] = $id;
+            }
+            $stT = $pdo->prepare("SELECT codigo FROM turmas WHERE id IN (" . implode(',', $ph) . ")");
+            $stT->execute($pr);
+            $codigos = array_values(array_filter(array_map('strval', $stT->fetchAll(PDO::FETCH_COLUMN) ?: []), fn($v) => $v !== ''));
         } catch (Throwable $e) {}
-        if ($turmaCodigoSel !== '') {
-            $whereUsers[]               = "u.`codigo_turma` = :turma_codigo";
-            $paramsUsers['turma_codigo'] = $turmaCodigoSel;
+        if (!empty($codigos)) {
+            $ph = [];
+            foreach ($codigos as $i => $codigo) {
+                $k = 'turma_codigo_' . $i;
+                $ph[] = ':' . $k;
+                $paramsUsers[$k] = $codigo;
+            }
+            $whereUsers[] = "u.`codigo_turma` IN (" . implode(',', $ph) . ")";
         }
     } else {
-        $whereUsers[]            = "u.`$turmaColTop` = :turma_id";
-        $paramsUsers['turma_id'] = $turmaId;
+        $ph = [];
+        foreach ($turmaIds as $i => $id) {
+            $k = 'turma_id_' . $i;
+            $ph[] = ':' . $k;
+            $paramsUsers[$k] = $id;
+        }
+        $whereUsers[] = "u.`$turmaColTop` IN (" . implode(',', $ph) . ")";
     }
 }
 
@@ -250,9 +272,16 @@ try {
 
 // Codigo da turma selecionada (para filtros em inscricao_logs.codigo_turma)
 $codigoTurmaSel = '';
-if ($turmaId > 0) {
+$codigosTurmaFiltro = [];
+if ($turmaIds) {
     foreach ($turmas as $t) {
-        if ((int)$t['id'] === $turmaId) { $codigoTurmaSel = (string)$t['codigo']; break; }
+        if (in_array((int)$t['id'], $turmaIds, true)) {
+            $codigo = (string)($t['codigo'] ?? '');
+            if ($codigo !== '') {
+                $codigosTurmaFiltro[] = $codigo;
+                if ($codigoTurmaSel === '') $codigoTurmaSel = $codigo;
+            }
+        }
     }
 }
 
@@ -267,7 +296,15 @@ try {
     $prIL  = [];
     if ($dataDe  !== '') { $whIL[] = 'il.created_at >= :il_de';  $prIL['il_de']  = $dataDe . ' 00:00:00'; }
     if ($dataAte !== '') { $whIL[] = 'il.created_at <= :il_ate'; $prIL['il_ate'] = $dataAte . ' 23:59:59'; }
-    if ($codigoTurmaSel !== '') { $whIL[] = 'il.codigo_turma = :il_ct'; $prIL['il_ct'] = $codigoTurmaSel; }
+    if ($codigosTurmaFiltro) {
+        $ph = [];
+        foreach ($codigosTurmaFiltro as $i => $codigo) {
+            $k = 'il_ct_' . $i;
+            $ph[] = ':' . $k;
+            $prIL[$k] = $codigo;
+        }
+        $whIL[] = 'il.codigo_turma IN (' . implode(',', $ph) . ')';
+    }
     $whIlSql = $whIL ? ('WHERE ' . implode(' AND ', $whIL)) : '';
 
     $stIL = $pdo->prepare("
@@ -389,6 +426,24 @@ $liveAcessou = dash_count_live($pdo, 'acessou', $whereUsers, $paramsUsers);
 $liveOferta  = dash_count_live($pdo, 'oferta',  $whereUsers, $paramsUsers);
 $liveCompra  = dash_count_live($pdo, 'compra',  $whereUsers, $paramsUsers);
 
+function dash_count_compras_reais(PDO $pdo, array $whereUsers, array $paramsUsers): int {
+    try {
+        $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
+        $sql = "SELECT COUNT(DISTINCT s.matched_user_id)
+                FROM hotmart_sales s
+                JOIN users u ON u.id = s.matched_user_id
+                WHERE s.matched_user_id IS NOT NULL
+                  AND s.status IN ('Aprovado','Completo')";
+        if ($whereUsers) $sql .= ' AND ' . implode(' AND ', $whereUsers);
+        $st = $pdo->prepare($sql);
+        $st->execute($paramsUsers);
+        return (int)$st->fetchColumn();
+    } catch (Throwable $e) { return 0; }
+}
+$comprasReais = dash_count_compras_reais($pdo, $whereUsers, $paramsUsers);
+$taxaConversaoVendas = $totalAlunos > 0 ? round($comprasReais / $totalAlunos * 100, 1) : 0;
+$taxaShowup = $totalAlunos > 0 ? round($liveAcessou / $totalAlunos * 100, 1) : 0;
+
 // ── Dados para o gráfico comparativo POR TURMA ──
 // Detecta qual coluna em users referencia a turma
 $turmaCol = null;
@@ -403,7 +458,11 @@ if ($turmaCol) {
         return strpos($w, 'turma_id') === false && strpos($w, 'codigo_turma') === false;
     }));
     $paramsSemTurma = $paramsUsers;
-    unset($paramsSemTurma['turma_id'], $paramsSemTurma['turma_codigo']);
+    foreach (array_keys($paramsSemTurma) as $k) {
+        if (strpos((string)$k, 'turma_id') === 0 || strpos((string)$k, 'turma_codigo') === 0) {
+            unset($paramsSemTurma[$k]);
+        }
+    }
     $whereSemTurmaSql = $whereSemTurma ? (' WHERE ' . implode(' AND ', $whereSemTurma)) : '';
     $extraWhere      = $whereSemTurma ? (' AND ' . implode(' AND ', $whereSemTurma)) : '';
 
@@ -456,6 +515,21 @@ if ($turmaCol) {
         } catch (Throwable $e) {}
     }
 
+    // Compras reais importadas da Hotmart
+    try {
+        $sqlCompraReal = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT s.matched_user_id) AS n
+                          FROM hotmart_sales s
+                          JOIN users u ON u.id = s.matched_user_id
+                          WHERE s.matched_user_id IS NOT NULL
+                            AND s.status IN ('Aprovado','Completo')$extraWhere
+                          GROUP BY u.`$turmaCol`";
+        $st = $pdo->prepare($sqlCompraReal); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['compras_reais'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
+
     // Certificados
     try {
         $sqlC = "SELECT u.`$turmaCol` AS tid, COUNT(*) AS n
@@ -476,6 +550,9 @@ foreach ($turmas as $t) {
     if (!empty($t['codigo'])) $turmasLabel[(string)$t['codigo']] = $label;
 }
 $turmasLabel[''] = 'Sem turma';
+$turmasSelecionadasChart = ($turmaCol === 'codigo_turma')
+    ? array_values($codigosTurmaFiltro)
+    : array_map('strval', $turmaIds);
 
 $sqlFull = "
     SELECT u.id, COUNT(DISTINCT lp.lesson_id) AS qtd
@@ -528,7 +605,8 @@ foreach ($funil as $f) {
 }
 if ($liveAcessou > 0) $funnelData[] = ['label' => 'Acessaram a live',     'count' => $liveAcessou];
 $funnelData[] = ['label' => 'Certificado emitido', 'count' => $totalCert];
-if ($liveCompra  > 0) $funnelData[] = ['label' => 'Clicou na oferta',     'count' => $liveCompra];
+if ($liveCompra  > 0) $funnelData[] = ['label' => 'Clicou CTA',           'count' => $liveCompra];
+if ($comprasReais > 0) $funnelData[] = ['label' => 'Comprou',             'count' => $comprasReais];
 
 $funnelMax = max(1, (int)($funnelData[0]['count'] ?? 1));
 foreach ($funnelData as $fi => &$fstep) {
@@ -682,14 +760,14 @@ include __DIR__ . '/_header.php';
     <?php if ($turmas): ?>
     <div class="filter-group">
         <label for="turma_id">Turma</label>
-        <select id="turma_id" name="turma_id">
-            <option value="0">Todas as turmas</option>
+        <select id="turma_id" name="turma_id[]" multiple size="4">
             <?php foreach ($turmas as $t): ?>
-                <option value="<?= (int)$t['id'] ?>" <?= $turmaId === (int)$t['id'] ? 'selected' : '' ?>>
+                <option value="<?= (int)$t['id'] ?>" <?= in_array((int)$t['id'], $turmaIds, true) ? 'selected' : '' ?>>
                     <?= htmlspecialchars($t['codigo'] . (empty($t['nome']) ? '' : ' – ' . $t['nome'])) ?>
                 </option>
             <?php endforeach; ?>
         </select>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">Ctrl/Cmd + clique para selecionar mais de uma</div>
     </div>
     <?php endif; ?>
     <div class="filter-actions">
@@ -752,6 +830,23 @@ include __DIR__ . '/_header.php';
         <div class="kpi-label">Frequência média</div>
         <div class="kpi-value"><?= number_format($freqMedia, 2, ',', '.') ?>x</div>
         <div class="kpi-sub">inscrições por aluno</div>
+    </div>
+    <div class="kpi" style="border-color:rgba(52,211,153,.3)">
+        <div class="kpi-icon" style="background:rgba(52,211,153,.15);color:#34d399">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M8 13l3 3 5-8"/></svg>
+        </div>
+        <div class="kpi-label">Conversão em vendas</div>
+        <div class="kpi-value"><?= number_format($taxaConversaoVendas, 1, ',', '.') ?>%</div>
+        <div class="kpi-sub"><?= number_format($comprasReais) ?> comprador(es)</div>
+    </div>
+
+    <div class="kpi" style="border-color:rgba(96,165,250,.3)">
+        <div class="kpi-icon" style="background:rgba(96,165,250,.15);color:#60a5fa">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        </div>
+        <div class="kpi-label">Showup</div>
+        <div class="kpi-value"><?= number_format($taxaShowup, 1, ',', '.') ?>%</div>
+        <div class="kpi-sub">viram a live</div>
     </div>
 </div>
 
@@ -912,8 +1007,8 @@ include __DIR__ . '/_header.php';
 
 <!-- ═══ LIVE: Funil exclusivo + cards ═══ -->
 <div class="panel mb-4">
-    <div class="panel-title">Funil de Live<?= ($liveAcessou + $liveOferta + $liveCompra) === 0 ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — configure eventos em Integrações → Eventos Live)</span>' : '' ?></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
+    <div class="panel-title">Funil de Live<?= ($liveAcessou + $liveOferta + $liveCompra + $comprasReais) === 0 ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — configure eventos em Integrações → Eventos Live)</span>' : '' ?></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px">
         <div class="kpi" style="border-color:rgba(96,165,250,.3)">
             <div class="kpi-icon" style="background:rgba(96,165,250,.15);color:#60a5fa">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>
@@ -934,9 +1029,17 @@ include __DIR__ . '/_header.php';
             <div class="kpi-icon" style="background:rgba(52,211,153,.15);color:#34d399">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
             </div>
-            <div class="kpi-label">Clicaram na compra</div>
+            <div class="kpi-label">Clicaram CTA</div>
             <div class="kpi-value"><?= number_format($liveCompra) ?></div>
             <div class="kpi-sub"><?= $liveOferta>0?round($liveCompra/$liveOferta*100,1):0 ?>% de quem viu oferta</div>
+        </div>
+        <div class="kpi" style="border-color:rgba(16,185,129,.3)">
+            <div class="kpi-icon" style="background:rgba(16,185,129,.15);color:#10b981">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/><path d="M21 10v9a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            </div>
+            <div class="kpi-label">Compraram</div>
+            <div class="kpi-value"><?= number_format($comprasReais) ?></div>
+            <div class="kpi-sub"><?= $totalAlunos>0?round($comprasReais/$totalAlunos*100,1):0 ?>% dos inscritos</div>
         </div>
     </div>
     <div style="display:flex;align-items:flex-end;gap:2px;height:140px;padding:0 6px">
@@ -944,7 +1047,8 @@ include __DIR__ . '/_header.php';
         $liveFunnel = [
             ['Acessou', $liveAcessou, '#60a5fa'],
             ['Oferta',  $liveOferta,  '#fbbf24'],
-            ['Compra',  $liveCompra,  '#34d399'],
+            ['Clicou CTA',  $liveCompra,  '#34d399'],
+            ['Comprou',     $comprasReais, '#10b981'],
         ];
         $lfMax = max(1, $liveAcessou);
         foreach ($liveFunnel as $lf):
@@ -1131,14 +1235,16 @@ include __DIR__ . '/_header.php';
     // ── Gráfico comparativo por turma ────────────────────────────────────
     const BAR_TURMA_DATA  = <?= json_encode($barTurmaData, JSON_UNESCAPED_UNICODE) ?>;
     const TURMAS_LABEL    = <?= json_encode($turmasLabel,  JSON_UNESCAPED_UNICODE) ?>;
-    const TURMA_FILTRADA  = <?= json_encode((string)$turmaId) ?>;
+    const TURMA_FILTRADA  = <?= json_encode((string)($turmasSelecionadasChart[0] ?? $turmaId)) ?>;
+    const TURMAS_FILTRADAS = <?= json_encode($turmasSelecionadasChart, JSON_UNESCAPED_UNICODE) ?>;
     const BAR_STAGES = [
         {key:'inscritos', label:'Inscritos',  color:'#facc15'},
         {key:'logaram',   label:'Logaram',    color:'#a855f7'},
         {key:'aula',      label:'Viu aula',   color:'#0ea5e9'},
         {key:'live_acessou', label:'Live: Acessou', color:'#60a5fa'},
         {key:'live_oferta',  label:'Live: Oferta',  color:'#fbbf24'},
-        {key:'live_compra',  label:'Live: Compra',  color:'#34d399'},
+        {key:'live_compra',  label:'Live: Clicou CTA',  color:'#34d399'},
+        {key:'compras_reais', label:'Compras', color:'#10b981'},
         {key:'cert',      label:'Certificado', color:'#22c55e'},
     ];
     let btMode = 'qtd';
@@ -1155,7 +1261,10 @@ include __DIR__ . '/_header.php';
             document.getElementById('btDropLabel').textContent = 'nenhuma turma no período';
             return;
         }
-        if (TURMA_FILTRADA && BAR_TURMA_DATA[TURMA_FILTRADA]) {
+        const filtradas = TURMAS_FILTRADAS.filter(tid => BAR_TURMA_DATA[tid]);
+        if (filtradas.length) {
+            btSelectedTurmas = filtradas;
+        } else if (TURMA_FILTRADA && BAR_TURMA_DATA[TURMA_FILTRADA]) {
             btSelectedTurmas = [TURMA_FILTRADA];
         } else {
             btSelectedTurmas = turmaIds.slice(0, Math.min(3, turmaIds.length));
