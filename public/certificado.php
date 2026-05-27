@@ -40,6 +40,22 @@ $certCfg   = $stCfgCert->fetch() ?: [
     'certificado_button_link'  => '#',
 ];
 
+$errorHtml = trim((string)($certCfg['error_html'] ?? ''));
+if ($errorHtml === '') {
+    $errorHtml = trim((string)($certCfg['error_message_html'] ?? ''));
+}
+if ($errorHtml === '') {
+    $errorHtml = '<strong>Senha inválida.</strong><br>Verifique o código informado e tente novamente.';
+}
+
+$successHtml = trim((string)($certCfg['success_html'] ?? ''));
+if ($successHtml === '') {
+    $successHtml = trim((string)($certCfg['success_message_html'] ?? ''));
+}
+if ($successHtml === '') {
+    $successHtml = '<strong>Parabéns!</strong><br>Seus dados estão corretos e sua senha foi validada.';
+}
+
 $stLessons = $pdo->query("SELECT id, conta_para_conclusao, ativo FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
 $lessons   = $stLessons->fetchAll();
 
@@ -147,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '') {
             $erroSenha    = true;
             $etapa        = 'erro';
-            $mensagemErro = $certCfg['error_message_html'] ?? 'Senha inválida.';
+            $mensagemErro = $errorHtml;
             if (!empty($certCfg['webhook_error_url'])) {
                 send_cert_webhook($pdo, $certCfg['webhook_error_url'], 'CERT_SENHA_ERRADA', $user, ['motivo' => 'senha_incorreta']);
             }
@@ -473,7 +489,7 @@ function normalizar_video_url(string $url): string {
         <?php endif; ?>
 
         <?php if ($etapa === 'sucesso'): ?>
-            <div class="alert alert-ok"><?= $certCfg['success_message_html'] ?? 'Certificado liberado com sucesso.' ?></div>
+            <div class="alert alert-ok"><?= $successHtml ?></div>
 
             <?php if ($codigoCert): ?>
                 <div class="cert-code">
