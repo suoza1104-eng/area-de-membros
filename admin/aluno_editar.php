@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/certificado_pdf.php';
 proteger_admin();
 $pdo = getPDO();
 $menu = 'alunos';
@@ -37,6 +38,110 @@ function sql_iso(?string $sql): string {
     $sql = trim((string)$sql);
     if ($sql === '') return '';
     try { return (new DateTime($sql))->format('Y-m-d\TH:i'); } catch (Throwable $e) { return ''; }
+}
+
+function ae_gerar_codigo_certificado(): string {
+    $chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    $result = '';
+    for ($i = 0; $i < 36; $i++) {
+        if ($i > 0 && $i % 9 === 0) $result .= '-';
+        else $result .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+    return $result;
+}
+
+function ae_obter_configs_certificado(PDO $pdo): array {
+    $appCfg = [];
+    $certCfg = [];
+    try {
+        $st = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
+        $appCfg = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: []) : [];
+    } catch (Throwable $e) {}
+    try {
+        $st = $pdo->query("SELECT * FROM certificate_config WHERE id = 1 LIMIT 1");
+        $certCfg = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: []) : [];
+    } catch (Throwable $e) {}
+    return [$appCfg, $certCfg];
+}
+
+function ae_certificado_atual(PDO $pdo, int $userId): ?array {
+    try {
+        $st = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND status = 'emitido' ORDER BY id DESC LIMIT 1");
+        $st->execute([':uid' => $userId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function ae_gerar_ou_atualizar_certificado(PDO $pdo, array $aluno): array {
+    [$appCfg, $certCfg] = ae_obter_configs_certificado($pdo);
+    $courseTitle = trim((string)($appCfg['course_title'] ?? 'Trilha de Aulas'));
+    if ($courseTitle === '') $courseTitle = 'Trilha de Aulas';
+
+    $userId = (int)($aluno['id'] ?? 0);
+    if ($userId <= 0) throw new RuntimeException('Aluno inválido.');
+
+    $pdo->beginTransaction();
+    try {
+        $st = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND course = :course ORDER BY id DESC LIMIT 1");
+        $st->execute([':uid' => $userId, ':course' => $courseTitle]);
+        $cert = $st->fetch(PDO::FETCH_ASSOC);
+
+        if (!$cert || (string)($cert['status'] ?? '') !== 'emitido') {
+            $codigo = ae_gerar_codigo_certificado();
+            $emitidoEm = date('Y-m-d H:i:s');
+            $ins = $pdo->prepare("
+                INSERT INTO certificates (user_id, course, codigo_uid, emitido_em, status)
+                VALUES (:uid, :course, :codigo, :emitido, 'emitido')
+            ");
+            $ins->execute([
+                ':uid' => $userId,
+                ':course' => $courseTitle,
+                ':codigo' => $codigo,
+                ':emitido' => $emitidoEm,
+            ]);
+            $cert = [
+                'id' => (int)$pdo->lastInsertId(),
+                'user_id' => $userId,
+                'course' => $courseTitle,
+                'codigo_uid' => $codigo,
+                'emitido_em' => $emitidoEm,
+                'status' => 'emitido',
+                'pdf_url' => null,
+            ];
+        }
+
+        $pdfUrl = gerar_pdf_certificado($aluno, $cert, $certCfg);
+        $upd = $pdo->prepare("UPDATE certificates SET pdf_url = :pdf_url WHERE id = :id");
+        $upd->execute([':pdf_url' => $pdfUrl, ':id' => (int)$cert['id']]);
+        $cert['pdf_url'] = $pdfUrl;
+
+        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin'); } catch (Throwable $e) {}
+        $pdo->commit();
+        return $cert;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function ae_reenviar_certificado_sf(PDO $pdo, array $aluno, array $cert): void {
+    $user = [
+        'id' => $aluno['id'] ?? null,
+        'nome' => $aluno['nome'] ?? null,
+        'email' => $aluno['email'] ?? null,
+        'telefone' => $aluno['telefone'] ?? null,
+    ];
+    $extra = [
+        'codigo_certificado' => $cert['codigo_uid'] ?? '',
+        'curso' => $cert['course'] ?? '',
+        'emitido_em' => $cert['emitido_em'] ?? '',
+        'pdf_url' => $cert['pdf_url'] ?? '',
+        'origem' => 'admin_reenvio_sf',
+    ];
+    sf_disparar_evento($pdo, 'CERT_EMITIDO', $user, $extra);
 }
 
 // ── Carrega aluno ──────────────────────────────────────────────────────
@@ -101,6 +206,32 @@ $msgOk = ''; $msgErro = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? 'salvar');
+
+    if ($acao === 'gerar_certificado') {
+        try {
+            ae_gerar_ou_atualizar_certificado($pdo, $aluno);
+            $msgOk = 'Certificado gerado/atualizado com sucesso.';
+            $aluno = buscar_usuario_por_id($id) ?: $aluno;
+        } catch (Throwable $e) {
+            $msgErro = 'Erro ao gerar certificado: ' . $e->getMessage();
+        }
+    }
+
+    if ($acao === 'reenviar_certificado_sf') {
+        try {
+            $certAtual = ae_certificado_atual($pdo, $id);
+            if (!$certAtual) {
+                throw new RuntimeException('Este aluno ainda não tem certificado emitido.');
+            }
+            if (trim((string)($certAtual['pdf_url'] ?? '')) === '') {
+                $certAtual = ae_gerar_ou_atualizar_certificado($pdo, $aluno);
+            }
+            ae_reenviar_certificado_sf($pdo, $aluno, $certAtual);
+            $msgOk = 'Certificado reenviado para o SuperFuncionário.';
+        } catch (Throwable $e) {
+            $msgErro = 'Erro ao reenviar certificado: ' . $e->getMessage();
+        }
+    }
 
     // ─── Trocar senha ─────────────────────────────────────────────────
     if ($acao === 'trocar_senha' && $senhaCol !== '') {
@@ -173,6 +304,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $stTags = $pdo->prepare("SELECT t.nome FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = :uid ORDER BY t.nome");
 $stTags->execute(['uid' => $id]);
 $tagsAluno = $stTags->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$certAluno = ae_certificado_atual($pdo, $id);
+$certPdfUrl = trim((string)($certAluno['pdf_url'] ?? ''));
+$certVerifyUrl = !empty($certAluno['codigo_uid'])
+    ? BASE_URL . '/verificar_certificado.php?c=' . urlencode((string)$certAluno['codigo_uid'])
+    : '';
 
 $page_title = 'Editar Aluno #' . $id;
 require __DIR__ . '/_header.php';
@@ -196,6 +332,13 @@ require __DIR__ . '/_header.php';
 .cal-btn:hover { border-color:var(--primary); color:var(--primary); }
 .back-link { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); text-decoration:none; margin-bottom:16px; }
 .back-link:hover { color:var(--text); }
+.cert-info-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+@media(max-width:640px) { .cert-info-grid { grid-template-columns:1fr; } }
+.cert-info-box { border:1px solid var(--border); background:rgba(255,255,255,.025); border-radius:var(--r); padding:10px 12px; }
+.cert-info-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:4px; }
+.cert-info-value { font-size:13px; font-weight:600; color:var(--text); word-break:break-word; }
+.cert-link-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0 14px; }
+.cert-link-input { flex:1; min-width:240px; font-size:12px; color:var(--muted); }
 </style>
 
 <a href="alunos.php" class="back-link">
@@ -320,6 +463,75 @@ require __DIR__ . '/_header.php';
     </form>
 </div>
 
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header" style="margin-bottom:14px">
+        <div class="card-header-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+            Certificado
+        </div>
+    </div>
+
+    <?php if ($certAluno): ?>
+        <div class="cert-info-grid">
+            <div class="cert-info-box">
+                <div class="cert-info-label">Data de emissão</div>
+                <div class="cert-info-value"><?= h(sql_br((string)($certAluno['emitido_em'] ?? ''))) ?: '-' ?></div>
+            </div>
+            <div class="cert-info-box">
+                <div class="cert-info-label">Curso</div>
+                <div class="cert-info-value"><?= h((string)($certAluno['course'] ?? '-')) ?></div>
+            </div>
+            <div class="cert-info-box">
+                <div class="cert-info-label">Código</div>
+                <div class="cert-info-value"><?= h((string)($certAluno['codigo_uid'] ?? '-')) ?></div>
+            </div>
+            <div class="cert-info-box">
+                <div class="cert-info-label">Status</div>
+                <div class="cert-info-value"><?= h((string)($certAluno['status'] ?? '-')) ?></div>
+            </div>
+        </div>
+
+        <?php if ($certPdfUrl !== ''): ?>
+            <div class="cert-info-label">Link do PDF</div>
+            <div class="cert-link-row">
+                <input type="text" class="cert-link-input" id="cert-pdf-link" readonly value="<?= h($certPdfUrl) ?>">
+                <button type="button" class="btn btn-ghost" onclick="copyCertLink('cert-pdf-link')">Copiar link</button>
+                <a href="<?= h($certPdfUrl) ?>" target="_blank" class="btn btn-ghost">Abrir PDF</a>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($certVerifyUrl !== ''): ?>
+            <div class="cert-info-label">Link de verificação</div>
+            <div class="cert-link-row">
+                <input type="text" class="cert-link-input" id="cert-verify-link" readonly value="<?= h($certVerifyUrl) ?>">
+                <button type="button" class="btn btn-ghost" onclick="copyCertLink('cert-verify-link')">Copiar link</button>
+                <a href="<?= h($certVerifyUrl) ?>" target="_blank" class="btn btn-ghost">Verificar</a>
+            </div>
+        <?php endif; ?>
+    <?php else: ?>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px">
+            Este aluno ainda não tem certificado emitido.
+        </div>
+    <?php endif; ?>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <form method="post" style="margin:0" onsubmit="return confirm('Gerar ou atualizar o PDF do certificado deste aluno?')">
+            <input type="hidden" name="acao" value="gerar_certificado">
+            <button type="submit" class="btn btn-ghost" style="border-color:rgba(34,197,94,.35);color:var(--success)">
+                Gerar certificado
+            </button>
+        </form>
+        <?php if ($certAluno): ?>
+            <form method="post" style="margin:0" onsubmit="return confirm('Reenviar este certificado para o SuperFuncionário?')">
+                <input type="hidden" name="acao" value="reenviar_certificado_sf">
+                <button type="submit" class="btn btn-ghost" style="border-color:rgba(56,189,248,.35);color:var(--info)">
+                    Reenviar certificado
+                </button>
+            </form>
+        <?php endif; ?>
+    </div>
+</div>
+
 <?php if ($senhaCol !== ''): ?>
 <!-- ─── Card: Senha de acesso ─────────────────────────────────────── -->
 <div class="card" style="margin-bottom:16px">
@@ -375,6 +587,17 @@ require __DIR__ . '/_header.php';
 </div>
 
 <script>
+function copyCertLink(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.select();
+    el.setSelectionRange(0, 99999);
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(el.value);
+    } else {
+        document.execCommand('copy');
+    }
+}
 (function(){
     // Telefone
     var tel = document.getElementById('ae-tel');

@@ -23,6 +23,10 @@ function fmtDt(?string $d): string {
     if (!$d || trim($d) === '') return '-';
     try { return (new DateTime($d))->format('d/m/Y'); } catch (Throwable $e) { return $d; }
 }
+function fmtDtHora(?string $d): string {
+    if (!$d || trim($d) === '') return '-';
+    try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
+}
 
 // ── Detecta colunas e tabelas ─────────────────────────────────────────────
 $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pdo,'users','turma') ? 'turma' : '');
@@ -78,8 +82,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uid = (int)($_POST['uid'] ?? 0);
         if ($uid > 0) {
             try {
-                disparar_webhooks('CERT_EMITIDO', $uid, ['origem' => 'admin_reenvio']);
-                $msgPost = 'Evento CERT_EMITIDO disparado.';
+                $stU = $pdo->prepare("SELECT id,nome,email,telefone FROM users WHERE id = :id LIMIT 1");
+                $stU->execute([':id' => $uid]);
+                $u = $stU->fetch(PDO::FETCH_ASSOC);
+                $stC = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND status = 'emitido' ORDER BY id DESC LIMIT 1");
+                $stC->execute([':uid' => $uid]);
+                $cert = $stC->fetch(PDO::FETCH_ASSOC);
+                if (!$u || !$cert) {
+                    throw new RuntimeException('Aluno sem certificado emitido.');
+                }
+                sf_disparar_evento($pdo, 'CERT_EMITIDO', $u, [
+                    'codigo_certificado' => $cert['codigo_uid'] ?? '',
+                    'curso' => $cert['course'] ?? '',
+                    'emitido_em' => $cert['emitido_em'] ?? '',
+                    'pdf_url' => $cert['pdf_url'] ?? '',
+                    'origem' => 'admin_reenvio_sf',
+                ]);
+                $msgPost = 'Certificado reenviado para o SuperFuncionário.';
             } catch (Throwable $e) {
                 $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
             }
@@ -195,8 +214,11 @@ if ($hasIL) {
 }
 
 $selCert = $hasCerts
-    ? "(SELECT codigo_uid FROM certificates WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS cert_codigo,"
-    : "NULL AS cert_codigo,";
+    ? "(SELECT codigo_uid FROM certificates WHERE user_id = u.id AND status = 'emitido' ORDER BY id DESC LIMIT 1) AS cert_codigo,
+       (SELECT emitido_em FROM certificates WHERE user_id = u.id AND status = 'emitido' ORDER BY id DESC LIMIT 1) AS cert_emitido_em,
+       (SELECT course FROM certificates WHERE user_id = u.id AND status = 'emitido' ORDER BY id DESC LIMIT 1) AS cert_course,
+       (SELECT pdf_url FROM certificates WHERE user_id = u.id AND status = 'emitido' ORDER BY id DESC LIMIT 1) AS cert_pdf_url,"
+    : "NULL AS cert_codigo, NULL AS cert_emitido_em, NULL AS cert_course, NULL AS cert_pdf_url,";
 
 // Count total (sem limit)
 $sqlCount = "SELECT COUNT(*) FROM users u $whereSql";
@@ -333,6 +355,8 @@ require __DIR__ . '/_header.php';
 .det-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; grid-column:1/-1; }
 .cert-link { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--success); }
 .cert-link:hover { text-decoration:underline; }
+.cert-mini-link { display:flex; gap:6px; align-items:center; margin-top:8px; }
+.cert-mini-link input { min-width:0; flex:1; font-size:11px; color:var(--muted); }
 
 /* ── KPI bar ──────────────────────────────────────────────── */
 .al-kpi-bar { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
@@ -507,6 +531,9 @@ require __DIR__ . '/_header.php';
                 $qtd     = (int)($a['qtd_cadastros']??1);
                 $certCod = (string)($a['cert_codigo']??'');
                 $certUrl = $certCod !== '' ? BASE_URL . '/verificar_certificado.php?c=' . urlencode($certCod) : '';
+                $certPdf = trim((string)($a['cert_pdf_url'] ?? ''));
+                $certCourse = trim((string)($a['cert_course'] ?? ''));
+                $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
             ?>
             <tr class="main-row" id="row-<?= $i ?>" onclick="toggleExpand(<?= $i ?>)">
@@ -576,10 +603,18 @@ require __DIR__ . '/_header.php';
                         <div>
                             <div class="det-title">Certificado</div>
                             <?php if($certUrl): ?>
+                            <div class="det-row"><span class="det-key">Emitido em</span><span class="det-val"><?=h(fmtDtHora($certEmitido))?></span></div>
+                            <div class="det-row"><span class="det-key">Curso</span><span class="det-val"><?=h($certCourse ?: '-')?></span></div>
                             <a href="<?=h($certUrl)?>" target="_blank" class="cert-link">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
                                 Ver certificado
                             </a>
+                            <?php if($certPdf !== ''): ?>
+                            <div class="cert-mini-link">
+                                <input type="text" id="cert-copy-<?=$i?>" readonly value="<?=h($certPdf)?>">
+                                <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();copyCertFromList('cert-copy-<?=$i?>')">Copiar</button>
+                            </div>
+                            <?php endif; ?>
                             <?php elseif($temCert): ?>
                             <span style="font-size:12px;color:var(--success)">✓ Emitido</span>
                             <?php else: ?>
@@ -669,6 +704,17 @@ require __DIR__ . '/_header.php';
 </div>
 
 <script>
+function copyCertFromList(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.select();
+    el.setSelectionRange(0, 99999);
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(el.value);
+    } else {
+        document.execCommand('copy');
+    }
+}
 function toggleExpand(i) {
     var row = document.getElementById('row-' + i);
     var det = document.getElementById('det-' + i);
