@@ -25,6 +25,7 @@ $eventOptions = [
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
     'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
+    'REENVIO_CERTIFICADO'   => 'Reenvio de certificado',
     'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
     'LIVE_TURMA'            => 'Disparo de live por turma (regra global)',
     'LIVE_ACESSOU'          => 'Live — aluno acessou (via webhook externo)',
@@ -75,6 +76,14 @@ $fieldOptions = [
         'extra.codigo_certificado' => 'codigo_certificado',
         'extra.curso'             => 'curso',
         'extra.emitido_em'        => 'emitido_em',
+    ],
+    'Extra - REENVIO_CERTIFICADO' => [
+        'extra.pdf_url'           => 'pdf_url (link do certificado)',
+        'extra.codigo_certificado' => 'codigo_certificado',
+        'extra.curso'             => 'curso',
+        'extra.emitido_em'        => 'emitido_em',
+        'extra.certificado_id'    => 'certificado_id',
+        'extra.origem'            => 'origem do reenvio',
     ],
     'Extra — CERT_SENHA_ERRADA' => [
         'extra.motivo' => 'motivo',
@@ -544,6 +553,7 @@ include __DIR__ . '/_header.php';
                     'INSCRITO'          => ['extra.codigo_live', 'extra.data_live'],
                     'CONCLUIU_TRILHA'   => ['extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
                     'CERT_EMITIDO'      => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em'],
+                    'REENVIO_CERTIFICADO' => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em', 'extra.certificado_id', 'extra.origem'],
                     'CERT_SENHA_ERRADA' => ['extra.motivo'],
                     'LIVE_TURMA'        => ['extra.codigo_turma', 'extra.codigo_live', 'extra.data_live', 'extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
                 ];
@@ -621,6 +631,10 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">
                                         <strong>CERT_EMITIDO <span class="ev-pill cert">Certificado</span></strong>
                                         <em>Disparado quando o aluno acerta a senha e o certificado é gerado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="REENVIO_CERTIFICADO">
+                                        <strong>REENVIO_CERTIFICADO <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o certificado Ã© reenviado pelo admin ou por webhook de entrada.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="CERT_SENHA_ERRADA">
                                         <strong>CERT_SENHA_ERRADA <span class="ev-pill cert">Certificado</span></strong>

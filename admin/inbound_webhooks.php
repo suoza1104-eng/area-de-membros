@@ -237,6 +237,7 @@ require_once __DIR__ . '/_header.php';
           <option value="VIU_AULA">VIU_AULA — marca aula como concluída</option>
           <option value="CONCLUIU_TRILHA">CONCLUIU_TRILHA — marca toda a trilha como concluída</option>
           <option value="CERT_EMITIDO">CERT_EMITIDO — dispara evento de certificado</option>
+          <option value="REENVIO_CERTIFICADO">REENVIO_CERTIFICADO — dispara gatilho de reenvio do certificado</option>
           <option value="TAG_CUSTOM">TAG_CUSTOM — apenas aplica tag e dispara evento custom</option>
         </select>
       </div>
@@ -329,7 +330,7 @@ require_once __DIR__ . '/_header.php';
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const EV_CLS = {
     'INSCRITO':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
-    'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','TAG_CUSTOM':'ev-tag'
+    'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','TAG_CUSTOM':'ev-tag'
 };
 
 document.addEventListener('DOMContentLoaded', iwCarregar);

@@ -127,21 +127,16 @@ function ae_gerar_ou_atualizar_certificado(PDO $pdo, array $aluno): array {
     }
 }
 
-function ae_reenviar_certificado_sf(PDO $pdo, array $aluno, array $cert): void {
-    $user = [
-        'id' => $aluno['id'] ?? null,
-        'nome' => $aluno['nome'] ?? null,
-        'email' => $aluno['email'] ?? null,
-        'telefone' => $aluno['telefone'] ?? null,
-    ];
+function ae_disparar_reenvio_certificado(array $aluno, array $cert, string $origem): void {
     $extra = [
         'codigo_certificado' => $cert['codigo_uid'] ?? '',
         'curso' => $cert['course'] ?? '',
         'emitido_em' => $cert['emitido_em'] ?? '',
         'pdf_url' => $cert['pdf_url'] ?? '',
-        'origem' => 'admin_reenvio_sf',
+        'certificado_id' => $cert['id'] ?? null,
+        'origem' => $origem,
     ];
-    sf_disparar_evento($pdo, 'CERT_EMITIDO', $user, $extra);
+    disparar_webhooks('REENVIO_CERTIFICADO', (int)($aluno['id'] ?? 0), $extra);
 }
 
 // ── Carrega aluno ──────────────────────────────────────────────────────
@@ -226,8 +221,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (trim((string)($certAtual['pdf_url'] ?? '')) === '') {
                 $certAtual = ae_gerar_ou_atualizar_certificado($pdo, $aluno);
             }
-            ae_reenviar_certificado_sf($pdo, $aluno, $certAtual);
-            $msgOk = 'Certificado reenviado para o SuperFuncionário.';
+            ae_disparar_reenvio_certificado($aluno, $certAtual, 'admin_aluno_editar');
+            $msgOk = 'Gatilho REENVIO_CERTIFICADO disparado.';
         } catch (Throwable $e) {
             $msgErro = 'Erro ao reenviar certificado: ' . $e->getMessage();
         }

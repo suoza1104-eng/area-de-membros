@@ -98,6 +98,23 @@ function iw_get_value(array $data, string $path): ?string {
     return is_scalar($cur) ? (string)$cur : null;
 }
 
+function iw_get_certificado_extra(PDO $pdo, int $userId, string $origem): array {
+    $st = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND status = 'emitido' ORDER BY id DESC LIMIT 1");
+    $st->execute([':uid' => $userId]);
+    $cert = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$cert) {
+        throw new RuntimeException('Usuário sem certificado emitido para reenvio');
+    }
+    return [
+        'codigo_certificado' => $cert['codigo_uid'] ?? '',
+        'curso' => $cert['course'] ?? '',
+        'emitido_em' => $cert['emitido_em'] ?? '',
+        'pdf_url' => $cert['pdf_url'] ?? '',
+        'certificado_id' => $cert['id'] ?? null,
+        'origem' => $origem,
+    ];
+}
+
 // ── Processa ──────────────────────────────────────────────────────────────────
 try {
     $map = [];
@@ -286,6 +303,12 @@ try {
 
         case 'CERT_EMITIDO':
             if (function_exists('disparar_webhooks')) disparar_webhooks('CERT_EMITIDO', $userId, ['origem' => 'inbound_webhook']);
+            break;
+
+        case 'REENVIO_CERTIFICADO':
+            if (function_exists('disparar_webhooks')) {
+                disparar_webhooks('REENVIO_CERTIFICADO', $userId, iw_get_certificado_extra($pdo, $userId, 'inbound_webhook'));
+            }
             break;
 
         case 'TAG_CUSTOM':

@@ -99,6 +99,26 @@ function al_gerar_certificado_manual(PDO $pdo, int $userId): array {
         throw $e;
     }
 }
+function al_certificado_atual(PDO $pdo, int $userId): ?array {
+    try {
+        $st = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND status = 'emitido' ORDER BY id DESC LIMIT 1");
+        $st->execute([':uid' => $userId]);
+        $cert = $st->fetch(PDO::FETCH_ASSOC);
+        return $cert ?: null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+function al_disparar_reenvio_certificado(int $userId, array $cert, string $origem): void {
+    disparar_webhooks('REENVIO_CERTIFICADO', $userId, [
+        'codigo_certificado' => $cert['codigo_uid'] ?? '',
+        'curso' => $cert['course'] ?? '',
+        'emitido_em' => $cert['emitido_em'] ?? '',
+        'pdf_url' => $cert['pdf_url'] ?? '',
+        'certificado_id' => $cert['id'] ?? null,
+        'origem' => $origem,
+    ]);
+}
 
 // ── Detecta colunas e tabelas ─────────────────────────────────────────────
 $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pdo,'users','turma') ? 'turma' : '');
@@ -166,23 +186,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uid = (int)($_POST['uid'] ?? 0);
         if ($uid > 0) {
             try {
-                $stU = $pdo->prepare("SELECT id,nome,email,telefone FROM users WHERE id = :id LIMIT 1");
-                $stU->execute([':id' => $uid]);
-                $u = $stU->fetch(PDO::FETCH_ASSOC);
-                $stC = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND status = 'emitido' ORDER BY id DESC LIMIT 1");
-                $stC->execute([':uid' => $uid]);
-                $cert = $stC->fetch(PDO::FETCH_ASSOC);
-                if (!$u || !$cert) {
+                $cert = al_certificado_atual($pdo, $uid);
+                if (!$cert) {
                     throw new RuntimeException('Aluno sem certificado emitido.');
                 }
-                sf_disparar_evento($pdo, 'CERT_EMITIDO', $u, [
-                    'codigo_certificado' => $cert['codigo_uid'] ?? '',
-                    'curso' => $cert['course'] ?? '',
-                    'emitido_em' => $cert['emitido_em'] ?? '',
-                    'pdf_url' => $cert['pdf_url'] ?? '',
-                    'origem' => 'admin_reenvio_sf',
-                ]);
-                $msgPost = 'Certificado reenviado para o SuperFuncionário.';
+                al_disparar_reenvio_certificado($uid, $cert, 'admin_alunos');
+                $msgPost = 'Gatilho REENVIO_CERTIFICADO disparado.';
             } catch (Throwable $e) {
                 $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
             }
@@ -717,7 +726,7 @@ require __DIR__ . '/_header.php';
                                     <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--warning)">Gerar certificado manualmente</button>
                                 </form>
                                 <?php if($temCert): ?>
-                                <form method="post" style="margin:0" onsubmit="return confirm('Reenviar CERT_EMITIDO para este aluno?')">
+                                <form method="post" style="margin:0" onsubmit="return confirm('Disparar REENVIO_CERTIFICADO para este aluno?')">
                                     <input type="hidden" name="acao" value="reenviar_cert">
                                     <input type="hidden" name="uid"  value="<?=(int)$a['id']?>">
                                     <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--success)">↻ Reenviar certificado</button>

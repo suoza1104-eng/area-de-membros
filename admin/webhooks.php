@@ -111,6 +111,7 @@ $eventGroups = [
     ],
     'Certificado' => [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],
+        'REENVIO_CERTIFICADO'  => ['label' => 'Reenvio de certificado',        'desc' => 'Disparado quando o admin clica em reenviar certificado ou quando um webhook de entrada configurado para reenvio é recebido.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url, extra.certificado_id, extra.origem'],
         'CERT_SENHA_ERRADA'    => ['label' => 'Senha de certificado errada',   'desc' => 'Disparado quando o aluno tenta uma senha inválida.', 'extra' => 'extra.motivo'],
     ],
     'Live' => [
