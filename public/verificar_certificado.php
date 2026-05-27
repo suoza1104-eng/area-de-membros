@@ -58,6 +58,7 @@ if ($cert && !empty($cert['emitido_em'])) {
     $dataEmissao = date('d/m/Y', strtotime($cert['emitido_em']));
 }
 $curso = !empty($cert['course']) ? $cert['course'] : ($courseTitle ?: 'Não informado');
+$pdfUrl = ($cert && !empty($cert['pdf_url'])) ? trim((string)$cert['pdf_url']) : '';
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -161,6 +162,23 @@ $curso = !empty($cert['course']) ? $cert['course'] : ($courseTitle ?: 'Não info
             color: #fca5a5; border-radius: 999px; padding: 4px 14px;
             font-size: 13px; font-weight: 600; margin-top: 10px;
         }
+        .download-cert {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            margin-top: 16px;
+            padding: 12px 18px;
+            border-radius: 10px;
+            background: <?= h($primary) ?>;
+            color: #07101f;
+            font-size: 14px;
+            font-weight: 800;
+            text-decoration: none;
+            border: 1px solid rgba(255,255,255,.18);
+        }
+        .download-cert:hover { filter: brightness(1.06); }
     </style>
 </head>
 <body>
@@ -215,6 +233,11 @@ $curso = !empty($cert['course']) ? $cert['course'] : ($courseTitle ?: 'Não info
         <div class="codigo-box">
             Código: <?= h($codigoUid) ?>
         </div>
+        <?php if ($pdfUrl !== ''): ?>
+            <a class="download-cert" href="<?= h($pdfUrl) ?>" download target="_blank" rel="noopener">
+                Baixar certificado em PDF
+            </a>
+        <?php endif; ?>
     </div>
     <?php elseif ($codigoUid !== ''): ?>
     <div class="card-body" style="text-align:center;padding:32px;">
