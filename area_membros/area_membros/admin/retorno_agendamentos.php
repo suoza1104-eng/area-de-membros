@@ -20,6 +20,16 @@ $msgTipo = 'ok';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
+    if ($acao === 'processar_agora_ajax') {
+        header('Content-Type: application/json; charset=utf-8');
+        try {
+            $r = retorno_processar_devidos($pdo, 50);
+            echo json_encode(['ok' => true] + $r, JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            echo json_encode(['ok' => false, 'msg' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
     try {
         if ($acao === 'salvar_agendamento') {
             $id = (int)($_POST['id'] ?? 0);
@@ -57,6 +67,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             if ($id > 0) $pdo->prepare("DELETE FROM retorno_modelos WHERE id=:id")->execute([':id'=>$id]);
             $msg = 'Modelo deletado.';
+        } elseif ($acao === 'processar_agora') {
+            $r = retorno_processar_devidos($pdo, 50);
+            $msg = 'Processamento executado: ' . (int)$r['total'] . ' pendente(s), ' . (int)$r['enviados'] . ' enviado(s), ' . (int)$r['erros'] . ' erro(s).';
         }
     } catch (Throwable $e) {
         $msg = 'Erro: ' . $e->getMessage();
@@ -121,8 +134,12 @@ require __DIR__ . '/_header.php';
 <div class="topbar">
     <div>
         <div class="topbar-title">Agendamentos de retorno</div>
-        <div class="text-muted text-sm">O cron dispara o gatilho <code>RETORNO_AGENDADO</code> na data e hora marcada.</div>
+        <div class="text-muted text-sm">O cron dispara o gatilho <code>RETORNO_AGENDADO</code> na data e hora marcada. Com esta tela aberta, o sistema tambem verifica pendentes automaticamente.</div>
     </div>
+    <form method="post" style="margin:0">
+        <input type="hidden" name="acao" value="processar_agora">
+        <button class="btn btn-ghost btn-sm" type="submit">Processar pendentes agora</button>
+    </form>
 </div>
 
 <div class="kpi-grid">
@@ -205,9 +222,9 @@ require __DIR__ . '/_header.php';
             <form method="post">
                 <input type="hidden" name="acao" value="salvar_modelo">
                 <input type="hidden" name="modelo_id" id="modeloId" value="0">
-                <div class="form-group"><label class="form-label">Nome</label><input name="modelo_nome" id="modeloNome"></div>
+                <div class="form-group"><label class="form-label">Nome</label><input type="text" name="modelo_nome" id="modeloNome" required></div>
                 <div class="form-group"><label class="form-label">Tipo</label><select name="modelo_tipo" id="modeloTipo"><?php foreach ($tipos as $k=>$l): ?><option value="<?=h($k)?>"><?=h($l)?></option><?php endforeach; ?></select></div>
-                <div class="form-group"><label class="form-label">Mensagem</label><textarea name="modelo_mensagem" id="modeloMensagem" rows="4"></textarea></div>
+                <div class="form-group"><label class="form-label">Mensagem</label><textarea name="modelo_mensagem" id="modeloMensagem" rows="4" required></textarea></div>
                 <button class="btn btn-ghost btn-sm">Salvar modelo</button>
             </form>
             <div class="mt-3">
@@ -251,5 +268,16 @@ function editarModelo(m) {
     document.getElementById('modeloTipo').value = m.tipo || 'vendas';
     document.getElementById('modeloMensagem').value = m.mensagem || '';
 }
+setInterval(function() {
+    if (document.hidden) return;
+    var fd = new FormData();
+    fd.append('acao', 'processar_agora_ajax');
+    fetch('retorno_agendamentos.php', {method:'POST', body:fd})
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (j && j.ok && parseInt(j.total || 0, 10) > 0) window.location.reload();
+        })
+        .catch(function(){});
+}, 30000);
 </script>
 <?php require __DIR__ . '/_footer.php'; ?>
