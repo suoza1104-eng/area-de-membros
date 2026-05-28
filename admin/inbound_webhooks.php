@@ -55,7 +55,7 @@ if ($acao !== '') {
         $mapJson   = trim((string)($_POST['payload_map_json'] ?? ''));
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
-        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_mensagem'=>'retorno_mensagem']);
+        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_assunto'=>'retorno_assunto','retorno_mensagem'=>'retorno_mensagem']);
         if ($nome === '' || $evento === '') { echo json_encode(['ok'=>false,'msg'=>'Nome e evento são obrigatórios']); exit; }
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
@@ -387,7 +387,7 @@ function iwNovo() {
     document.getElementById('iwCriarSeNaoExistir').checked = true;
     document.getElementById('iwMap').innerHTML = '';
     iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
-    iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_mensagem','retorno_mensagem');
+    iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
     document.getElementById('iwFormPanel').style.display = '';
     iwAtualizaCamposCondicionais();
@@ -411,7 +411,7 @@ async function iwEditar(id) {
     Object.entries(map).forEach(([k,v]) => iwAddMap(k,v));
     if (!Object.keys(map).length) {
         iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
-        iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_mensagem','retorno_mensagem');
+        iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     }
     document.getElementById('iwFormTitle').textContent = 'Editar: ' + d.nome;
     document.getElementById('iwFormPanel').style.display = '';

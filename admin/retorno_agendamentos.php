@@ -36,16 +36,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userId = (int)($_POST['user_id'] ?? 0);
             $tipo = (string)($_POST['tipo'] ?? 'vendas');
             $scheduledAt = retorno_parse_data_hora((string)($_POST['scheduled_at'] ?? ''));
+            $assunto = trim((string)($_POST['assunto'] ?? ''));
             $mensagem = trim((string)($_POST['mensagem'] ?? ''));
             if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');
             retorno_buscar_usuario($pdo, $userId);
 
             if ($id > 0) {
-                $pdo->prepare("UPDATE retorno_agendamentos SET user_id=:u,tipo=:t,scheduled_at=:d,mensagem=:m,status='aguardando',last_error=NULL,sent_at=NULL WHERE id=:id")
-                    ->execute([':u'=>$userId, ':t'=>retorno_normalizar_tipo($tipo), ':d'=>$scheduledAt, ':m'=>$mensagem !== '' ? $mensagem : null, ':id'=>$id]);
+                $pdo->prepare("UPDATE retorno_agendamentos SET user_id=:u,tipo=:t,scheduled_at=:d,assunto=:a,mensagem=:m,status='aguardando',last_error=NULL,sent_at=NULL WHERE id=:id")
+                    ->execute([':u'=>$userId, ':t'=>retorno_normalizar_tipo($tipo), ':d'=>$scheduledAt, ':a'=>$assunto !== '' ? $assunto : null, ':m'=>$mensagem !== '' ? $mensagem : null, ':id'=>$id]);
                 $msg = 'Agendamento atualizado.';
             } else {
-                retorno_criar_agendamento($pdo, $userId, $tipo, $scheduledAt, $mensagem, 'admin_controle');
+                retorno_criar_agendamento($pdo, $userId, $tipo, $scheduledAt, $mensagem, 'admin_controle', [], $assunto);
                 $msg = 'Agendamento criado.';
             }
         } elseif ($acao === 'delete_agendamento') {
@@ -61,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id > 0) $pdo->prepare("UPDATE retorno_agendamentos SET status='aguardando', last_error=NULL, sent_at=NULL WHERE id=:id")->execute([':id'=>$id]);
             $msg = 'Agendamento voltou para aguardando.';
         } elseif ($acao === 'salvar_modelo') {
-            retorno_salvar_modelo($pdo, (string)($_POST['modelo_nome'] ?? ''), (string)($_POST['modelo_tipo'] ?? 'vendas'), (string)($_POST['modelo_mensagem'] ?? ''), (int)($_POST['modelo_id'] ?? 0));
+            retorno_salvar_modelo($pdo, (string)($_POST['modelo_nome'] ?? ''), (string)($_POST['modelo_tipo'] ?? 'vendas'), (string)($_POST['modelo_mensagem'] ?? ''), (int)($_POST['modelo_id'] ?? 0), (string)($_POST['modelo_assunto'] ?? ''));
             $msg = 'Modelo salvo.';
         } elseif ($acao === 'delete_modelo') {
             $id = (int)($_POST['id'] ?? 0);
@@ -163,7 +164,7 @@ require __DIR__ . '/_header.php';
     <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Aluno</th><th>Agendamento</th><th>Mensagem</th><th>Status</th><th style="text-align:right">Acoes</th></tr></thead>
+                <thead><tr><th>Aluno</th><th>Agendamento</th><th>Assunto / Mensagem</th><th>Status</th><th style="text-align:right">Acoes</th></tr></thead>
                 <tbody>
                 <?php if (!$rows): ?>
                     <tr><td colspan="5" class="text-muted" style="text-align:center;padding:26px">Nenhum agendamento encontrado.</td></tr>
@@ -179,7 +180,11 @@ require __DIR__ . '/_header.php';
                             <div class="fw-700"><?=h(fmt_retorno_dt($r['scheduled_at']))?></div>
                             <div class="text-muted text-xs"><?=h($tipos[$r['tipo']] ?? $r['tipo'])?> · <?=h($r['origem'] ?? '')?></div>
                         </td>
-                        <td><div class="ret-msg"><?=h((string)($r['mensagem'] ?? ''))?></div><?php if (!empty($r['last_error'])): ?><div class="text-danger text-xs"><?=h($r['last_error'])?></div><?php endif; ?></td>
+                        <td>
+                            <?php if (!empty($r['assunto'])): ?><div class="fw-700"><?=h((string)$r['assunto'])?></div><?php endif; ?>
+                            <div class="ret-msg"><?=h((string)($r['mensagem'] ?? ''))?></div>
+                            <?php if (!empty($r['last_error'])): ?><div class="text-danger text-xs"><?=h($r['last_error'])?></div><?php endif; ?>
+                        </td>
                         <td><span class="ret-status <?=h($r['status'])?>"><?=h(retorno_status_label((string)$r['status']))?></span><?php if (!empty($r['sent_at'])): ?><div class="text-xs text-muted"><?=h(fmt_retorno_dt($r['sent_at']))?></div><?php endif; ?></td>
                         <td>
                             <div class="ret-actions">
@@ -212,7 +217,8 @@ require __DIR__ . '/_header.php';
                     <div class="form-group"><label class="form-label">Tipo</label><select name="tipo" id="agTipo"><?php foreach ($tipos as $k=>$l): ?><option value="<?=h($k)?>"><?=h($l)?></option><?php endforeach; ?></select></div>
                 </div>
                 <div class="form-group"><label class="form-label">Carregar modelo</label><select id="modeloSelect" onchange="carregarModelo(this.value)"><option value="">Selecionar...</option><?php foreach ($modelos as $m): ?><option value="<?=(int)$m['id']?>"><?=h($m['nome'])?> (<?=h($tipos[$m['tipo']] ?? $m['tipo'])?>)</option><?php endforeach; ?></select></div>
-                <div class="form-group"><label class="form-label">Mensagem</label><textarea name="mensagem" id="agMensagem" rows="6" placeholder="Ex: Oi {primeiro_nome}, passando para dar continuidade..."></textarea><div class="text-xs text-muted mt-2">Variaveis: <code>{primeiro_nome}</code>, <code>{nome}</code>, <code>{email}</code>, <code>{telefone}</code>, <code>{tipo}</code>, <code>{data_agendamento}</code>.</div></div>
+                <div class="form-group"><label class="form-label">Assunto</label><input type="text" name="assunto" id="agAssunto" placeholder="Ex: Retorno sobre sua vaga"></div>
+                <div class="form-group"><label class="form-label">Mensagem</label><textarea name="mensagem" id="agMensagem" rows="6" placeholder="Ex: Oi {primeiro_nome}, passando para dar continuidade..."></textarea><div class="text-xs text-muted mt-2">Variaveis: <code>{primeiro_nome}</code>, <code>{nome}</code>, <code>{email}</code>, <code>{telefone}</code>, <code>{assunto}</code>, <code>{tipo}</code>, <code>{data_agendamento}</code>.</div></div>
                 <div class="d-flex gap-2"><button class="btn btn-primary">Salvar</button><button type="button" class="btn btn-ghost" onclick="novoAg()">Novo</button></div>
             </form>
         </div>
@@ -224,6 +230,7 @@ require __DIR__ . '/_header.php';
                 <input type="hidden" name="modelo_id" id="modeloId" value="0">
                 <div class="form-group"><label class="form-label">Nome</label><input type="text" name="modelo_nome" id="modeloNome" required></div>
                 <div class="form-group"><label class="form-label">Tipo</label><select name="modelo_tipo" id="modeloTipo"><?php foreach ($tipos as $k=>$l): ?><option value="<?=h($k)?>"><?=h($l)?></option><?php endforeach; ?></select></div>
+                <div class="form-group"><label class="form-label">Assunto</label><input type="text" name="modelo_assunto" id="modeloAssunto"></div>
                 <div class="form-group"><label class="form-label">Mensagem</label><textarea name="modelo_mensagem" id="modeloMensagem" rows="4" required></textarea></div>
                 <button class="btn btn-ghost btn-sm">Salvar modelo</button>
             </form>
@@ -253,6 +260,7 @@ function editarAg(r) {
     document.getElementById('agUserId').value = r.user_id || '';
     document.getElementById('agTipo').value = r.tipo || 'vendas';
     document.getElementById('agScheduled').value = toLocalInput(r.scheduled_at || '');
+    document.getElementById('agAssunto').value = r.assunto || '';
     document.getElementById('agMensagem').value = r.mensagem || '';
     window.scrollTo({top:0, behavior:'smooth'});
 }
@@ -260,12 +268,14 @@ function carregarModelo(id) {
     const m = MODELOS.find(x => String(x.id) === String(id));
     if (!m) return;
     document.getElementById('agTipo').value = m.tipo || 'vendas';
+    document.getElementById('agAssunto').value = m.assunto || '';
     document.getElementById('agMensagem').value = m.mensagem || '';
 }
 function editarModelo(m) {
     document.getElementById('modeloId').value = m.id || 0;
     document.getElementById('modeloNome').value = m.nome || '';
     document.getElementById('modeloTipo').value = m.tipo || 'vendas';
+    document.getElementById('modeloAssunto').value = m.assunto || '';
     document.getElementById('modeloMensagem').value = m.mensagem || '';
 }
 setInterval(function() {

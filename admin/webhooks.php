@@ -108,7 +108,7 @@ $eventGroups = [
         'PRIMEIRO_LOGIN'       => ['label' => 'Primeiro login na plataforma',  'desc' => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a área de membros (qualquer método: senha, magic link ou cookie). Aplica também a tag PRIMEIRO_LOGIN.', 'extra' => 'user.id, user.nome, user.email, user.magic_link'],
         'ASSISTIU_ALGUMA_AULA' => ['label' => 'Assistiu alguma aula',          'desc' => 'Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.', 'extra' => 'user.id, user.nome, extra.lesson_id'],
         'CONCLUIU_TRILHA'      => ['label' => 'Concluiu a trilha',             'desc' => 'Disparado quando o aluno finaliza todas as aulas obrigatórias.', 'extra' => 'user.id, user.nome'],
-        'RETORNO_AGENDADO'     => ['label' => 'Retorno agendado chegou',       'desc' => 'Disparado pelo cron quando um retorno de contato chega na data e hora marcada.', 'extra' => 'extra.agendamento_id, extra.tipo, extra.scheduled_at, extra.mensagem, extra.mensagem_renderizada, extra.origem'],
+        'RETORNO_AGENDADO'     => ['label' => 'Retorno agendado chegou',       'desc' => 'Disparado pelo cron quando um retorno de contato chega na data e hora marcada.', 'extra' => 'extra.agendamento_id, extra.tipo, extra.scheduled_at, extra.assunto, extra.mensagem, extra.mensagem_renderizada, extra.origem'],
     ],
     'Certificado' => [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],

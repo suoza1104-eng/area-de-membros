@@ -134,7 +134,7 @@ try {
         $tmp = json_decode($ihw['payload_map_json'], true);
         if (is_array($tmp)) $map = $tmp;
     }
-    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta', 'retorno_data' => 'retorno_data', 'retorno_tipo' => 'retorno_tipo', 'retorno_mensagem' => 'retorno_mensagem'];
+    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta', 'retorno_data' => 'retorno_data', 'retorno_tipo' => 'retorno_tipo', 'retorno_assunto' => 'retorno_assunto', 'retorno_mensagem' => 'retorno_mensagem'];
     foreach ($defaults as $k => $v) if (!isset($map[$k])) $map[$k] = $v;
 
     // ── FILTRO DE OFERTA ──
@@ -327,11 +327,12 @@ try {
             retorno_ensure_tables($pdo);
             $retornoData = iw_get_first_mapped($payload, $map, ['retorno_data', 'data_retorno', 'scheduled_at', 'data_hora']);
             $retornoTipo = iw_get_first_mapped($payload, $map, ['retorno_tipo', 'tipo', 'tipo_retorno']);
+            $retornoAssunto = iw_get_first_mapped($payload, $map, ['retorno_assunto', 'assunto', 'subject']);
             $retornoMensagem = iw_get_first_mapped($payload, $map, ['retorno_mensagem', 'mensagem', 'message']);
             $agId = retorno_criar_agendamento($pdo, $userId, $retornoTipo ?: 'outro', $retornoData, $retornoMensagem, 'inbound_webhook', [
                 'inbound_id' => (int)$ihw['id'],
                 'payload_raw' => $payload,
-            ]);
+            ], $retornoAssunto);
             if (function_exists('adicionar_tag')) adicionar_tag($userId, 'RETORNO_AGENDADO', 'inbound_webhook', $agId);
             break;
 

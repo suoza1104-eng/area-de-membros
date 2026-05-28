@@ -9,6 +9,7 @@ function retorno_ensure_tables(PDO $pdo): void {
         user_id INT NOT NULL,
         tipo VARCHAR(40) NOT NULL DEFAULT 'vendas',
         scheduled_at DATETIME NOT NULL,
+        assunto VARCHAR(255) NULL,
         mensagem TEXT NULL,
         status ENUM('aguardando','enviado','erro','cancelado') NOT NULL DEFAULT 'aguardando',
         origem VARCHAR(80) NULL,
@@ -21,17 +22,20 @@ function retorno_ensure_tables(PDO $pdo): void {
         INDEX idx_retorno_user (user_id),
         INDEX idx_retorno_status_data (status, scheduled_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try { $pdo->exec("ALTER TABLE retorno_agendamentos ADD COLUMN assunto VARCHAR(255) NULL AFTER scheduled_at"); } catch (Throwable $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS retorno_modelos (
         id INT AUTO_INCREMENT PRIMARY KEY,
         nome VARCHAR(120) NOT NULL,
         tipo VARCHAR(40) NOT NULL DEFAULT 'vendas',
+        assunto VARCHAR(255) NULL,
         mensagem TEXT NOT NULL,
         is_default TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_retorno_modelo_tipo (tipo)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try { $pdo->exec("ALTER TABLE retorno_modelos ADD COLUMN assunto VARCHAR(255) NULL AFTER tipo"); } catch (Throwable $e) {}
 }
 
 function retorno_tipos(): array {
@@ -93,6 +97,7 @@ function retorno_render_mensagem(string $mensagem, array $user, array $agendamen
         '{nome}' => (string)($user['nome'] ?? ''),
         '{email}' => (string)($user['email'] ?? ''),
         '{telefone}' => (string)($user['telefone'] ?? ''),
+        '{assunto}' => (string)($agendamento['assunto'] ?? ''),
         '{tipo}' => (string)($agendamento['tipo'] ?? ''),
         '{data_agendamento}' => (string)($agendamento['scheduled_at'] ?? ''),
     ];
@@ -109,20 +114,22 @@ function retorno_buscar_usuario(PDO $pdo, int $userId): array {
     return $user;
 }
 
-function retorno_criar_agendamento(PDO $pdo, int $userId, string $tipo, string $scheduledAt, string $mensagem, string $origem = 'manual', array $payload = []): int {
+function retorno_criar_agendamento(PDO $pdo, int $userId, string $tipo, string $scheduledAt, string $mensagem, string $origem = 'manual', array $payload = [], string $assunto = ''): int {
     retorno_ensure_tables($pdo);
     retorno_buscar_usuario($pdo, $userId);
     $tipo = retorno_normalizar_tipo($tipo);
     $scheduledAt = retorno_parse_data_hora($scheduledAt);
+    $assunto = trim($assunto);
     $mensagem = trim($mensagem);
 
     $st = $pdo->prepare("INSERT INTO retorno_agendamentos
-        (user_id, tipo, scheduled_at, mensagem, status, origem, payload_json, created_at)
-        VALUES (:u, :t, :d, :m, 'aguardando', :o, :p, NOW())");
+        (user_id, tipo, scheduled_at, assunto, mensagem, status, origem, payload_json, created_at)
+        VALUES (:u, :t, :d, :a, :m, 'aguardando', :o, :p, NOW())");
     $st->execute([
         ':u' => $userId,
         ':t' => $tipo,
         ':d' => $scheduledAt,
+        ':a' => $assunto !== '' ? $assunto : null,
         ':m' => $mensagem !== '' ? $mensagem : null,
         ':o' => $origem,
         ':p' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
@@ -130,27 +137,28 @@ function retorno_criar_agendamento(PDO $pdo, int $userId, string $tipo, string $
     return (int)$pdo->lastInsertId();
 }
 
-function retorno_salvar_modelo(PDO $pdo, string $nome, string $tipo, string $mensagem, int $id = 0): int {
+function retorno_salvar_modelo(PDO $pdo, string $nome, string $tipo, string $mensagem, int $id = 0, string $assunto = ''): int {
     retorno_ensure_tables($pdo);
     $nome = trim($nome);
     $mensagem = trim($mensagem);
+    $assunto = trim($assunto);
     if ($nome === '' || $mensagem === '') {
         throw new RuntimeException('Nome e mensagem do modelo sao obrigatorios.');
     }
     $tipo = retorno_normalizar_tipo($tipo);
     if ($id > 0) {
-        $pdo->prepare("UPDATE retorno_modelos SET nome=:n,tipo=:t,mensagem=:m WHERE id=:id")
-            ->execute([':n' => $nome, ':t' => $tipo, ':m' => $mensagem, ':id' => $id]);
+        $pdo->prepare("UPDATE retorno_modelos SET nome=:n,tipo=:t,assunto=:a,mensagem=:m WHERE id=:id")
+            ->execute([':n' => $nome, ':t' => $tipo, ':a' => $assunto !== '' ? $assunto : null, ':m' => $mensagem, ':id' => $id]);
         return $id;
     }
-    $pdo->prepare("INSERT INTO retorno_modelos (nome,tipo,mensagem,created_at) VALUES (:n,:t,:m,NOW())")
-        ->execute([':n' => $nome, ':t' => $tipo, ':m' => $mensagem]);
+    $pdo->prepare("INSERT INTO retorno_modelos (nome,tipo,assunto,mensagem,created_at) VALUES (:n,:t,:a,:m,NOW())")
+        ->execute([':n' => $nome, ':t' => $tipo, ':a' => $assunto !== '' ? $assunto : null, ':m' => $mensagem]);
     return (int)$pdo->lastInsertId();
 }
 
 function retorno_listar_modelos(PDO $pdo): array {
     retorno_ensure_tables($pdo);
-    return $pdo->query("SELECT id,nome,tipo,mensagem,is_default FROM retorno_modelos ORDER BY tipo ASC, nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $pdo->query("SELECT id,nome,tipo,assunto,mensagem,is_default FROM retorno_modelos ORDER BY tipo ASC, nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
 function retorno_disparar_agendamento(PDO $pdo, array $agendamento): void {
@@ -171,6 +179,7 @@ function retorno_disparar_agendamento(PDO $pdo, array $agendamento): void {
             'agendamento_id' => $id,
             'tipo' => (string)($agendamento['tipo'] ?? ''),
             'scheduled_at' => (string)($agendamento['scheduled_at'] ?? ''),
+            'assunto' => (string)($agendamento['assunto'] ?? ''),
             'mensagem' => $mensagem,
             'mensagem_renderizada' => $mensagemRenderizada,
             'origem' => (string)($agendamento['origem'] ?? ''),

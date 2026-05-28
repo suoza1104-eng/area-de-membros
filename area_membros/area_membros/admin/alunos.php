@@ -207,11 +207,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (string)($_POST['retorno_tipo'] ?? 'vendas'),
                 (string)($_POST['retorno_scheduled_at'] ?? ''),
                 (string)($_POST['retorno_mensagem'] ?? ''),
-                'admin_alunos'
+                'admin_alunos',
+                [],
+                (string)($_POST['retorno_assunto'] ?? '')
             );
             $modeloNome = trim((string)($_POST['retorno_modelo_nome'] ?? ''));
             if ($modeloNome !== '') {
-                retorno_salvar_modelo($pdo, $modeloNome, (string)($_POST['retorno_tipo'] ?? 'vendas'), (string)($_POST['retorno_mensagem'] ?? ''));
+                retorno_salvar_modelo($pdo, $modeloNome, (string)($_POST['retorno_tipo'] ?? 'vendas'), (string)($_POST['retorno_mensagem'] ?? ''), 0, (string)($_POST['retorno_assunto'] ?? ''));
             }
             $msgPost = 'Retorno agendado com sucesso (#' . $agId . ').';
         } catch (Throwable $e) {
@@ -805,6 +807,7 @@ require __DIR__ . '/_header.php';
                                         <span><?=h(fmtDtHora((string)$ret['scheduled_at']))?></span>
                                     </div>
                                     <div class="text-xs text-muted" style="margin-bottom:4px"><?=h($retornoTipos[(string)$ret['tipo']] ?? (string)$ret['tipo'])?> · <?=h((string)($ret['origem'] ?? ''))?></div>
+                                    <?php if (!empty($ret['assunto'])): ?><div class="text-xs" style="font-weight:700;margin-bottom:4px"><?=h((string)$ret['assunto'])?></div><?php endif; ?>
                                     <div class="retorno-msg"><?=h((string)($ret['mensagem'] ?? ''))?></div>
                                 </div>
                                 <?php endforeach; ?>
@@ -911,9 +914,13 @@ require __DIR__ . '/_header.php';
                 </select>
             </div>
             <div class="form-group">
+                <label class="form-label">Assunto</label>
+                <input type="text" name="retorno_assunto" id="m-retorno-assunto" placeholder="Ex: Retorno sobre sua vaga">
+            </div>
+            <div class="form-group">
                 <label class="form-label">Mensagem</label>
                 <textarea name="retorno_mensagem" id="m-retorno-mensagem" rows="6" placeholder="Oi {primeiro_nome}, passando para dar continuidade..."></textarea>
-                <div style="font-size:11px;color:var(--muted);margin-top:6px">Variaveis: <code>{primeiro_nome}</code>, <code>{nome}</code>, <code>{email}</code>, <code>{telefone}</code>, <code>{tipo}</code>, <code>{data_agendamento}</code>.</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px">Variaveis: <code>{primeiro_nome}</code>, <code>{nome}</code>, <code>{email}</code>, <code>{telefone}</code>, <code>{assunto}</code>, <code>{tipo}</code>, <code>{data_agendamento}</code>.</div>
             </div>
             <div class="form-group">
                 <label class="form-label">Salvar esta mensagem como modelo (opcional)</label>
@@ -1059,6 +1066,7 @@ function abrirRetorno(uid, nome) {
     document.getElementById('m-retorno-uid').value = uid;
     document.getElementById('m-retorno-nome').textContent = 'Aluno: ' + nome;
     document.getElementById('m-retorno-modelo').value = '';
+    document.getElementById('m-retorno-assunto').value = '';
     document.getElementById('m-retorno-mensagem').value = '';
     document.getElementById('modal-retorno').classList.add('open');
 }
@@ -1066,6 +1074,7 @@ function carregarModeloRetorno(id) {
     var modelo = RETORNO_MODELOS.find(function(m) { return String(m.id) === String(id); });
     if (!modelo) return;
     document.getElementById('m-retorno-tipo').value = modelo.tipo || 'vendas';
+    document.getElementById('m-retorno-assunto').value = modelo.assunto || '';
     document.getElementById('m-retorno-mensagem').value = modelo.mensagem || '';
 }
 function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
