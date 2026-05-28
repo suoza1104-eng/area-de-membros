@@ -262,11 +262,11 @@ $whereUsersSql = $whereUsers ? ('WHERE ' . implode(' AND ', $whereUsers)) : '';
 $turmas = [];
 try {
     // Tenta com nome (instâncias antigas)
-    $turmas = $pdo->query("SELECT id, codigo, nome FROM turmas ORDER BY codigo DESC")->fetchAll();
+    $turmas = $pdo->query("SELECT id, codigo, nome FROM turmas ORDER BY codigo ASC")->fetchAll();
 } catch (Throwable $e) {
     // Fallback sem nome
     try {
-        $turmas = $pdo->query("SELECT id, codigo, '' AS nome FROM turmas ORDER BY codigo DESC")->fetchAll();
+        $turmas = $pdo->query("SELECT id, codigo, '' AS nome FROM turmas ORDER BY codigo ASC")->fetchAll();
     } catch (Throwable $e2) { $turmas = []; }
 }
 
@@ -758,9 +758,27 @@ include __DIR__ . '/_header.php';
         <input type="date" id="data_ate" name="data_ate" value="<?= htmlspecialchars($dataAte) ?>">
     </div>
     <?php if ($turmas): ?>
-    <div class="filter-group">
+    <div class="filter-group" style="min-width:230px;position:relative">
+        <label>Turma</label>
+        <button type="button" id="dashTurmaBtn" onclick="dashTurmaToggle(event)"
+                style="width:100%;height:34px;padding:6px 10px;border-radius:var(--r);border:1px solid var(--border-light);background:var(--bg);color:var(--text);font-size:12px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span id="dashTurmaLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Todas</span>
+            <span id="dashTurmaArrow" style="color:var(--muted);font-size:10px">▼</span>
+        </button>
+        <div id="dashTurmaHidden"></div>
+        <div id="dashTurmaPanel" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);box-shadow:0 10px 28px rgba(0,0,0,.45);padding:8px;z-index:80;max-height:320px;overflow:hidden;flex-direction:column">
+            <input type="text" id="dashTurmaSearch" placeholder="Buscar turma..." oninput="dashTurmaRender()"
+                   style="height:30px;padding:5px 8px;font-size:12px;margin-bottom:6px">
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+                <button type="button" class="btn btn-ghost btn-xs" style="flex:1" onclick="dashTurmaAll(true)">Todas</button>
+                <button type="button" class="btn btn-ghost btn-xs" style="flex:1" onclick="dashTurmaAll(false)">Limpar</button>
+            </div>
+            <div id="dashTurmaList" style="overflow-y:auto;max-height:230px"></div>
+        </div>
+    </div>
+    <div class="filter-group" style="display:none">
         <label for="turma_id">Turma</label>
-        <select id="turma_id" name="turma_id[]" multiple size="4">
+        <select id="turma_id" multiple size="4" disabled>
             <?php foreach ($turmas as $t): ?>
                 <option value="<?= (int)$t['id'] ?>" <?= in_array((int)$t['id'], $turmaIds, true) ? 'selected' : '' ?>>
                     <?= htmlspecialchars($t['codigo'] . (empty($t['nome']) ? '' : ' – ' . $t['nome'])) ?>
@@ -775,6 +793,84 @@ include __DIR__ . '/_header.php';
         <a href="<?= htmlspecialchars(BASE_URL_ADMIN . '/index.php') ?>" class="reset-link">Limpar</a>
     </div>
 </form>
+
+<?php if ($turmas): ?>
+<script>
+const DASH_TURMAS = <?= json_encode(array_map(static function($t) {
+    return [
+        'id' => (int)($t['id'] ?? 0),
+        'label' => (string)($t['codigo'] ?? '') . (empty($t['nome']) ? '' : ' - ' . (string)$t['nome']),
+    ];
+}, $turmas), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+let dashTurmaSelected = <?= json_encode(array_values(array_map('intval', $turmaIds))) ?>;
+function dashTurmaEsc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function dashTurmaToggle(ev) {
+    if (ev) ev.stopPropagation();
+    const panel = document.getElementById('dashTurmaPanel');
+    const open = panel.style.display === 'flex';
+    panel.style.display = open ? 'none' : 'flex';
+    document.getElementById('dashTurmaArrow').textContent = open ? '▼' : '▲';
+    if (!open) {
+        document.getElementById('dashTurmaSearch').value = '';
+        dashTurmaRender();
+        setTimeout(() => document.getElementById('dashTurmaSearch').focus(), 30);
+    }
+}
+function dashTurmaRender() {
+    const q = (document.getElementById('dashTurmaSearch')?.value || '').trim().toLowerCase();
+    const list = document.getElementById('dashTurmaList');
+    const itens = DASH_TURMAS.filter(t => !q || t.label.toLowerCase().includes(q));
+    if (!itens.length) {
+        list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px;text-align:center">Nenhuma turma encontrada</div>';
+        return;
+    }
+    list.innerHTML = itens.map(t => {
+        const checked = dashTurmaSelected.includes(t.id);
+        return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text)">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="dashTurmaPick(${t.id})" style="accent-color:var(--primary)">
+            <span style="flex:1">${dashTurmaEsc(t.label)}</span>
+        </label>`;
+    }).join('');
+}
+function dashTurmaPick(id) {
+    const i = dashTurmaSelected.indexOf(id);
+    if (i >= 0) dashTurmaSelected.splice(i, 1);
+    else dashTurmaSelected.push(id);
+    dashTurmaSync();
+    dashTurmaRender();
+}
+function dashTurmaAll(all) {
+    dashTurmaSelected = all ? DASH_TURMAS.map(t => t.id) : [];
+    dashTurmaSync();
+    dashTurmaRender();
+}
+function dashTurmaSync() {
+    const hidden = document.getElementById('dashTurmaHidden');
+    hidden.innerHTML = dashTurmaSelected.map(id => `<input type="hidden" name="turma_id[]" value="${id}">`).join('');
+    const label = document.getElementById('dashTurmaLabel');
+    if (!dashTurmaSelected.length) {
+        label.textContent = 'Todas';
+    } else if (dashTurmaSelected.length === 1) {
+        const item = DASH_TURMAS.find(t => t.id === dashTurmaSelected[0]);
+        label.textContent = item ? item.label : '1 turma selecionada';
+    } else {
+        label.textContent = dashTurmaSelected.length + ' turmas selecionadas';
+    }
+}
+document.addEventListener('click', function(ev) {
+    const panel = document.getElementById('dashTurmaPanel');
+    const wrap = document.getElementById('dashTurmaBtn')?.parentElement;
+    if (panel && wrap && !wrap.contains(ev.target)) {
+        panel.style.display = 'none';
+        document.getElementById('dashTurmaArrow').textContent = '▼';
+    }
+});
+dashTurmaSync();
+dashTurmaRender();
+</script>
+<?php endif; ?>
 
 <!-- KPI CARDS -->
 <div class="kpi-grid mb-4">
