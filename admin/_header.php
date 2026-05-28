@@ -650,7 +650,7 @@ button:not([class]):hover { filter: brightness(1.07); }
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12 6 12 12 16 14"/>
       </svg>
-      Retornos
+      Agendamentos
     </a>
     <?php endif; ?>
 
