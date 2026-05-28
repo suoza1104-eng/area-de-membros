@@ -175,8 +175,8 @@ function retorno_disparar_agendamento(PDO $pdo, array $agendamento): void {
             'mensagem_renderizada' => $mensagemRenderizada,
             'origem' => (string)($agendamento['origem'] ?? ''),
         ]);
-        $pdo->prepare("UPDATE retorno_agendamentos SET status='enviado', sent_at=NOW(), last_error=NULL WHERE id=:id")
-            ->execute([':id' => $id]);
+        $pdo->prepare("UPDATE retorno_agendamentos SET status='enviado', sent_at=:sent_at, last_error=NULL WHERE id=:id")
+            ->execute([':sent_at' => date('Y-m-d H:i:s'), ':id' => $id]);
     } catch (Throwable $e) {
         $pdo->prepare("UPDATE retorno_agendamentos SET status='erro', last_error=:e WHERE id=:id")
             ->execute([':e' => $e->getMessage(), ':id' => $id]);
@@ -187,7 +187,10 @@ function retorno_disparar_agendamento(PDO $pdo, array $agendamento): void {
 function retorno_processar_devidos(PDO $pdo, int $limit = 50): array {
     retorno_ensure_tables($pdo);
     $limit = max(1, min(200, $limit));
-    $rows = $pdo->query("SELECT * FROM retorno_agendamentos WHERE status='aguardando' AND scheduled_at <= NOW() ORDER BY scheduled_at ASC, id ASC LIMIT $limit")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $agora = date('Y-m-d H:i:s');
+    $st = $pdo->prepare("SELECT * FROM retorno_agendamentos WHERE status='aguardando' AND scheduled_at <= :agora ORDER BY scheduled_at ASC, id ASC LIMIT $limit");
+    $st->execute([':agora' => $agora]);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $ok = 0;
     $erro = 0;
     foreach ($rows as $row) {
