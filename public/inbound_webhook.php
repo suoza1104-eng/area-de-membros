@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/retorno_agendamentos.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -115,6 +116,17 @@ function iw_get_certificado_extra(PDO $pdo, int $userId, string $origem): array 
     ];
 }
 
+function iw_get_first_mapped(array $payload, array $map, array $keys): string {
+    foreach ($keys as $key) {
+        $path = (string)($map[$key] ?? $key);
+        $value = iw_get_value($payload, $path);
+        if ($value !== null && trim($value) !== '') {
+            return trim($value);
+        }
+    }
+    return '';
+}
+
 // ── Processa ──────────────────────────────────────────────────────────────────
 try {
     $map = [];
@@ -122,7 +134,7 @@ try {
         $tmp = json_decode($ihw['payload_map_json'], true);
         if (is_array($tmp)) $map = $tmp;
     }
-    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta'];
+    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta', 'retorno_data' => 'retorno_data', 'retorno_tipo' => 'retorno_tipo', 'retorno_mensagem' => 'retorno_mensagem'];
     foreach ($defaults as $k => $v) if (!isset($map[$k])) $map[$k] = $v;
 
     // ── FILTRO DE OFERTA ──
@@ -309,6 +321,18 @@ try {
             if (function_exists('disparar_webhooks')) {
                 disparar_webhooks('REENVIO_CERTIFICADO', $userId, iw_get_certificado_extra($pdo, $userId, 'inbound_webhook'));
             }
+            break;
+
+        case 'AGENDAR_RETORNO':
+            retorno_ensure_tables($pdo);
+            $retornoData = iw_get_first_mapped($payload, $map, ['retorno_data', 'data_retorno', 'scheduled_at', 'data_hora']);
+            $retornoTipo = iw_get_first_mapped($payload, $map, ['retorno_tipo', 'tipo', 'tipo_retorno']);
+            $retornoMensagem = iw_get_first_mapped($payload, $map, ['retorno_mensagem', 'mensagem', 'message']);
+            $agId = retorno_criar_agendamento($pdo, $userId, $retornoTipo ?: 'outro', $retornoData, $retornoMensagem, 'inbound_webhook', [
+                'inbound_id' => (int)$ihw['id'],
+                'payload_raw' => $payload,
+            ]);
+            if (function_exists('adicionar_tag')) adicionar_tag($userId, 'RETORNO_AGENDADO', 'inbound_webhook', $agId);
             break;
 
         case 'TAG_CUSTOM':

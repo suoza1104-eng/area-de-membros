@@ -2,8 +2,10 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/certificado_pdf.php';
+require_once __DIR__ . '/../app/retorno_agendamentos.php';
 proteger_admin();
 $pdo = getPDO();
+retorno_ensure_tables($pdo);
 $menu       = 'alunos';
 $page_title = 'Alunos';
 
@@ -196,6 +198,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
             }
         }
+    } elseif ($acao === 'agendar_retorno') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            $agId = retorno_criar_agendamento(
+                $pdo,
+                $uid,
+                (string)($_POST['retorno_tipo'] ?? 'vendas'),
+                (string)($_POST['retorno_scheduled_at'] ?? ''),
+                (string)($_POST['retorno_mensagem'] ?? ''),
+                'admin_alunos'
+            );
+            $modeloNome = trim((string)($_POST['retorno_modelo_nome'] ?? ''));
+            if ($modeloNome !== '') {
+                retorno_salvar_modelo($pdo, $modeloNome, (string)($_POST['retorno_tipo'] ?? 'vendas'), (string)($_POST['retorno_mensagem'] ?? ''));
+            }
+            $msgPost = 'Retorno agendado com sucesso (#' . $agId . ').';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
     }
 }
 
@@ -336,6 +357,23 @@ $st     = $pdo->prepare($sql);
 $st->execute($params);
 $alunos = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+$retornoModelos = retorno_listar_modelos($pdo);
+$retornoTipos = retorno_tipos();
+$retornosPorUser = [];
+if ($alunos) {
+    $ids = array_values(array_unique(array_map(static fn($a) => (int)$a['id'], $alunos)));
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    try {
+        $stRet = $pdo->prepare("SELECT * FROM retorno_agendamentos WHERE user_id IN ($ph) ORDER BY scheduled_at DESC, id DESC");
+        $stRet->execute($ids);
+        foreach ($stRet->fetchAll(PDO::FETCH_ASSOC) ?: [] as $ret) {
+            $uidRet = (int)$ret['user_id'];
+            if (!isset($retornosPorUser[$uidRet])) $retornosPorUser[$uidRet] = [];
+            if (count($retornosPorUser[$uidRet]) < 4) $retornosPorUser[$uidRet][] = $ret;
+        }
+    } catch (Throwable $e) {}
+}
+
 $temFiltroUtm  = ($fUtmSrc !== '' || $fUtmMed !== '' || $fUtmCamp !== '');
 $temFiltroData = ($fDateFrom !== '' || $fDateTo !== '');
 
@@ -450,6 +488,18 @@ require __DIR__ . '/_header.php';
 .cert-link:hover { text-decoration:underline; }
 .cert-mini-link { display:flex; gap:6px; align-items:center; margin-top:8px; }
 .cert-mini-link input { min-width:0; flex:1; font-size:11px; color:var(--muted); }
+.retorno-block { grid-column:1/-1; border-top:1px solid var(--border); padding-top:14px; }
+.retorno-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+.retorno-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:8px; }
+.retorno-item { border:1px solid var(--border); border-radius:var(--r); padding:9px 10px; background:rgba(0,0,0,.12); }
+.retorno-item.aguardando { border-color:rgba(245,158,11,.35); background:rgba(245,158,11,.08); }
+.retorno-item.enviado { border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.08); }
+.retorno-item.erro { border-color:rgba(239,68,68,.35); background:rgba(239,68,68,.08); }
+.retorno-item.cancelado { opacity:.68; }
+.retorno-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; color:var(--muted); margin-bottom:5px; }
+.retorno-msg { font-size:12px; color:var(--text); white-space:pre-wrap; max-height:48px; overflow:hidden; }
+.retorno-empty { font-size:12px; color:var(--dim); }
+.modal-box.modal-wide { max-width:620px; }
 
 /* ── KPI bar ──────────────────────────────────────────────── */
 .al-kpi-bar { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
@@ -628,6 +678,7 @@ require __DIR__ . '/_header.php';
                 $certCourse = trim((string)($a['cert_course'] ?? ''));
                 $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
+                $retornosAluno = $retornosPorUser[(int)$a['id']] ?? [];
             ?>
             <tr class="main-row" id="row-<?= $i ?>" onclick="toggleExpand(<?= $i ?>)">
                 <td><span class="expand-icon">▶</span></td>
@@ -734,6 +785,34 @@ require __DIR__ . '/_header.php';
                                 <?php endif; ?>
                             </div>
                         </div>
+                        <div class="retorno-block">
+                            <div class="retorno-head">
+                                <div>
+                                    <div class="det-title" style="margin-bottom:2px">Agendamentos de retorno</div>
+                                    <div class="text-xs text-muted">Status por cor: amarelo aguardando, verde enviado, vermelho erro.</div>
+                                </div>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                    <button type="button" class="btn btn-ghost btn-sm" onclick='abrirRetorno(<?=(int)$a['id']?>, <?=json_encode((string)($a['nome']??''), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)?>)'>Agendar retorno</button>
+                                    <a class="btn btn-ghost btn-sm" href="retorno_agendamentos.php?user_id=<?=(int)$a['id']?>">Ver controle</a>
+                                </div>
+                            </div>
+                            <?php if ($retornosAluno): ?>
+                            <div class="retorno-list">
+                                <?php foreach ($retornosAluno as $ret): ?>
+                                <div class="retorno-item <?=h((string)$ret['status'])?>">
+                                    <div class="retorno-meta">
+                                        <strong><?=h(retorno_status_label((string)$ret['status']))?></strong>
+                                        <span><?=h(fmtDtHora((string)$ret['scheduled_at']))?></span>
+                                    </div>
+                                    <div class="text-xs text-muted" style="margin-bottom:4px"><?=h($retornoTipos[(string)$ret['tipo']] ?? (string)$ret['tipo'])?> · <?=h((string)($ret['origem'] ?? ''))?></div>
+                                    <div class="retorno-msg"><?=h((string)($ret['mensagem'] ?? ''))?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php else: ?>
+                            <div class="retorno-empty">Nenhum retorno agendado para este aluno.</div>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </td>
             </tr>
@@ -801,7 +880,55 @@ require __DIR__ . '/_header.php';
     </div>
 </div>
 
+<div class="modal-overlay" id="modal-retorno">
+    <div class="modal-box modal-wide">
+        <div class="modal-title">Agendar retorno de contato</div>
+        <div id="m-retorno-nome" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
+        <form method="post">
+            <input type="hidden" name="acao" value="agendar_retorno">
+            <input type="hidden" name="uid" id="m-retorno-uid">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="form-group">
+                    <label class="form-label">Data e hora do envio</label>
+                    <input type="datetime-local" name="retorno_scheduled_at" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tipo</label>
+                    <select name="retorno_tipo" id="m-retorno-tipo">
+                        <?php foreach ($retornoTipos as $k => $label): ?>
+                        <option value="<?=h($k)?>"><?=h($label)?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Carregar mensagem salva</label>
+                <select id="m-retorno-modelo" onchange="carregarModeloRetorno(this.value)">
+                    <option value="">Selecionar modelo...</option>
+                    <?php foreach ($retornoModelos as $m): ?>
+                    <option value="<?=(int)$m['id']?>"><?=h((string)$m['nome'])?> (<?=h($retornoTipos[(string)$m['tipo']] ?? (string)$m['tipo'])?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Mensagem</label>
+                <textarea name="retorno_mensagem" id="m-retorno-mensagem" rows="6" placeholder="Oi {primeiro_nome}, passando para dar continuidade..."></textarea>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px">Variaveis: <code>{primeiro_nome}</code>, <code>{nome}</code>, <code>{email}</code>, <code>{telefone}</code>, <code>{tipo}</code>, <code>{data_agendamento}</code>.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Salvar esta mensagem como modelo (opcional)</label>
+                <input type="text" name="retorno_modelo_nome" placeholder="Nome do modelo">
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-primary btn-sm">Salvar agendamento</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModal('modal-retorno')">Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
+const RETORNO_MODELOS = <?= json_encode($retornoModelos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 function copyCertFromList(id) {
     var el = document.getElementById(id);
     if (!el) return;
@@ -927,6 +1054,19 @@ function abrirLogin(uid, email) {
     document.getElementById('m-login-uid').value = uid;
     document.getElementById('m-login-email').value = email;
     document.getElementById('modal-login').classList.add('open');
+}
+function abrirRetorno(uid, nome) {
+    document.getElementById('m-retorno-uid').value = uid;
+    document.getElementById('m-retorno-nome').textContent = 'Aluno: ' + nome;
+    document.getElementById('m-retorno-modelo').value = '';
+    document.getElementById('m-retorno-mensagem').value = '';
+    document.getElementById('modal-retorno').classList.add('open');
+}
+function carregarModeloRetorno(id) {
+    var modelo = RETORNO_MODELOS.find(function(m) { return String(m.id) === String(id); });
+    if (!modelo) return;
+    document.getElementById('m-retorno-tipo').value = modelo.tipo || 'vendas';
+    document.getElementById('m-retorno-mensagem').value = modelo.mensagem || '';
 }
 function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-overlay').forEach(function(m) {

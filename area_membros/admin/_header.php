@@ -31,7 +31,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','alunos','aulas','turmas','cursos','certificado',
+foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','aulas','turmas','cursos','certificado',
           'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
@@ -46,6 +46,7 @@ $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
     'alunos'           => 'Alunos',
+    'retorno_agendamentos' => 'Agendamentos de Retorno',
     'aulas'            => 'Aulas',
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
@@ -605,7 +606,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -640,6 +641,16 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
       </svg>
       Alunos
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['retorno_agendamentos']): ?>
+    <a href="retorno_agendamentos.php" class="sb-item <?= $currentMenu === 'retorno_agendamentos' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      Retornos
     </a>
     <?php endif; ?>
 

@@ -19,11 +19,20 @@ sf_ensure_tables($pdo);
 
 // ===== eventos (mesmos do Webhooks) =====
 $eventOptions = [
-    'INSCRITO'              => 'Aluno se cadastrou na área de membros',
+    'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
+    'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
+    'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
     'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
+    'RETORNO_AGENDADO'      => 'Retorno de contato agendado chegou',
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
+    'REENVIO_CERTIFICADO'   => 'Reenvio de certificado',
     'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
+    'LIVE_TURMA'            => 'Disparo de live por turma (regra global)',
+    'LIVE_ACESSOU'          => 'Live — aluno acessou (via webhook externo)',
+    'LIVE_OFERTA'           => 'Live — ficou até a oferta',
+    'LIVE_COMPRA'           => 'Live — clicou na compra',
+    'LIVE_EVENTO'           => 'Live — evento customizado',
 ];
 
 // dinâmico por aula
@@ -42,18 +51,65 @@ try {
 // ===== opções de campos (origem) =====
 $fieldOptions = [
     'Payload (fixo)' => [
-        'evento' => 'Evento (código)',
-        'timestamp' => 'Timestamp (ISO)',
-        'user.id' => 'User ID',
-        'user.nome' => 'Nome',
-        'user.email' => 'Email',
-        'user.telefone' => 'Telefone',
+        'evento'          => 'Evento (código)',
+        'timestamp'       => 'Timestamp (ISO)',
+        'user.id'         => 'User ID',
+        'user.nome'       => 'Nome',
+        'user.email'      => 'Email',
+        'user.telefone'   => 'Telefone',
+        'user.magic_link' => 'Magic link (URL de auto-login, 30 dias)',
     ],
-    'Extra (do evento)' => [
-        'extra.codigo_live' => 'codigo_live',
-        'extra.data_live'   => 'data_live',
+    'Extra — INSCRITO / REINSCRITO / LIVE' => [
+        'extra.codigo_turma'              => 'codigo_turma',
+        'extra.codigo_live'               => 'codigo_live',
+        'extra.data_live'                 => 'data_live',
+        'extra.qtd_inscricoes'            => 'qtd_inscricoes (total de inscrições do aluno)',
+        'extra.primeira_inscricao'        => 'primeira_inscricao (data da 1ª inscrição)',
+        'extra.data_inscricao_anterior'   => 'data_inscricao_anterior (penúltima inscrição)',
+        'extra.turma_anterior'            => 'turma_anterior (turma da inscrição anterior)',
+        'extra.eh_reinscrito'             => 'eh_reinscrito (0 = novo / 1 = reinscrito)',
+        'extra.andamento'                 => 'andamento (% conclusão — LIVE_TURMA)',
+        'extra.aulas_concluidas'          => 'aulas_concluidas (LIVE_TURMA)',
+        'extra.aulas_totais'              => 'aulas_totais (LIVE_TURMA)',
     ],
-    'Users (tabela users)' => []
+    'Extra — CERT_EMITIDO' => [
+        'extra.pdf_url'           => 'pdf_url (link do certificado)',
+        'extra.codigo_certificado' => 'codigo_certificado',
+        'extra.curso'             => 'curso',
+        'extra.emitido_em'        => 'emitido_em',
+    ],
+    'Extra - REENVIO_CERTIFICADO' => [
+        'extra.pdf_url'           => 'pdf_url (link do certificado)',
+        'extra.codigo_certificado' => 'codigo_certificado',
+        'extra.curso'             => 'curso',
+        'extra.emitido_em'        => 'emitido_em',
+        'extra.certificado_id'    => 'certificado_id',
+        'extra.origem'            => 'origem do reenvio',
+    ],
+    'Extra - RETORNO_AGENDADO' => [
+        'extra.agendamento_id' => 'agendamento_id',
+        'extra.tipo' => 'tipo',
+        'extra.scheduled_at' => 'scheduled_at',
+        'extra.mensagem' => 'mensagem original',
+        'extra.mensagem_renderizada' => 'mensagem com variaveis',
+        'extra.origem' => 'origem',
+    ],
+    'Extra — CERT_SENHA_ERRADA' => [
+        'extra.motivo' => 'motivo',
+    ],
+    'Users (tabela users)' => [],
+];
+
+// hints por evento — exibidos dinamicamente no formulário
+$eventHints = [
+    'RETORNO_AGENDADO'   => 'Extras disponiveis: <code>extra.tipo</code>, <code>extra.scheduled_at</code>, <code>extra.mensagem</code>, <code>extra.mensagem_renderizada</code>, <code>extra.agendamento_id</code>',
+    'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
+    'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
+    'PRIMEIRO_LOGIN'     => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a plataforma. Tag PRIMEIRO_LOGIN aplicada automaticamente. Disponíveis: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.magic_link</code>',
+    'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
+    'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
+    'CERT_SENHA_ERRADA'  => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',
+    'LIVE_TURMA'         => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -181,6 +237,35 @@ if (isset($_GET['toggle'])) {
     exit;
 }
 
+// === POST: salvar config SF por turma ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_save') {
+    $tid        = (int)($_POST['turma_id'] ?? 0);
+    $sfEnabled  = isset($_POST['sf_enabled']) ? 1 : 0;
+    $sfTags     = trim($_POST['sf_tags_text'] ?? '');
+    $sfFlows    = trim($_POST['sf_flows_text'] ?? '');
+    $sfSources  = $_POST['sf_field_source'] ?? [];
+    $sfDests    = $_POST['sf_field_dest'] ?? [];
+    $sfPairs    = [];
+    if (is_array($sfSources) && is_array($sfDests)) {
+        $n = min(count($sfSources), count($sfDests));
+        for ($i = 0; $i < $n; $i++) {
+            $src = trim((string)$sfSources[$i]);
+            $dst = trim((string)$sfDests[$i]);
+            if ($src !== '' && $dst !== '') $sfPairs[] = ['source'=>$src,'dest'=>$dst];
+        }
+    }
+    $sfFieldsJson = $sfPairs ? json_encode($sfPairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+
+    if ($tid > 0) {
+        try {
+            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,live_disparada=0 WHERE id=:id")
+                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':id'=>$tid]);
+        } catch (Throwable $e) {}
+    }
+    header('Location: superfuncionario.php?sf_edit=' . $tid . '&saved=1');
+    exit;
+}
+
 // ===== carregar config e regras =====
 $cfg = sf_get_config($pdo);
 
@@ -195,238 +280,712 @@ if (isset($_GET['edit'])) {
 }
 
 $editPairs = [];
-if ($edit && !empty($edit['fields_json'])) {
-    $tmp = json_decode((string)$edit['fields_json'], true);
-    if (is_array($tmp)) $editPairs = $tmp;
+if ($edit) {
+    // Prefere custom_fields_json (novo), cai em fields_json (legado)
+    $cfRaw = trim((string)($edit['custom_fields_json'] ?? ''));
+    $fjRaw = trim((string)($edit['fields_json'] ?? ''));
+    $rawJson = $cfRaw !== '' ? $cfRaw : $fjRaw;
+    if ($rawJson !== '') {
+        $tmp = json_decode($rawJson, true);
+        if (is_array($tmp)) $editPairs = $tmp;
+    }
 }
+
+// Datalist plano para o input de origem
+$fieldDatalist = [];
+foreach ($fieldOptions as $opts) {
+    foreach ($opts as $val => $lab) {
+        $fieldDatalist[$val] = $lab;
+    }
+}
+
+$sfEditTurma = null;
+if (isset($_GET['sf_edit'])) {
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => (int)$_GET['sf_edit']]);
+    $sfEditTurma = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+$sfTurmasList = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 include __DIR__ . '/_header.php';
 ?>
 
 <style>
-.page-sf { max-width: 1200px; margin: 0 auto; }
-.grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 980px){ .grid2{ grid-template-columns: 1fr; } }
-.small { font-size:12px; color:var(--muted); }
-input[type="text"], input[type="number"], select, textarea { width:100%; }
-textarea{ min-height:78px; }
-.sf-badge { display:inline-block; padding:3px 8px; border-radius:999px; border:1px solid var(--border); font-size:11px; color:var(--text); background:var(--bg); }
-.sf-badge.off { opacity:.55; }
-.table { width:100%; border-collapse:collapse; }
-.table th,.table td { padding:10px 8px; border-bottom:1px solid var(--border); font-size:12px; text-align:left; vertical-align:top; color:var(--text); }
-.table th { color:var(--muted); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-.row { display:grid; grid-template-columns: 1fr 1fr 34px; gap:8px; align-items:center; margin-bottom:8px; }
-.btnx { width:34px; height:34px; border-radius:10px; border:1px solid var(--border); background:var(--bg-card); color:var(--muted); cursor:pointer; transition:background var(--t); }
-.btnx:hover { background:var(--danger-dim); color:var(--danger); border-color:rgba(239,68,68,.25); }
-.sf-logs-table td { font-size:11px; }
-.sf-ok   { color:#15803d; }
-.sf-fail { color:#dc2626; }
+    :root {
+        --bg:      #020617;
+        --bg-card: #0b1120;
+        --border:  #1e2d45;
+        --text:    #e2e8f0;
+        --muted:   #64748b;
+        --primary: #facc15;
+        --green:   #22c55e;
+        --red:     #ef4444;
+        --blue:    #3b82f6;
+        --purple:  #a855f7;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    .sf-wrap { max-width: 1100px; margin: 36px auto; padding: 0 24px 60px; }
+
+    .page-header { margin-bottom: 28px; }
+    .page-header h1 { font-size: 26px; font-weight: 700; margin: 0 0 4px; }
+    .page-header p  { font-size: 13px; color: var(--muted); margin: 0; }
+
+    .card {
+        background: var(--bg-card);
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        box-shadow: 0 8px 32px rgba(0,0,0,.4);
+        padding: 22px 26px;
+        margin-bottom: 22px;
+    }
+    .card-header {
+        display: flex; align-items: center; gap: 10px;
+        margin-bottom: 18px; padding-bottom: 14px;
+        border-bottom: 1px solid var(--border);
+    }
+    .card-icon {
+        width: 36px; height: 36px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px; flex-shrink: 0;
+    }
+    .card-icon.yellow { background: rgba(250,204,21,.12); }
+    .card-icon.purple { background: rgba(168,85,247,.12); }
+    .card-icon.blue   { background: rgba(59,130,246,.12); }
+    .card-icon.green  { background: rgba(34,197,94,.12); }
+    .card-icon.orange { background: rgba(249,115,22,.12); }
+    .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
+    .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
+
+    .grid-2 { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
+    @media(max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+    input[type="text"], input[type="number"], textarea, select {
+        width: 100%; padding: 9px 12px; border-radius: 10px;
+        border: 1px solid var(--border); background: #07101f;
+        color: var(--text); font-size: 13px; outline: none; transition: border-color .15s;
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--blue); }
+    textarea { min-height: 70px; resize: vertical; }
+    select { cursor: pointer; }
+
+    .checkbox-row { display: flex; align-items: center; gap: 8px; }
+    .checkbox-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary); flex-shrink: 0; }
+    .checkbox-row label, .checkbox-row span { font-size: 13px; margin: 0; }
+
+    .btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: none; background: var(--primary); color: #111;
+        font-weight: 700; font-size: 13px; padding: 10px 20px;
+        border-radius: 999px; cursor: pointer; text-decoration: none;
+    }
+    .btn:hover { filter: brightness(1.06); }
+    .btn.blue   { background: var(--blue);   color: #fff; }
+    .btn.green  { background: var(--green);  color: #fff; }
+    .btn.ghost  { background: rgba(255,255,255,.06); color: var(--text); border: 1px solid var(--border); }
+    .btn.sm     { padding: 6px 14px; font-size: 12px; }
+    .btn.danger { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid rgba(239,68,68,.3); }
+    .btn.danger:hover { background: rgba(239,68,68,.2); }
+
+    .spacer { height: 14px; }
+    .note { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+    .note code, .sf-hint code { background: rgba(255,255,255,.06); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+
+    .sf-hint {
+        font-size: 11.5px; color: var(--muted); background: rgba(255,255,255,.03);
+        border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; line-height: 1.7;
+        border: 1px solid var(--border);
+    }
+    .sf-hint b { color: var(--text); }
+    .sf-hint-warning { border-left: 3px solid rgba(250,204,21,.5); }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge-on     { background: rgba(34,197,94,.1);   color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .badge-off    { background: rgba(100,116,139,.1); color: #94a3b8; border: 1px solid rgba(100,116,139,.3); }
+    .badge-evt    { background: rgba(250,204,21,.08); border: 1px solid rgba(250,204,21,.2); color: #fef3c7; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
+    .badge-live   { background: rgba(249,115,22,.1);  color: #fdba74; border: 1px solid rgba(249,115,22,.3); }
+
+    /* rule cards */
+    .sf-list { display: flex; flex-direction: column; gap: 12px; }
+    .sf-card {
+        background: rgba(255,255,255,.03); border: 1px solid var(--border);
+        border-radius: 12px; padding: 14px 16px;
+    }
+    .sf-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .sf-card-name { font-size: 14px; font-weight: 600; }
+    .sf-card-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sf-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+
+    /* event dropdown */
+    .evento-wrapper { position: relative; }
+    .evento-input-row { display: flex; gap: 4px; }
+    .evento-input-row input { flex: 1; cursor: pointer; caret-color: transparent; }
+    .evento-toggle-btn {
+        border-radius: 10px; border: 1px solid var(--border); background: #07101f;
+        color: var(--text); padding: 0 14px; font-size: 12px; cursor: pointer;
+        display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0;
+    }
+    .evento-toggle-btn:hover { background: #0f1f3d; }
+    .evento-dropdown {
+        position: absolute; left: 0; right: 0; margin-top: 4px;
+        background: #0b1120; border-radius: 12px; border: 1px solid var(--border);
+        max-height: 290px; overflow-y: auto; padding: 8px;
+        box-shadow: 0 20px 48px rgba(0,0,0,.75); display: none; z-index: 50;
+    }
+    .evento-dropdown.aberto { display: block; }
+    .ev-group-label {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+        color: var(--muted); padding: 6px 8px 4px; margin-top: 4px;
+    }
+    .ev-group-label:first-child { margin-top: 0; }
+    .evento-opcao {
+        padding: 7px 10px; border-radius: 8px; cursor: pointer;
+        display: flex; flex-direction: column; gap: 2px; transition: background .1s;
+        border: 1px solid transparent;
+    }
+    .evento-opcao:hover { background: rgba(255,255,255,.06); }
+    .evento-opcao.selecionado { background: rgba(250,204,21,.06); border-color: rgba(250,204,21,.2); }
+    .evento-opcao strong { font-size: 11px; color: var(--text); }
+    .evento-opcao em    { font-size: 10px; color: var(--muted); font-style: normal; }
+    .ev-pill {
+        display: inline-block; padding: 1px 6px; border-radius: 999px;
+        font-size: 9px; font-weight: 700; text-transform: uppercase;
+        margin-left: 4px; vertical-align: middle;
+    }
+    .ev-pill.cert  { background: rgba(168,85,247,.15); color: #d8b4fe; border: 1px solid rgba(168,85,247,.3); }
+    .ev-pill.aluno { background: rgba(59,130,246,.15);  color: #93c5fd; border: 1px solid rgba(59,130,246,.3); }
+    .ev-pill.live  { background: rgba(249,115,22,.15);  color: #fdba74; border: 1px solid rgba(249,115,22,.3); }
+    .ev-pill.aula  { background: rgba(34,197,94,.15);   color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+
+    /* field rows */
+    .field-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .btnx { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-card); color: var(--muted); cursor: pointer; font-size: 16px; }
+    .btnx:hover { background: rgba(239,68,68,.12); color: #fca5a5; border-color: rgba(239,68,68,.3); }
+
+    /* logs */
+    .log-table { width: 100%; border-collapse: collapse; }
+    .log-table th, .log-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 12px; text-align: left; vertical-align: top; color: var(--text); }
+    .log-table th { color: var(--muted); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .log-ok   { color: #4ade80; }
+    .log-fail { color: #f87171; }
+
+    .empty-state {
+        text-align: center; padding: 32px; color: var(--muted);
+        border: 1px dashed var(--border); border-radius: 12px; font-size: 13px;
+    }
 </style>
 
-<div class="page-sf">
-    <div class="card">
-        <h3 style="margin:0 0 6px 0;">Integrações (Saída) — SuperFuncionário</h3>
-        <div class="small">
-            Configure as credenciais globais e crie regras por <b>evento</b> (os mesmos eventos da tela de Webhooks).
-            Cada regra pode: criar/atualizar contato, aplicar tags, enviar campos personalizados e disparar fluxos.
-        </div>
+<datalist id="sf-source-list">
+<?php foreach ($fieldDatalist as $val => $lab): ?>
+    <option value="<?= h($val) ?>"><?= h($lab) ?></option>
+<?php endforeach; ?>
+</datalist>
+<datalist id="sf-turma-source-list">
+<?php foreach ($fieldDatalist as $val => $lab): ?>
+    <option value="<?= h($val) ?>"><?= h($lab) ?></option>
+<?php endforeach; ?>
+</datalist>
+
+<div class="sf-wrap">
+    <div class="page-header">
+        <h1>SuperFuncionário</h1>
+        <p>Configure as credenciais globais e crie regras de disparo por evento — tags, fluxos e campos personalizados.</p>
     </div>
 
-    <div class="grid2">
-        <div class="card">
-            <h4 style="margin:0 0 10px 0;">SuperFuncionário (credenciais fixas)</h4>
-            <form method="post">
-                <input type="hidden" name="action" value="save_config">
-                <label class="small">
-                    <input type="checkbox" name="is_enabled" <?= ((int)$cfg['is_enabled']===1?'checked':'') ?>> Ativar integração
-                </label>
-                <div style="height:8px"></div>
+    <div class="grid-2">
 
-                <label class="small">Base URL (opcional se usar o default)<br>
-                    <input type="text" name="base_url" placeholder="https://app.superfuncionario.com.br" value="<?= h((string)$cfg['base_url']) ?>">
-                </label>
-                <div style="height:8px"></div>
+        <!-- ===== ESQUERDA: CREDENCIAIS + REFERÊNCIA ===== -->
+        <div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon yellow">🔑</div>
+                    <div class="card-header-text">
+                        <h2>Credenciais globais</h2>
+                        <p>Token e endpoint padrão para todos os disparos.</p>
+                    </div>
+                </div>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_config">
 
-                <label class="small">Token<br>
-                    <input type="text" name="token" value="<?= h((string)$cfg['token']) ?>" placeholder="cole o token aqui">
-                </label>
-                <div style="height:8px"></div>
+                    <div class="checkbox-row" style="margin-bottom:14px;">
+                        <input type="checkbox" id="sf-enabled" name="is_enabled" <?= ((int)$cfg['is_enabled']===1 ? 'checked' : '') ?>>
+                        <label for="sf-enabled">Ativar integração SuperFuncionário</label>
+                    </div>
 
-                <label class="small">Modo do Header<br>
-                    <select name="header_mode">
-                        <option value="x-access-token" <?= $cfg['header_mode']==='x-access-token'?'selected':'' ?>>X-ACCESS-TOKEN</option>
-                        <option value="bearer" <?= $cfg['header_mode']==='bearer'?'selected':'' ?>>Authorization: Bearer</option>
-                    </select>
-                </label>
+                    <div style="margin-bottom:12px;">
+                        <label class="lbl">Base URL</label>
+                        <input type="text" name="base_url" placeholder="https://app.superfuncionario.com.br" value="<?= h((string)$cfg['base_url']) ?>">
+                        <div class="note">Opcional se usar o default.</div>
+                    </div>
 
-                <div style="height:8px"></div>
+                    <div style="margin-bottom:12px;">
+                        <label class="lbl">Token</label>
+                        <input type="text" name="token" value="<?= h((string)$cfg['token']) ?>" placeholder="Cole o token aqui">
+                    </div>
 
-                <label class="small">Default Endpoint (path ou URL)<br>
-                    <input type="text" name="default_endpoint" value="<?= h((string)$cfg['default_endpoint']) ?>" placeholder="/api/contacts">
-                </label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                        <div>
+                            <label class="lbl">Modo do Header</label>
+                            <select name="header_mode">
+                                <option value="x-access-token" <?= $cfg['header_mode']==='x-access-token'?'selected':'' ?>>X-ACCESS-TOKEN</option>
+                                <option value="bearer" <?= $cfg['header_mode']==='bearer'?'selected':'' ?>>Bearer</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="lbl">Timeout (s)</label>
+                            <input type="number" name="timeout_seconds" value="<?= (int)$cfg['timeout_seconds'] ?>" min="1" max="60">
+                        </div>
+                    </div>
 
-                <div style="height:8px"></div>
+                    <div style="margin-bottom:16px;">
+                        <label class="lbl">Default Endpoint</label>
+                        <input type="text" name="default_endpoint" value="<?= h((string)$cfg['default_endpoint']) ?>" placeholder="/api/contacts">
+                    </div>
 
-                <label class="small">Timeout (segundos)<br>
-                    <input type="number" name="timeout_seconds" value="<?= (int)$cfg['timeout_seconds'] ?>" min="1" max="60">
-                </label>
+                    <button class="btn" type="submit">💾 Salvar credenciais</button>
+                </form>
+                <div class="note" style="margin-top:12px;">
+                    Credenciais globais. As regras abaixo definem <b>quando</b> e <b>o que</b> enviar.
+                </div>
+            </div>
 
-                <div style="height:10px"></div>
-                <button class="btn" type="submit">Salvar credenciais</button>
-            </form>
-
-            <div class="small" style="margin-top:10px;">
-                Essas credenciais são globais. As regras abaixo definem <b>quando</b> e <b>o que</b> enviar.
+            <!-- Referência de extras -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon blue">📦</div>
+                    <div class="card-header-text">
+                        <h2>Extras por evento</h2>
+                        <p>Campos disponíveis para mapear no source.</p>
+                    </div>
+                </div>
+                <?php
+                $payloadRef = [
+                    'INSCRITO'          => ['extra.codigo_live', 'extra.data_live'],
+                    'CONCLUIU_TRILHA'   => ['extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
+                    'RETORNO_AGENDADO'  => ['extra.agendamento_id', 'extra.tipo', 'extra.scheduled_at', 'extra.mensagem', 'extra.mensagem_renderizada', 'extra.origem'],
+                    'CERT_EMITIDO'      => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em'],
+                    'REENVIO_CERTIFICADO' => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em', 'extra.certificado_id', 'extra.origem'],
+                    'CERT_SENHA_ERRADA' => ['extra.motivo'],
+                    'LIVE_TURMA'        => ['extra.codigo_turma', 'extra.codigo_live', 'extra.data_live', 'extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
+                ];
+                foreach ($payloadRef as $ev => $fields): ?>
+                    <div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);">
+                        <div style="font-size:12px;font-weight:700;margin-bottom:6px;">
+                            <span class="badge-evt"><?= h($ev) ?></span>
+                            <?php if ($ev === 'LIVE_TURMA'): ?>
+                                <span class="badge badge-live" style="margin-left:4px;">Live</span>
+                            <?php endif; ?>
+                        </div>
+                        <div style="font-size:11px;color:#93c5fd;font-family:monospace;line-height:1.8;">
+                            <?= implode('<br>', array_map('htmlspecialchars', $fields)) ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+                <div class="note">Todos os eventos incluem: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.telefone</code>.</div>
             </div>
         </div>
 
-        <div class="card">
-            <h4 style="margin:0 0 10px 0;"><?= $edit ? 'Editar regra' : 'Nova integração' ?></h4>
-
-            <form method="post" id="form-rule">
-                <input type="hidden" name="action" value="save_rule">
-                <input type="hidden" name="id" value="<?= (int)($edit['id'] ?? 0) ?>">
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <label class="small">Nome<br>
-                        <input type="text" name="nome" value="<?= h((string)($edit['nome'] ?? '')) ?>" placeholder="Ex.: SF - CTA Click">
-                    </label>
-
-                    <label class="small">Gatilho (evento)<br>
-                        <select name="evento">
-                            <?php foreach ($eventOptions as $code => $label): ?>
-                                <option value="<?= h($code) ?>" <?= ($edit && (string)$edit['evento']===(string)$code)?'selected':'' ?>>
-                                    <?= h($code) ?> — <?= h($label) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
+        <!-- ===== DIREITA: FORM + LISTA ===== -->
+        <div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon purple">⚡</div>
+                    <div class="card-header-text">
+                        <h2><?= $edit ? 'Editar integração' : 'Nova integração' ?></h2>
+                        <p><?= $edit ? 'Atualize os dados da regra de disparo.' : 'Preencha para criar uma nova regra de disparo.' ?></p>
+                    </div>
                 </div>
 
-                <div style="height:8px"></div>
+                <form method="post" id="form-rule">
+                    <input type="hidden" name="action" value="save_rule">
+                    <input type="hidden" name="id" value="<?= (int)($edit['id'] ?? 0) ?>">
 
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <label class="small">Tag(s) (uma por linha)<br>
-                        <textarea name="tags_text" placeholder="Ex.: TAG_CTA"><?= h((string)($edit['tags_text'] ?? '')) ?></textarea>
-                    </label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                        <div>
+                            <label class="lbl">Nome</label>
+                            <input type="text" name="nome" value="<?= h((string)($edit['nome'] ?? '')) ?>" placeholder="Ex.: SF - CTA Click">
+                        </div>
+                        <div>
+                            <label class="lbl">Gatilho (evento)</label>
+                            <?php $sfEvAtual = (string)($edit['evento'] ?? 'INSCRITO'); ?>
+                            <div class="evento-wrapper">
+                                <div class="evento-input-row">
+                                    <input type="text" name="evento" id="sf-evento-input"
+                                           value="<?= h($sfEvAtual) ?>"
+                                           placeholder="Selecione o evento gatilho"
+                                           readonly>
+                                    <button type="button" class="evento-toggle-btn" id="sf-btn-ev-toggle">▼ Ver eventos</button>
+                                </div>
+                                <div class="evento-dropdown" id="sf-ev-dropdown">
+                                    <div class="ev-group-label">Aluno</div>
+                                    <div class="evento-opcao" data-value="INSCRITO">
+                                        <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="REINSCRITO">
+                                        <strong>REINSCRITO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando um aluno já existente se inscreve novamente.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="PRIMEIRO_LOGIN">
+                                        <strong>PRIMEIRO_LOGIN <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado UMA ÚNICA VEZ na primeira vez que o aluno acessa a plataforma.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="ASSISTIU_ALGUMA_AULA">
+                                        <strong>ASSISTIU_ALGUMA_AULA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="CONCLUIU_TRILHA">
+                                        <strong>CONCLUIU_TRILHA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado quando o aluno finaliza todas as aulas obrigatórias.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="RETORNO_AGENDADO">
+                                        <strong>RETORNO_AGENDADO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado pelo cron quando um retorno de contato chega na data e hora marcada.</em>
+                                    </div>
+                                    <div class="ev-group-label">Certificado</div>
+                                    <div class="evento-opcao" data-value="CERT_EMITIDO">
+                                        <strong>CERT_EMITIDO <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o aluno acerta a senha e o certificado é gerado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="REENVIO_CERTIFICADO">
+                                        <strong>REENVIO_CERTIFICADO <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o certificado Ã© reenviado pelo admin ou por webhook de entrada.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="CERT_SENHA_ERRADA">
+                                        <strong>CERT_SENHA_ERRADA <span class="ev-pill cert">Certificado</span></strong>
+                                        <em>Disparado quando o aluno tenta uma senha inválida.</em>
+                                    </div>
+                                    <div class="ev-group-label">⚡ Live</div>
+                                    <div class="evento-opcao" data-value="LIVE_TURMA">
+                                        <strong>LIVE_TURMA <span class="ev-pill live">Live</span></strong>
+                                        <em>Regra global: disparada para cada aluno da turma quando a data/hora de disparo chega.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_ACESSOU">
+                                        <strong>LIVE_ACESSOU <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno acessou a sala da live (via webhook externo configurado em "Eventos Live").</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_OFERTA">
+                                        <strong>LIVE_OFERTA <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno ficou até o momento da oferta.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_COMPRA">
+                                        <strong>LIVE_COMPRA <span class="ev-pill live">Live</span></strong>
+                                        <em>Aluno clicou no botão de compra durante a live.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_EVENTO">
+                                        <strong>LIVE_EVENTO <span class="ev-pill live">Live</span></strong>
+                                        <em>Evento customizado vindo de Eventos Live.</em>
+                                    </div>
+                                    <?php
+                                    $hasLessons = false;
+                                    foreach ($eventOptions as $code => $label) {
+                                        if (strpos($code, 'VIU_AULA_') !== 0) continue;
+                                        if (!$hasLessons) {
+                                            echo '<div class="ev-group-label">Aulas</div>';
+                                            $hasLessons = true;
+                                        }
+                                        echo '<div class="evento-opcao" data-value="' . h($code) . '">';
+                                        echo '<strong>' . h($code) . ' <span class="ev-pill aula">Aula</span></strong>';
+                                        echo '<em>' . h($label) . '</em>';
+                                        echo '</div>';
+                                    }
+                                    ?>
+                                </div>
+                            </div>
+                            <div class="note" style="margin-top:5px;">Clique para selecionar o evento. Apenas um evento por regra.</div>
+                        </div>
+                    </div>
 
-                    <label class="small">Fluxo / Flow ID(s) (separados por vírgula)<br>
-                        <input type="text" name="flows_text" value="<?= h((string)($edit['flows_text'] ?? '')) ?>" placeholder="Ex.: 123,456">
-                        <div class="small" style="margin-top:6px;">O SF também permite disparar fluxo dentro do POST /contacts.</div>
-                    </label>
-                </div>
+                    <!-- Hint dinâmico -->
+                    <div class="sf-hint sf-hint-warning" id="sf-event-hint" style="display:none;margin-bottom:12px;"></div>
 
-                <div style="height:8px"></div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                        <div>
+                            <label class="lbl">Tag(s) — uma por linha</label>
+                            <textarea name="tags_text" placeholder="Ex.: TAG_CTA"><?= h((string)($edit['tags_text'] ?? '')) ?></textarea>
+                        </div>
+                        <div>
+                            <label class="lbl">Flow ID(s) — separados por vírgula</label>
+                            <input type="text" name="flows_text" value="<?= h((string)($edit['flows_text'] ?? '')) ?>" placeholder="Ex.: 123,456">
+                            <div class="note">O SF permite disparar fluxo dentro do POST /contacts.</div>
+                        </div>
+                    </div>
 
-                <label class="small">Endpoint (opcional - sobrescreve o default)<br>
-                    <input type="text" name="endpoint_override" value="<?= h((string)($edit['endpoint_override'] ?? '')) ?>" placeholder="/api/contacts">
-                </label>
+                    <div style="margin-bottom:14px;">
+                        <label class="lbl">Endpoint — sobrescreve o default</label>
+                        <input type="text" name="endpoint_override" value="<?= h((string)($edit['endpoint_override'] ?? '')) ?>" placeholder="/api/contacts">
+                    </div>
 
-                <div style="height:10px"></div>
+                    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">Campos personalizados</div>
 
-                <h4 style="margin:10px 0 6px 0;">Campos personalizados</h4>
-                <div class="small" style="margin-bottom:8px;">
-                    Selecione um campo de origem (do payload/extra/users) e informe o nome do campo no SF.
-                    Você pode adicionar quantos quiser.
-                </div>
+                    <div class="sf-hint" style="margin-bottom:10px;">
+                        <b>Origem</b> — selecione da lista ou digite livremente:<br>
+                        • Simples: <code>user.email</code>, <code>extra.codigo_live</code> &nbsp;•&nbsp; Profundo: <code>extra.data.purchase.id</code><br>
+                        • Fixo: <code>literal:texto aqui</code> &nbsp;•&nbsp; Template: <code>{{user.nome}} - {{evento}}</code><br>
+                        • Fallback: <code>user.telefone|extra.phone|literal:sem_telefone</code>
+                    </div>
 
-                <div id="fields">
-                    <?php if ($editPairs): ?>
-                        <?php foreach ($editPairs as $p): ?>
-                            <div class="row">
-                                <select name="field_source[]">
-                                    <?php foreach ($fieldOptions as $group => $opts): ?>
-                                        <optgroup label="<?= h($group) ?>">
-                                            <?php foreach ($opts as $val => $lab): ?>
-                                                <option value="<?= h($val) ?>" <?= ((string)($p['source'] ?? '')===(string)$val)?'selected':'' ?>>
-                                                    <?= h($lab) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </optgroup>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input type="text" name="field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>" placeholder="Campo destino no SF (ex.: idade)">
+                    <div id="fields">
+                        <?php
+                        $initialPairs = $editPairs ?: [['source' => '', 'dest' => '']];
+                        foreach ($initialPairs as $p):
+                        ?>
+                            <div class="field-row">
+                                <input type="text" name="field_source[]" list="sf-source-list"
+                                       value="<?= h((string)($p['source'] ?? '')) ?>"
+                                       placeholder="ex.: user.email ou extra.data.id">
+                                <input type="text" name="field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>"
+                                       placeholder="Campo destino no SF">
                                 <button class="btnx" type="button" onclick="removeRow(this)">×</button>
                             </div>
                         <?php endforeach; ?>
-                    <?php else: ?>
-                        <div class="row">
-                            <select name="field_source[]">
-                                <?php foreach ($fieldOptions as $group => $opts): ?>
-                                    <optgroup label="<?= h($group) ?>">
-                                        <?php foreach ($opts as $val => $lab): ?>
-                                            <option value="<?= h($val) ?>"><?= h($lab) ?></option>
-                                        <?php endforeach; ?>
-                                    </optgroup>
-                                <?php endforeach; ?>
-                            </select>
-                            <input type="text" name="field_dest[]" value="" placeholder="Campo destino no SF (ex.: idade)">
-                            <button class="btnx" type="button" onclick="removeRow(this)">×</button>
-                        </div>
-                    <?php endif; ?>
+                    </div>
+
+                    <button class="btn ghost sm" type="button" onclick="addRow()" style="margin-bottom:14px;">+ Adicionar campo</button>
+
+                    <div class="checkbox-row" style="margin-bottom:16px;">
+                        <input type="checkbox" id="sf-is-active" name="is_active" <?= (!$edit || (int)($edit['is_active'] ?? 1)===1) ? 'checked' : '' ?>>
+                        <label for="sf-is-active">Regra ativa</label>
+                    </div>
+
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <button type="submit" class="btn">
+                            <?= $edit ? '💾 Salvar regra' : '➕ Criar integração' ?>
+                        </button>
+                        <?php if ($edit): ?>
+                            <a href="superfuncionario.php" class="btn ghost">✕ Cancelar</a>
+                        <?php endif; ?>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Lista de regras -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon green">📋</div>
+                    <div class="card-header-text">
+                        <h2>Integrações cadastradas</h2>
+                        <p><?= count($rules) ?> regra<?= count($rules) !== 1 ? 's' : '' ?> no total.</p>
+                    </div>
                 </div>
 
-                <button class="btn-secondary" type="button" onclick="addRow()">Adicionar campo</button>
-
-                <div style="height:10px"></div>
-                <label class="small">
-                    <input type="checkbox" name="is_active" <?= (!$edit || (int)($edit['is_active'] ?? 1)===1)?'checked':'' ?>> Regra ativa
-                </label>
-
-                <div style="height:10px"></div>
-                <button class="btn" type="submit"><?= $edit ? 'Salvar regra' : 'Criar integração' ?></button>
-                <?php if ($edit): ?>
-                    <a class="btn-secondary" href="superfuncionario.php" style="margin-left:8px;">Cancelar</a>
+                <?php if (empty($rules)): ?>
+                    <div class="empty-state">Nenhuma regra cadastrada ainda.<br>Crie a primeira pelo formulário ao lado.</div>
+                <?php else: ?>
+                    <div class="sf-list">
+                        <?php foreach ($rules as $r):
+                            $rCfRaw = trim((string)($r['custom_fields_json'] ?? ''));
+                            $rFjRaw = trim((string)($r['fields_json'] ?? ''));
+                            $rFieldsRaw = $rCfRaw !== '' ? $rCfRaw : $rFjRaw;
+                            $rFields = [];
+                            if ($rFieldsRaw !== '') {
+                                $tmp = json_decode($rFieldsRaw, true);
+                                if (is_array($tmp)) {
+                                    foreach ($tmp as $fp) {
+                                        if (trim((string)($fp['source'] ?? '')) !== '' && trim((string)($fp['dest'] ?? '')) !== '') $rFields[] = $fp;
+                                    }
+                                }
+                            }
+                            $rIsLive = (string)($r['evento'] ?? '') === 'LIVE_TURMA';
+                        ?>
+                            <div class="sf-card">
+                                <div class="sf-card-top">
+                                    <div>
+                                        <div class="sf-card-name"><?= h((string)$r['nome']) ?></div>
+                                        <div style="margin-top:6px;">
+                                            <span class="badge-evt"><?= h((string)$r['evento']) ?></span>
+                                            <?php if ($rIsLive): ?>
+                                                <span class="badge badge-live" style="margin-left:4px;">Live</span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    <div class="sf-actions">
+                                        <a href="?edit=<?= (int)$r['id'] ?>" class="btn ghost sm">✏️ Editar</a>
+                                        <a href="?toggle=<?= (int)$r['id'] ?>" class="btn ghost sm">
+                                            <?= (int)$r['is_active']===1 ? '⏸ Pausar' : '▶ Ativar' ?>
+                                        </a>
+                                        <a href="?del=<?= (int)$r['id'] ?>" class="btn danger sm"
+                                           onclick="return confirm('Remover esta regra?')">🗑</a>
+                                    </div>
+                                </div>
+                                <div class="sf-card-meta">
+                                    <span class="badge <?= (int)$r['is_active']===1 ? 'badge-on' : 'badge-off' ?>">
+                                        <?= (int)$r['is_active']===1 ? '● Ativa' : '○ Inativa' ?>
+                                    </span>
+                                    <?php if ($rFields): ?>
+                                        <span class="badge badge-off" title="<?= h(implode(', ', array_column($rFields, 'dest'))) ?>">
+                                            <?= count($rFields) ?> campo<?= count($rFields)!==1?'s':'' ?>
+                                        </span>
+                                    <?php endif; ?>
+                                    <?php if (trim((string)($r['tags_text'] ?? '')) !== ''): ?>
+                                        <span class="badge badge-off">Tags</span>
+                                    <?php endif; ?>
+                                    <?php if (trim((string)($r['flows_text'] ?? '')) !== ''): ?>
+                                        <span class="badge badge-off">Flows</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="note" style="margin-top:12px;">
+                        Dica: para validar, ative a regra e provoque o evento (ex.: assistir aula, concluir trilha).
+                    </div>
                 <?php endif; ?>
-            </form>
+            </div>
         </div>
+
     </div>
 
+    <!-- ===== DISPARO DE LIVE POR TURMA ===== -->
     <div class="card">
-        <h4 style="margin:0 0 10px 0;">Integrações cadastradas (regras)</h4>
-        <table class="table">
-            <thead>
-            <tr>
-                <th>Nome</th>
-                <th>Evento</th>
-                <th>Status</th>
-                <th>Ações</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php if (!$rules): ?>
-                <tr><td colspan="4" class="small">Nenhuma regra cadastrada ainda.</td></tr>
-            <?php else: ?>
-                <?php foreach ($rules as $r): ?>
-                    <tr>
-                        <td><?= h((string)$r['nome']) ?></td>
-                        <td><span class="sf-badge"><?= h((string)$r['evento']) ?></span></td>
-                        <td>
-                            <?php if ((int)$r['is_active']===1): ?>
-                                <span class="sf-badge" style="color:#15803d;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)">Ativa</span>
-                            <?php else: ?>
-                                <span class="sf-badge off">Inativa</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <a href="superfuncionario.php?edit=<?= (int)$r['id'] ?>">Editar</a>
-                            &nbsp;|&nbsp;
-                            <a href="superfuncionario.php?toggle=<?= (int)$r['id'] ?>"><?= ((int)$r['is_active']===1)?'Desativar':'Ativar' ?></a>
-                            &nbsp;|&nbsp;
-                            <a href="superfuncionario.php?del=<?= (int)$r['id'] ?>" onclick="return confirm('Remover esta regra?')">Remover</a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
+        <div class="card-header">
+            <div class="card-icon orange">🚀</div>
+            <div class="card-header-text">
+                <h2>Disparo de Live por Turma — SF específico</h2>
+                <p>Configure tags, fluxos e campos SF exclusivos por turma, disparados automaticamente na data da live.</p>
+            </div>
+        </div>
 
-        <div class="small" style="margin-top:8px;">
-            Dica: para validar o disparo, ative a regra e provoque o evento (ex.: assistir aula, concluir trilha etc.).
+        <div class="sf-hint" style="margin-bottom:16px;">
+            <b>Como funciona:</b> quando a data/hora de disparo da turma chega, o sistema enfileira todos os alunos filtrados e os envia para o SF respeitando o delay configurado. Use <b>regras globais LIVE_TURMA</b> acima para regras que valem para todas as turmas, ou configure aqui para personalizar por turma.
+        </div>
+
+        <?php if (isset($_GET['saved']) && $_GET['saved'] == '1'): ?>
+            <div style="margin-bottom:16px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;font-size:13px;">
+                ✓ Configuração de SF da turma salva com sucesso!
+            </div>
+        <?php endif; ?>
+
+        <div class="grid-2" style="align-items:start;">
+            <!-- FORM -->
+            <div>
+                <?php if ($sfEditTurma):
+                    $sfTEditPairs = [];
+                    $sfTFieldsRaw = trim((string)($sfEditTurma['sf_fields_json'] ?? ''));
+                    if ($sfTFieldsRaw !== '') {
+                        $tmp = json_decode($sfTFieldsRaw, true);
+                        if (is_array($tmp)) $sfTEditPairs = $tmp;
+                    }
+                    if (!$sfTEditPairs) $sfTEditPairs = [['source'=>'','dest'=>'']];
+                ?>
+                    <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
+                        <input type="hidden" name="action" value="sf_turma_save">
+                        <input type="hidden" name="turma_id" value="<?= (int)$sfEditTurma['id'] ?>">
+
+                        <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+                            <div class="lbl" style="margin-bottom:4px;">Turma selecionada</div>
+                            <div style="font-size:15px;font-weight:700;color:var(--text);"><?= h((string)$sfEditTurma['codigo']) ?></div>
+                            <?php if (!empty($sfEditTurma['data_live'])): ?>
+                                <div class="note">Live: <?= h(substr((string)$sfEditTurma['data_live'],0,16)) ?></div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="checkbox-row" style="margin-bottom:14px;">
+                            <input type="checkbox" id="sf-t-enabled" name="sf_enabled" <?= (int)($sfEditTurma['sf_enabled'] ?? 0) === 1 ? 'checked' : '' ?>>
+                            <label for="sf-t-enabled">Disparar alunos no SF ao chegar na data da live</label>
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                            <div>
+                                <label class="lbl">Tags SF — uma por linha</label>
+                                <textarea name="sf_tags_text" placeholder="ex: LIVE_CONFIRMADO" style="min-height:80px;"><?= h((string)($sfEditTurma['sf_tags_text'] ?? '')) ?></textarea>
+                            </div>
+                            <div>
+                                <label class="lbl">Flow IDs — separados por vírgula</label>
+                                <input type="text" name="sf_flows_text" value="<?= h((string)($sfEditTurma['sf_flows_text'] ?? '')) ?>" placeholder="ex: 123, 456">
+                                <div class="note">IDs numéricos dos fluxos do SF.</div>
+                            </div>
+                        </div>
+
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">Campos personalizados</div>
+
+                        <div class="sf-hint" style="margin-bottom:10px;">
+                            <b>Origem</b> — selecione da lista ou digite:<br>
+                            • Aluno: <code>user.email</code>, <code>user.nome</code>, <code>user.telefone</code><br>
+                            • Turma: <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.codigo_live</code><br>
+                            • Progresso: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code><br>
+                            • Fixo: <code>literal:texto</code> | Template: <code>{{user.nome}} - {{extra.andamento}}%</code>
+                        </div>
+
+                        <div id="sf-turma-fields">
+                            <?php foreach ($sfTEditPairs as $p): ?>
+                            <div class="field-row">
+                                <input type="text" name="sf_field_source[]" list="sf-turma-source-list"
+                                       value="<?= h((string)($p['source'] ?? '')) ?>"
+                                       placeholder="ex: user.email ou extra.data_live">
+                                <input type="text" name="sf_field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>"
+                                       placeholder="Campo destino no SF">
+                                <button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <button type="button" class="btn ghost sm" onclick="addSfTurmaRow()" style="margin-bottom:14px;">+ Adicionar campo</button>
+
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button class="btn" type="submit">💾 Salvar configuração</button>
+                            <a class="btn ghost" href="superfuncionario.php">✕ Cancelar</a>
+                        </div>
+                    </form>
+                <?php else: ?>
+                    <div class="empty-state">Selecione uma turma na tabela ao lado para configurar o SF.</div>
+                <?php endif; ?>
+            </div>
+
+            <!-- TABLE -->
+            <div>
+                <?php if (empty($sfTurmasList)): ?>
+                    <div class="empty-state">Nenhuma turma cadastrada. <a href="turmas.php">Cadastrar turma</a>.</div>
+                <?php else: ?>
+                <div style="overflow-x:auto;">
+                <table class="log-table">
+                    <thead>
+                    <tr>
+                        <th>Turma</th>
+                        <th>Data Live</th>
+                        <th>SF</th>
+                        <th>Tags</th>
+                        <th>Flows</th>
+                        <th>Disparado</th>
+                        <th>Ações</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($sfTurmasList as $stl):
+                        $stlSfOn  = (int)($stl['sf_enabled'] ?? 0) === 1;
+                        $stlDisp  = (int)($stl['live_disparada'] ?? 0) === 1;
+                        $stlTags  = trim((string)($stl['sf_tags_text'] ?? ''));
+                        $stlFlows = trim((string)($stl['sf_flows_text'] ?? ''));
+                    ?>
+                        <tr>
+                            <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
+                            <td style="white-space:nowrap;color:var(--muted);"><?= h(substr((string)($stl['data_live']??'—'),0,16)) ?></td>
+                            <td>
+                                <span class="badge <?= $stlSfOn ? 'badge-on' : 'badge-off' ?>">
+                                    <?= $stlSfOn ? '● ON' : '○ OFF' ?>
+                                </span>
+                            </td>
+                            <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;" title="<?= h($stlTags) ?>"><?= h($stlTags ?: '—') ?></td>
+                            <td style="color:var(--muted);font-size:11px;"><?= h($stlFlows ?: '—') ?></td>
+                            <td>
+                                <span class="badge <?= $stlDisp ? 'badge-on' : 'badge-off' ?>">
+                                    <?= $stlDisp ? '● Sim' : '○ Não' ?>
+                                </span>
+                            </td>
+                            <td style="white-space:nowrap;">
+                                <a href="?sf_edit=<?= (int)$stl['id'] ?>" class="btn ghost sm">⚙️</a>
+                                <a href="turmas.php?reset_disparo=<?= (int)$stl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')" title="Resetar">↺</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
-    <!-- LOGS RECENTES -->
+    <!-- ===== LOGS ===== -->
     <?php
     $logs = [];
     try {
@@ -441,12 +1000,18 @@ textarea{ min-height:78px; }
     } catch (Throwable $e) {}
     ?>
     <div class="card">
-        <h4 style="margin:0 0 10px 0;">Logs recentes (últimos 30)</h4>
+        <div class="card-header">
+            <div class="card-icon blue">📊</div>
+            <div class="card-header-text">
+                <h2>Logs recentes</h2>
+                <p>Últimos 30 disparos registrados.</p>
+            </div>
+        </div>
         <?php if (!$logs): ?>
-            <p class="small">Nenhum log registrado ainda. Os disparos aparecem aqui automaticamente.</p>
+            <div class="empty-state">Nenhum log registrado ainda. Os disparos aparecem aqui automaticamente.</div>
         <?php else: ?>
-        <div class="table-wrap">
-            <table class="table sf-logs-table">
+        <div style="overflow-x:auto;">
+            <table class="log-table">
                 <thead>
                     <tr>
                         <th>#</th>
@@ -455,28 +1020,51 @@ textarea{ min-height:78px; }
                         <th>Regra</th>
                         <th>Status</th>
                         <th>HTTP</th>
+                        <th>Campos</th>
                         <th>Detalhe</th>
                     </tr>
                 </thead>
                 <tbody>
-                <?php foreach ($logs as $l): ?>
+                <?php foreach ($logs as $l):
+                    $logDebug = null;
+                    $reqRaw = trim((string)($l['request_json'] ?? ''));
+                    if ($reqRaw !== '') {
+                        $reqArr = json_decode($reqRaw, true);
+                        if (is_array($reqArr) && isset($reqArr['_debug'])) {
+                            $logDebug = $reqArr['_debug'];
+                        }
+                    }
+                ?>
                     <tr>
                         <td style="color:var(--muted)"><?= (int)$l['id'] ?></td>
-                        <td style="white-space:nowrap"><?= h((string)$l['created_at']) ?></td>
-                        <td><span class="sf-badge"><?= h((string)$l['evento']) ?></span></td>
-                        <td><?= h((string)($l['rule_nome'] ?? '—')) ?></td>
+                        <td style="white-space:nowrap;font-size:11px;"><?= h((string)$l['created_at']) ?></td>
+                        <td><span class="badge-evt" style="font-size:10px;"><?= h((string)$l['evento']) ?></span></td>
+                        <td style="font-size:11px;"><?= h((string)($l['rule_nome'] ?? '—')) ?></td>
                         <td>
                             <?php if ((int)$l['ok']): ?>
-                                <span class="sf-ok">✓ OK</span>
+                                <span class="log-ok">✓ OK</span>
                             <?php else: ?>
-                                <span class="sf-fail">✗ Falha</span>
+                                <span class="log-fail">✗ Falha</span>
                             <?php endif; ?>
                         </td>
-                        <td><?= $l['http_status'] ? (int)$l['http_status'] : '—' ?></td>
-                        <td style="max-width:260px;word-break:break-all">
+                        <td style="font-size:11px;color:var(--muted);"><?= $l['http_status'] ? (int)$l['http_status'] : '—' ?></td>
+                        <td style="white-space:nowrap;font-size:11px;">
+                            <?php if ($logDebug !== null):
+                                $cnt    = (int)($logDebug['custom_fields_count'] ?? 0);
+                                $skiped = (array)($logDebug['skipped_keys'] ?? []);
+                                $tooltip = '';
+                                if ($cnt > 0) $tooltip .= 'OK: ' . implode(', ', (array)($logDebug['custom_fields_keys'] ?? []));
+                                if ($skiped) $tooltip .= ($tooltip ? ' | ' : '') . 'Skip: ' . implode(', ', $skiped);
+                            ?>
+                                <span title="<?= h($tooltip) ?>" style="<?= $skiped ? 'color:#f59e0b' : 'color:var(--muted)' ?>">
+                                    <?= $cnt ?>✓<?= count($skiped) ? ' '.count($skiped).'✗' : '' ?>
+                                </span>
+                            <?php else: ?>—<?php endif; ?>
+                        </td>
+                        <td style="max-width:220px;word-break:break-all;font-size:11px;">
                             <?php
                             $detail = trim((string)($l['error_text'] ?? ''));
-                            if ($detail === '') $detail = trim(substr((string)($l['response_text'] ?? ''), 0, 120));
+                            if ($detail === '') $detail = trim(substr((string)($l['response_text'] ?? ''), 0, 100));
                             echo h($detail !== '' ? $detail : '—');
                             ?>
                         </td>
@@ -487,33 +1075,98 @@ textarea{ min-height:78px; }
         </div>
         <?php endif; ?>
     </div>
-</div>
+
+</div><!-- /.sf-wrap -->
 
 <script>
-function removeRow(btn){
-    var row = btn.closest('.row');
-    if(row) row.remove();
+function removeRow(btn) { btn.closest('.field-row').remove(); }
+function addRow() {
+    var c = document.getElementById('fields');
+    var d = document.createElement('div');
+    d.className = 'field-row';
+    d.innerHTML =
+        '<input type="text" name="field_source[]" list="sf-source-list" placeholder="ex.: user.email ou extra.data.id">' +
+        '<input type="text" name="field_dest[]" placeholder="Campo destino no SF (ex.: idade)">' +
+        '<button class="btnx" type="button" onclick="removeRow(this)">×</button>';
+    c.appendChild(d);
+    d.querySelector('input').focus();
 }
-function addRow(){
-    var container = document.getElementById('fields');
-    var tpl = document.createElement('div');
-    tpl.className = 'row';
-    tpl.innerHTML = <?= json_encode(
-        '<select name="field_source[]">' .
-        implode('', array_map(function($group) use ($fieldOptions){
-            $html = '<optgroup label="'.h($group).'">';
-            foreach ($fieldOptions[$group] as $val => $lab) {
-                $html .= '<option value="'.h((string)$val).'">'.h((string)$lab).'</option>';
-            }
-            $html .= '</optgroup>';
-            return $html;
-        }, array_keys($fieldOptions))) .
-        '</select>' .
-        '<input type="text" name="field_dest[]" value="" placeholder="Campo destino no SF (ex.: idade)">' .
-        '<button class="btnx" type="button" onclick="removeRow(this)">×</button>',
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    ); ?>;
-    container.appendChild(tpl);
+
+var eventHints = <?= json_encode($eventHints, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+function updateEventHint() {
+    var input  = document.getElementById('sf-evento-input');
+    var hintDiv = document.getElementById('sf-event-hint');
+    if (!input || !hintDiv) return;
+    var hint = eventHints[input.value];
+    if (hint) { hintDiv.innerHTML = hint; hintDiv.style.display = 'block'; }
+    else { hintDiv.style.display = 'none'; }
+}
+
+// ===== Dropdown de eventos =====
+document.addEventListener('DOMContentLoaded', function () {
+    var input = document.getElementById('sf-evento-input');
+    var btn   = document.getElementById('sf-btn-ev-toggle');
+    var drop  = document.getElementById('sf-ev-dropdown');
+    if (!input || !btn || !drop) return;
+
+    function markSelected() {
+        drop.querySelectorAll('.evento-opcao').forEach(function(o) {
+            o.classList.toggle('selecionado', o.dataset.value === input.value);
+        });
+    }
+
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        drop.classList.toggle('aberto');
+        if (drop.classList.contains('aberto')) markSelected();
+    });
+
+    drop.querySelectorAll('.evento-opcao').forEach(function(opcao) {
+        opcao.addEventListener('click', function(e) {
+            e.stopPropagation();
+            input.value = this.dataset.value;
+            drop.classList.remove('aberto');
+            markSelected();
+            updateEventHint();
+        });
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!drop.contains(e.target) && e.target !== btn) drop.classList.remove('aberto');
+    });
+
+    markSelected();
+    updateEventHint();
+})();
+
+document.getElementById('form-rule').addEventListener('submit', function(e) {
+    var rows = document.querySelectorAll('#fields .field-row');
+    var errors = [];
+    rows.forEach(function(row, i) {
+        var src = row.querySelector('input[name="field_source[]"]').value.trim();
+        var dst = row.querySelector('input[name="field_dest[]"]').value.trim();
+        if (src !== '' && dst === '') errors.push('Linha ' + (i+1) + ': destino vazio');
+        if (src === '' && dst !== '') errors.push('Linha ' + (i+1) + ': origem vazia');
+    });
+    if (errors.length > 0) {
+        if (!confirm('Atenção nos campos:\n\n' + errors.join('\n') + '\n\nSalvar mesmo assim?')) {
+            e.preventDefault();
+        }
+    }
+});
+
+function removeSfTurmaRow(btn) { btn.closest('.field-row').remove(); }
+function addSfTurmaRow() {
+    var c = document.getElementById('sf-turma-fields');
+    if (!c) return;
+    var d = document.createElement('div');
+    d.className = 'field-row';
+    d.innerHTML =
+        '<input type="text" name="sf_field_source[]" list="sf-turma-source-list" placeholder="ex: user.email ou extra.data_live">' +
+        '<input type="text" name="sf_field_dest[]" placeholder="Campo destino no SF">' +
+        '<button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>';
+    c.appendChild(d);
+    d.querySelector('input').focus();
 }
 </script>
 

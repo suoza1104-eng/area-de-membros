@@ -55,7 +55,7 @@ if ($acao !== '') {
         $mapJson   = trim((string)($_POST['payload_map_json'] ?? ''));
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
-        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta']);
+        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_mensagem'=>'retorno_mensagem']);
         if ($nome === '' || $evento === '') { echo json_encode(['ok'=>false,'msg'=>'Nome e evento são obrigatórios']); exit; }
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
@@ -238,6 +238,7 @@ require_once __DIR__ . '/_header.php';
           <option value="CONCLUIU_TRILHA">CONCLUIU_TRILHA — marca toda a trilha como concluída</option>
           <option value="CERT_EMITIDO">CERT_EMITIDO — dispara evento de certificado</option>
           <option value="REENVIO_CERTIFICADO">REENVIO_CERTIFICADO — dispara gatilho de reenvio do certificado</option>
+          <option value="AGENDAR_RETORNO">AGENDAR_RETORNO — cria retorno agendado por payload</option>
           <option value="TAG_CUSTOM">TAG_CUSTOM — apenas aplica tag e dispara evento custom</option>
         </select>
       </div>
@@ -330,7 +331,7 @@ require_once __DIR__ . '/_header.php';
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const EV_CLS = {
     'INSCRITO':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
-    'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','TAG_CUSTOM':'ev-tag'
+    'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
 };
 
 document.addEventListener('DOMContentLoaded', iwCarregar);
@@ -386,6 +387,7 @@ function iwNovo() {
     document.getElementById('iwCriarSeNaoExistir').checked = true;
     document.getElementById('iwMap').innerHTML = '';
     iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+    iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_mensagem','retorno_mensagem');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
     document.getElementById('iwFormPanel').style.display = '';
     iwAtualizaCamposCondicionais();
@@ -407,7 +409,10 @@ async function iwEditar(id) {
     document.getElementById('iwMap').innerHTML = '';
     const map = JSON.parse(d.payload_map_json || '{}');
     Object.entries(map).forEach(([k,v]) => iwAddMap(k,v));
-    if (!Object.keys(map).length) { iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta'); }
+    if (!Object.keys(map).length) {
+        iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+        iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_mensagem','retorno_mensagem');
+    }
     document.getElementById('iwFormTitle').textContent = 'Editar: ' + d.nome;
     document.getElementById('iwFormPanel').style.display = '';
     iwAtualizaCamposCondicionais();

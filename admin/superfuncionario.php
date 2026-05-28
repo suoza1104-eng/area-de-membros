@@ -24,6 +24,7 @@ $eventOptions = [
     'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
     'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
+    'RETORNO_AGENDADO'      => 'Retorno de contato agendado chegou',
     'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
     'REENVIO_CERTIFICADO'   => 'Reenvio de certificado',
     'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
@@ -85,6 +86,14 @@ $fieldOptions = [
         'extra.certificado_id'    => 'certificado_id',
         'extra.origem'            => 'origem do reenvio',
     ],
+    'Extra - RETORNO_AGENDADO' => [
+        'extra.agendamento_id' => 'agendamento_id',
+        'extra.tipo' => 'tipo',
+        'extra.scheduled_at' => 'scheduled_at',
+        'extra.mensagem' => 'mensagem original',
+        'extra.mensagem_renderizada' => 'mensagem com variaveis',
+        'extra.origem' => 'origem',
+    ],
     'Extra — CERT_SENHA_ERRADA' => [
         'extra.motivo' => 'motivo',
     ],
@@ -93,6 +102,7 @@ $fieldOptions = [
 
 // hints por evento — exibidos dinamicamente no formulário
 $eventHints = [
+    'RETORNO_AGENDADO'   => 'Extras disponiveis: <code>extra.tipo</code>, <code>extra.scheduled_at</code>, <code>extra.mensagem</code>, <code>extra.mensagem_renderizada</code>, <code>extra.agendamento_id</code>',
     'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
     'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
     'PRIMEIRO_LOGIN'     => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a plataforma. Tag PRIMEIRO_LOGIN aplicada automaticamente. Disponíveis: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.magic_link</code>',
@@ -552,6 +562,7 @@ include __DIR__ . '/_header.php';
                 $payloadRef = [
                     'INSCRITO'          => ['extra.codigo_live', 'extra.data_live'],
                     'CONCLUIU_TRILHA'   => ['extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
+                    'RETORNO_AGENDADO'  => ['extra.agendamento_id', 'extra.tipo', 'extra.scheduled_at', 'extra.mensagem', 'extra.mensagem_renderizada', 'extra.origem'],
                     'CERT_EMITIDO'      => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em'],
                     'REENVIO_CERTIFICADO' => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em', 'extra.certificado_id', 'extra.origem'],
                     'CERT_SENHA_ERRADA' => ['extra.motivo'],
@@ -626,6 +637,10 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="CONCLUIU_TRILHA">
                                         <strong>CONCLUIU_TRILHA <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado quando o aluno finaliza todas as aulas obrigatórias.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="RETORNO_AGENDADO">
+                                        <strong>RETORNO_AGENDADO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Disparado pelo cron quando um retorno de contato chega na data e hora marcada.</em>
                                     </div>
                                     <div class="ev-group-label">Certificado</div>
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">
