@@ -191,9 +191,13 @@ $bgColor   = (string)($appCfg['background_color'] ?? '#020617');
 $courseTitle = (string)($appCfg['course_title'] ?? 'Área de Membros');
 $logoUrl = (string)($appCfg['logo_url'] ?? '');
 
-$opcoesN = (int)rl_get_setting($pdo, 'reagendar_opcoes_qtd', '3');
+$opcoesN = (int)rl_get_setting($pdo, 'reagendar_opcoes_qtd', (string)rl_get_setting($pdo, 'reagendar_next_lives_count', '3'));
 if ($opcoesN < 1) $opcoesN = 1;
 if ($opcoesN > 10) $opcoesN = 10;
+
+$janelaDias = (int)rl_get_setting($pdo, 'reagendar_window_days', '15');
+if ($janelaDias < 1) $janelaDias = 1;
+if ($janelaDias > 365) $janelaDias = 365;
 
 $webhookUrl = (string)rl_get_setting($pdo, 'reagendar_webhook_url', '');
 
@@ -202,7 +206,7 @@ $webhookUrl = (string)rl_get_setting($pdo, 'reagendar_webhook_url', '');
 // Regra "disponível": ter data_live futura dentro dos próximos 15 dias (ignora janela_inicio/janela_fim)
 // -----------------------------------------------------------------------------
 $now = new DateTimeImmutable('now');
-$end = $now->modify('+15 days');
+$end = $now->modify('+' . $janelaDias . ' days');
 
 $turmasAll = [];
 try {

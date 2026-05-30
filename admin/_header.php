@@ -31,7 +31,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','aulas','turmas','cursos','certificado',
+foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
           'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
@@ -47,6 +47,7 @@ $titleMap = [
     'vendas_analytics' => 'Analise de Vendas',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
+    'reagendamentos_live' => 'Reagendamentos de Live',
     'aulas'            => 'Aulas',
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
@@ -606,7 +607,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -651,6 +652,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <polyline points="12 6 12 12 16 14"/>
       </svg>
       Agendamentos
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['reagendamentos_live']): ?>
+    <a href="reagendamentos_live.php" class="sb-item <?= $currentMenu === 'reagendamentos_live' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="18" rx="2"/>
+        <path d="M16 2v4M8 2v4M3 10h18"/>
+        <path d="M17 14l-3 3-2-2"/>
+      </svg>
+      Reagend. Live
     </a>
     <?php endif; ?>
 

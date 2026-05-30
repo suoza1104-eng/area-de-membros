@@ -30,6 +30,7 @@ $PAGINAS = [
     'vendas_analytics' => 'Analise de Vendas',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
+    'reagendamentos_live' => 'Reagendamentos de Live',
     'aulas'            => 'Aulas',
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
