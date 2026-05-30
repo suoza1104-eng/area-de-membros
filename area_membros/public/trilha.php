@@ -39,7 +39,7 @@ try {
     }
 } catch (Throwable $e) {}
 
-// Usa só o primeiro nome no cabeçalho (mais pessoal)
+// Usa sÃ³ o primeiro nome no cabeÃ§alho (mais pessoal)
 $primeiroNome = trim((string)preg_split('/\s+/', trim($alunoNome))[0] ?? '');
 if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
@@ -51,10 +51,10 @@ $courseTitle     = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
 $logoUrl         = $appCfg['logo_url']     ?? '';
 $whatsappHelpUrl = get_setting('whatsapp_help_url', '');
 
-        /* Seções */
+$stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
 $lessons   = $stLessons->fetchAll(PDO::FETCH_ASSOC);
 
-        /* Seções */
+$stProg = $pdo->prepare("SELECT lesson_id, status FROM lesson_progress WHERE user_id = :uid");
 $stProg->execute(['uid' => $alunoId]);
 $rowsProg = $stProg->fetchAll(PDO::FETCH_ASSOC);
 
@@ -78,7 +78,7 @@ $percent          = $totalObrigatorias > 0 ? (int)round(($totalConcluidas / $tot
 $temTudoConcluido = ($totalObrigatorias > 0 && $totalObrigatorias === $totalConcluidas);
 
 try {
-        /* Seções */
+    $stRec     = $pdo->query("SELECT * FROM recommended_courses WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
     $cursosRec = $stRec->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     $cursosRec = [];
@@ -136,9 +136,9 @@ if ($liveDataIso && $liveIsPast) {
     }
     try {
         $dtLiveGrace = (new DateTimeImmutable($liveDataIso))->modify('+' . $expireGraceMin . ' minutes');
-        /* Seções */
+        $liveExpiredMissed = !$liveAcessada && $dtLiveGrace <= new DateTimeImmutable('now');
     } catch (Throwable $e) {
-        /* Seções */
+        $liveExpiredMissed = !$liveAcessada;
     }
 }
 
@@ -316,7 +316,7 @@ function h(string $v): string {
             margin-bottom: 16px;
         }
 
-        /* Cabeçalho de progresso + botão de certificado */
+        /* CabeÃ§alho de progresso + botÃ£o de certificado */
         .progress-header {
             display: grid;
             grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
@@ -388,19 +388,19 @@ function h(string $v): string {
             100% { transform: scale(1);   box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
         }
 
-        /* Seções */
+        /* SeÃ§Ãµes */
         .section-title {
             font-size: 16px;
             font-weight: 600;
             margin: 18px 2px 8px;
         }
 
-        /* Wrapper genérico de carrossel */
+        /* Wrapper genÃ©rico de carrossel */
         .carousel-wrapper {
             position: relative;
         }
 
-        /* Listas (carrosséis) */
+        /* Listas (carrossÃ©is) */
         .lessons-grid,
         .rec-list {
             display: flex;
@@ -643,7 +643,7 @@ width: 100%;
             white-space:nowrap;
         }
 
-        /* Seções */
+        /* Setas de carrossel (bolinhas maiores) */
         .carousel-arrow {
             position: absolute;
             top: 50%;
@@ -679,7 +679,7 @@ width: 100%;
             color:var(--text-muted);
         }
 
-        /* Botão flutuante de WhatsApp na trilha (estilo bolha com telefone) */
+        /* BotÃ£o flutuante de WhatsApp na trilha (estilo bolha com telefone) */
         .whatsapp-fab {
             position: fixed;
             right: 16px;
@@ -797,7 +797,7 @@ width: 100%;
                 <div class="live-dot"></div>
                 <div class="live-text" id="live-text">
                     <div class="live-line-primary">
-                        Sua aula ao vivo será: <strong><?= h($liveDataBr) ?></strong>
+                        Sua aula ao vivo ser&aacute;: <strong><?= h($liveDataBr) ?></strong>
                     </div>
                     <div class="live-line-secondary" id="live-countdown-text">
                         Faltam -- dias -- horas -- minutos -- segundos
@@ -813,7 +813,7 @@ width: 100%;
                             Sua aula ao vivo foi realizada em <strong><?= h($liveDataBr) ?></strong>
                         </div>
                         <div class="live-line-secondary">
-                            Identificamos que você não acessou a live. Escolha uma nova data para assistir a repescagem.
+                            Identificamos que voc&ecirc; n&atilde;o acessou a live. Escolha uma nova data para assistir a repescagem.
                         </div>
                     </div>
                 </div>
@@ -826,7 +826,7 @@ width: 100%;
                 <div>
                     <div class="progress-title">Progresso no treinamento</div>
                     <div class="progress-sub">
-                        Você concluiu <?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas obrigatórias (<?= $percent ?>%)
+                        Voc&ecirc; concluiu <?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas obrigat&oacute;rias (<?= $percent ?>%)
                     </div>
                     <div class="progress-bar-outer">
                         <div class="progress-bar-inner"></div>
@@ -852,7 +852,7 @@ width: 100%;
                 <span>&lsaquo;</span>
             </button>
 
-        /* Seções */
+<section class="lessons-grid" id="lessons-carousel">
         <?php
         $allPrevCompleted = true;
         foreach ($lessons as $idx => $ls):
@@ -862,8 +862,8 @@ width: 100%;
 
             // Regra de desbloqueio:
             // - Primeira aula sempre liberada
-        /* Seções */
-            // - Aulas já concluídas continuam acessíveis
+            // - Proximas so liberam se TODAS as anteriores estiverem concluidas
+            // - Aulas ja concluidas continuam acessiveis
             $isUnlocked = ($idx === 0) || $allPrevCompleted || $completed;
             $locked = !$isUnlocked;
 
@@ -893,7 +893,7 @@ width: 100%;
                         if ($locked) {
                             echo 'Bloqueada';
                         } else {
-                            echo $completed ? 'Concluída &#10003;' : 'Pendente';
+                            echo $completed ? 'Conclu&iacute;da &#10003;' : 'Pendente';
                         }
                         ?>
                     </span>
@@ -909,7 +909,7 @@ width: 100%;
                 </div>
             </article>
         <?php
-            // Após a primeira aula pendente, bloqueia o restante (sequencial).
+            // Apos a primeira aula pendente, bloqueia o restante (sequencial).
             $allPrevCompleted = $allPrevCompleted && $completed;
         endforeach;
         ?>
@@ -917,13 +917,13 @@ width: 100%;
             <button type="button"
                     class="carousel-arrow carousel-arrow-right"
                     data-target="lessons-carousel"
-                    aria-label="Ver próximas aulas">
+                    aria-label="Ver proximas aulas">
                 <span>&rsaquo;</span>
             </button>
         </div>
 
         <?php if ($cursosRec): ?>
-        /* Seções */
+            <h2 class="section-title"><?= h($appCfg['paid_courses_title'] ?? 'Conheca nossos cursos pagos') ?></h2>
             <div class="carousel-wrapper">
                 <button type="button"
                         class="carousel-arrow carousel-arrow-left"
@@ -942,7 +942,7 @@ width: 100%;
                                 <?php endif; ?>
                                 <div class="rec-locked-overlay">
                                     <div class="rec-locked-overlay-icon">&#128274;</div>
-                                    <div class="rec-locked-overlay-text">Este conteúdo não está disponível nesta área</div>
+                                    <div class="rec-locked-overlay-text">Este conte&uacute;do n&atilde;o est&aacute; dispon&iacute;vel nesta &aacute;rea</div>
                                 </div>
                             </div>
                             <div class="rec-title"><?= h($c['titulo']) ?></div>
@@ -959,7 +959,7 @@ width: 100%;
                 <button type="button"
                         class="carousel-arrow carousel-arrow-right"
                         data-target="rec-carousel"
-                        aria-label="Ver próximos cursos">
+                        aria-label="Ver proximos cursos">
                     <span>&rsaquo;</span>
                 </button>
             </div>
@@ -976,7 +976,7 @@ width: 100%;
    target="_blank" rel="noopener noreferrer"
    aria-label="Falar com suporte no WhatsApp">
     <span class="whatsapp-fab-icon" aria-hidden="true">
-        <!-- Ícone estilo WhatsApp (bolha verde com telefone branco) -->
+        <!-- Ãcone estilo WhatsApp (bolha verde com telefone branco) -->
         <svg viewBox="0 0 32 32">
             <circle cx="16" cy="16" r="15" fill="#ffffff"/>
             <circle cx="16" cy="16" r="13" fill="#25D366"/>
@@ -989,7 +989,7 @@ width: 100%;
 <script>
 document.addEventListener('DOMContentLoaded', function () {
 
-        /* Seções */
+    // ====== CARROSSEIS: setas esquerda/direita ======
     document.querySelectorAll('.carousel-arrow').forEach(function (btn) {
         var targetId = btn.getAttribute('data-target');
         if (!targetId) return;
@@ -1014,8 +1014,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }, { passive: false });
     });
 
-    // ====== AULAS: card inteiro clicável (respeitando bloqueio) ======
-        /* Seções */
+    // ====== AULAS: card inteiro clicÃ¡vel (respeitando bloqueio) ======
+    document.querySelectorAll('.lesson-card').forEach(function (card) {
         var locked = card.getAttribute('data-locked') === '1';
 
         // Descobre o link da aula (aula.php?id=...)
@@ -1030,7 +1030,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         card.addEventListener('click', function (e) {
-            // não intercepta cliques em botões/links/inputs (inclui as setas do carrossel)
+            // nÃ£o intercepta cliques em botÃµes/links/inputs (inclui as setas do carrossel)
             if (e.target.closest('button, a, input, label, select, textarea')) return;
 
             if (locked) {
@@ -1043,7 +1043,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // ====== CURSOS RECOMENDADOS: card inteiro clicável ======
+    // ====== CURSOS RECOMENDADOS: card inteiro clicÃ¡vel ======
     document.querySelectorAll('.rec-card').forEach(function (card) {
         var link = card.querySelector('a.btn-rec');
         if (!link) link = card.querySelector('a[href]');
