@@ -1646,11 +1646,11 @@ dashTurmaRender();
         // funções fora do loop para não causar "Cannot redeclare"
         function rkDt(?string $d): string {
             if (!$d || trim($d) === '') return '—';
-            try { return (new DateTime($d))->format('d/m/Y'); } catch (Throwable $e) { return $d; }
+            try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
         }
         function rkDtHora(?string $d): string {
             if (!$d || trim($d) === '') return '—';
-            try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
+            try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
         }
         foreach ($rankingRows as $ri => $rk):
             $uid       = (int)$rk['id'];
@@ -1739,8 +1739,7 @@ dashTurmaRender();
                             <div class="rk-insc-card">
                                 <div class="rk-insc-date">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                    <?= rkDt((string)($h['data_dia']??'')) ?>
-                                    <span><?= htmlspecialchars(substr((string)($h['hora']??''),11,5)) ?></span>
+                                    <?= rkDtHora((string)($h['hora']??'')) ?>
                                     <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi+1 ?></span>
                                     <?php if (!$isNovo): ?>
                                     <span style="margin-left:4px;font-size:10px;background:rgba(99,102,241,.12);color:#818cf8;padding:1px 6px;border-radius:999px">re-inscrição</span>

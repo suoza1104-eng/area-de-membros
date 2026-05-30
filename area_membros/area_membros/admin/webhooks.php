@@ -12,6 +12,13 @@ function h(?string $v): string {
     return htmlspecialchars($v ?? '', ENT_QUOTES, 'UTF-8');
 }
 
+function fmt_dt(?string $v): string {
+    $v = trim((string)$v);
+    if ($v === '') return '—';
+    try { return (new DateTime($v))->format('d/m/Y H:i:s'); }
+    catch (Throwable $e) { return $v; }
+}
+
 // === POST: salvar config webhook de live por turma ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'live_turma_save') {
     $tid           = (int)($_POST['turma_id'] ?? 0);
@@ -577,7 +584,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             <span class="lbl">Turma</span>
                             <div style="font-size:14px;font-weight:600;color:var(--text);"><?= htmlspecialchars((string)$liveEditTurma['codigo'], ENT_QUOTES, 'UTF-8') ?></div>
                             <?php if (!empty($liveEditTurma['data_live'])): ?>
-                                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live: <?= htmlspecialchars(substr((string)$liveEditTurma['data_live'],0,16), ENT_QUOTES, 'UTF-8') ?></div>
+                                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live: <?= h(fmt_dt((string)$liveEditTurma['data_live'])) ?></div>
                             <?php endif; ?>
                         </div>
 
@@ -674,7 +681,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         ?>
                         <tr style="border-bottom:1px solid var(--border);">
                             <td style="padding:8px 6px;font-weight:600;"><?= htmlspecialchars((string)$tl['codigo'], ENT_QUOTES, 'UTF-8') ?></td>
-                            <td style="padding:8px 6px;white-space:nowrap;color:var(--muted);"><?= htmlspecialchars(substr((string)($tl['data_live']??'—'),0,16), ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;white-space:nowrap;color:var(--muted);"><?= h(fmt_dt((string)($tl['data_live'] ?? ''))) ?></td>
                             <td style="padding:8px 6px;font-size:11px;color:#93c5fd;word-break:break-all;" title="<?= htmlspecialchars($tlUrl, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($tlUrlShort, ENT_QUOTES, 'UTF-8') ?></td>
                             <td style="padding:8px 6px;color:var(--muted);"><?= (int)($tl['delay_ms'] ?? 500) ?>ms</td>
                             <td style="padding:8px 6px;">
@@ -684,7 +691,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <span class="badge badge-off">OFF</span>
                                 <?php endif; ?>
                             </td>
-                            <td style="padding:8px 6px;white-space:nowrap;font-size:11px;color:var(--muted);"><?= htmlspecialchars(substr((string)($tl['live_disparo_data']??'—'),0,16), ENT_QUOTES, 'UTF-8') ?></td>
+                            <td style="padding:8px 6px;white-space:nowrap;font-size:11px;color:var(--muted);"><?= h(fmt_dt((string)($tl['live_disparo_data'] ?? ''))) ?></td>
                             <td style="padding:8px 6px;">
                                 <?php if ($tlDisp): ?>
                                     <span class="badge badge-on">Sim</span>

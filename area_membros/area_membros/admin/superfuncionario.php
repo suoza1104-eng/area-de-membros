@@ -40,7 +40,7 @@ function sf_format_live_offset(?string $liveAt, ?string $disparoAt): string {
 function sf_format_datetime_local(?string $dbValue): string {
     if (!$dbValue) return '';
     $ts = strtotime($dbValue);
-    return $ts ? date('Y-m-d H:i', $ts) : '';
+    return $ts ? date('d/m/Y H:i:s', $ts) : '';
 }
 
 // garante tabelas
@@ -934,7 +934,7 @@ include __DIR__ . '/_header.php';
                             <div class="lbl" style="margin-bottom:4px;">Turma selecionada</div>
                             <div style="font-size:15px;font-weight:700;color:var(--text);"><?= h((string)$sfEditTurma['codigo']) ?></div>
                             <?php if (!empty($sfEditTurma['data_live'])): ?>
-                                <div class="note">Live: <?= h(substr((string)$sfEditTurma['data_live'],0,16)) ?></div>
+                                <div class="note">Live: <?= h(sf_format_datetime_local((string)$sfEditTurma['data_live'])) ?></div>
                             <?php endif; ?>
                         </div>
 
@@ -1035,8 +1035,8 @@ include __DIR__ . '/_header.php';
                     ?>
                         <tr>
                             <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
-                            <td style="white-space:nowrap;color:var(--muted);"><?= h(substr((string)($stl['data_live']??'—'),0,16)) ?></td>
-                            <td style="white-space:nowrap;color:var(--muted);font-size:11px;"><?= h(substr((string)($stl['live_disparo_data']??'--'),0,16)) ?></td>
+                            <td style="white-space:nowrap;color:var(--muted);"><?= h(sf_format_datetime_local((string)($stl['data_live'] ?? ''))) ?></td>
+                            <td style="white-space:nowrap;color:var(--muted);font-size:11px;"><?= h(sf_format_datetime_local((string)($stl['live_disparo_data'] ?? ''))) ?></td>
                             <td>
                                 <span class="badge <?= $stlSfOn ? 'badge-on' : 'badge-off' ?>">
                                     <?= $stlSfOn ? '● ON' : '○ OFF' ?>
@@ -1115,7 +1115,7 @@ include __DIR__ . '/_header.php';
                 ?>
                     <tr>
                         <td style="color:var(--muted)"><?= (int)$l['id'] ?></td>
-                        <td style="white-space:nowrap;font-size:11px;"><?= h((string)$l['created_at']) ?></td>
+                        <td style="white-space:nowrap;font-size:11px;"><?= h(sf_format_datetime_local((string)$l['created_at'])) ?></td>
                         <td><span class="badge-evt" style="font-size:10px;"><?= h((string)$l['evento']) ?></span></td>
                         <td style="font-size:11px;"><?= h((string)($l['rule_nome'] ?? '—')) ?></td>
                         <td>
@@ -1260,7 +1260,7 @@ function parseSfLiveOffset(raw) {
 
 function formatSfLiveDate(d) {
     var pad = function(n) { return String(n).padStart(2, '0'); };
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 }
 
 function updateSfLivePreview() {
