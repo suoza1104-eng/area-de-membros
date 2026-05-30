@@ -274,6 +274,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
     $sfTags     = trim($_POST['sf_tags_text'] ?? '');
     $sfFlows    = trim($_POST['sf_flows_text'] ?? '');
     $sfOffsetRaw = trim((string)($_POST['sf_live_offset'] ?? '0:00'));
+    $delayMs    = max(0, min(30000, (int)($_POST['delay_ms'] ?? 500)));
+    $excludePurchase = isset($_POST['live_exclude_purchase']) ? 1 : 0;
+    $excludeCert     = isset($_POST['live_exclude_cert']) ? 1 : 0;
+    $includeSel      = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
+    $excludeSel      = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
+    $filterCfg       = null;
+    if ($includeSel || $excludeSel || $excludePurchase || $excludeCert) {
+        $filterCfg = json_encode([
+            'include_any'      => $includeSel,
+            'exclude_any'      => $excludeSel,
+            'exclude_purchase' => $excludePurchase,
+            'exclude_cert'     => $excludeCert,
+        ], JSON_UNESCAPED_UNICODE);
+    }
     $sfSources  = $_POST['sf_field_source'] ?? [];
     $sfDests    = $_POST['sf_field_dest'] ?? [];
     $sfPairs    = [];
@@ -307,8 +321,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
                 $liveDisparoData = $live->format('Y-m-d H:i:s');
             }
 
-            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
-                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':ldd'=>$liveDisparoData,':id'=>$tid]);
+            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,delay_ms=:delay,live_filter_tag_ids=:filters,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
+                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':delay'=>$delayMs,':filters'=>$filterCfg,':ldd'=>$liveDisparoData,':id'=>$tid]);
         } catch (Throwable $e) {}
     }
     header('Location: superfuncionario.php?sf_edit=' . $tid . '&saved=1');
@@ -355,6 +369,14 @@ if (isset($_GET['sf_edit'])) {
     $sfEditTurma = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 $sfTurmasList = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+$allTagsSfTurma = [];
+try {
+    $allTagsSfTurma = $pdo->query("SELECT id, nome FROM tags WHERE ativo = 1 ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    try { $allTagsSfTurma = $pdo->query("SELECT id, nome FROM tags ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: []; }
+    catch (Throwable $e2) { $allTagsSfTurma = []; }
+}
 
 include __DIR__ . '/_header.php';
 ?>
@@ -925,6 +947,21 @@ include __DIR__ . '/_header.php';
                     $sfLiveOffset = sf_format_live_offset((string)($sfEditTurma['data_live'] ?? ''), (string)($sfEditTurma['live_disparo_data'] ?? ''));
                     $sfLiveIso = !empty($sfEditTurma['data_live']) ? date('c', strtotime((string)$sfEditTurma['data_live'])) : '';
                     $sfDisparoPreview = sf_format_datetime_local((string)($sfEditTurma['live_disparo_data'] ?? ''));
+                    $sfFilterRaw = $sfEditTurma['live_filter_tag_ids'] ?? '';
+                    $sfFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_purchase'=>0,'exclude_cert'=>0];
+                    if ($sfFilterRaw) {
+                        $sfj = json_decode((string)$sfFilterRaw, true);
+                        if (is_array($sfj)) {
+                            $sfFilter['include_any'] = array_values(array_filter(array_map('intval', $sfj['include_any'] ?? []), fn($v)=>$v>0));
+                            $sfFilter['exclude_any'] = array_values(array_filter(array_map('intval', $sfj['exclude_any'] ?? []), fn($v)=>$v>0));
+                            $sfFilter['exclude_purchase'] = (int)(!!($sfj['exclude_purchase'] ?? 0));
+                            $sfFilter['exclude_cert'] = (int)(!!($sfj['exclude_cert'] ?? 0));
+                        }
+                    }
+                    $sfSelInc = []; foreach ($sfFilter['include_any'] as $tid) $sfSelInc[(int)$tid] = true;
+                    $sfSelExc = []; foreach ($sfFilter['exclude_any'] as $tid) $sfSelExc[(int)$tid] = true;
+                    $sfExcPurchase = (int)$sfFilter['exclude_purchase'] === 1;
+                    $sfExcCert = (int)$sfFilter['exclude_cert'] === 1;
                 ?>
                     <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
                         <input type="hidden" name="action" value="sf_turma_save">
@@ -958,6 +995,45 @@ include __DIR__ . '/_header.php';
                                     <input type="text" id="sf-live-preview" value="<?= h($sfDisparoPreview) ?>" readonly>
                                     <div class="note">Horario calculado para o disparo.</div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom:14px;">
+                            <label class="lbl">Intervalo entre disparos (ms)</label>
+                            <input type="number" name="delay_ms" value="<?= (int)($sfEditTurma['delay_ms'] ?? 500) ?>" min="0" max="30000">
+                            <div class="note">Tempo de espera entre um aluno e outro. Ex.: <code>2000</code> = 2 segundos.</div>
+                        </div>
+
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">Filtros de exclusao do publico</div>
+
+                        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px;">
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_exclude_purchase" value="1" <?= $sfExcPurchase ? 'checked' : '' ?>>
+                                <span style="font-size:13px;">Excluir quem comprou</span>
+                            </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_exclude_cert" value="1" <?= $sfExcCert ? 'checked' : '' ?>>
+                                <span style="font-size:13px;">Excluir quem ja gerou certificado</span>
+                            </label>
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                            <div>
+                                <label class="lbl">Excluir quem tem qualquer uma destas tags</label>
+                                <select name="live_exclude_tag_ids[]" multiple size="6" style="width:100%;">
+                                    <?php foreach ($allTagsSfTurma as $tg): $tid2=(int)$tg['id']; ?>
+                                        <option value="<?= $tid2 ?>" <?= isset($sfSelExc[$tid2]) ? 'selected' : '' ?>><?= h((string)$tg['nome']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="lbl">Excluir quem NAO tem pelo menos uma destas tags</label>
+                                <select name="live_include_tag_ids[]" multiple size="6" style="width:100%;">
+                                    <?php foreach ($allTagsSfTurma as $tg): $tid2=(int)$tg['id']; ?>
+                                        <option value="<?= $tid2 ?>" <?= isset($sfSelInc[$tid2]) ? 'selected' : '' ?>><?= h((string)$tg['nome']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="note">Vazio = nao exige tag.</div>
                             </div>
                         </div>
 

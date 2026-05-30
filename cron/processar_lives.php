@@ -24,6 +24,16 @@ function table_exists(PDO $pdo, string $table): bool {
     }
 }
 
+function column_exists(PDO $pdo, string $table, string $column): bool {
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
+        $stmt->execute([':c' => $column]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 /**
  * Retorna o primeiro nome de tabela que existir.
  */
@@ -47,6 +57,75 @@ function csv_ids(?string $csv): array {
         if ($n > 0) $out[] = $n;
     }
     return array_values(array_unique($out));
+}
+
+function live_filter_config($raw): array {
+    $cfg = [
+        'include_any'      => [],
+        'exclude_any'      => [],
+        'exclude_cert'     => 0,
+        'exclude_zero'     => 0,
+        'exclude_purchase' => 0,
+    ];
+
+    $raw = trim((string)$raw);
+    if ($raw === '') return $cfg;
+
+    $json = json_decode($raw, true);
+    if (is_array($json)) {
+        foreach (['include_any', 'exclude_any'] as $k) {
+            $cfg[$k] = array_values(array_unique(array_filter(array_map('intval', (array)($json[$k] ?? [])), fn($v) => $v > 0)));
+        }
+        foreach (['exclude_cert', 'exclude_zero', 'exclude_purchase'] as $k) {
+            $cfg[$k] = (int)(!!($json[$k] ?? 0));
+        }
+        return $cfg;
+    }
+
+    // Compatibilidade com formato antigo CSV: tratava como tags obrigatórias.
+    $cfg['include_any'] = csv_ids($raw);
+    return $cfg;
+}
+
+function user_has_any_tag(PDO $pdo, ?string $tagRelTable, int $userId, array $tagIds): bool {
+    if (!$tagRelTable || $userId <= 0 || !$tagIds) return false;
+    try {
+        $in = implode(',', array_fill(0, count($tagIds), '?'));
+        $st = $pdo->prepare("SELECT 1 FROM `$tagRelTable` WHERE user_id = ? AND tag_id IN ($in) LIMIT 1");
+        $st->execute(array_merge([$userId], $tagIds));
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function user_has_certificate(PDO $pdo, int $userId): bool {
+    if ($userId <= 0 || !table_exists($pdo, 'certificates')) return false;
+    try {
+        $statusSql = column_exists($pdo, 'certificates', 'status') ? " AND status = 'emitido'" : "";
+        $st = $pdo->prepare("SELECT 1 FROM certificates WHERE user_id = :u$statusSql LIMIT 1");
+        $st->execute([':u' => $userId]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function user_has_purchase(PDO $pdo, int $userId): bool {
+    if ($userId <= 0) return false;
+    try {
+        if (table_exists($pdo, 'hotmart_sales')) {
+            $st = $pdo->prepare("SELECT 1 FROM hotmart_sales WHERE matched_user_id = :u AND LOWER(COALESCE(status,'')) IN ('aprovado','completo','approved','complete','paid') LIMIT 1");
+            $st->execute([':u' => $userId]);
+            if ($st->fetchColumn()) return true;
+        }
+        if (table_exists($pdo, 'live_event_recebimentos') && table_exists($pdo, 'live_events')) {
+            $st = $pdo->prepare("SELECT 1 FROM live_event_recebimentos ler JOIN live_events le ON le.id = ler.event_id WHERE ler.user_id = :u AND le.tipo = 'compra' LIMIT 1");
+            $st->execute([':u' => $userId]);
+            if ($st->fetchColumn()) return true;
+        }
+    } catch (Throwable $e) {}
+    return false;
 }
 
 /**
@@ -265,7 +344,13 @@ foreach ($turmas as $turma) {
     if ($delay < 0) $delay = 0;
     if ($delay > 30000) $delay = 30000; // 30s de safety
 
-    $tagIds = csv_ids($turma['live_filter_tag_ids'] ?? null);
+    $filterCfg = live_filter_config($turma['live_filter_tag_ids'] ?? null);
+    $includeTagIds = $filterCfg['include_any'];
+    $excludeTagIds = $filterCfg['exclude_any'];
+    $excludeCert = (int)$filterCfg['exclude_cert'] === 1;
+    $excludeZero = (int)$filterCfg['exclude_zero'] === 1;
+    $excludePurchase = (int)$filterCfg['exclude_purchase'] === 1;
+    $tagIds = $includeTagIds;
 
     // ----------------------------------------------------------------------------------
     // 3) Busca alunos da turma
@@ -305,6 +390,11 @@ foreach ($turmas as $turma) {
         $aluno['andamento']        = $prog['andamento'];
         $aluno['aulas_concluidas'] = $prog['concluidas'];
         $aluno['aulas_totais']     = $prog['total'];
+        if ($includeTagIds && !$tagRelTable) continue;
+        if ($excludeZero && (int)$aluno['andamento'] <= 0) continue;
+        if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) continue;
+        if ($excludeCert && user_has_certificate($pdo, $uid)) continue;
+        if ($excludePurchase && user_has_purchase($pdo, $uid)) continue;
 
         // Extra disponível para resolução de campos SF e payload do webhook
         $extra = [
