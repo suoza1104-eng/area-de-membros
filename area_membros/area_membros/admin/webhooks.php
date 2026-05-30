@@ -209,9 +209,19 @@ include __DIR__ . '/_header.php';
     .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
     .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
 
-    .grid-2 { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; align-items: start; }
+    .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
     .grid-2 > * { min-width: 0; }
     @media(max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+    .live-config-grid {
+        display: grid;
+        grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+        gap: 18px;
+        align-items: start;
+    }
+    .live-config-grid > * { min-width: 0; }
+    @media(max-width: 1180px) {
+        .live-config-grid { grid-template-columns: 1fr; }
+    }
 
     label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
     input[type="text"], input[type="url"], textarea, select {
@@ -334,7 +344,20 @@ include __DIR__ . '/_header.php';
     .live-table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
     .live-table th, .live-table td { overflow:hidden; text-overflow:ellipsis; }
     .live-table td:last-child { overflow:visible; white-space:normal!important; }
-    .live-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-start; }
+    .live-table col:nth-child(1) { width: 11%; }
+    .live-table col:nth-child(2) { width: 18%; }
+    .live-table col:nth-child(3) { width: 16%; }
+    .live-table col:nth-child(4) { width: 8%; }
+    .live-table col:nth-child(5) { width: 9%; }
+    .live-table col:nth-child(6) { width: 17%; }
+    .live-table col:nth-child(7) { width: 10%; }
+    .live-table col:nth-child(8) { width: 11%; }
+    .live-table th:nth-child(2),
+    .live-table th:nth-child(6),
+    .live-table td:nth-child(2),
+    .live-table td:nth-child(6) { white-space: nowrap; }
+    .live-actions { display:flex; gap:6px; flex-wrap:nowrap; justify-content:flex-start; }
+    .live-actions .btn.sm { width:36px; height:32px; padding:0; justify-content:center; flex:0 0 auto; }
 
     .empty-state {
         text-align: center; padding: 32px; color: var(--muted);
@@ -586,7 +609,7 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
         <?php endif; ?>
 
-        <div class="grid-2" style="align-items:start;">
+        <div class="live-config-grid">
             <!-- FORM (left) -->
             <div>
                 <?php if ($liveEditTurma): ?>
@@ -696,6 +719,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 <?php else: ?>
                 <div>
                 <table class="live-table">
+                    <colgroup>
+                        <col><col><col><col><col><col><col><col>
+                    </colgroup>
                     <thead>
                     <tr>
                         <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Turma</th>
@@ -738,8 +764,8 @@ document.addEventListener('DOMContentLoaded', function () {
                             </td>
                             <td style="padding:8px 6px;">
                                 <div class="live-actions">
-                                <a href="?live_edit=<?= (int)$tl['id'] ?>" class="btn ghost sm">⚙️ Configurar</a>
-                                <a href="turmas.php?reset_disparo=<?= (int)$tl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')">↺ Resetar</a>
+                                <a href="?live_edit=<?= (int)$tl['id'] ?>" class="btn ghost sm" title="Configurar" aria-label="Configurar">⚙️</a>
+                                <a href="turmas.php?reset_disparo=<?= (int)$tl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')" title="Resetar" aria-label="Resetar">↺</a>
                                 </div>
                             </td>
                         </tr>

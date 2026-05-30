@@ -429,9 +429,19 @@ include __DIR__ . '/_header.php';
     .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
     .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
 
-    .grid-2 { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; align-items: start; }
+    .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
     .grid-2 > * { min-width: 0; }
     @media(max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+    .live-config-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+    }
+    .live-config-grid > * { min-width: 0; }
+    @media(max-width: 1180px) {
+        .live-config-grid { grid-template-columns: 1fr; }
+    }
 
     label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
     input[type="text"], input[type="number"], textarea, select {
@@ -565,7 +575,20 @@ include __DIR__ . '/_header.php';
     .log-table th, .log-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 12px; text-align: left; vertical-align: top; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
     .log-table th { color: var(--muted); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
     .log-table td:last-child { overflow: visible; white-space: normal; }
-    .live-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-start; }
+    .live-sf-table col:nth-child(1) { width: 12%; }
+    .live-sf-table col:nth-child(2) { width: 19%; }
+    .live-sf-table col:nth-child(3) { width: 19%; }
+    .live-sf-table col:nth-child(4) { width: 9%; }
+    .live-sf-table col:nth-child(5) { width: 10%; }
+    .live-sf-table col:nth-child(6) { width: 8%; }
+    .live-sf-table col:nth-child(7) { width: 12%; }
+    .live-sf-table col:nth-child(8) { width: 11%; }
+    .live-sf-table th:nth-child(2),
+    .live-sf-table th:nth-child(3),
+    .live-sf-table td:nth-child(2),
+    .live-sf-table td:nth-child(3) { white-space: nowrap; }
+    .live-actions { display:flex; gap:6px; flex-wrap:nowrap; justify-content:flex-start; }
+    .live-actions .btn.sm { width:36px; height:32px; padding:0; justify-content:center; flex:0 0 auto; }
     .log-ok   { color: #4ade80; }
     .log-fail { color: #f87171; }
 
@@ -962,7 +985,7 @@ include __DIR__ . '/_header.php';
             </div>
         <?php endif; ?>
 
-        <div class="grid-2" style="align-items:start;">
+        <div class="live-config-grid">
             <!-- FORM -->
             <div>
                 <?php if ($sfEditTurma):
@@ -1124,7 +1147,10 @@ include __DIR__ . '/_header.php';
                     <div class="empty-state">Nenhuma turma cadastrada. <a href="turmas.php">Cadastrar turma</a>.</div>
                 <?php else: ?>
                 <div>
-                <table class="log-table">
+                <table class="log-table live-sf-table">
+                    <colgroup>
+                        <col><col><col><col><col><col><col><col>
+                    </colgroup>
                     <thead>
                     <tr>
                         <th>Turma</th>
