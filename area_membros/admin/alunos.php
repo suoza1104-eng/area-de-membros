@@ -121,6 +121,113 @@ function al_disparar_reenvio_certificado(int $userId, array $cert, string $orige
         'origem' => $origem,
     ]);
 }
+function al_get_setting(string $key, string $default = ''): string {
+    try {
+        $v = get_setting($key, $default);
+        return ($v === null || $v === '') ? $default : (string)$v;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+function al_ensure_reagendamentos_live(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS reagendamentos_live (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        old_codigo_turma VARCHAR(80) NULL,
+        new_codigo_turma VARCHAR(80) NULL,
+        old_turma_live_at DATETIME NULL,
+        new_turma_live_at DATETIME NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'reagendado',
+        live_url TEXT NULL,
+        sf_disparo_at DATETIME NULL,
+        sf_delay_ms INT NOT NULL DEFAULT 500,
+        sf_sent_at DATETIME NULL,
+        expired_checked_at DATETIME NULL,
+        ip VARCHAR(64) NULL,
+        user_agent VARCHAR(250) NULL,
+        webhook_url TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_reag_live_user (user_id),
+        KEY idx_reag_live_status (status),
+        KEY idx_reag_live_new_live (new_turma_live_at),
+        KEY idx_reag_live_disparo (sf_disparo_at),
+        KEY idx_reag_live_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): int {
+    if ($userId <= 0) throw new RuntimeException('Aluno invalido.');
+    $dataLiveRaw = trim($dataLiveRaw);
+    if ($dataLiveRaw === '') throw new RuntimeException('Informe a nova data/hora da live.');
+
+    $dLive = new DateTimeImmutable(str_replace('T', ' ', $dataLiveRaw));
+    if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
+    $newLive = $dLive->format('Y-m-d H:i:s');
+
+    $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $userId]);
+    $u = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$u) throw new RuntimeException('Aluno nao encontrado.');
+
+    $oldCodigo = (string)($u['codigo_turma'] ?? ($u['turma_codigo'] ?? ''));
+    $oldLive = (string)($u['turma_live_at'] ?? ($u['data_live'] ?? ''));
+    $liveUrl = al_get_setting('reagendar_live_url', '');
+    $offsetMin = (int)al_get_setting('reagendar_dispatch_offset_min', '0');
+    $delayMs = (int)al_get_setting('reagendar_dispatch_delay_ms', '500');
+    if ($delayMs < 0) $delayMs = 0;
+    if ($delayMs > 30000) $delayMs = 30000;
+    $dispatchAt = $dLive->modify(($offsetMin >= 0 ? '+' : '') . $offsetMin . ' minutes')->format('Y-m-d H:i:s');
+
+    $sets = [];
+    $params = [':id' => $userId];
+    if (col_ok($pdo, 'users', 'turma_live_at')) { $sets[] = 'turma_live_at = :tl'; $params[':tl'] = $newLive; }
+    if (col_ok($pdo, 'users', 'data_live')) { $sets[] = 'data_live = :dl'; $params[':dl'] = $newLive; }
+    if (!$sets) throw new RuntimeException('Aluno sem campo de data da live.');
+
+    al_ensure_reagendamentos_live($pdo);
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
+        $pdo->prepare("INSERT INTO reagendamentos_live
+            (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
+            VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, NULL, NOW())")
+            ->execute([
+                ':u' => $userId,
+                ':oc' => $oldCodigo ?: null,
+                ':nc' => $oldCodigo ?: null,
+                ':ol' => $oldLive ?: null,
+                ':nl' => $newLive,
+                ':url' => $liveUrl ?: null,
+                ':sf' => $dispatchAt,
+                ':delay' => $delayMs,
+                ':ip' => $_SERVER['REMOTE_ADDR'] ?? null,
+                ':ua' => 'admin_alunos',
+            ]);
+        $histId = (int)$pdo->lastInsertId();
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+
+    disparar_webhooks('LIVE_REAGENDADA', $userId, [
+        'reagendamento_id' => $histId,
+        'codigo_turma' => $oldCodigo,
+        'data_live' => $dLive->format('d/m/Y H:i'),
+        'data_live_iso' => $newLive,
+        'live_url' => $liveUrl,
+        'origem' => 'admin_alunos',
+        'reagendamento' => [
+            'id' => $histId,
+            'turma_original' => $oldCodigo,
+            'live_antiga' => fmtDtHora($oldLive),
+            'live_nova' => $dLive->format('d/m/Y H:i'),
+            'live_nova_iso' => $newLive,
+            'live_url' => $liveUrl,
+            'status' => 'reagendado',
+        ],
+    ]);
+    return $histId;
+}
 
 // ── Detecta colunas e tabelas ─────────────────────────────────────────────
 $colTurma   = col_ok($pdo,'users','codigo_turma') ? 'codigo_turma' : (col_ok($pdo,'users','turma') ? 'turma' : '');
@@ -216,6 +323,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 retorno_salvar_modelo($pdo, $modeloNome, (string)($_POST['retorno_tipo'] ?? 'vendas'), (string)($_POST['retorno_mensagem'] ?? ''), 0, (string)($_POST['retorno_assunto'] ?? ''));
             }
             $msgPost = 'Retorno agendado com sucesso (#' . $agId . ').';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
+    } elseif ($acao === 'reagendar_live_manual') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            $histId = al_reagendar_live_manual($pdo, $uid, (string)($_POST['nova_data_live'] ?? ''));
+            $msgPost = 'Live reagendada com sucesso (#' . $histId . ').';
         } catch (Throwable $e) {
             $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
         }
@@ -712,7 +827,7 @@ require __DIR__ . '/_header.php';
                 <td style="font-size:12px;color:var(--muted)"><?= fmtDt($ultCad) ?></td>
                 <td style="text-align:right" onclick="event.stopPropagation()">
                     <a href="aluno_editar.php?id=<?= (int)$a['id'] ?>" class="btn btn-ghost btn-xs">Editar</a>
-                    <a href="reagendamentos_live.php?user_id=<?= (int)$a['id'] ?>#manual" class="btn btn-ghost btn-xs" title="Reagendar live manualmente">Reagendar</a>
+                    <button type="button" class="btn btn-ghost btn-xs" onclick="abrirReagendarLive(<?= (int)$a['id'] ?>, '<?= h((string)($a['nome'] ?? 'Aluno')) ?>')" title="Reagendar live manualmente">Reagendar Live</button>
                 </td>
             </tr>
             <tr id="exp-<?= $i ?>">
@@ -935,6 +1050,26 @@ require __DIR__ . '/_header.php';
     </div>
 </div>
 
+<div class="modal-overlay" id="modal-reagendar-live">
+    <div class="modal-box">
+        <div class="modal-title">Reagendar Live</div>
+        <div id="m-reagendar-live-nome" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
+        <form method="post">
+            <input type="hidden" name="acao" value="reagendar_live_manual">
+            <input type="hidden" name="uid" id="m-reagendar-live-uid">
+            <div class="form-group">
+                <label class="form-label">Nova data e hora da live</label>
+                <input type="datetime-local" name="nova_data_live" id="m-reagendar-live-data" required>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px">O aluno permanece na turma atual. O sistema atualiza apenas a data/hora da live e dispara o gatilho LIVE_REAGENDADA.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-primary btn-sm">Confirmar reagendamento</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModal('modal-reagendar-live')">Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 const RETORNO_MODELOS = <?= json_encode($retornoModelos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 function copyCertFromList(id) {
@@ -1070,6 +1205,12 @@ function abrirRetorno(uid, nome) {
     document.getElementById('m-retorno-assunto').value = '';
     document.getElementById('m-retorno-mensagem').value = '';
     document.getElementById('modal-retorno').classList.add('open');
+}
+function abrirReagendarLive(uid, nome) {
+    document.getElementById('m-reagendar-live-uid').value = uid;
+    document.getElementById('m-reagendar-live-nome').textContent = 'Aluno: ' + nome;
+    document.getElementById('m-reagendar-live-data').value = '';
+    document.getElementById('modal-reagendar-live').classList.add('open');
 }
 function carregarModeloRetorno(id) {
     var modelo = RETORNO_MODELOS.find(function(m) { return String(m.id) === String(id); });
