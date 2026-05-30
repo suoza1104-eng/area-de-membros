@@ -254,6 +254,14 @@ $publicBase = rtrim(dirname(BASE_URL_ADMIN, 1), '/');
 $publicTokenExample = $publicBase . '/public/reagendar_live.php?t=SEU_TOKEN';
 $publicAutoExample = $publicBase . '/public/reagendar_live.php?email=EMAIL_DO_ALUNO&telefone=TELEFONE_DO_ALUNO';
 $generatorExample = BASE_URL_ADMIN . '/reagendar_link.php?user_id=ID_DO_ALUNO';
+$studentRescheduleLink = $publicBase . '/public/reagendar_live.php';
+try {
+    $stPreviewToken = $pdo->query("SELECT token FROM live_reschedule_tokens WHERE used_at IS NULL AND expires_at >= NOW() ORDER BY created_at DESC, id DESC LIMIT 1");
+    $previewToken = (string)($stPreviewToken->fetchColumn() ?: '');
+    if ($previewToken !== '') {
+        $studentRescheduleLink = rl_make_token_link($previewToken);
+    }
+} catch (Throwable $e) {}
 
 $nowSql = date('Y-m-d H:i:s');
 $endSql = (new DateTimeImmutable('now'))->modify('+' . $windowDays . ' days')->format('Y-m-d H:i:s');
@@ -531,7 +539,7 @@ require __DIR__ . '/_header.php';
         <div class="topbar-title">Reagendamentos de live</div>
         <div class="text-muted text-sm">Central para configurar a pagina publica, gerar links e acompanhar as trocas de turma/live feitas pelos alunos.</div>
     </div>
-    <a class="btn btn-ghost btn-sm" href="<?= h($publicBase . '/public/reagendar_live.php') ?>" target="_blank">Abrir pagina publica</a>
+    <a class="btn btn-ghost btn-sm" href="<?= h($studentRescheduleLink) ?>" target="_blank">Abrir pagina publica</a>
 </div>
 
 <div class="card rl-chart-card">

@@ -92,6 +92,9 @@ function rl_ensure_history(PDO $pdo): void {
         "ALTER TABLE reagendamentos_live ADD COLUMN sf_delay_ms INT NOT NULL DEFAULT 500",
         "ALTER TABLE reagendamentos_live ADD COLUMN sf_sent_at DATETIME NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN expired_checked_at DATETIME NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN ip VARCHAR(64) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN user_agent VARCHAR(250) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN webhook_url TEXT NULL",
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
     }
