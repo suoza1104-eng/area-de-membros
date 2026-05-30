@@ -280,6 +280,28 @@ if (table_ok($pdo,'turmas') && $colTurma !== '') {
 }
 
 // ── POST: ações inline ────────────────────────────────────────────────────
+if (($_GET['ajax'] ?? '') === 'magic_link') {
+    header('Content-Type: application/json; charset=utf-8');
+    $uid = (int)($_GET['uid'] ?? 0);
+    if ($uid <= 0) {
+        echo json_encode(['ok' => false, 'message' => 'Aluno invalido.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    try {
+        $st = $pdo->prepare("SELECT id FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $uid]);
+        if (!$st->fetchColumn()) {
+            echo json_encode(['ok' => false, 'message' => 'Aluno nao encontrado.'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $link = function_exists('gerar_magic_link') ? gerar_magic_link($uid, 30, false) : '';
+        echo json_encode(['ok' => $link !== '', 'link' => $link, 'message' => $link !== '' ? '' : 'Nao foi possivel gerar o link.'], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'message' => 'Erro ao gerar link.'], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 $msgPost = ''; $msgPostTipo = 'ok';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
@@ -919,6 +941,7 @@ require __DIR__ . '/_header.php';
 
                             <div class="det-actions">
                                 <a href="aluno_editar.php?id=<?=(int)$a['id']?>" class="btn btn-ghost btn-sm">✏ Editar dados</a>
+                                <button type="button" class="btn btn-ghost btn-sm" onclick="copiarLinkAcesso(<?=(int)$a['id']?>, this)">Copiar link de acesso</button>
                                 <?php if($senhaCol!==''): ?>
                                 <button type="button" class="btn btn-ghost btn-sm" onclick="abrirSenha(<?=(int)$a['id']?>,'<?=h((string)($a['nome']??''))?>')">🔑 Trocar senha</button>
                                 <button type="button" class="btn btn-ghost btn-sm" onclick="abrirLogin(<?=(int)$a['id']?>,'<?=h((string)($a['email']??''))?>')">📧 Trocar e-mail</button>
@@ -1239,6 +1262,31 @@ function abrirLogin(uid, email) {
     document.getElementById('m-login-uid').value = uid;
     document.getElementById('m-login-email').value = email;
     document.getElementById('modal-login').classList.add('open');
+}
+async function copiarLinkAcesso(uid, btn) {
+    const original = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Gerando...';
+    }
+    try {
+        const res = await fetch('alunos.php?ajax=magic_link&uid=' + encodeURIComponent(uid), { credentials: 'same-origin' });
+        const json = await res.json();
+        if (!json || !json.ok || !json.link) throw new Error((json && json.message) || 'Nao foi possivel gerar o link.');
+        try {
+            await navigator.clipboard.writeText(json.link);
+        } catch (copyErr) {
+            window.prompt('Copie o link de acesso direto:', json.link);
+        }
+        if (btn) btn.textContent = 'Link copiado';
+        setTimeout(function(){ if (btn) btn.textContent = original; }, 1800);
+    } catch (e) {
+        const msg = e && e.message ? e.message : 'Erro ao copiar link.';
+        alert(msg);
+        if (btn) btn.textContent = original;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 function abrirRetorno(uid, nome) {
     document.getElementById('m-retorno-uid').value = uid;
