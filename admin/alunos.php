@@ -129,6 +129,37 @@ function al_get_setting(string $key, string $default = ''): string {
         return $default;
     }
 }
+function al_available_reagendar_slots(PDO $pdo): array {
+    $now = new DateTimeImmutable('now');
+    $qty = (int)al_get_setting('reagendar_opcoes_qtd', al_get_setting('reagendar_next_lives_count', '3'));
+    if ($qty < 1) $qty = 1;
+    if ($qty > 30) $qty = 30;
+
+    $days = (int)al_get_setting('reagendar_window_days', '30');
+    if ($days < 1) $days = 1;
+    if ($days > 365) $days = 365;
+
+    $time = trim(al_get_setting('reagendar_live_time', '19:30'));
+    if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
+
+    $blackouts = array_flip(array_filter(array_map('trim', explode(',', al_get_setting('reagendar_blackout_dates', '')))));
+    $slots = [];
+    for ($i = 0; $i <= $days && count($slots) < $qty; $i++) {
+        $day = $now->modify('+' . $i . ' days');
+        $key = $day->format('Y-m-d');
+        if (isset($blackouts[$key])) continue;
+
+        $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
+        if ($slot <= $now) continue;
+
+        $value = $slot->format('Y-m-d H:i:s');
+        $slots[$value] = [
+            'value' => $value,
+            'label' => $slot->format('d/m/Y H:i'),
+        ];
+    }
+    return $slots;
+}
 function al_ensure_reagendamentos_live(PDO $pdo): void {
     $pdo->exec("CREATE TABLE IF NOT EXISTS reagendamentos_live (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -162,6 +193,8 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     $dLive = new DateTimeImmutable(str_replace('T', ' ', $dataLiveRaw));
     if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
     $newLive = $dLive->format('Y-m-d H:i:s');
+    $slots = al_available_reagendar_slots($pdo);
+    if (empty($slots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
 
     $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
     $st->execute([':id' => $userId]);
@@ -493,6 +526,7 @@ if ($alunos) {
 
 $temFiltroUtm  = ($fUtmSrc !== '' || $fUtmMed !== '' || $fUtmCamp !== '');
 $temFiltroData = ($fDateFrom !== '' || $fDateTo !== '');
+$reagendarLiveSlots = al_available_reagendar_slots($pdo);
 
 require __DIR__ . '/_header.php';
 ?>
@@ -1058,12 +1092,20 @@ require __DIR__ . '/_header.php';
             <input type="hidden" name="acao" value="reagendar_live_manual">
             <input type="hidden" name="uid" id="m-reagendar-live-uid">
             <div class="form-group">
-                <label class="form-label">Nova data e hora da live</label>
-                <input type="datetime-local" name="nova_data_live" id="m-reagendar-live-data" required>
-                <div style="font-size:11px;color:var(--muted);margin-top:6px">O aluno permanece na turma atual. O sistema atualiza apenas a data/hora da live e dispara o gatilho LIVE_REAGENDADA.</div>
+                <label class="form-label">Escolha a live de repescagem</label>
+                <select name="nova_data_live" id="m-reagendar-live-data" required>
+                    <option value="">Selecione uma data disponivel...</option>
+                    <?php foreach ($reagendarLiveSlots as $slot): ?>
+                    <option value="<?= h((string)$slot['value']) ?>"><?= h((string)$slot['label']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px">
+                    As opcoes seguem a configuracao da tela Reagendamento Live: quantidade de lives, horario diario e dias indisponiveis.
+                    O aluno permanece na turma atual e o sistema dispara o gatilho LIVE_REAGENDADA.
+                </div>
             </div>
             <div class="modal-footer">
-                <button type="submit" class="btn btn-primary btn-sm">Confirmar reagendamento</button>
+                <button type="submit" class="btn btn-primary btn-sm" <?= empty($reagendarLiveSlots) ? 'disabled' : '' ?>>Confirmar reagendamento</button>
                 <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModal('modal-reagendar-live')">Cancelar</button>
             </div>
         </form>
