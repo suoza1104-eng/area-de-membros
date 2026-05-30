@@ -39,6 +39,10 @@ function rl_count(PDO $pdo, string $sql, array $params = []): int {
         return 0;
     }
 }
+function rl_pct(int $parte, int $total): string {
+    if ($total <= 0) return '0,0%';
+    return number_format(($parte / $total) * 100, 1, ',', '.') . '%';
+}
 function rl_make_token_link(string $token): string {
     $publicBase = rtrim(dirname(BASE_URL_ADMIN, 1), '/');
     return $publicBase . '/public/reagendar_live.php?t=' . urlencode($token);
@@ -160,12 +164,14 @@ $endSql = (new DateTimeImmutable('now'))->modify('+' . $windowDays . ' days')->f
 $kpiTokensAtivos = rl_count($pdo, "SELECT COUNT(*) FROM live_reschedule_tokens WHERE used_at IS NULL AND expires_at >= NOW()");
 $kpiTokensUsados = rl_count($pdo, "SELECT COUNT(*) FROM live_reschedule_tokens WHERE used_at IS NOT NULL");
 $kpiTokensExpirados = rl_count($pdo, "SELECT COUNT(*) FROM live_reschedule_tokens WHERE used_at IS NULL AND expires_at < NOW()");
-$kpiReagTotal = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live");
-$kpiReag7 = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
 $kpiLivesDisponiveis = rl_count($pdo, "SELECT COUNT(*) FROM turmas WHERE data_live >= :now AND data_live <= :end", [':now' => $nowSql, ':end' => $endSql]);
 
 $fAluno = trim((string)($_GET['aluno'] ?? ''));
 $fStatus = trim((string)($_GET['status'] ?? ''));
+$fTurmaNova = trim((string)($_GET['turma_nova'] ?? ''));
+$fTurmaAntiga = trim((string)($_GET['turma_antiga'] ?? ''));
+$fFrom = trim((string)($_GET['from'] ?? ''));
+$fTo = trim((string)($_GET['to'] ?? ''));
 
 $whereHist = [];
 $paramsHist = [];
@@ -174,10 +180,70 @@ if ($fAluno !== '') {
     $paramsHist[':aluno'] = '%' . $fAluno . '%';
     $paramsHist[':aluno_id'] = ctype_digit($fAluno) ? (int)$fAluno : 0;
 }
+if ($fTurmaNova !== '') {
+    $whereHist[] = "r.new_codigo_turma = :turma_nova";
+    $paramsHist[':turma_nova'] = $fTurmaNova;
+}
+if ($fTurmaAntiga !== '') {
+    $whereHist[] = "r.old_codigo_turma = :turma_antiga";
+    $paramsHist[':turma_antiga'] = $fTurmaAntiga;
+}
+if ($fFrom !== '') {
+    $whereHist[] = "r.created_at >= :from";
+    $paramsHist[':from'] = $fFrom . ' 00:00:00';
+}
+if ($fTo !== '') {
+    $whereHist[] = "r.created_at <= :to";
+    $paramsHist[':to'] = $fTo . ' 23:59:59';
+}
 $whereHistSql = $whereHist ? 'WHERE ' . implode(' AND ', $whereHist) : '';
 
+$liveEventsReady = rl_table_exists($pdo, 'live_event_recebimentos') && rl_table_exists($pdo, 'live_events');
+$eventExpr = function(string $tipo): string {
+    return "EXISTS (
+        SELECT 1
+        FROM live_event_recebimentos ler
+        JOIN live_events le ON le.id = ler.event_id
+        WHERE ler.user_id = r.user_id
+          AND ler.status = 'processado'
+          AND le.tipo = '$tipo'
+          AND COALESCE(ler.processado_em, ler.recebido_em) >= r.created_at
+        LIMIT 1
+    )";
+};
+$exprAcessou = $liveEventsReady ? $eventExpr('acessou') : '0';
+$exprOferta = $liveEventsReady ? $eventExpr('oferta') : '0';
+$exprCompra = $liveEventsReady ? $eventExpr('compra') : '0';
+
 try {
-    $st = $pdo->prepare("SELECT r.*, u.nome, u.email, u.telefone
+    $st = $pdo->prepare("SELECT
+            COUNT(*) AS total,
+            SUM($exprAcessou) AS acessou,
+            SUM($exprOferta) AS oferta,
+            SUM($exprCompra) AS compra,
+            COUNT(DISTINCT r.user_id) AS alunos_unicos
+        FROM reagendamentos_live r
+        LEFT JOIN users u ON u.id = r.user_id
+        $whereHistSql");
+    $st->execute($paramsHist);
+    $metricas = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $metricas = [];
+}
+$kpiReagFiltrados = (int)($metricas['total'] ?? 0);
+$kpiEntrada = (int)($metricas['acessou'] ?? 0);
+$kpiOferta = (int)($metricas['oferta'] ?? 0);
+$kpiVenda = (int)($metricas['compra'] ?? 0);
+$kpiAlunosUnicos = (int)($metricas['alunos_unicos'] ?? 0);
+$kpiReagTotal = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live");
+$kpiReag7 = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+
+try {
+    $st = $pdo->prepare("SELECT r.*, u.nome, u.email, u.telefone,
+            ($exprAcessou) AS teve_acesso,
+            ($exprOferta) AS teve_oferta,
+            ($exprCompra) AS teve_compra,
+            (SELECT COUNT(*) FROM reagendamentos_live rr WHERE rr.user_id = r.user_id) AS frequencia_aluno
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
@@ -187,6 +253,24 @@ try {
     $historico = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
     $historico = [];
+}
+
+try {
+    $st = $pdo->prepare("SELECT r.user_id, u.nome, u.email, u.telefone, COUNT(*) AS total, MAX(r.created_at) AS ultimo_reagendamento
+        FROM reagendamentos_live r
+        LEFT JOIN users u ON u.id = r.user_id
+        $whereHistSql
+        GROUP BY r.user_id, u.nome, u.email, u.telefone
+        ORDER BY total DESC, ultimo_reagendamento DESC
+        LIMIT 50");
+    $st->execute($paramsHist);
+    $frequencias = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $frequencias = [];
+}
+$kpiMaiorFreq = 0;
+foreach ($frequencias as $fr) {
+    $kpiMaiorFreq = max($kpiMaiorFreq, (int)($fr['total'] ?? 0));
 }
 
 $whereTokens = [];
@@ -204,6 +288,12 @@ if ($fStatus === 'ativo') {
     $whereTokens[] = "t.used_at IS NULL AND t.expires_at < NOW()";
 }
 $whereTokensSql = $whereTokens ? 'WHERE ' . implode(' AND ', $whereTokens) : '';
+
+try {
+    $turmasFiltro = $pdo->query("SELECT DISTINCT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo <> '' ORDER BY codigo ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {
+    $turmasFiltro = [];
+}
 
 try {
     $st = $pdo->prepare("SELECT t.*, u.nome, u.email, u.telefone
@@ -251,6 +341,11 @@ require __DIR__ . '/_header.php';
 .rl-link-box input { min-width:0; font-size:12px; }
 .rl-table-small td { font-size:12px; }
 .rl-copy { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rl-event-pills { display:flex; gap:4px; flex-wrap:wrap; }
+.rl-event-pill { display:inline-flex; align-items:center; padding:1px 7px; border-radius:999px; font-size:10px; font-weight:700; border:1px solid var(--border); color:var(--muted); background:rgba(100,116,139,.08); }
+.rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
+.rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
+.rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
 </style>
 
 <?php if ($msg): ?>
@@ -279,9 +374,23 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-g"><div class="kpi-label">Links ativos</div><div class="kpi-value"><?= number_format($kpiTokensAtivos, 0, ',', '.') ?></div></div>
     <div class="kpi kpi-b"><div class="kpi-label">Links usados</div><div class="kpi-value"><?= number_format($kpiTokensUsados, 0, ',', '.') ?></div></div>
     <div class="kpi kpi-r"><div class="kpi-label">Links expirados</div><div class="kpi-value"><?= number_format($kpiTokensExpirados, 0, ',', '.') ?></div></div>
-    <div class="kpi kpi-y"><div class="kpi-label">Reagendamentos</div><div class="kpi-value"><?= number_format($kpiReagTotal, 0, ',', '.') ?></div><div class="kpi-sub"><?= number_format($kpiReag7, 0, ',', '.') ?> nos ultimos 7 dias</div></div>
+    <div class="kpi kpi-y"><div class="kpi-label">Reagendamentos</div><div class="kpi-value"><?= number_format($kpiReagFiltrados, 0, ',', '.') ?></div><div class="kpi-sub"><?= number_format($kpiReagTotal, 0, ',', '.') ?> total · <?= number_format($kpiReag7, 0, ',', '.') ?> em 7 dias</div></div>
+    <div class="kpi kpi-b"><div class="kpi-label">Taxa de entrada</div><div class="kpi-value"><?= h(rl_pct($kpiEntrada, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiEntrada, 0, ',', '.') ?> acessaram a live</div></div>
+    <div class="kpi kpi-o"><div class="kpi-label">Taxa ate oferta</div><div class="kpi-value"><?= h(rl_pct($kpiOferta, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiOferta, 0, ',', '.') ?> ficaram ate a oferta</div></div>
+    <div class="kpi kpi-g"><div class="kpi-label">Conversao venda</div><div class="kpi-value"><?= h(rl_pct($kpiVenda, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiVenda, 0, ',', '.') ?> evento(s) de compra</div></div>
+    <div class="kpi"><div class="kpi-label">Frequencia</div><div class="kpi-value"><?= number_format($kpiMaiorFreq, 0, ',', '.') ?>x</div><div class="kpi-sub"><?= number_format($kpiAlunosUnicos, 0, ',', '.') ?> aluno(s) no filtro</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Lives disponiveis</div><div class="kpi-value"><?= number_format($kpiLivesDisponiveis, 0, ',', '.') ?></div><div class="kpi-sub">janela de <?= (int)$windowDays ?> dia(s)</div></div>
 </div>
+
+<form method="get" class="filter-bar">
+    <div class="filter-group" style="min-width:220px"><label>Aluno</label><input name="aluno" value="<?= h($fAluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
+    <div class="filter-group"><label>Turma nova</label><select name="turma_nova"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaNova===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
+    <div class="filter-group"><label>Turma antiga</label><select name="turma_antiga"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaAntiga===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
+    <div class="filter-group"><label>Status do link</label><select name="status"><option value="">Todos</option><option value="ativo" <?= $fStatus==='ativo'?'selected':'' ?>>Ativos</option><option value="usado" <?= $fStatus==='usado'?'selected':'' ?>>Usados</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirados</option></select></div>
+    <div class="filter-group"><label>De</label><input type="date" name="from" value="<?= h($fFrom) ?>"></div>
+    <div class="filter-group"><label>Ate</label><input type="date" name="to" value="<?= h($fTo) ?>"></div>
+    <div class="filter-actions"><button class="btn btn-primary btn-sm">Filtrar</button><a class="reset-link" href="reagendamentos_live.php">Limpar</a></div>
+</form>
 
 <div class="rl-grid">
     <div>
@@ -332,10 +441,10 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Quando</th></tr></thead>
+                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
-                        <tr><td colspan="4" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
+                        <tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $r): ?>
                         <tr>
@@ -351,6 +460,14 @@ require __DIR__ . '/_header.php';
                                 <div class="fw-700"><?= h($r['new_codigo_turma'] ?: '-') ?></div>
                                 <div class="text-xs text-muted"><?= h(rl_admin_dt($r['new_turma_live_at'] ?? null)) ?></div>
                             </td>
+                            <td>
+                                <div class="rl-event-pills">
+                                    <span class="rl-event-pill <?= !empty($r['teve_acesso']) ? 'on acesso' : '' ?>">Entrada</span>
+                                    <span class="rl-event-pill <?= !empty($r['teve_oferta']) ? 'on oferta' : '' ?>">Oferta</span>
+                                    <span class="rl-event-pill <?= !empty($r['teve_compra']) ? 'on compra' : '' ?>">Venda</span>
+                                </div>
+                            </td>
+                            <td><span class="badge badge-neutral"><?= (int)($r['frequencia_aluno'] ?? 0) ?>x</span></td>
                             <td>
                                 <div><?= h(rl_admin_dt($r['created_at'] ?? null)) ?></div>
                                 <div class="text-xs text-muted"><?= h($r['ip'] ?? '') ?></div>
@@ -376,11 +493,29 @@ require __DIR__ . '/_header.php';
             </form>
         </div>
 
-        <form method="get" class="filter-bar">
-            <div class="filter-group" style="min-width:220px"><label>Aluno</label><input name="aluno" value="<?= h($fAluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
-            <div class="filter-group"><label>Status do link</label><select name="status"><option value="">Todos</option><option value="ativo" <?= $fStatus==='ativo'?'selected':'' ?>>Ativos</option><option value="usado" <?= $fStatus==='usado'?'selected':'' ?>>Usados</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirados</option></select></div>
-            <div class="filter-actions"><button class="btn btn-primary btn-sm">Filtrar</button><a class="reset-link" href="reagendamentos_live.php">Limpar</a></div>
-        </form>
+        <div class="card" style="padding:0;overflow:hidden">
+            <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Frequencia de reagendamento por aluno</div>
+            <div class="table-wrap">
+                <table class="rl-table-small">
+                    <thead><tr><th>Aluno</th><th>Qtd.</th><th>Ultimo</th></tr></thead>
+                    <tbody>
+                    <?php if (!$frequencias): ?>
+                        <tr><td colspan="3" class="text-muted" style="text-align:center;padding:24px">Nenhuma frequencia encontrada no filtro.</td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($frequencias as $fr): ?>
+                        <tr>
+                            <td>
+                                <div class="fw-700"><?= h($fr['nome'] ?? ('Aluno #' . (int)$fr['user_id'])) ?></div>
+                                <div class="text-xs text-muted">#<?= (int)$fr['user_id'] ?> &middot; <?= h($fr['email'] ?? '') ?></div>
+                            </td>
+                            <td><span class="badge badge-primary"><?= (int)($fr['total'] ?? 0) ?>x</span></td>
+                            <td><?= h(rl_admin_dt($fr['ultimo_reagendamento'] ?? null)) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
         <div class="card" style="padding:0;overflow:hidden">
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Links gerados</div>
