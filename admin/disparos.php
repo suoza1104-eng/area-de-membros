@@ -509,6 +509,16 @@ try {
     )->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {}
 
+$tagsSf = [];
+try {
+    $tagsSf = $pdo->query("SELECT nome FROM tags ORDER BY nome ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {}
+
+$tagsSistema = [];
+try {
+    $tagsSistema = $pdo->query("SELECT DISTINCT tag FROM user_tags_sistema ORDER BY tag ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {}
+
 $currentMenu = 'disparos';
 $page_title  = 'Disparos';
 require_once __DIR__ . '/_header.php';
@@ -835,6 +845,8 @@ require_once __DIR__ . '/_header.php';
 
 <script>
 const TURMAS = <?= json_encode($turmas) ?>;
+const TAGS_SF = <?= json_encode(array_values($tagsSf), JSON_UNESCAPED_UNICODE) ?>;
+const TAGS_SISTEMA = <?= json_encode(array_values($tagsSistema), JSON_UNESCAPED_UNICODE) ?>;
 let dpLogica = 'AND';
 let dpPreviewTimer = null;
 let dpPreviewContatosOpen = false;
@@ -1007,11 +1019,33 @@ function dpBuildSelect(tipos, val) {
         + '</select>';
 }
 
+function dpBuildOptions(valores, selecionado) {
+    const set = new Set((valores || []).filter(v => String(v || '').trim() !== '').map(String));
+    const atual = String(selecionado || '');
+    if (atual !== '') set.add(atual);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+        .map(v => `<option value="${dpEsc(v)}"${atual===v?' selected':''}>${dpEsc(v)}</option>`).join('');
+}
+
+function dpBuildTagSelect(tipo, valor) {
+    const tags = tipo === 'tag_sistema' ? TAGS_SISTEMA : TAGS_SF;
+    const label = tipo === 'tag_sistema' ? 'tag do sistema' : 'tag SF';
+    const options = dpBuildOptions(tags, valor);
+    const emptyText = tags.length ? `-- ${label} --` : 'Nenhuma tag cadastrada';
+    return '<select onchange="dpAtualizarPreview()" style="flex:1;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
+        + `<option value="">${emptyText}</option>`
+        + options
+        + '</select>';
+}
+
 function dpBuildValueInput(tipo, valor) {
     if (tipo === 'turma') {
         return '<select onchange="dpAtualizarPreview()" style="flex:1;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px"><option value="">-- turma --</option>'
             + TURMAS.map(t => `<option value="${t.codigo}"${valor===t.codigo?' selected':''}>${t.nome || t.codigo}</option>`).join('')
             + '</select>';
+    }
+    if (tipo === 'tag_sf' || tipo === 'tag_sistema') {
+        return dpBuildTagSelect(tipo, valor);
     }
     if (['tem_cert','nao_tem_cert'].includes(tipo)) return '';
     let inputType = (tipo.includes('de') || tipo.includes('ate')) ? 'date' : 'text';
