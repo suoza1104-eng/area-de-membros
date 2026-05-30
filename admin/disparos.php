@@ -6,6 +6,11 @@ session_start();
 if (empty($_SESSION['admin_logado'])) {
     header('Location: login.php'); exit;
 }
+// Este arquivo so LE a sessao (auth acima) e nunca grava em $_SESSION.
+// Liberamos o lock imediatamente: sem isso, um disparo em lote
+// (executar_batch, com cURL por aluno) segura o lock por minutos e
+// congela TODA a area admin para o mesmo navegador.
+if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
 
@@ -276,7 +281,9 @@ if ($acao !== '') {
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $payload,
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_TIMEOUT        => (int)($cfg['timeout_seconds'] ?? 10),
+            CURLOPT_NOSIGNAL       => 1,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json', $authHeader],
         ]);
