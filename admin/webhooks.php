@@ -140,7 +140,7 @@ $eventGroups = [
         ],
         'LIVE_REAGENDAMENTO_EXPIRADO' => [
             'label' => 'Reagendamento expirado',
-            'desc'  => 'Disparado quando a live reagendada passou e o aluno nao entrou.',
+            'desc'  => 'Disparado quando a live reagendada passou, terminou o prazo de tolerancia configurado e o aluno nao entrou.',
             'extra' => 'extra.reagendamento_id, extra.codigo_turma, extra.data_live, extra.data_live_iso, extra.live_url',
         ],
         'LIVE_ACESSOU' => [

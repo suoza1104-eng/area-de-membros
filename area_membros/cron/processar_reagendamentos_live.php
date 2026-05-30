@@ -53,6 +53,9 @@ if (!rl_cron_table_exists($pdo, 'reagendamentos_live')) {
 
 $sent = 0;
 $expired = 0;
+$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
+if ($expireGraceMin < 0) $expireGraceMin = 0;
+if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
 try {
     $rows = $pdo->query("SELECT * FROM reagendamentos_live
@@ -77,7 +80,7 @@ try {
 try {
     $rows = $pdo->query("SELECT r.* FROM reagendamentos_live r
         WHERE r.status = 'reagendado'
-          AND r.new_turma_live_at < NOW()
+          AND r.new_turma_live_at <= DATE_SUB(NOW(), INTERVAL {$expireGraceMin} MINUTE)
           AND r.expired_checked_at IS NULL
           AND NOT EXISTS (
               SELECT 1

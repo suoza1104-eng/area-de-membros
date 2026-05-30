@@ -805,7 +805,7 @@ include __DIR__ . '/_header.php';
                                     </div>
                                     <div class="evento-opcao" data-value="LIVE_REAGENDAMENTO_EXPIRADO">
                                         <strong>LIVE_REAGENDAMENTO_EXPIRADO <span class="ev-pill live">Live</span></strong>
-                                        <em>Disparado quando a live reagendada passou e o aluno nao entrou.</em>
+                                        <em>Disparado quando a live reagendada passou, terminou o prazo de tolerancia configurado e o aluno nao entrou.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="LIVE_ACESSOU">
                                         <strong>LIVE_ACESSOU <span class="ev-pill live">Live</span></strong>

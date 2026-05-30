@@ -133,6 +133,9 @@ $dispatchOffsetMin = (int)get_setting('reagendar_dispatch_offset_min', '0');
 $dispatchOffsetText = rl_format_offset($dispatchOffsetMin);
 $dispatchDelayMs = (int)get_setting('reagendar_dispatch_delay_ms', '500');
 if ($dispatchDelayMs < 0) $dispatchDelayMs = 500;
+$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
+if ($expireGraceMin < 0) $expireGraceMin = 60;
+if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
@@ -160,6 +163,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dispatchDelayMs = (int)($_POST['reagendar_dispatch_delay_ms'] ?? 500);
             if ($dispatchDelayMs < 0) $dispatchDelayMs = 0;
             if ($dispatchDelayMs > 30000) $dispatchDelayMs = 30000;
+            $expireGraceMin = (int)($_POST['reagendar_expire_grace_min'] ?? 60);
+            if ($expireGraceMin < 0) $expireGraceMin = 0;
+            if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
             set_setting('reagendar_opcoes_qtd', (string)$opcoesN);
             set_setting('reagendar_next_lives_count', (string)$opcoesN);
@@ -170,6 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             set_setting('reagendar_blackout_dates', implode(',', $blackoutDates));
             set_setting('reagendar_dispatch_offset_min', (string)$dispatchOffsetMin);
             set_setting('reagendar_dispatch_delay_ms', (string)$dispatchDelayMs);
+            set_setting('reagendar_expire_grace_min', (string)$expireGraceMin);
             $msg = 'Configuracoes de reagendamento salvas.';
         } elseif ($acao === 'manual_reagendar') {
             $userId = (int)($_POST['user_id'] ?? 0);
@@ -597,6 +604,13 @@ require __DIR__ . '/_header.php';
                     <div class="form-group">
                         <label class="form-label">Delay entre disparos (ms)</label>
                         <input type="number" min="0" max="30000" name="reagendar_dispatch_delay_ms" value="<?= (int)$dispatchDelayMs ?>">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label class="form-label">Prazo para considerar expirado (min)</label>
+                        <input type="number" min="0" max="1440" name="reagendar_expire_grace_min" value="<?= (int)$expireGraceMin ?>">
+                        <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 60: so dispara expirado a partir de 20:30 se o aluno nao acessou.</div>
                     </div>
                 </div>
                 <div class="form-group">

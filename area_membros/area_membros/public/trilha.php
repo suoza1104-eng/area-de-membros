@@ -88,6 +88,9 @@ $liveDataIso = null;
 $liveDataBr  = null;
 $liveIsPast = false;
 $liveExpiredMissed = false;
+$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
+if ($expireGraceMin < 0) $expireGraceMin = 0;
+if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
 if (!empty($turmaLiveAt)) {
     try {
@@ -131,7 +134,12 @@ if ($liveDataIso && $liveIsPast) {
     } catch (Throwable $e) {
         $liveAcessada = false;
     }
-    $liveExpiredMissed = !$liveAcessada;
+    try {
+        $dtLiveGrace = (new DateTimeImmutable($liveDataIso))->modify('+' . $expireGraceMin . ' minutes');
+        $liveExpiredMissed = !$liveAcessada && $dtLiveGrace <= new DateTimeImmutable('now');
+    } catch (Throwable $e) {
+        $liveExpiredMissed = !$liveAcessada;
+    }
 }
 
 function h(string $v): string {
