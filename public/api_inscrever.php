@@ -9,6 +9,9 @@ header('Content-Type: application/json; charset=utf-8');
 @ini_set('log_errors', '1');
 @set_time_limit(60);
 ignore_user_abort(true);
+// Este endpoint nao usa $_SESSION; libera o lock imediatamente para nao
+// prender outras requisicoes do mesmo navegador durante o trabalho lento.
+if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 function api_response(int $status, array $data): void
 {

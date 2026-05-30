@@ -30,6 +30,10 @@ try {
     }
 
     $user_id   = (int)$_SESSION['aluno_id'];
+    // Libera o lock da sessao: nada mais grava em $_SESSION aqui, entao
+    // outros cliques/abas do mesmo aluno nao ficam presos na fila enquanto
+    // este request faz o trabalho lento (banco + webhooks).
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
     $lesson_id = (int)($_POST['lesson_id'] ?? 0);
 
     if ($lesson_id <= 0) {

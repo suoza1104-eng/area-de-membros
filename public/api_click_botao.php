@@ -21,6 +21,9 @@ $userId = (int)($_SESSION['aluno_id'] ?? 0);
 if ($userId <= 0) {
     json_out(['ok' => false, 'error' => 'not_logged'], 401);
 }
+// Libera o lock da sessao (so houve leitura acima): evita prender outras
+// requisicoes do mesmo aluno enquanto este faz banco + webhook.
+if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
 
