@@ -395,7 +395,7 @@ include __DIR__ . '/_header.php';
         --purple:  #a855f7;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    .sf-wrap { max-width: 1100px; margin: 36px auto; padding: 0 24px 60px; }
+    .sf-wrap { max-width: 1320px; margin: 36px auto; padding: 0 24px 60px; }
 
     .page-header { margin-bottom: 28px; }
     .page-header h1 { font-size: 26px; font-weight: 700; margin: 0 0 4px; }
@@ -427,8 +427,8 @@ include __DIR__ . '/_header.php';
     .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
     .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
 
-    .grid-2 { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
-    @media(max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+    .grid-2 { display: grid; grid-template-columns: minmax(460px, 540px) minmax(0, 1fr); gap: 28px; align-items: start; }
+    @media(max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
 
     label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
     input[type="text"], input[type="number"], textarea, select {
@@ -438,6 +438,30 @@ include __DIR__ . '/_header.php';
     }
     input:focus, textarea:focus, select:focus { border-color: var(--blue); }
     textarea { min-height: 70px; resize: vertical; }
+    .tag-check-list {
+        width: 100%;
+        max-height: 170px;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #07101f;
+        padding: 6px;
+    }
+    .tag-check-item {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        min-height: 28px;
+        padding: 4px 6px;
+        border-radius: 7px;
+        font-size: 12px;
+        color: var(--text);
+        cursor: pointer;
+    }
+    .tag-check-item:hover { background: rgba(255,255,255,.06); }
+    .tag-check-item input { width: 14px; height: 14px; accent-color: var(--primary); }
+    .tag-check-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     select { cursor: pointer; }
 
     .checkbox-row { display: flex; align-items: center; gap: 8px; }
@@ -1020,19 +1044,25 @@ include __DIR__ . '/_header.php';
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
                             <div>
                                 <label class="lbl">Excluir quem tem qualquer uma destas tags</label>
-                                <select name="live_exclude_tag_ids[]" multiple size="6" style="width:100%;">
+                                <div class="tag-check-list">
                                     <?php foreach ($allTagsSfTurma as $tg): $tid2=(int)$tg['id']; ?>
-                                        <option value="<?= $tid2 ?>" <?= isset($sfSelExc[$tid2]) ? 'selected' : '' ?>><?= h((string)$tg['nome']) ?></option>
+                                        <label class="tag-check-item">
+                                            <input type="checkbox" name="live_exclude_tag_ids[]" value="<?= $tid2 ?>" <?= isset($sfSelExc[$tid2]) ? 'checked' : '' ?>>
+                                            <span title="<?= h((string)$tg['nome']) ?>"><?= h((string)$tg['nome']) ?></span>
+                                        </label>
                                     <?php endforeach; ?>
-                                </select>
+                                </div>
                             </div>
                             <div>
                                 <label class="lbl">Excluir quem NAO tem pelo menos uma destas tags</label>
-                                <select name="live_include_tag_ids[]" multiple size="6" style="width:100%;">
+                                <div class="tag-check-list">
                                     <?php foreach ($allTagsSfTurma as $tg): $tid2=(int)$tg['id']; ?>
-                                        <option value="<?= $tid2 ?>" <?= isset($sfSelInc[$tid2]) ? 'selected' : '' ?>><?= h((string)$tg['nome']) ?></option>
+                                        <label class="tag-check-item">
+                                            <input type="checkbox" name="live_include_tag_ids[]" value="<?= $tid2 ?>" <?= isset($sfSelInc[$tid2]) ? 'checked' : '' ?>>
+                                            <span title="<?= h((string)$tg['nome']) ?>"><?= h((string)$tg['nome']) ?></span>
+                                        </label>
                                     <?php endforeach; ?>
-                                </select>
+                                </div>
                                 <div class="note">Vazio = nao exige tag.</div>
                             </div>
                         </div>
