@@ -45,18 +45,33 @@ if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
 $aluno = ['id' => $alunoId, 'nome' => $alunoNome, 'turma_codigo' => $turmaCodigo];
 
-$cfgStmt = $pdo->query("SELECT * FROM app_config LIMIT 1");
-$appCfg  = $cfgStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+try {
+    $cfgStmt = $pdo->query("SELECT * FROM app_config LIMIT 1");
+    $appCfg  = $cfgStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    error_log('trilha.php app_config: ' . $e->getMessage());
+    $appCfg = [];
+}
 $courseTitle     = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
 $logoUrl         = $appCfg['logo_url']     ?? '';
 $whatsappHelpUrl = get_setting('whatsapp_help_url', '');
 
-$stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
-$lessons   = $stLessons->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
+    $lessons   = $stLessons->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    error_log('trilha.php lessons: ' . $e->getMessage());
+    $lessons = [];
+}
 
-$stProg = $pdo->prepare("SELECT lesson_id, status FROM lesson_progress WHERE user_id = :uid");
-$stProg->execute(['uid' => $alunoId]);
-$rowsProg = $stProg->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $stProg = $pdo->prepare("SELECT lesson_id, status FROM lesson_progress WHERE user_id = :uid");
+    $stProg->execute(['uid' => $alunoId]);
+    $rowsProg = $stProg->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    error_log('trilha.php lesson_progress: ' . $e->getMessage());
+    $rowsProg = [];
+}
 
 $mapStatus = [];
 foreach ($rowsProg as $r) {
