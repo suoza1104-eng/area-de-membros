@@ -371,7 +371,7 @@ foreach ($frequencias as $fr) {
 }
 
 try {
-    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total
+    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total, SUM($exprCompra) AS vendas
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
@@ -385,6 +385,14 @@ try {
 }
 $maxReagDia = 0;
 foreach ($reagPorDia as $rp) $maxReagDia = max($maxReagDia, (int)($rp['total'] ?? 0));
+$chartLabels = [];
+$chartReagData = [];
+$chartVendaData = [];
+foreach ($reagPorDia as $rp) {
+    $chartLabels[] = date('d/m', strtotime((string)$rp['dia']));
+    $chartReagData[] = (int)($rp['total'] ?? 0);
+    $chartVendaData[] = (int)($rp['vendas'] ?? 0);
+}
 
 $whereTokens = [];
 $paramsTokens = [];
@@ -459,10 +467,28 @@ require __DIR__ . '/_header.php';
 .rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
 .rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
-.rl-bars { display:flex; align-items:end; gap:8px; min-height:160px; padding:10px 4px 2px; overflow-x:auto; }
-.rl-bar { width:28px; min-width:28px; display:flex; flex-direction:column; align-items:center; gap:6px; }
-.rl-bar-fill { width:100%; min-height:3px; border-radius:6px 6px 0 0; background:var(--primary); }
-.rl-bar-label { writing-mode:vertical-rl; transform:rotate(180deg); font-size:10px; color:var(--muted); white-space:nowrap; }
+.rl-chart-card { margin-bottom:16px; }
+.rl-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+.rl-chart-wrap { height:300px; width:100%; }
+.rl-chart-toggle { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:999px; padding:7px 11px; color:var(--muted); font-size:12px; cursor:pointer; background:rgba(15,23,42,.55); }
+.rl-chart-toggle input { accent-color:var(--primary); }
+.rl-calendar { border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(2,6,23,.35); }
+.rl-calendar-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border-bottom:1px solid var(--border); }
+.rl-calendar-title { font-weight:800; color:var(--text); text-transform:capitalize; }
+.rl-cal-nav { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:10px; background:var(--bg); color:var(--text); cursor:pointer; font-size:18px; line-height:1; }
+.rl-cal-nav:hover { border-color:var(--primary); color:var(--primary); }
+.rl-calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:1px; background:var(--border); }
+.rl-cal-dow, .rl-cal-day { background:var(--bg); min-height:44px; }
+.rl-cal-dow { display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; }
+.rl-cal-day { min-height:78px; padding:8px; display:flex; flex-direction:column; justify-content:space-between; gap:6px; }
+.rl-cal-day.out { opacity:.35; }
+.rl-cal-day label { display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer; color:var(--text); font-weight:800; }
+.rl-cal-day input { accent-color:var(--primary); }
+.rl-cal-date { font-size:14px; }
+.rl-cal-state { font-size:10px; color:var(--muted); }
+.rl-cal-day.blocked { background:rgba(239,68,68,.08); }
+.rl-cal-day.blocked .rl-cal-state { color:#fca5a5; }
+@media(max-width:720px){ .rl-chart-wrap{height:240px;} .rl-cal-day{min-height:62px;padding:6px;} .rl-cal-dow{font-size:10px;} }
 </style>
 
 <?php if ($msg): ?>
@@ -485,6 +511,21 @@ require __DIR__ . '/_header.php';
         <div class="text-muted text-sm">Central para configurar a pagina publica, gerar links e acompanhar as trocas de turma/live feitas pelos alunos.</div>
     </div>
     <a class="btn btn-ghost btn-sm" href="<?= h($publicBase . '/public/reagendar_live.php') ?>" target="_blank">Abrir pagina publica</a>
+</div>
+
+<div class="card rl-chart-card">
+    <div class="rl-chart-head">
+        <div class="card-header-title">Reagendamentos por dia</div>
+        <label class="rl-chart-toggle">
+            <input type="checkbox" id="toggleVendasReag" checked>
+            Mostrar vendas dos reagendados
+        </label>
+    </div>
+    <?php if (!$reagPorDia): ?>
+        <div class="text-muted text-sm" style="padding:48px;text-align:center">Sem dados para o filtro atual.</div>
+    <?php else: ?>
+        <div class="rl-chart-wrap"><canvas id="reagLineChart"></canvas></div>
+    <?php endif; ?>
 </div>
 
 <div class="kpi-grid">
@@ -556,7 +597,14 @@ require __DIR__ . '/_header.php';
                 <div class="form-group">
                     <label class="form-label">Dias indisponiveis</label>
                     <input type="hidden" id="blackoutDates" name="reagendar_blackout_dates" value="<?= h(implode(',', $blackoutDates)) ?>">
-                    <div id="blackoutCalendar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px"></div>
+                    <div class="rl-calendar">
+                        <div class="rl-calendar-head">
+                            <button type="button" class="rl-cal-nav" onclick="changeBlackoutMonth(-1)" aria-label="Mes anterior">&lsaquo;</button>
+                            <div class="rl-calendar-title" id="blackoutMonthTitle"></div>
+                            <button type="button" class="rl-cal-nav" onclick="changeBlackoutMonth(1)" aria-label="Proximo mes">&rsaquo;</button>
+                        </div>
+                        <div class="rl-calendar-grid" id="blackoutCalendar"></div>
+                    </div>
                     <div class="text-xs text-muted mt-2">Desmarque os dias em que nao havera live de repescagem.</div>
                 </div>
                 <button class="btn btn-primary">Salvar configuracoes</button>
@@ -624,27 +672,6 @@ require __DIR__ . '/_header.php';
     </div>
 
     <div>
-        <div class="card">
-            <div class="card-header-title mb-3">Reagendamentos por dia</div>
-            <?php if (!$reagPorDia): ?>
-                <div class="text-muted text-sm" style="padding:24px;text-align:center">Sem dados para o filtro atual.</div>
-            <?php else: ?>
-                <div class="rl-bars">
-                    <?php foreach ($reagPorDia as $rp):
-                        $totalDia = (int)($rp['total'] ?? 0);
-                        $hBar = $maxReagDia > 0 ? max(6, (int)round(($totalDia / $maxReagDia) * 130)) : 6;
-                        $labelDia = date('d/m', strtotime((string)$rp['dia']));
-                    ?>
-                    <div class="rl-bar" title="<?= h($labelDia . ': ' . $totalDia) ?>">
-                        <div class="text-xs fw-700"><?= $totalDia ?></div>
-                        <div class="rl-bar-fill" style="height:<?= $hBar ?>px"></div>
-                        <div class="rl-bar-label"><?= h($labelDia) ?></div>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
-
         <div class="card">
             <div class="card-header-title mb-3">Gerar link para aluno</div>
             <form method="post">
@@ -760,6 +787,12 @@ require __DIR__ . '/_header.php';
 const BLACKOUT_INIT = <?= json_encode($blackoutDates, JSON_UNESCAPED_UNICODE) ?>;
 const LIVE_TIME = <?= json_encode($liveTime) ?>;
 const WINDOW_DAYS = <?= (int)$windowDays ?>;
+const REAG_CHART_LABELS = <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>;
+const REAG_CHART_DATA = <?= json_encode($chartReagData, JSON_UNESCAPED_UNICODE) ?>;
+const REAG_CHART_VENDAS = <?= json_encode($chartVendaData, JSON_UNESCAPED_UNICODE) ?>;
+let blackoutSelected = new Set(BLACKOUT_INIT);
+let blackoutMonth = new Date();
+blackoutMonth.setDate(1);
 function parseOffsetMinutes(value) {
     value = String(value || '').trim();
     if (!value) return 0;
@@ -773,40 +806,74 @@ function parseOffsetMinutes(value) {
 function fmtBrDate(date) {
     return date.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
 }
+function isoLocalDate(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+}
+function syncBlackoutInput() {
+    var input = document.getElementById('blackoutDates');
+    if (input) input.value = Array.from(blackoutSelected).sort().join(',');
+}
 function buildBlackoutCalendar() {
     var box = document.getElementById('blackoutCalendar');
     var input = document.getElementById('blackoutDates');
     if (!box || !input) return;
-    var selected = new Set(BLACKOUT_INIT);
-    var today = new Date();
+    var title = document.getElementById('blackoutMonthTitle');
+    var year = blackoutMonth.getFullYear();
+    var month = blackoutMonth.getMonth();
+    var first = new Date(year, month, 1);
+    var start = new Date(year, month, 1 - first.getDay());
+    if (title) title.textContent = first.toLocaleDateString('pt-BR', {month:'long', year:'numeric'});
     box.innerHTML = '';
-    for (var i = 0; i < WINDOW_DAYS; i++) {
-        var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-        var key = d.toISOString().slice(0, 10);
-        var label = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', weekday:'short'});
-        var wrap = document.createElement('label');
-        wrap.style.cssText = 'display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--bg);font-size:12px;';
+    ['Dom','Seg','Ter','Qua','Qui','Sex','Sab'].forEach(function(dow) {
+        var h = document.createElement('div');
+        h.className = 'rl-cal-dow';
+        h.textContent = dow;
+        box.appendChild(h);
+    });
+    for (var i = 0; i < 42; i++) {
+        var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        var key = isoLocalDate(d);
+        var blocked = blackoutSelected.has(key);
+        var cell = document.createElement('div');
+        cell.className = 'rl-cal-day' + (d.getMonth() !== month ? ' out' : '') + (blocked ? ' blocked' : '');
+        var label = document.createElement('label');
+        var number = document.createElement('span');
+        number.className = 'rl-cal-date';
+        number.textContent = String(d.getDate()).padStart(2, '0');
         var cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = !selected.has(key);
-        cb.style.accentColor = 'var(--primary)';
+        cb.checked = !blocked;
+        cb.setAttribute('data-date', key);
         cb.onchange = function() {
-            var vals = [];
-            box.querySelectorAll('input[data-date]').forEach(function(c) { if (!c.checked) vals.push(c.getAttribute('data-date')); });
-            input.value = vals.join(',');
+            var date = this.getAttribute('data-date');
+            if (this.checked) blackoutSelected.delete(date);
+            else blackoutSelected.add(date);
+            syncBlackoutInput();
+            buildBlackoutCalendar();
             updateDispatchPreview();
         };
-        cb.setAttribute('data-date', key);
-        wrap.appendChild(cb);
-        wrap.appendChild(document.createTextNode(label));
-        box.appendChild(wrap);
+        label.appendChild(number);
+        label.appendChild(cb);
+        var state = document.createElement('div');
+        state.className = 'rl-cal-state';
+        state.textContent = blocked ? 'Indisponivel' : 'Disponivel';
+        cell.appendChild(label);
+        cell.appendChild(state);
+        box.appendChild(cell);
     }
-    input.value = Array.from(selected).join(',');
+    syncBlackoutInput();
+}
+function changeBlackoutMonth(delta) {
+    blackoutMonth = new Date(blackoutMonth.getFullYear(), blackoutMonth.getMonth() + delta, 1);
+    buildBlackoutCalendar();
 }
 function updateDispatchPreview() {
     var out = document.getElementById('dispatchPreview');
     if (!out) return;
-    var blackouts = new Set(String(document.getElementById('blackoutDates')?.value || '').split(',').filter(Boolean));
+    var blackouts = blackoutSelected;
     var now = new Date();
     var live = null;
     for (var i = 0; i < WINDOW_DAYS; i++) {
@@ -821,7 +888,63 @@ function updateDispatchPreview() {
     live = new Date(live.getTime() + parseOffsetMinutes(document.getElementById('dispatchOffset')?.value || '0:00') * 60000);
     out.value = fmtBrDate(live);
 }
+function buildReagLineChart() {
+    var canvas = document.getElementById('reagLineChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    var vendasDataset = {
+        label: 'Vendas dos reagendados',
+        data: REAG_CHART_VENDAS,
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,.12)',
+        tension: .35,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        borderWidth: 2,
+        fill: false
+    };
+    var chart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: REAG_CHART_LABELS,
+            datasets: [
+                {
+                    label: 'Reagendamentos',
+                    data: REAG_CHART_DATA,
+                    borderColor: '#facc15',
+                    backgroundColor: 'rgba(250,204,21,.14)',
+                    tension: .35,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    borderWidth: 2,
+                    fill: true
+                },
+                vendasDataset
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true } },
+                tooltip: { backgroundColor: '#0f172a', borderColor: '#334155', borderWidth: 1 }
+            },
+            scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,.12)' } },
+                y: { beginAtZero: true, ticks: { color: '#94a3b8', precision: 0 }, grid: { color: 'rgba(148,163,184,.12)' } }
+            }
+        }
+    });
+    var toggle = document.getElementById('toggleVendasReag');
+    if (toggle) {
+        toggle.addEventListener('change', function() {
+            chart.setDatasetVisibility(1, this.checked);
+            chart.update();
+        });
+    }
+}
 document.addEventListener('DOMContentLoaded', function() {
+    buildReagLineChart();
     buildBlackoutCalendar();
     updateDispatchPreview();
     var time = document.querySelector('[name="reagendar_live_time"]');
