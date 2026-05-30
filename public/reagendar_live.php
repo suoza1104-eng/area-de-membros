@@ -52,13 +52,32 @@ function rl_find_user(PDO $pdo, ?string $email, ?string $telefone): ?array {
     return null;
 }
 
+$tokenGet = trim((string)($_GET['t'] ?? ''));
 $emailGet = isset($_GET['email']) ? (string)$_GET['email'] : null;
 $telGet = isset($_GET['telefone']) ? (string)$_GET['telefone'] : (isset($_GET['tel']) ? (string)$_GET['tel'] : null);
 $user = null;
 $modo = 'guest';
 try {
     $alunoIdSess = (int)($_SESSION['aluno_id'] ?? 0);
-    if ($alunoIdSess > 0) {
+    if ($tokenGet !== '') {
+        $st = $pdo->prepare("SELECT t.id AS token_id, t.user_id, u.* FROM live_reschedule_tokens t
+            INNER JOIN users u ON u.id = t.user_id
+            WHERE t.token = :token
+              AND t.used_at IS NULL
+              AND t.expires_at >= NOW()
+            LIMIT 1");
+        $st->execute([':token' => $tokenGet]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            header('Location: login.php?erro=reagendar_link_invalido');
+            exit;
+        }
+        $_SESSION['reagendar_guest_uid'] = (int)$row['user_id'];
+        $_SESSION['reagendar_guest_exp'] = time() + 2 * 3600;
+        $_SESSION['reagendar_token_id'] = (int)$row['token_id'];
+        $user = $row;
+        $modo = 'token';
+    } elseif ($alunoIdSess > 0) {
         $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
         $st->execute([':id' => $alunoIdSess]);
         $user = $st->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -136,7 +155,7 @@ $alunoNome = (string)($user['nome'] ?? 'Aluno');
 <title><?= rl_h($courseTitle) ?> - Reagendar Live</title>
 <style>
 :root{--bg:<?= rl_h($bgColor) ?>;--card:#020617;--line:#1f2937;--text:#e5e7eb;--muted:#94a3b8;--primary:<?= rl_h($primary) ?>;--danger:#ef4444;--ok:#22c55e}
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}.wrap{max-width:1120px;margin:0 auto;padding:16px}.top,.card{border:1px solid var(--line);border-radius:16px;background:rgba(2,6,23,.82)}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px}.brand{display:flex;align-items:center;gap:10px;min-width:0}.logo{width:42px;height:42px;border-radius:999px;background:#0b1220;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden}.logo img{width:100%;height:100%;object-fit:cover}.t1{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.t2,.muted{font-size:12px;color:var(--muted)}.badge{border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted);font-size:12px}.card{margin-top:14px;padding:14px}h1{margin:0 0 6px;font-size:20px}p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.grid{margin-top:14px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}.dow{text-align:center;color:var(--muted);font-size:11px;padding:6px 0}.day{border:1px solid var(--line);border-radius:14px;min-height:92px;background:#0b1220;padding:10px;display:flex;flex-direction:column;gap:6px}.day.available{border-color:rgba(34,197,94,.42);cursor:pointer;box-shadow:0 0 0 1px rgba(34,197,94,.12) inset}.day.blocked{opacity:.55}.n{font-weight:800}.pill{width:max-content;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:11px}.pill.ok{color:#bbf7d0;border-color:rgba(34,197,94,.4)}.pill.no{color:#fecaca;border-color:rgba(239,68,68,.35)}.btn{border:0;border-radius:12px;padding:10px 12px;background:var(--primary);color:#111827;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}.btn.secondary{background:transparent;color:var(--text);border:1px solid var(--line)}.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.58);display:none;align-items:center;justify-content:center;padding:18px;z-index:99}.modal{width:min(520px,100%);background:#0b1220;border:1px solid var(--line);border-radius:16px;padding:16px}.times{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.time-btn{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer;font-weight:800}.actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}.hint{font-size:12px;color:var(--muted);margin-top:10px}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(0,0,0,.25);border-top-color:#111827;display:none;animation:spin .8s linear infinite}.loading .spinner{display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:720px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.dow{display:none}.top{align-items:flex-start;flex-direction:column}.btn{width:100%}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}.wrap{max-width:1120px;margin:0 auto;padding:16px}.top,.card{border:1px solid var(--line);border-radius:16px;background:rgba(2,6,23,.82)}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px}.brand{display:flex;align-items:center;gap:10px;min-width:0}.logo{width:42px;height:42px;border-radius:999px;background:#0b1220;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden}.logo img{width:100%;height:100%;object-fit:cover}.t1{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.t2,.muted{font-size:12px;color:var(--muted)}.badge{border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted);font-size:12px}.card{margin-top:14px;padding:14px}h1{margin:0 0 6px;font-size:20px}p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.grid{margin-top:14px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}.dow{text-align:center;color:var(--muted);font-size:11px;padding:6px 0}.day{border:1px solid var(--line);border-radius:14px;min-height:92px;background:#0b1220;padding:10px;display:flex;flex-direction:column;gap:6px}.day.first{grid-column-start:var(--start-col)}.day.available{border-color:rgba(34,197,94,.42);cursor:pointer;box-shadow:0 0 0 1px rgba(34,197,94,.12) inset}.day.blocked{opacity:.55}.n{font-weight:800}.pill{width:max-content;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:11px}.pill.ok{color:#bbf7d0;border-color:rgba(34,197,94,.4)}.pill.no{color:#fecaca;border-color:rgba(239,68,68,.35)}.btn{border:0;border-radius:12px;padding:10px 12px;background:var(--primary);color:#111827;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}.btn.secondary{background:transparent;color:var(--text);border:1px solid var(--line)}.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.58);display:none;align-items:center;justify-content:center;padding:18px;z-index:99}.modal{width:min(520px,100%);background:#0b1220;border:1px solid var(--line);border-radius:16px;padding:16px}.times{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.time-btn{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer;font-weight:800}.actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}.hint{font-size:12px;color:var(--muted);margin-top:10px}.spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(0,0,0,.25);border-top-color:#111827;display:none;animation:spin .8s linear infinite}.loading .spinner{display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:720px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.dow{display:none}.day.first{grid-column-start:auto}.top{align-items:flex-start;flex-direction:column}.btn{width:100%}}
 </style>
 </head>
 <body>
@@ -154,8 +173,9 @@ $alunoNome = (string)($user['nome'] ?? 'Aluno');
     <?php if ($liveUrl !== ''): ?><p style="margin-top:6px">Link da live: <strong><?= rl_h($liveUrl) ?></strong></p><?php endif; ?>
     <div class="grid">
       <?php foreach (['Dom','Seg','Ter','Qua','Qui','Sex','Sab'] as $dow): ?><div class="dow"><?= rl_h($dow) ?></div><?php endforeach; ?>
-      <?php foreach ($days as $day): $d=$day['d']; $items=$day['items']; $cls='day' . ($day['has'] ? ' available' : '') . ($day['blocked'] ? ' blocked' : ''); ?>
-      <div class="<?= rl_h($cls) ?>" data-items="<?= $day['has'] ? rl_h(json_encode($items, JSON_UNESCAPED_UNICODE)) : '' ?>">
+      <?php $dayIndex = 0; ?>
+      <?php foreach ($days as $day): $d=$day['d']; $items=$day['items']; $cls='day' . ($dayIndex === 0 ? ' first' : '') . ($day['has'] ? ' available' : '') . ($day['blocked'] ? ' blocked' : ''); $style = $dayIndex === 0 ? ' style="--start-col:' . ((int)$d->format('w') + 1) . '"' : ''; $dayIndex++; ?>
+      <div class="<?= rl_h($cls) ?>"<?= $style ?> data-items="<?= $day['has'] ? rl_h(json_encode($items, JSON_UNESCAPED_UNICODE)) : '' ?>">
         <div class="n"><?= rl_h($d->format('d/m/y')) ?></div>
         <?php if ($day['has']): ?><div class="pill ok">Liberada</div><div class="muted"><?= rl_h($liveTime) ?></div>
         <?php elseif ($day['blocked']): ?><div class="pill no">Indisponivel</div><div class="muted">Sem repescagem</div>

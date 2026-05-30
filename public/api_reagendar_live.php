@@ -191,6 +191,12 @@ try {
             ':wh' => null,
         ]);
     $histId = (int)$pdo->lastInsertId();
+    $tokenId = (int)($_SESSION['reagendar_token_id'] ?? 0);
+    if ($tokenId > 0) {
+        $pdo->prepare("UPDATE live_reschedule_tokens SET used_at = COALESCE(used_at, NOW()) WHERE id = :id AND user_id = :user_id")
+            ->execute([':id' => $tokenId, ':user_id' => $alunoId]);
+        unset($_SESSION['reagendar_token_id']);
+    }
     $pdo->commit();
 
     $extra = [
