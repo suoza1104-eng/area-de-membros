@@ -124,7 +124,6 @@ $ttlHours = (int)get_setting('reagendar_token_ttl_hours', '72');
 if ($ttlHours < 1) $ttlHours = 72;
 $windowDays = (int)get_setting('reagendar_window_days', '15');
 if ($windowDays < 1) $windowDays = 15;
-$webhookUrl = (string)get_setting('reagendar_webhook_url', '');
 $liveUrl = (string)get_setting('reagendar_live_url', '');
 $liveTime = (string)get_setting('reagendar_live_time', '19:30');
 if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
@@ -151,7 +150,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($windowDays < 1) $windowDays = 1;
             if ($windowDays > 365) $windowDays = 365;
 
-            $webhookUrl = trim((string)($_POST['reagendar_webhook_url'] ?? ''));
             $liveUrl = trim((string)($_POST['reagendar_live_url'] ?? ''));
             $liveTime = trim((string)($_POST['reagendar_live_time'] ?? '19:30'));
             if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
@@ -167,7 +165,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             set_setting('reagendar_next_lives_count', (string)$opcoesN);
             set_setting('reagendar_token_ttl_hours', (string)$ttlHours);
             set_setting('reagendar_window_days', (string)$windowDays);
-            set_setting('reagendar_webhook_url', $webhookUrl);
             set_setting('reagendar_live_url', $liveUrl);
             set_setting('reagendar_live_time', $liveTime);
             set_setting('reagendar_blackout_dates', implode(',', $blackoutDates));
@@ -198,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=:id LIMIT 1')->execute($params);
             $pdo->prepare("INSERT INTO reagendamentos_live (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
                 VALUES (:u,:oc,:nc,:ol,:nl,'reagendado',:url,:sf,:delay,:ip,:ua,:wh,NOW())")
-                ->execute([':u'=>$userId, ':oc'=>$oldCodigo ?: null, ':nc'=>$oldCodigo ?: null, ':ol'=>$oldLive ?: null, ':nl'=>$newLive, ':url'=>$liveUrl ?: null, ':sf'=>$dispatchAt, ':delay'=>$dispatchDelayMs, ':ip'=>$_SERVER['REMOTE_ADDR'] ?? null, ':ua'=>'admin_manual', ':wh'=>$webhookUrl ?: null]);
+                ->execute([':u'=>$userId, ':oc'=>$oldCodigo ?: null, ':nc'=>$oldCodigo ?: null, ':ol'=>$oldLive ?: null, ':nl'=>$newLive, ':url'=>$liveUrl ?: null, ':sf'=>$dispatchAt, ':delay'=>$dispatchDelayMs, ':ip'=>$_SERVER['REMOTE_ADDR'] ?? null, ':ua'=>'admin_manual', ':wh'=>null]);
             $histId = (int)$pdo->lastInsertId();
             $pdo->commit();
             disparar_webhooks('LIVE_REAGENDADA', $userId, [
@@ -561,11 +558,6 @@ require __DIR__ . '/_header.php';
                     <input type="hidden" id="blackoutDates" name="reagendar_blackout_dates" value="<?= h(implode(',', $blackoutDates)) ?>">
                     <div id="blackoutCalendar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px"></div>
                     <div class="text-xs text-muted mt-2">Desmarque os dias em que nao havera live de repescagem.</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Webhook ao reagendar</label>
-                    <input type="url" name="reagendar_webhook_url" value="<?= h($webhookUrl) ?>" placeholder="https://...">
-                    <div class="text-xs text-muted mt-2">Chamado quando o aluno confirma nova turma/live.</div>
                 </div>
                 <button class="btn btn-primary">Salvar configuracoes</button>
             </form>

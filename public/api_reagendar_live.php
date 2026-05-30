@@ -153,7 +153,6 @@ try {
     $oldCodigo = (string)($user['codigo_turma'] ?? ($user['turma_codigo'] ?? ''));
     $oldLiveAt = (string)($user['turma_live_at'] ?? ($user['data_live'] ?? ''));
     $liveUrl = trim((string)rl_get_setting_db($pdo, 'reagendar_live_url', ''));
-    $webhookUrl = trim((string)rl_get_setting_db($pdo, 'reagendar_webhook_url', ''));
     $offsetMin = (int)rl_get_setting_db($pdo, 'reagendar_dispatch_offset_min', '0');
     $delayMs = (int)rl_get_setting_db($pdo, 'reagendar_dispatch_delay_ms', '500');
     if ($delayMs < 0) $delayMs = 0;
@@ -189,7 +188,7 @@ try {
             ':delay' => $delayMs,
             ':ip' => $_SERVER['REMOTE_ADDR'] ?? null,
             ':ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250),
-            ':wh' => $webhookUrl !== '' ? $webhookUrl : null,
+            ':wh' => null,
         ]);
     $histId = (int)$pdo->lastInsertId();
     $pdo->commit();
