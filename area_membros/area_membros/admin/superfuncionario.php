@@ -395,7 +395,7 @@ include __DIR__ . '/_header.php';
         --purple:  #a855f7;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    .sf-wrap { max-width: 1320px; margin: 36px auto; padding: 0 24px 60px; }
+    .sf-wrap { width: 100%; max-width: none; margin: 24px 0 0; padding: 0 16px 60px; overflow-x: hidden; }
 
     .page-header { margin-bottom: 28px; }
     .page-header h1 { font-size: 26px; font-weight: 700; margin: 0 0 4px; }
@@ -408,6 +408,8 @@ include __DIR__ . '/_header.php';
         box-shadow: 0 8px 32px rgba(0,0,0,.4);
         padding: 22px 26px;
         margin-bottom: 22px;
+        min-width: 0;
+        overflow: hidden;
     }
     .card-header {
         display: flex; align-items: center; gap: 10px;
@@ -427,7 +429,8 @@ include __DIR__ . '/_header.php';
     .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
     .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
 
-    .grid-2 { display: grid; grid-template-columns: minmax(460px, 540px) minmax(0, 1fr); gap: 28px; align-items: start; }
+    .grid-2 { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; align-items: start; }
+    .grid-2 > * { min-width: 0; }
     @media(max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
 
     label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
@@ -558,9 +561,11 @@ include __DIR__ . '/_header.php';
     .btnx:hover { background: rgba(239,68,68,.12); color: #fca5a5; border-color: rgba(239,68,68,.3); }
 
     /* logs */
-    .log-table { width: 100%; border-collapse: collapse; }
-    .log-table th, .log-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 12px; text-align: left; vertical-align: top; color: var(--text); }
+    .log-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .log-table th, .log-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 12px; text-align: left; vertical-align: top; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
     .log-table th { color: var(--muted); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .log-table td:last-child { overflow: visible; white-space: normal; }
+    .live-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-start; }
     .log-ok   { color: #4ade80; }
     .log-fail { color: #f87171; }
 
@@ -1118,7 +1123,7 @@ include __DIR__ . '/_header.php';
                 <?php if (empty($sfTurmasList)): ?>
                     <div class="empty-state">Nenhuma turma cadastrada. <a href="turmas.php">Cadastrar turma</a>.</div>
                 <?php else: ?>
-                <div style="overflow-x:auto;">
+                <div>
                 <table class="log-table">
                     <thead>
                     <tr>
@@ -1155,9 +1160,11 @@ include __DIR__ . '/_header.php';
                                     <?= $stlDisp ? '● Sim' : '○ Não' ?>
                                 </span>
                             </td>
-                            <td style="white-space:nowrap;">
+                            <td>
+                                <div class="live-actions">
                                 <a href="?sf_edit=<?= (int)$stl['id'] ?>" class="btn ghost sm">⚙️</a>
                                 <a href="turmas.php?reset_disparo=<?= (int)$stl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')" title="Resetar">↺</a>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>

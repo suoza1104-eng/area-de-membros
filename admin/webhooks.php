@@ -177,7 +177,7 @@ include __DIR__ . '/_header.php';
         --purple:  #a855f7;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    .wh-wrap { max-width: 1320px; margin: 36px auto; padding: 0 24px 60px; }
+    .wh-wrap { width: 100%; max-width: none; margin: 24px 0 0; padding: 0 16px 60px; overflow-x: hidden; }
 
     .page-header { margin-bottom: 28px; }
     .page-header h1 { font-size: 26px; font-weight: 700; margin: 0 0 4px; }
@@ -190,6 +190,8 @@ include __DIR__ . '/_header.php';
         box-shadow: 0 8px 32px rgba(0,0,0,.4);
         padding: 22px 26px;
         margin-bottom: 22px;
+        min-width: 0;
+        overflow: hidden;
     }
     .card-header {
         display: flex; align-items: center; gap: 10px;
@@ -207,7 +209,8 @@ include __DIR__ . '/_header.php';
     .card-header-text h2 { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
     .card-header-text p  { font-size: 12px; color: var(--muted); margin: 0; }
 
-    .grid-2 { display: grid; grid-template-columns: minmax(460px, 540px) minmax(0, 1fr); gap: 28px; align-items: start; }
+    .grid-2 { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; align-items: start; }
+    .grid-2 > * { min-width: 0; }
     @media(max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
 
     label.lbl { font-size: 12px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
@@ -328,6 +331,10 @@ include __DIR__ . '/_header.php';
     .badge-off { background: rgba(100,116,139,.1); color: #94a3b8; border: 1px solid rgba(100,116,139,.3); }
     .badge-method { background: rgba(59,130,246,.1); color: #93c5fd; border: 1px solid rgba(59,130,246,.3); }
     .wh-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+    .live-table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+    .live-table th, .live-table td { overflow:hidden; text-overflow:ellipsis; }
+    .live-table td:last-child { overflow:visible; white-space:normal!important; }
+    .live-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-start; }
 
     .empty-state {
         text-align: center; padding: 32px; color: var(--muted);
@@ -687,8 +694,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 <?php if (empty($turmasList)): ?>
                     <div class="empty-state">Nenhuma turma cadastrada ainda. <a href="turmas.php">Cadastrar turma</a>.</div>
                 <?php else: ?>
-                <div style="overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <div>
+                <table class="live-table">
                     <thead>
                     <tr>
                         <th style="padding:8px 6px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Turma</th>
@@ -729,9 +736,11 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <span class="badge badge-off">Não</span>
                                 <?php endif; ?>
                             </td>
-                            <td style="padding:8px 6px;white-space:nowrap;">
+                            <td style="padding:8px 6px;">
+                                <div class="live-actions">
                                 <a href="?live_edit=<?= (int)$tl['id'] ?>" class="btn ghost sm">⚙️ Configurar</a>
                                 <a href="turmas.php?reset_disparo=<?= (int)$tl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')">↺ Resetar</a>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
