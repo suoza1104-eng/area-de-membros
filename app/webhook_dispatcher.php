@@ -260,7 +260,9 @@ function enviar_webhook_http(
         CURLOPT_URL            => $url,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_CONNECTTIMEOUT => 5,   // limita a fase de conexao (destino inacessivel)
+        CURLOPT_TIMEOUT        => 15,  // limite total da requisicao
+        CURLOPT_NOSIGNAL       => 1,   // garante que os timeouts sejam respeitados
         CURLOPT_HTTPHEADER     => $headers,
     ]);
 

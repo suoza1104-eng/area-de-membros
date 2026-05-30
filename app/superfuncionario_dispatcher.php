@@ -295,7 +295,9 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER     => $hdr,
         CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_CONNECTTIMEOUT => 5,   // limita a fase de conexao
         CURLOPT_TIMEOUT        => $timeoutSeconds,
+        CURLOPT_NOSIGNAL       => 1,   // garante que os timeouts sejam respeitados
     ]);
 
     $resp = curl_exec($ch);

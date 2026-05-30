@@ -71,10 +71,26 @@ function getPDO(): PDO
     if ($pdo === null) {
         $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
 
-        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
+        $opts = [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
+            // Evita que uma conexao lenta com o banco remoto trave a pagina
+            // por minutos (o TCP connect padrao no Linux pode chegar a ~127s).
+            PDO::ATTR_TIMEOUT            => 5,
+        ];
+
+        // Tenta conectar com 1 retry rapido para hiccups de rede transitorios.
+        $tentativas = 0;
+        while (true) {
+            try {
+                $pdo = new PDO($dsn, DB_USER, DB_PASS, $opts);
+                break;
+            } catch (PDOException $e) {
+                $tentativas++;
+                if ($tentativas >= 2) throw $e;
+                usleep(300000); // 0,3s antes de tentar de novo
+            }
+        }
     }
 
     return $pdo;
