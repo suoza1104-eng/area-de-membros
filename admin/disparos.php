@@ -104,7 +104,10 @@ if ($acao !== '') {
                 case 'tag_sistema':
                     if (!empty($regra['valor'])) {
                         $pk = $nextP();
-                        $incClauses[] = "EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)";
+                        $incClauses[] = "(
+                            EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)
+                            OR EXISTS(SELECT 1 FROM user_tags utS JOIN tags tS ON tS.id = utS.tag_id WHERE utS.user_id = u.id AND tS.nome = $pk)
+                        )";
                         $params[$pk] = $regra['valor'];
                     }
                     break;
@@ -186,7 +189,10 @@ if ($acao !== '') {
                 case 'tag_sistema':
                     if (!empty($regra['valor'])) {
                         $pk = $nextP();
-                        $excClauses[] = "EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)";
+                        $excClauses[] = "(
+                            EXISTS(SELECT 1 FROM user_tags_sistema uts WHERE uts.user_id = u.id AND uts.tag = $pk)
+                            OR EXISTS(SELECT 1 FROM user_tags utS JOIN tags tS ON tS.id = utS.tag_id WHERE utS.user_id = u.id AND tS.nome = $pk)
+                        )";
                         $params[$pk] = $regra['valor'];
                     }
                     break;
@@ -516,7 +522,12 @@ try {
 
 $tagsSistema = [];
 try {
-    $tagsSistema = $pdo->query("SELECT DISTINCT tag FROM user_tags_sistema ORDER BY tag ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $tagsSistema = $pdo->query("
+        SELECT tag AS nome FROM user_tags_sistema
+        UNION
+        SELECT nome FROM tags
+        ORDER BY nome ASC
+    ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 } catch (Throwable $e) {}
 
 $currentMenu = 'disparos';
