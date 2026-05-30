@@ -303,7 +303,21 @@ $eventExpr = function(string $tipo): string {
 };
 $exprAcessou = $liveEventsReady ? $eventExpr('acessou') : '0';
 $exprOferta = $liveEventsReady ? $eventExpr('oferta') : '0';
-$exprCompra = $liveEventsReady ? $eventExpr('compra') : '0';
+$hotmartSalesReady = rl_table_exists($pdo, 'hotmart_sales')
+    && rl_col_exists($pdo, 'hotmart_sales', 'matched_user_id')
+    && rl_col_exists($pdo, 'hotmart_sales', 'status')
+    && rl_col_exists($pdo, 'hotmart_sales', 'transaction_date');
+$exprCompra = $hotmartSalesReady
+    ? "EXISTS (
+        SELECT 1
+        FROM hotmart_sales s
+        WHERE s.matched_user_id = r.user_id
+          AND s.status IN ('Aprovado','Completo')
+          AND s.transaction_date IS NOT NULL
+          AND s.transaction_date >= r.created_at
+        LIMIT 1
+    )"
+    : '0';
 
 try {
     $st = $pdo->prepare("SELECT
@@ -451,7 +465,7 @@ try {
 require __DIR__ . '/_header.php';
 ?>
 <style>
-.rl-grid { display:grid; grid-template-columns:1.05fr .95fr; gap:16px; align-items:start; }
+.rl-grid { display:grid; grid-template-columns:1fr; gap:16px; align-items:start; }
 @media(max-width:1100px){ .rl-grid{grid-template-columns:1fr;} }
 .rl-status { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
 .rl-status.ativo { background:var(--success-dim); color:#86efac; }
@@ -535,7 +549,7 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-y"><div class="kpi-label">Reagendamentos</div><div class="kpi-value"><?= number_format($kpiReagFiltrados, 0, ',', '.') ?></div><div class="kpi-sub"><?= number_format($kpiReagTotal, 0, ',', '.') ?> total · <?= number_format($kpiReag7, 0, ',', '.') ?> em 7 dias</div></div>
     <div class="kpi kpi-b"><div class="kpi-label">Taxa de entrada</div><div class="kpi-value"><?= h(rl_pct($kpiEntrada, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiEntrada, 0, ',', '.') ?> acessaram a live</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Taxa ate oferta</div><div class="kpi-value"><?= h(rl_pct($kpiOferta, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiOferta, 0, ',', '.') ?> ficaram ate a oferta</div></div>
-    <div class="kpi kpi-g"><div class="kpi-label">Conversao venda</div><div class="kpi-value"><?= h(rl_pct($kpiVenda, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiVenda, 0, ',', '.') ?> evento(s) de compra</div></div>
+    <div class="kpi kpi-g"><div class="kpi-label">Conversao venda</div><div class="kpi-value"><?= h(rl_pct($kpiVenda, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiVenda, 0, ',', '.') ?> venda(s) Hotmart</div></div>
     <div class="kpi"><div class="kpi-label">Frequencia</div><div class="kpi-value"><?= number_format($kpiMaiorFreq, 0, ',', '.') ?>x</div><div class="kpi-sub"><?= number_format($kpiAlunosUnicos, 0, ',', '.') ?> aluno(s) no filtro</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Lives disponiveis</div><div class="kpi-value"><?= number_format($kpiLivesDisponiveis, 0, ',', '.') ?></div><div class="kpi-sub">janela de <?= (int)$windowDays ?> dia(s)</div></div>
 </div>

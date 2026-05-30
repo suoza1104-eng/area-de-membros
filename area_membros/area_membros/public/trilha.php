@@ -7,48 +7,50 @@ require_once __DIR__ . '/../app/funcoes.php';
 proteger_aluno();
 $pdo = getPDO();
 
-// ========== Carrega dados do aluno ==========
 $alunoId = (int)($_SESSION['aluno_id'] ?? 0);
 if ($alunoId <= 0) {
     header('Location: index.php');
     exit;
 }
 
-// Dados básicos a partir da sessão
-$alunoNome    = (string)($_SESSION['aluno_nome']   ?? 'Aluno');
-$turmaCodigo  = (string)($_SESSION['turma_codigo'] ?? '');
-
-// Refina dados com base na tabela users (turma_codigo + turma_live_at)
+$alunoNome   = (string)($_SESSION['aluno_nome']   ?? 'Aluno');
+$turmaCodigo = (string)($_SESSION['turma_codigo'] ?? '');
 $turmaLiveAt = null;
+$liveAcessada = false;
+
 try {
-    $stUser = $pdo->prepare("SELECT turma_codigo, turma_live_at FROM users WHERE id = :id LIMIT 1");
+    $stUser = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
     $stUser->execute(['id' => $alunoId]);
     if ($rowUser = $stUser->fetch(PDO::FETCH_ASSOC)) {
+        if (!empty($rowUser['nome'])) {
+            $alunoNome = (string)$rowUser['nome'];
+            $_SESSION['aluno_nome'] = $alunoNome;
+        }
         if (!empty($rowUser['turma_codigo']) && $turmaCodigo === '') {
             $turmaCodigo = (string)$rowUser['turma_codigo'];
+        } elseif (!empty($rowUser['codigo_turma']) && $turmaCodigo === '') {
+            $turmaCodigo = (string)$rowUser['codigo_turma'];
         }
         if (!empty($rowUser['turma_live_at'])) {
             $turmaLiveAt = (string)$rowUser['turma_live_at'];
+        } elseif (!empty($rowUser['data_live'])) {
+            $turmaLiveAt = (string)$rowUser['data_live'];
         }
     }
-} catch (Throwable $e) {
-    // Se der erro nessa consulta, seguimos só com os dados de sessão
-}
+} catch (Throwable $e) {}
 
-$aluno = [
-    'id'           => $alunoId,
-    'nome'         => $alunoNome,
-    'turma_codigo' => $turmaCodigo,
-];
+// Usa sÃ³ o primeiro nome no cabeÃ§alho (mais pessoal)
+$primeiroNome = trim((string)preg_split('/\s+/', trim($alunoNome))[0] ?? '');
+if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
-// ========== Config da aplicação (título do curso, logo etc.) ==========
+$aluno = ['id' => $alunoId, 'nome' => $alunoNome, 'turma_codigo' => $turmaCodigo];
+
 $cfgStmt = $pdo->query("SELECT * FROM app_config LIMIT 1");
-$appCfg = $cfgStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-$courseTitle = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
-$logoUrl     = $appCfg['logo_url']     ?? '';
+$appCfg  = $cfgStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+$courseTitle     = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
+$logoUrl         = $appCfg['logo_url']     ?? '';
 $whatsappHelpUrl = get_setting('whatsapp_help_url', '');
 
-// ========== Aulas e progresso ==========
 $stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
 $lessons   = $stLessons->fetchAll(PDO::FETCH_ASSOC);
 
@@ -61,72 +63,77 @@ foreach ($rowsProg as $r) {
     $mapStatus[(int)$r['lesson_id']] = $r['status'];
 }
 
-// Conta obrigatórias / concluídas
 $totalObrigatorias = 0;
 $totalConcluidas   = 0;
 foreach ($lessons as $ls) {
-    // No seu banco o campo é conta_para_conclusao
     $obrig = (int)($ls['conta_para_conclusao'] ?? 1);
     if ($obrig === 1) {
         $totalObrigatorias++;
-        $st = $mapStatus[(int)$ls['id']] ?? 'pending';
-        if ($st === 'completed') {
+        if (($mapStatus[(int)$ls['id']] ?? 'pending') === 'completed') {
             $totalConcluidas++;
         }
     }
 }
-$percent = $totalObrigatorias > 0
-    ? (int)round(($totalConcluidas / $totalObrigatorias) * 100)
-    : 0;
+$percent          = $totalObrigatorias > 0 ? (int)round(($totalConcluidas / $totalObrigatorias) * 100) : 0;
 $temTudoConcluido = ($totalObrigatorias > 0 && $totalObrigatorias === $totalConcluidas);
 
-// ========== Cursos recomendados (pagos) ==========
 try {
-    $stRec = $pdo->query("SELECT * FROM recommended_courses WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
+    $stRec     = $pdo->query("SELECT * FROM recommended_courses WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
     $cursosRec = $stRec->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     $cursosRec = [];
 }
 
-// ========== Live da turma do aluno ==========
-$liveDataIso   = null;
-$liveDataBr    = null;
+$liveDataIso = null;
+$liveDataBr  = null;
+$liveIsPast = false;
+$liveExpiredMissed = false;
 
-// 1º: se existir turma_live_at no próprio usuário, usamos ela
 if (!empty($turmaLiveAt)) {
     try {
         $dtLive = new DateTime($turmaLiveAt);
         $now    = new DateTime('now');
-        if ($dtLive > $now) {
-            $liveDataIso   = $dtLive->format('Y-m-d H:i:s');
-            $liveDataBr    = $dtLive->format('d/m/Y H:i');
-        }
-    } catch (Throwable $e) {
-        // Se der erro no parse da data, ignora
-    }
+        $liveDataIso = $dtLive->format('Y-m-d H:i:s');
+        $liveDataBr  = $dtLive->format('d/m/Y H:i');
+        $liveIsPast = $dtLive <= $now;
+    } catch (Throwable $e) {}
 }
 
-// 2º: se não houver turma_live_at mas houver turma_codigo, busca na tabela turmas
 if (!$liveDataIso && $turmaCodigo !== '') {
     try {
         $stTurma = $pdo->prepare("SELECT * FROM turmas WHERE codigo = :cod LIMIT 1");
         $stTurma->execute(['cod' => $turmaCodigo]);
         $turma = $stTurma->fetch(PDO::FETCH_ASSOC);
-
         if ($turma && !empty($turma['data_live'])) {
             $dtLive = new DateTime($turma['data_live']);
             $now    = new DateTime('now');
-            if ($dtLive > $now) {
-                $liveDataIso   = $dtLive->format('Y-m-d H:i:s');
-                $liveDataBr    = $dtLive->format('d/m/Y H:i');
-            }
+            $liveDataIso = $dtLive->format('Y-m-d H:i:s');
+            $liveDataBr  = $dtLive->format('d/m/Y H:i');
+            $liveIsPast = $dtLive <= $now;
         }
-    } catch (Throwable $e) {
-        // sem banner se der erro
-    }
+    } catch (Throwable $e) {}
 }
 
-// helper de escape
+if ($liveDataIso && $liveIsPast) {
+    try {
+        $stAcesso = $pdo->prepare("
+            SELECT 1
+            FROM live_event_recebimentos ler
+            JOIN live_events le ON le.id = ler.event_id
+            WHERE ler.user_id = :uid
+              AND ler.status = 'processado'
+              AND le.tipo = 'acessou'
+              AND COALESCE(ler.processado_em, ler.recebido_em) >= :live_at
+            LIMIT 1
+        ");
+        $stAcesso->execute([':uid' => $alunoId, ':live_at' => $liveDataIso]);
+        $liveAcessada = (bool)$stAcesso->fetchColumn();
+    } catch (Throwable $e) {
+        $liveAcessada = false;
+    }
+    $liveExpiredMissed = !$liveAcessada;
+}
+
 function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
@@ -143,6 +150,8 @@ function h(string $v): string {
 
         :root {
             --header-height: 64px;
+            --border-subtle: #1f2937;
+            --text-muted:    #9ca3af;
         }
 
         * {
@@ -258,6 +267,31 @@ function h(string $v): string {
         .live-text strong {
             font-weight: 700;
         }
+        .live-banner.live-missed {
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        .live-missed .live-dot {
+            animation: none;
+            background: #fee2e2;
+        }
+        .btn-reagendar-live {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            padding: 9px 14px;
+            background: #facc15;
+            color: #111827;
+            font-size: 13px;
+            font-weight: 800;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .btn-reagendar-live:hover {
+            filter: brightness(1.05);
+        }
 
         @keyframes pulse {
             0% { transform: scale(1);   box-shadow: 0 0 0 0 rgba(254,202,202,0.7); }
@@ -274,7 +308,7 @@ function h(string $v): string {
             margin-bottom: 16px;
         }
 
-        /* Cabeçalho de progresso + botão de certificado */
+        /* CabeÃ§alho de progresso + botÃ£o de certificado */
         .progress-header {
             display: grid;
             grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
@@ -346,19 +380,19 @@ function h(string $v): string {
             100% { transform: scale(1);   box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
         }
 
-        /* Seções */
+        /* SeÃ§Ãµes */
         .section-title {
             font-size: 16px;
             font-weight: 600;
             margin: 18px 2px 8px;
         }
 
-        /* Wrapper genérico de carrossel */
+        /* Wrapper genÃ©rico de carrossel */
         .carousel-wrapper {
             position: relative;
         }
 
-        /* Listas (carrosséis) */
+        /* Listas (carrossÃ©is) */
         .lessons-grid,
         .rec-list {
             display: flex;
@@ -426,7 +460,7 @@ width: 100%;
             height: 100%;
             object-fit: cover;
         }
-        
+
 
 /* Bloqueio de aulas (trilha) */
 .lesson-card.lesson-locked {
@@ -637,7 +671,7 @@ width: 100%;
             color:var(--text-muted);
         }
 
-        /* Botão flutuante de WhatsApp na trilha (estilo bolha com telefone) */
+        /* BotÃ£o flutuante de WhatsApp na trilha (estilo bolha com telefone) */
         .whatsapp-fab {
             position: fixed;
             right: 16px;
@@ -684,7 +718,7 @@ width: 100%;
         }
 
         /* Responsivo */
-        
+
 @media (max-width: 560px) {
     .lesson-card,
     .rec-card {
@@ -740,7 +774,7 @@ width: 100%;
             <div class="course-texts">
                 <div class="course-title"><?= h($courseTitle) ?></div>
                 <div class="course-sub">
-                    Bem-vindo, <?= h($aluno['nome'] ?? 'Aluno') ?>
+                    Bem-vindo, <strong><?= h($primeiroNome) ?></strong>
                 </div>
             </div>
         </div>
@@ -750,17 +784,32 @@ width: 100%;
     </header>
 
     <main class="content">
-        <?php if ($liveDataIso && $liveDataBr): ?>
+        <?php if ($liveDataIso && $liveDataBr && !$liveIsPast): ?>
             <div class="live-banner" id="live-banner">
                 <div class="live-dot"></div>
                 <div class="live-text" id="live-text">
                     <div class="live-line-primary">
-                        Sua aula ao vivo será: <strong><?= h($liveDataBr) ?></strong>
+                        Sua aula ao vivo serÃ¡: <strong><?= h($liveDataBr) ?></strong>
                     </div>
                     <div class="live-line-secondary" id="live-countdown-text">
-                        Faltam -- horas -- minutos -- segundos
+                        Faltam -- dias -- horas -- minutos -- segundos
                     </div>
                 </div>
+            </div>
+        <?php elseif ($liveExpiredMissed && $liveDataBr): ?>
+            <div class="live-banner live-missed">
+                <div style="display:flex;align-items:flex-start;gap:10px;min-width:0;">
+                    <div class="live-dot"></div>
+                    <div class="live-text">
+                        <div class="live-line-primary">
+                            Sua aula ao vivo foi realizada em <strong><?= h($liveDataBr) ?></strong>
+                        </div>
+                        <div class="live-line-secondary">
+                            Identificamos que vocÃƒÂª nÃƒÂ£o acessou a live. Escolha uma nova data para assistir a repescagem.
+                        </div>
+                    </div>
+                </div>
+                <a class="btn-reagendar-live" href="reagendar_live.php">Reagendar Live</a>
             </div>
         <?php endif; ?>
 
@@ -769,7 +818,7 @@ width: 100%;
                 <div>
                     <div class="progress-title">Progresso no treinamento</div>
                     <div class="progress-sub">
-                        Você concluiu <?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas obrigatórias (<?= $percent ?>%)
+                        VocÃª concluiu <?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas obrigatÃ³rias (<?= $percent ?>%)
                     </div>
                     <div class="progress-bar-outer">
                         <div class="progress-bar-inner"></div>
@@ -779,7 +828,7 @@ width: 100%;
                 <div style="text-align:right;">
                     <a href="certificado.php"
                        class="btn-certificado <?= $temTudoConcluido ? 'btn-certificado-pulse' : '' ?>">
-                        <span class="icon">🎓</span>
+                        <span class="icon">ðŸŽ“</span>
                         <span>Emitir Certificado</span>
                     </a>
                 </div>
@@ -794,7 +843,7 @@ width: 100%;
                     aria-label="Ver aulas anteriores">
                 <span>&lsaquo;</span>
             </button>
-            
+
 <section class="lessons-grid" id="lessons-carousel">
         <?php
         $allPrevCompleted = true;
@@ -805,8 +854,8 @@ width: 100%;
 
             // Regra de desbloqueio:
             // - Primeira aula sempre liberada
-            // - Próximas só liberam se TODAS as anteriores estiverem concluídas
-            // - Aulas já concluídas continuam acessíveis
+            // - PrÃ³ximas sÃ³ liberam se TODAS as anteriores estiverem concluÃ­das
+            // - Aulas jÃ¡ concluÃ­das continuam acessÃ­veis
             $isUnlocked = ($idx === 0) || $allPrevCompleted || $completed;
             $locked = !$isUnlocked;
 
@@ -825,7 +874,7 @@ width: 100%;
 
                     <?php if ($locked): ?>
                         <div class="lesson-locked-overlay" aria-hidden="true">
-                            <div class="lesson-locked-overlay-icon">🔒</div>
+                            <div class="lesson-locked-overlay-icon">ðŸ”’</div>
                             <div class="lesson-locked-overlay-text">Conclua a aula anterior para liberar</div>
                         </div>
                     <?php endif; ?>
@@ -836,7 +885,7 @@ width: 100%;
                         if ($locked) {
                             echo 'Bloqueada';
                         } else {
-                            echo $completed ? 'Concluída ✓' : 'Pendente';
+                            echo $completed ? 'ConcluÃ­da âœ“' : 'Pendente';
                         }
                         ?>
                     </span>
@@ -852,7 +901,7 @@ width: 100%;
                 </div>
             </article>
         <?php
-            // Após a primeira aula pendente, bloqueia o restante (sequencial).
+            // ApÃ³s a primeira aula pendente, bloqueia o restante (sequencial).
             $allPrevCompleted = $allPrevCompleted && $completed;
         endforeach;
         ?>
@@ -860,13 +909,13 @@ width: 100%;
             <button type="button"
                     class="carousel-arrow carousel-arrow-right"
                     data-target="lessons-carousel"
-                    aria-label="Ver próximas aulas">
+                    aria-label="Ver prÃ³ximas aulas">
                 <span>&rsaquo;</span>
             </button>
         </div>
 
         <?php if ($cursosRec): ?>
-            <h2 class="section-title"><?= h($appCfg['paid_courses_title'] ?? 'Conheça nossos cursos pagos') ?></h2>
+            <h2 class="section-title"><?= h($appCfg['paid_courses_title'] ?? 'ConheÃ§a nossos cursos pagos') ?></h2>
             <div class="carousel-wrapper">
                 <button type="button"
                         class="carousel-arrow carousel-arrow-left"
@@ -884,8 +933,8 @@ width: 100%;
                                     Sem imagem
                                 <?php endif; ?>
                                 <div class="rec-locked-overlay">
-                                    <div class="rec-locked-overlay-icon">🔒</div>
-                                    <div class="rec-locked-overlay-text">Este conteúdo não está disponível nesta área</div>
+                                    <div class="rec-locked-overlay-icon">ðŸ”’</div>
+                                    <div class="rec-locked-overlay-text">Este conteÃºdo nÃ£o estÃ¡ disponÃ­vel nesta Ã¡rea</div>
                                 </div>
                             </div>
                             <div class="rec-title"><?= h($c['titulo']) ?></div>
@@ -902,7 +951,7 @@ width: 100%;
                 <button type="button"
                         class="carousel-arrow carousel-arrow-right"
                         data-target="rec-carousel"
-                        aria-label="Ver próximos cursos">
+                        aria-label="Ver prÃ³ximos cursos">
                     <span>&rsaquo;</span>
                 </button>
             </div>
@@ -919,7 +968,7 @@ width: 100%;
    target="_blank" rel="noopener noreferrer"
    aria-label="Falar com suporte no WhatsApp">
     <span class="whatsapp-fab-icon" aria-hidden="true">
-        <!-- Ícone estilo WhatsApp (bolha verde com telefone branco) -->
+        <!-- Ãcone estilo WhatsApp (bolha verde com telefone branco) -->
         <svg viewBox="0 0 32 32">
             <circle cx="16" cy="16" r="15" fill="#ffffff"/>
             <circle cx="16" cy="16" r="13" fill="#25D366"/>
@@ -957,7 +1006,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }, { passive: false });
     });
 
-    // ====== AULAS: card inteiro clicável (respeitando bloqueio) ======
+    // ====== AULAS: card inteiro clicÃ¡vel (respeitando bloqueio) ======
     document.querySelectorAll('.lesson-card').forEach(function (card) {
         var locked = card.getAttribute('data-locked') === '1';
 
@@ -973,7 +1022,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         card.addEventListener('click', function (e) {
-            // não intercepta cliques em botões/links/inputs (inclui as setas do carrossel)
+            // nÃ£o intercepta cliques em botÃµes/links/inputs (inclui as setas do carrossel)
             if (e.target.closest('button, a, input, label, select, textarea')) return;
 
             if (locked) {
@@ -986,7 +1035,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // ====== CURSOS RECOMENDADOS: card inteiro clicável ======
+    // ====== CURSOS RECOMENDADOS: card inteiro clicÃ¡vel ======
     document.querySelectorAll('.rec-card').forEach(function (card) {
         var link = card.querySelector('a.btn-rec');
         if (!link) link = card.querySelector('a[href]');
@@ -1002,7 +1051,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 
-<?php if ($liveDataIso): ?>
+<?php if ($liveDataIso && !$liveIsPast): ?>
 <script>
 (function() {
     const target = new Date("<?= $liveDataIso ?>").getTime();
@@ -1021,16 +1070,18 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const totalSeconds = Math.floor(diff / 1000);
-        const totalHours   = Math.floor(totalSeconds / 3600);
+        const days         = Math.floor(totalSeconds / 86400);
+        const hours        = Math.floor((totalSeconds % 86400) / 3600);
         const mins         = Math.floor((totalSeconds % 3600) / 60);
         const secs         = totalSeconds % 60;
 
         if (elText) {
-            elText.textContent =
-                'Faltam ' +
-                totalHours.toString() + ' horas ' +
-                mins.toString().padStart(2,'0') + ' minutos ' +
-                secs.toString().padStart(2,'0') + ' segundos';
+            const parts = [];
+            if (days > 0) parts.push(days + ' ' + (days === 1 ? 'dia' : 'dias'));
+            parts.push(hours.toString().padStart(2,'0') + ' ' + (hours === 1 ? 'hora' : 'horas'));
+            parts.push(mins.toString().padStart(2,'0') + ' ' + (mins === 1 ? 'minuto' : 'minutos'));
+            parts.push(secs.toString().padStart(2,'0') + ' ' + (secs === 1 ? 'segundo' : 'segundos'));
+            elText.textContent = 'Faltam ' + parts.join(' ');
         }
     }
 

@@ -146,6 +146,9 @@ $eventHints = [
     'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
     'CERT_SENHA_ERRADA'  => 'Extras disponíveis: <code>extra.motivo</code> (valor: <code>senha_incorreta</code>)',
     'LIVE_TURMA'         => 'Extras disponíveis: <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
+    'LIVE_REAGENDADA'    => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>, <code>extra.reagendamento</code>',
+    'LIVE_REAGENDAMENTO_LEMBRETE' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
+    'LIVE_REAGENDAMENTO_EXPIRADO' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -696,6 +699,9 @@ include __DIR__ . '/_header.php';
                     'REENVIO_CERTIFICADO' => ['extra.pdf_url', 'extra.codigo_certificado', 'extra.curso', 'extra.emitido_em', 'extra.certificado_id', 'extra.origem'],
                     'CERT_SENHA_ERRADA' => ['extra.motivo'],
                     'LIVE_TURMA'        => ['extra.codigo_turma', 'extra.codigo_live', 'extra.data_live', 'extra.andamento', 'extra.aulas_concluidas', 'extra.aulas_totais'],
+                    'LIVE_REAGENDADA'   => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url', 'extra.reagendamento'],
+                    'LIVE_REAGENDAMENTO_LEMBRETE' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
+                    'LIVE_REAGENDAMENTO_EXPIRADO' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
                 ];
                 foreach ($payloadRef as $ev => $fields): ?>
                     <div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);">
@@ -788,6 +794,18 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="LIVE_TURMA">
                                         <strong>LIVE_TURMA <span class="ev-pill live">Live</span></strong>
                                         <em>Regra global: disparada para cada aluno da turma quando a data/hora de disparo chega.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_REAGENDADA">
+                                        <strong>LIVE_REAGENDADA <span class="ev-pill live">Live</span></strong>
+                                        <em>Disparado quando o aluno ou suporte confirma uma nova data de live de repescagem.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_REAGENDAMENTO_LEMBRETE">
+                                        <strong>LIVE_REAGENDAMENTO_LEMBRETE <span class="ev-pill live">Live</span></strong>
+                                        <em>Disparado pelo cron no horario configurado antes/depois da live reagendada.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="LIVE_REAGENDAMENTO_EXPIRADO">
+                                        <strong>LIVE_REAGENDAMENTO_EXPIRADO <span class="ev-pill live">Live</span></strong>
+                                        <em>Disparado quando a live reagendada passou e o aluno nao entrou.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="LIVE_ACESSOU">
                                         <strong>LIVE_ACESSOU <span class="ev-pill live">Live</span></strong>
