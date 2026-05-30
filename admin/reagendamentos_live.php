@@ -47,6 +47,20 @@ function rl_make_token_link(string $token): string {
     $publicBase = rtrim(dirname(BASE_URL_ADMIN, 1), '/');
     return $publicBase . '/public/reagendar_live.php?t=' . urlencode($token);
 }
+function rl_parse_offset_minutes(string $v): int {
+    $v = trim($v);
+    if ($v === '') return 0;
+    $sign = 1;
+    if ($v[0] === '-') { $sign = -1; $v = substr($v, 1); }
+    elseif ($v[0] === '+') { $v = substr($v, 1); }
+    if (!preg_match('/^(\d{1,3})(?::([0-5]\d))?$/', $v, $m)) return 0;
+    return $sign * (((int)$m[1] * 60) + (int)($m[2] ?? 0));
+}
+function rl_format_offset(int $minutes): string {
+    $sign = $minutes < 0 ? '-' : '';
+    $abs = abs($minutes);
+    return $sign . intdiv($abs, 60) . ':' . str_pad((string)($abs % 60), 2, '0', STR_PAD_LEFT);
+}
 
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS live_reschedule_tokens (
@@ -70,14 +84,32 @@ try {
         new_codigo_turma VARCHAR(80) NULL,
         old_turma_live_at DATETIME NULL,
         new_turma_live_at DATETIME NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'reagendado',
+        live_url TEXT NULL,
+        sf_disparo_at DATETIME NULL,
+        sf_delay_ms INT NOT NULL DEFAULT 500,
+        sf_sent_at DATETIME NULL,
+        expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
+        KEY idx_reag_live_status (status),
         KEY idx_reag_live_created (created_at),
-        KEY idx_reag_live_new_live (new_turma_live_at)
+        KEY idx_reag_live_new_live (new_turma_live_at),
+        KEY idx_reag_live_disparo (sf_disparo_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    foreach ([
+        "ALTER TABLE reagendamentos_live ADD COLUMN status VARCHAR(30) NOT NULL DEFAULT 'reagendado'",
+        "ALTER TABLE reagendamentos_live ADD COLUMN live_url TEXT NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN sf_disparo_at DATETIME NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN sf_delay_ms INT NOT NULL DEFAULT 500",
+        "ALTER TABLE reagendamentos_live ADD COLUMN sf_sent_at DATETIME NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN expired_checked_at DATETIME NULL",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
 } catch (Throwable $e) {
     // A tela continua carregando para exibir o erro nas acoes dependentes.
 }
@@ -93,6 +125,15 @@ if ($ttlHours < 1) $ttlHours = 72;
 $windowDays = (int)get_setting('reagendar_window_days', '15');
 if ($windowDays < 1) $windowDays = 15;
 $webhookUrl = (string)get_setting('reagendar_webhook_url', '');
+$liveUrl = (string)get_setting('reagendar_live_url', '');
+$liveTime = (string)get_setting('reagendar_live_time', '19:30');
+if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
+$blackoutRaw = (string)get_setting('reagendar_blackout_dates', '');
+$blackoutDates = array_values(array_filter(array_map('trim', explode(',', $blackoutRaw))));
+$dispatchOffsetMin = (int)get_setting('reagendar_dispatch_offset_min', '0');
+$dispatchOffsetText = rl_format_offset($dispatchOffsetMin);
+$dispatchDelayMs = (int)get_setting('reagendar_dispatch_delay_ms', '500');
+if ($dispatchDelayMs < 0) $dispatchDelayMs = 500;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
@@ -100,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'salvar_config') {
             $opcoesN = (int)($_POST['reagendar_opcoes_qtd'] ?? $opcoesN);
             if ($opcoesN < 1) $opcoesN = 1;
-            if ($opcoesN > 10) $opcoesN = 10;
+            if ($opcoesN > 30) $opcoesN = 30;
 
             $ttlHours = (int)($_POST['reagendar_token_ttl_hours'] ?? $ttlHours);
             if ($ttlHours < 1) $ttlHours = 1;
@@ -111,13 +152,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($windowDays > 365) $windowDays = 365;
 
             $webhookUrl = trim((string)($_POST['reagendar_webhook_url'] ?? ''));
+            $liveUrl = trim((string)($_POST['reagendar_live_url'] ?? ''));
+            $liveTime = trim((string)($_POST['reagendar_live_time'] ?? '19:30'));
+            if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
+            $blackoutDates = array_values(array_unique(array_filter(array_map('trim', explode(',', (string)($_POST['reagendar_blackout_dates'] ?? ''))))));
+            $dispatchOffsetText = trim((string)($_POST['reagendar_dispatch_offset'] ?? '0:00'));
+            $dispatchOffsetMin = rl_parse_offset_minutes($dispatchOffsetText);
+            $dispatchOffsetText = rl_format_offset($dispatchOffsetMin);
+            $dispatchDelayMs = (int)($_POST['reagendar_dispatch_delay_ms'] ?? 500);
+            if ($dispatchDelayMs < 0) $dispatchDelayMs = 0;
+            if ($dispatchDelayMs > 30000) $dispatchDelayMs = 30000;
 
             set_setting('reagendar_opcoes_qtd', (string)$opcoesN);
             set_setting('reagendar_next_lives_count', (string)$opcoesN);
             set_setting('reagendar_token_ttl_hours', (string)$ttlHours);
             set_setting('reagendar_window_days', (string)$windowDays);
             set_setting('reagendar_webhook_url', $webhookUrl);
+            set_setting('reagendar_live_url', $liveUrl);
+            set_setting('reagendar_live_time', $liveTime);
+            set_setting('reagendar_blackout_dates', implode(',', $blackoutDates));
+            set_setting('reagendar_dispatch_offset_min', (string)$dispatchOffsetMin);
+            set_setting('reagendar_dispatch_delay_ms', (string)$dispatchDelayMs);
             $msg = 'Configuracoes de reagendamento salvas.';
+        } elseif ($acao === 'manual_reagendar') {
+            $userId = (int)($_POST['user_id'] ?? 0);
+            $manualDt = trim((string)($_POST['manual_data_live'] ?? ''));
+            if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');
+            if ($manualDt === '') throw new RuntimeException('Informe a nova data/hora da live.');
+            $dLive = new DateTimeImmutable(str_replace('T', ' ', $manualDt));
+            if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
+            $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+            $st->execute([':id' => $userId]);
+            $u = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$u) throw new RuntimeException('Aluno nao encontrado.');
+            $oldCodigo = (string)($u['codigo_turma'] ?? ($u['turma_codigo'] ?? ''));
+            $oldLive = (string)($u['turma_live_at'] ?? ($u['data_live'] ?? ''));
+            $newLive = $dLive->format('Y-m-d H:i:s');
+            $sets = [];
+            $params = [':id'=>$userId];
+            if (rl_col_exists($pdo, 'users', 'turma_live_at')) { $sets[] = 'turma_live_at=:tl'; $params[':tl'] = $newLive; }
+            if (rl_col_exists($pdo, 'users', 'data_live')) { $sets[] = 'data_live=:dl'; $params[':dl'] = $newLive; }
+            if (!$sets) throw new RuntimeException('Aluno sem campo de data da live.');
+            $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=:id LIMIT 1')->execute($params);
+            $pdo->prepare("INSERT INTO reagendamentos_live (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
+                VALUES (:u,:oc,:nc,:ol,:nl,'reagendado',:url,:sf,:delay,:ip,:ua,:wh,NOW())")
+                ->execute([':u'=>$userId, ':oc'=>$oldCodigo ?: null, ':nc'=>$oldCodigo ?: null, ':ol'=>$oldLive ?: null, ':nl'=>$newLive, ':url'=>$liveUrl ?: null, ':sf'=>$dispatchAt, ':delay'=>$dispatchDelayMs, ':ip'=>$_SERVER['REMOTE_ADDR'] ?? null, ':ua'=>'admin_manual', ':wh'=>$webhookUrl ?: null]);
+            $histId = (int)$pdo->lastInsertId();
+            $pdo->commit();
+            disparar_webhooks('LIVE_REAGENDADA', $userId, [
+                'reagendamento_id'=>$histId,
+                'codigo_turma'=>$oldCodigo,
+                'data_live'=>$dLive->format('d/m/Y H:i'),
+                'data_live_iso'=>$newLive,
+                'live_url'=>$liveUrl,
+                'origem'=>'admin_manual',
+                'reagendamento'=>['id'=>$histId,'turma_original'=>$oldCodigo,'live_antiga'=>rl_admin_dt($oldLive),'live_nova'=>$dLive->format('d/m/Y H:i'),'live_nova_iso'=>$newLive,'live_url'=>$liveUrl,'status'=>'reagendado'],
+            ]);
+            $msg = 'Aluno reagendado manualmente.';
         } elseif ($acao === 'gerar_link') {
             $userId = (int)($_POST['user_id'] ?? 0);
             if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');
@@ -243,6 +336,13 @@ try {
             ($exprAcessou) AS teve_acesso,
             ($exprOferta) AS teve_oferta,
             ($exprCompra) AS teve_compra,
+            CASE
+                WHEN r.status = 'expirou' THEN 'Expirou'
+                WHEN ($exprCompra) THEN 'Comprou'
+                WHEN ($exprOferta) THEN 'Ficou ate oferta'
+                WHEN ($exprAcessou) THEN 'Acessou'
+                ELSE 'Reagendado'
+            END AS status_visual,
             (SELECT COUNT(*) FROM reagendamentos_live rr WHERE rr.user_id = r.user_id) AS frequencia_aluno
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
@@ -272,6 +372,22 @@ $kpiMaiorFreq = 0;
 foreach ($frequencias as $fr) {
     $kpiMaiorFreq = max($kpiMaiorFreq, (int)($fr['total'] ?? 0));
 }
+
+try {
+    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total
+        FROM reagendamentos_live r
+        LEFT JOIN users u ON u.id = r.user_id
+        $whereHistSql
+        GROUP BY DATE(r.created_at)
+        ORDER BY dia ASC
+        LIMIT 60");
+    $st->execute($paramsHist);
+    $reagPorDia = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $reagPorDia = [];
+}
+$maxReagDia = 0;
+foreach ($reagPorDia as $rp) $maxReagDia = max($maxReagDia, (int)($rp['total'] ?? 0));
 
 $whereTokens = [];
 $paramsTokens = [];
@@ -346,6 +462,10 @@ require __DIR__ . '/_header.php';
 .rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
 .rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-bars { display:flex; align-items:end; gap:8px; min-height:160px; padding:10px 4px 2px; overflow-x:auto; }
+.rl-bar { width:28px; min-width:28px; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.rl-bar-fill { width:100%; min-height:3px; border-radius:6px 6px 0 0; background:var(--primary); }
+.rl-bar-label { writing-mode:vertical-rl; transform:rotate(180deg); font-size:10px; color:var(--muted); white-space:nowrap; }
 </style>
 
 <?php if ($msg): ?>
@@ -401,7 +521,7 @@ require __DIR__ . '/_header.php';
                 <div class="grid-3">
                     <div class="form-group">
                         <label class="form-label">Proximas lives exibidas</label>
-                        <input type="number" min="1" max="10" name="reagendar_opcoes_qtd" value="<?= (int)$opcoesN ?>">
+                        <input type="number" min="1" max="30" name="reagendar_opcoes_qtd" value="<?= (int)$opcoesN ?>">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Validade do link (horas)</label>
@@ -411,6 +531,36 @@ require __DIR__ . '/_header.php';
                         <label class="form-label">Janela de lives (dias)</label>
                         <input type="number" min="1" max="365" name="reagendar_window_days" value="<?= (int)$windowDays ?>">
                     </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label class="form-label">Horario diario da live</label>
+                        <input type="time" name="reagendar_live_time" value="<?= h($liveTime) ?>">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Deslocamento do disparo</label>
+                        <input type="text" id="dispatchOffset" name="reagendar_dispatch_offset" value="<?= h($dispatchOffsetText) ?>" placeholder="ex: -2:30" oninput="updateDispatchPreview()">
+                        <div class="text-xs text-muted mt-2">Use <code>-2:30</code> para disparar 2h30 antes, <code>0:00</code> no horario da live ou <code>1:15</code> depois.</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Delay entre disparos (ms)</label>
+                        <input type="number" min="0" max="30000" name="reagendar_dispatch_delay_ms" value="<?= (int)$dispatchDelayMs ?>">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Previsualizacao do disparo</label>
+                    <input type="text" id="dispatchPreview" value="" readonly>
+                    <div class="text-xs text-muted mt-2">Baseado no proximo dia disponivel e no horario diario da live.</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Link da live de repescagem</label>
+                    <input type="url" name="reagendar_live_url" value="<?= h($liveUrl) ?>" placeholder="https://...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Dias indisponiveis</label>
+                    <input type="hidden" id="blackoutDates" name="reagendar_blackout_dates" value="<?= h(implode(',', $blackoutDates)) ?>">
+                    <div id="blackoutCalendar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px"></div>
+                    <div class="text-xs text-muted mt-2">Desmarque os dias em que nao havera live de repescagem.</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Webhook ao reagendar</label>
@@ -441,10 +591,10 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
+                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
-                        <tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
+                        <tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $r): ?>
                         <tr>
@@ -460,6 +610,7 @@ require __DIR__ . '/_header.php';
                                 <div class="fw-700"><?= h($r['new_codigo_turma'] ?: '-') ?></div>
                                 <div class="text-xs text-muted"><?= h(rl_admin_dt($r['new_turma_live_at'] ?? null)) ?></div>
                             </td>
+                            <td><span class="badge badge-info"><?= h($r['status_visual'] ?? 'Reagendado') ?></span></td>
                             <td>
                                 <div class="rl-event-pills">
                                     <span class="rl-event-pill <?= !empty($r['teve_acesso']) ? 'on acesso' : '' ?>">Entrada</span>
@@ -482,6 +633,27 @@ require __DIR__ . '/_header.php';
 
     <div>
         <div class="card">
+            <div class="card-header-title mb-3">Reagendamentos por dia</div>
+            <?php if (!$reagPorDia): ?>
+                <div class="text-muted text-sm" style="padding:24px;text-align:center">Sem dados para o filtro atual.</div>
+            <?php else: ?>
+                <div class="rl-bars">
+                    <?php foreach ($reagPorDia as $rp):
+                        $totalDia = (int)($rp['total'] ?? 0);
+                        $hBar = $maxReagDia > 0 ? max(6, (int)round(($totalDia / $maxReagDia) * 130)) : 6;
+                        $labelDia = date('d/m', strtotime((string)$rp['dia']));
+                    ?>
+                    <div class="rl-bar" title="<?= h($labelDia . ': ' . $totalDia) ?>">
+                        <div class="text-xs fw-700"><?= $totalDia ?></div>
+                        <div class="rl-bar-fill" style="height:<?= $hBar ?>px"></div>
+                        <div class="rl-bar-label"><?= h($labelDia) ?></div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <div class="card">
             <div class="card-header-title mb-3">Gerar link para aluno</div>
             <form method="post">
                 <input type="hidden" name="acao" value="gerar_link">
@@ -490,6 +662,22 @@ require __DIR__ . '/_header.php';
                     <input type="number" min="1" name="user_id" value="<?= h($_GET['user_id'] ?? '') ?>" placeholder="Ex: 123" required>
                 </div>
                 <button class="btn btn-primary">Gerar link</button>
+            </form>
+        </div>
+
+        <div class="card" id="manual">
+            <div class="card-header-title mb-3">Reagendar manualmente</div>
+            <form method="post">
+                <input type="hidden" name="acao" value="manual_reagendar">
+                <div class="form-group">
+                    <label class="form-label">ID do aluno</label>
+                    <input type="number" min="1" name="user_id" value="<?= h($_GET['user_id'] ?? '') ?>" placeholder="Ex: 123" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Nova data/hora da live</label>
+                    <input type="datetime-local" name="manual_data_live" required>
+                </div>
+                <button class="btn btn-primary">Confirmar reagendamento</button>
             </form>
         </div>
 
@@ -577,6 +765,76 @@ require __DIR__ . '/_header.php';
 </div>
 
 <script>
+const BLACKOUT_INIT = <?= json_encode($blackoutDates, JSON_UNESCAPED_UNICODE) ?>;
+const LIVE_TIME = <?= json_encode($liveTime) ?>;
+const WINDOW_DAYS = <?= (int)$windowDays ?>;
+function parseOffsetMinutes(value) {
+    value = String(value || '').trim();
+    if (!value) return 0;
+    var sign = 1;
+    if (value[0] === '-') { sign = -1; value = value.slice(1); }
+    if (value[0] === '+') value = value.slice(1);
+    var m = value.match(/^(\d{1,3})(?::([0-5]\d))?$/);
+    if (!m) return 0;
+    return sign * ((parseInt(m[1], 10) * 60) + parseInt(m[2] || '0', 10));
+}
+function fmtBrDate(date) {
+    return date.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function buildBlackoutCalendar() {
+    var box = document.getElementById('blackoutCalendar');
+    var input = document.getElementById('blackoutDates');
+    if (!box || !input) return;
+    var selected = new Set(BLACKOUT_INIT);
+    var today = new Date();
+    box.innerHTML = '';
+    for (var i = 0; i < WINDOW_DAYS; i++) {
+        var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+        var key = d.toISOString().slice(0, 10);
+        var label = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', weekday:'short'});
+        var wrap = document.createElement('label');
+        wrap.style.cssText = 'display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--bg);font-size:12px;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !selected.has(key);
+        cb.style.accentColor = 'var(--primary)';
+        cb.onchange = function() {
+            var vals = [];
+            box.querySelectorAll('input[data-date]').forEach(function(c) { if (!c.checked) vals.push(c.getAttribute('data-date')); });
+            input.value = vals.join(',');
+            updateDispatchPreview();
+        };
+        cb.setAttribute('data-date', key);
+        wrap.appendChild(cb);
+        wrap.appendChild(document.createTextNode(label));
+        box.appendChild(wrap);
+    }
+    input.value = Array.from(selected).join(',');
+}
+function updateDispatchPreview() {
+    var out = document.getElementById('dispatchPreview');
+    if (!out) return;
+    var blackouts = new Set(String(document.getElementById('blackoutDates')?.value || '').split(',').filter(Boolean));
+    var now = new Date();
+    var live = null;
+    for (var i = 0; i < WINDOW_DAYS; i++) {
+        var d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+        var key = d.toISOString().slice(0, 10);
+        if (blackouts.has(key)) continue;
+        var parts = String(document.querySelector('[name="reagendar_live_time"]')?.value || LIVE_TIME || '19:30').split(':');
+        d.setHours(parseInt(parts[0] || '19', 10), parseInt(parts[1] || '30', 10), 0, 0);
+        if (d > now) { live = d; break; }
+    }
+    if (!live) { out.value = 'Nenhuma live disponivel na janela configurada.'; return; }
+    live = new Date(live.getTime() + parseOffsetMinutes(document.getElementById('dispatchOffset')?.value || '0:00') * 60000);
+    out.value = fmtBrDate(live);
+}
+document.addEventListener('DOMContentLoaded', function() {
+    buildBlackoutCalendar();
+    updateDispatchPreview();
+    var time = document.querySelector('[name="reagendar_live_time"]');
+    if (time) time.addEventListener('input', updateDispatchPreview);
+});
 function copyText(id) {
     var el = document.getElementById(id);
     if (!el) return;

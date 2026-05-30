@@ -712,6 +712,7 @@ require __DIR__ . '/_header.php';
                 <td style="font-size:12px;color:var(--muted)"><?= fmtDt($ultCad) ?></td>
                 <td style="text-align:right" onclick="event.stopPropagation()">
                     <a href="aluno_editar.php?id=<?= (int)$a['id'] ?>" class="btn btn-ghost btn-xs">Editar</a>
+                    <a href="reagendamentos_live.php?user_id=<?= (int)$a['id'] ?>#manual" class="btn btn-ghost btn-xs" title="Reagendar live manualmente">Reagendar</a>
                 </td>
             </tr>
             <tr id="exp-<?= $i ?>">
