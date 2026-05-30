@@ -14,6 +14,35 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 function post_str(string $k): string { return trim((string)($_POST[$k] ?? '')); }
 function post_int(string $k): int { return (int)($_POST[$k] ?? 0); }
 
+function sf_parse_live_offset_minutes(string $raw): ?int {
+    $raw = trim($raw);
+    if ($raw === '') return 0;
+    if (!preg_match('/^([+-])?\s*(\d{1,3})(?::([0-5]\d))?$/', $raw, $m)) return null;
+
+    $sign = ($m[1] ?? '') === '-' ? -1 : 1;
+    $hours = (int)$m[2];
+    $minutes = isset($m[3]) && $m[3] !== '' ? (int)$m[3] : 0;
+    return $sign * (($hours * 60) + $minutes);
+}
+
+function sf_format_live_offset(?string $liveAt, ?string $disparoAt): string {
+    if (!$liveAt || !$disparoAt) return '0:00';
+    $liveTs = strtotime($liveAt);
+    $dispTs = strtotime($disparoAt);
+    if (!$liveTs || !$dispTs) return '0:00';
+
+    $diffMinutes = (int)round(($dispTs - $liveTs) / 60);
+    $sign = $diffMinutes < 0 ? '-' : '';
+    $abs = abs($diffMinutes);
+    return $sign . intdiv($abs, 60) . ':' . str_pad((string)($abs % 60), 2, '0', STR_PAD_LEFT);
+}
+
+function sf_format_datetime_local(?string $dbValue): string {
+    if (!$dbValue) return '';
+    $ts = strtotime($dbValue);
+    return $ts ? date('Y-m-d H:i', $ts) : '';
+}
+
 // garante tabelas
 sf_ensure_tables($pdo);
 
@@ -244,6 +273,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
     $sfEnabled  = isset($_POST['sf_enabled']) ? 1 : 0;
     $sfTags     = trim($_POST['sf_tags_text'] ?? '');
     $sfFlows    = trim($_POST['sf_flows_text'] ?? '');
+    $sfOffsetRaw = trim((string)($_POST['sf_live_offset'] ?? '0:00'));
     $sfSources  = $_POST['sf_field_source'] ?? [];
     $sfDests    = $_POST['sf_field_dest'] ?? [];
     $sfPairs    = [];
@@ -257,10 +287,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
     }
     $sfFieldsJson = $sfPairs ? json_encode($sfPairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
 
+    $offsetMinutes = sf_parse_live_offset_minutes($sfOffsetRaw);
+    if ($offsetMinutes === null) {
+        header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Deslocamento de disparo invalido. Use formatos como -2:30, 0:00 ou 1:15.'));
+        exit;
+    }
+
     if ($tid > 0) {
         try {
-            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,live_disparada=0 WHERE id=:id")
-                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':id'=>$tid]);
+            $stTurma = $pdo->prepare("SELECT data_live FROM turmas WHERE id = :id LIMIT 1");
+            $stTurma->execute([':id' => $tid]);
+            $dataLive = (string)($stTurma->fetchColumn() ?: '');
+            $liveDisparoData = null;
+            if ($dataLive !== '') {
+                $live = new DateTime($dataLive);
+                if ($offsetMinutes !== 0) {
+                    $live->modify(($offsetMinutes > 0 ? '+' : '') . $offsetMinutes . ' minutes');
+                }
+                $liveDisparoData = $live->format('Y-m-d H:i:s');
+            }
+
+            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
+                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':ldd'=>$liveDisparoData,':id'=>$tid]);
         } catch (Throwable $e) {}
     }
     header('Location: superfuncionario.php?sf_edit=' . $tid . '&saved=1');
@@ -857,6 +905,12 @@ include __DIR__ . '/_header.php';
             </div>
         <?php endif; ?>
 
+        <?php if (!empty($_GET['err'])): ?>
+            <div style="margin-bottom:16px;padding:10px 14px;border-radius:10px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);color:#fca5a5;font-size:13px;">
+                <?= h((string)$_GET['err']) ?>
+            </div>
+        <?php endif; ?>
+
         <div class="grid-2" style="align-items:start;">
             <!-- FORM -->
             <div>
@@ -868,6 +922,9 @@ include __DIR__ . '/_header.php';
                         if (is_array($tmp)) $sfTEditPairs = $tmp;
                     }
                     if (!$sfTEditPairs) $sfTEditPairs = [['source'=>'','dest'=>'']];
+                    $sfLiveOffset = sf_format_live_offset((string)($sfEditTurma['data_live'] ?? ''), (string)($sfEditTurma['live_disparo_data'] ?? ''));
+                    $sfLiveIso = !empty($sfEditTurma['data_live']) ? date('c', strtotime((string)$sfEditTurma['data_live'])) : '';
+                    $sfDisparoPreview = sf_format_datetime_local((string)($sfEditTurma['live_disparo_data'] ?? ''));
                 ?>
                     <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
                         <input type="hidden" name="action" value="sf_turma_save">
@@ -884,6 +941,24 @@ include __DIR__ . '/_header.php';
                         <div class="checkbox-row" style="margin-bottom:14px;">
                             <input type="checkbox" id="sf-t-enabled" name="sf_enabled" <?= (int)($sfEditTurma['sf_enabled'] ?? 0) === 1 ? 'checked' : '' ?>>
                             <label for="sf-t-enabled">Disparar alunos no SF ao chegar na data da live</label>
+                        </div>
+
+                        <div style="margin-bottom:14px;">
+                            <label class="lbl">Deslocamento do disparo em relacao a live</label>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                                <div>
+                                    <input type="text" id="sf-live-offset" name="sf_live_offset"
+                                           value="<?= h($sfLiveOffset) ?>"
+                                           data-live-at="<?= h($sfLiveIso) ?>"
+                                           placeholder="ex: -2:30"
+                                           oninput="updateSfLivePreview()">
+                                    <div class="note">Use <code>-2:30</code> para disparar 2h30 antes, <code>0:00</code> no horario da live ou <code>1:15</code> depois.</div>
+                                </div>
+                                <div>
+                                    <input type="text" id="sf-live-preview" value="<?= h($sfDisparoPreview) ?>" readonly>
+                                    <div class="note">Horario calculado para o disparo.</div>
+                                </div>
+                            </div>
                         </div>
 
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
@@ -943,6 +1018,7 @@ include __DIR__ . '/_header.php';
                     <tr>
                         <th>Turma</th>
                         <th>Data Live</th>
+                        <th>Disparo</th>
                         <th>SF</th>
                         <th>Tags</th>
                         <th>Flows</th>
@@ -960,6 +1036,7 @@ include __DIR__ . '/_header.php';
                         <tr>
                             <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
                             <td style="white-space:nowrap;color:var(--muted);"><?= h(substr((string)($stl['data_live']??'—'),0,16)) ?></td>
+                            <td style="white-space:nowrap;color:var(--muted);font-size:11px;"><?= h(substr((string)($stl['live_disparo_data']??'--'),0,16)) ?></td>
                             <td>
                                 <span class="badge <?= $stlSfOn ? 'badge-on' : 'badge-off' ?>">
                                     <?= $stlSfOn ? '● ON' : '○ OFF' ?>
@@ -1168,6 +1245,61 @@ function addSfTurmaRow() {
         '<button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>';
     c.appendChild(d);
     d.querySelector('input').focus();
+}
+
+function parseSfLiveOffset(raw) {
+    raw = String(raw || '').trim();
+    if (raw === '') return 0;
+    var m = raw.match(/^([+-])?\s*(\d{1,3})(?::([0-5]\d))?$/);
+    if (!m) return null;
+    var sign = m[1] === '-' ? -1 : 1;
+    var hours = parseInt(m[2], 10);
+    var minutes = m[3] ? parseInt(m[3], 10) : 0;
+    return sign * ((hours * 60) + minutes);
+}
+
+function formatSfLiveDate(d) {
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function updateSfLivePreview() {
+    var offsetEl = document.getElementById('sf-live-offset');
+    var previewEl = document.getElementById('sf-live-preview');
+    if (!offsetEl || !previewEl) return true;
+
+    var liveAt = offsetEl.getAttribute('data-live-at') || '';
+    if (!liveAt) {
+        previewEl.value = 'Data da live nao configurada';
+        return false;
+    }
+
+    var offset = parseSfLiveOffset(offsetEl.value);
+    if (offset === null) {
+        previewEl.value = 'Formato invalido';
+        return false;
+    }
+
+    var d = new Date(liveAt);
+    if (isNaN(d.getTime())) {
+        previewEl.value = 'Data da live invalida';
+        return false;
+    }
+
+    d.setMinutes(d.getMinutes() + offset);
+    previewEl.value = formatSfLiveDate(d);
+    return true;
+}
+
+var sfTurmaForm = document.getElementById('form-sf-turma');
+if (sfTurmaForm) {
+    updateSfLivePreview();
+    sfTurmaForm.addEventListener('submit', function(e) {
+        if (!updateSfLivePreview()) {
+            e.preventDefault();
+            alert('Informe o deslocamento no formato -2:30, 0:00 ou 1:15.');
+        }
+    });
 }
 </script>
 
