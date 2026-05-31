@@ -135,6 +135,32 @@ function adicionar_tag(int $user_id, string $tag_nome, string $origem = 'manual'
  * $extra   - dados extras específicos do evento
  */
 function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = []): void {
+    // Em requisições web, adia o envio para DEPOIS de entregar a resposta ao
+    // usuário. Assim o aluno nunca espera a resposta de APIs externas
+    // (webhooks / SuperFuncionário) durante login, conclusão de aula, etc.
+    // Em CLI/cron executa na hora (o processo precisa terminar o trabalho).
+    if (PHP_SAPI !== 'cli') {
+        register_shutdown_function(static function () use ($evento, $user_id, $extra) {
+            // Entrega a resposta ao navegador antes de iniciar o trabalho lento.
+            if (function_exists('fastcgi_finish_request')) {
+                @fastcgi_finish_request();
+            }
+            try {
+                _disparar_webhooks_sync($evento, $user_id, $extra);
+            } catch (Throwable $e) {
+                @error_log('disparar_webhooks (shutdown): ' . $e->getMessage());
+            }
+        });
+        return;
+    }
+
+    _disparar_webhooks_sync($evento, $user_id, $extra);
+}
+
+/**
+ * Execução síncrona real do disparo (usada no cron e no shutdown da web).
+ */
+function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): void {
     $pdo = getPDO();
 
     // Monta dados básicos do usuário (se informado)
