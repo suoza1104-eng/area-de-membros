@@ -183,6 +183,11 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
+// Login/logout ja foram tratados acima. Daqui pra frente o painel so LE a
+// sessao. Liberamos o lock para que outras abas/cliques do admin nao fiquem
+// presos enquanto este dashboard (muitas queries) carrega.
+if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+
 $pdo = getPDO();
 
 // ========================

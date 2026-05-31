@@ -95,3 +95,29 @@ function getPDO(): PDO
 
     return $pdo;
 }
+
+// ── Monitor de requisições lentas (diagnóstico) ──────────────────────────────
+// Registra em app/error_log/slow_requests.log toda requisição que passar de
+// SLOW_REQ_THRESHOLD segundos, para identificar gargalos reais sem precisar
+// reproduzir na frente do usuário. Não altera o comportamento da página.
+if (!defined('SLOW_REQ_MONITOR')) {
+    define('SLOW_REQ_MONITOR', 1);
+    register_shutdown_function(static function () {
+        $start = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        if ($start === null) return;
+        $elapsed = microtime(true) - (float)$start;
+        if ($elapsed < 3.0) return; // só registra o que estiver lento
+        $dir = __DIR__ . '/error_log';
+        if (!is_dir($dir)) @mkdir($dir, 0775, true);
+        $uri  = $_SERVER['REQUEST_URI'] ?? ($_SERVER['SCRIPT_NAME'] ?? PHP_SAPI);
+        $line = sprintf(
+            "[%s] %.2fs %s %s (mem %.1fMB)\n",
+            date('Y-m-d H:i:s'),
+            $elapsed,
+            $_SERVER['REQUEST_METHOD'] ?? PHP_SAPI,
+            $uri,
+            memory_get_peak_usage(true) / 1048576
+        );
+        @file_put_contents($dir . '/slow_requests.log', $line, FILE_APPEND);
+    });
+}
