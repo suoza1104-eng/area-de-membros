@@ -12,8 +12,28 @@ set -e
 REPO_DIR="/home1/prof2543/repositories/area-de-membros"
 DEPLOY_DIR="/home1/prof2543/public_html/area_membros"
 LOG="$REPO_DIR/deploy.log"
+PHP_BIN="${PHP_BIN:-$(command -v php || command -v /usr/local/bin/php || command -v /opt/cpanel/ea-php82/root/usr/bin/php || true)}"
+
+run_php_cron() {
+    local script="$1"
+    local name="$2"
+    local lock="/tmp/area_membros_${name}.lock"
+
+    if [ -z "$PHP_BIN" ] || [ ! -x "$PHP_BIN" ] || [ ! -f "$script" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] cron $name ignorado (php/script indisponivel)" >> "$LOG"
+        return 0
+    fi
+
+    if command -v flock >/dev/null 2>&1; then
+        flock -n "$lock" "$PHP_BIN" "$script" >> "$LOG" 2>&1 || true
+    else
+        "$PHP_BIN" "$script" >> "$LOG" 2>&1 || true
+    fi
+}
 
 cd "$REPO_DIR" || exit 1
+
+run_php_cron "$DEPLOY_DIR/cron/processar_reagendamentos_live.php" "reagendamentos_live"
 
 git fetch --all -q
 
