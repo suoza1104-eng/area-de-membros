@@ -284,11 +284,52 @@ function sf_build_custom_fields(PDO $pdo, array $pairs, array $userRow, array $e
  * ----------------------------------*/
 function sf_http_post_json(string $url, array $headers, array $body, int $timeoutSeconds): array
 {
-    $ch      = curl_init($url);
     $payload = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
     $hdr   = $headers;
     $hdr[] = 'Content-Type: application/json';
+
+    if (!function_exists('curl_init')) {
+        $respHeaders = [];
+        $context = stream_context_create([
+            'http' => [
+                'method'        => 'POST',
+                'header'        => implode("\r\n", $hdr),
+                'content'       => $payload,
+                'timeout'       => $timeoutSeconds,
+                'ignore_errors' => true,
+            ],
+        ]);
+
+        $resp = @file_get_contents($url, false, $context);
+        $err = '';
+        if ($resp === false) {
+            $lastError = error_get_last();
+            $err = (string)($lastError['message'] ?? 'Falha HTTP sem cURL');
+            $resp = '';
+        }
+
+        if (isset($http_response_header) && is_array($http_response_header)) {
+            $respHeaders = $http_response_header;
+        }
+        $code = 0;
+        foreach ($respHeaders as $line) {
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', (string)$line, $m)) {
+                $code = (int)$m[1];
+                break;
+            }
+        }
+
+        return [
+            'ok'           => ($err === '' && $code >= 200 && $code < 300),
+            'http_status'  => $code,
+            'error'        => $err,
+            'response'     => is_string($resp) ? $resp : '',
+            'request_json' => $payload,
+        ];
+    }
+
+    $ch = curl_init($url);
 
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
