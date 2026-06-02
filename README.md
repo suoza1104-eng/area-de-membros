@@ -55,6 +55,7 @@ Regras importantes:
 - Antes de editar, ler o arquivo alvo e preservar mudancas existentes do usuario.
 - Validar PHP com `C:\xampp\php\php.exe -l caminho\arquivo.php` no Windows local.
 - Quando mexer em deploy, versionar apenas arquivos da tarefa e nao incluir alteracoes nao relacionadas.
+- Antes de cada deploy, incrementar `APP_VERSION` em `app/config.php` (V1, V2, V3...) para confirmar visualmente no sidebar do admin que a versao publicada atualizou.
 - O deploy padrao usa GitHub `main`; no cPanel, o servidor deve atualizar com `git pull origin main` ou receber os arquivos por File Manager/FTP mantendo os mesmos caminhos.
 ```
 

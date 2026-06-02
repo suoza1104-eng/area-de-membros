@@ -77,6 +77,7 @@ function rl_ensure_history(PDO $pdo): void {
         expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
+        origem VARCHAR(30) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
@@ -94,6 +95,7 @@ function rl_ensure_history(PDO $pdo): void {
         "ALTER TABLE reagendamentos_live ADD COLUMN expired_checked_at DATETIME NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN ip VARCHAR(64) NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN user_agent VARCHAR(250) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN origem VARCHAR(30) NULL AFTER user_agent",
         "ALTER TABLE reagendamentos_live ADD COLUMN webhook_url TEXT NULL",
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
@@ -178,8 +180,8 @@ try {
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
     $pdo->prepare("INSERT INTO reagendamentos_live
-        (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
-        VALUES (:u, :oldc, :newc, :oldl, :newl, 'reagendado', :url, :sfat, :delay, :ip, :ua, :wh, NOW())")
+        (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
+        VALUES (:u, :oldc, :newc, :oldl, :newl, 'reagendado', :url, :sfat, :delay, :ip, :ua, 'aluno', :wh, NOW())")
         ->execute([
             ':u' => $alunoId,
             ':oldc' => $oldCodigo !== '' ? $oldCodigo : null,

@@ -40,6 +40,7 @@ foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagen
 $__sbNome    = $__isEquipe ? ($_SESSION['equipe_nome']  ?? 'Membro') : 'Administrador';
 $__sbRole    = $__isEquipe ? 'Equipe' : 'Admin logado';
 $__sbInitial = strtoupper(substr($__sbNome, 0, 1));
+$__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 // ──────────────────────────────────────────────────────────────────────────
 
 $titleMap = [
@@ -195,6 +196,12 @@ img { max-width: 100%; display: block; }
   padding: 1px 6px; border-radius: var(--r-full);
   border: 1px solid var(--border);
   margin-top: 2px; display: inline-block;
+}
+.sb-logo-version {
+  color: var(--primary);
+  border-color: rgba(250,204,21,.28);
+  background: rgba(250,204,21,.08);
+  margin-left: 4px;
 }
 
 .sb-nav {
@@ -603,6 +610,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     <div class="sb-logo-info">
       <div class="sb-logo-name"><?= __esc($__courseTitle) ?></div>
       <span class="sb-logo-badge">Admin</span>
+      <span class="sb-logo-badge sb-logo-version"><?= __esc($__appVersion) ?></span>
     </div>
   </div>
 

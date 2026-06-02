@@ -176,6 +176,7 @@ function al_ensure_reagendamentos_live(PDO $pdo): void {
         expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
+        origem VARCHAR(30) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
@@ -184,6 +185,7 @@ function al_ensure_reagendamentos_live(PDO $pdo): void {
         KEY idx_reag_live_disparo (sf_disparo_at),
         KEY idx_reag_live_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    try { $pdo->exec("ALTER TABLE reagendamentos_live ADD COLUMN origem VARCHAR(30) NULL AFTER user_agent"); } catch (Throwable $e) {}
 }
 function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): int {
     if ($userId <= 0) throw new RuntimeException('Aluno invalido.');
@@ -221,8 +223,8 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     try {
         $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
         $pdo->prepare("INSERT INTO reagendamentos_live
-            (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
-            VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, NULL, NOW())")
+            (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
+            VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, 'suporte', NULL, NOW())")
             ->execute([
                 ':u' => $userId,
                 ':oc' => $oldCodigo ?: null,

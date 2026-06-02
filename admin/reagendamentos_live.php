@@ -92,6 +92,7 @@ try {
         expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
+        origem VARCHAR(30) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
@@ -107,6 +108,10 @@ try {
         "ALTER TABLE reagendamentos_live ADD COLUMN sf_delay_ms INT NOT NULL DEFAULT 500",
         "ALTER TABLE reagendamentos_live ADD COLUMN sf_sent_at DATETIME NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN expired_checked_at DATETIME NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN ip VARCHAR(64) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN user_agent VARCHAR(250) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN origem VARCHAR(30) NULL AFTER user_agent",
+        "ALTER TABLE reagendamentos_live ADD COLUMN webhook_url TEXT NULL",
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
     }
@@ -200,8 +205,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
             $pdo->beginTransaction();
             $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=:id LIMIT 1')->execute($params);
-            $pdo->prepare("INSERT INTO reagendamentos_live (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
-                VALUES (:u,:oc,:nc,:ol,:nl,'reagendado',:url,:sf,:delay,:ip,:ua,:wh,NOW())")
+            $pdo->prepare("INSERT INTO reagendamentos_live (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
+                VALUES (:u,:oc,:nc,:ol,:nl,'reagendado',:url,:sf,:delay,:ip,:ua,'suporte',:wh,NOW())")
                 ->execute([':u'=>$userId, ':oc'=>$oldCodigo ?: null, ':nc'=>$oldCodigo ?: null, ':ol'=>$oldLive ?: null, ':nl'=>$newLive, ':url'=>$liveUrl ?: null, ':sf'=>$dispatchAt, ':delay'=>$dispatchDelayMs, ':ip'=>$_SERVER['REMOTE_ADDR'] ?? null, ':ua'=>'admin_manual', ':wh'=>null]);
             $histId = (int)$pdo->lastInsertId();
             $pdo->commit();
@@ -667,10 +672,10 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
+                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
-                        <tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
+                        <tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $r): ?>
                         <tr>
@@ -686,6 +691,14 @@ require __DIR__ . '/_header.php';
                                 <div class="fw-700"><?= h($r['new_codigo_turma'] ?: '-') ?></div>
                                 <div class="text-xs text-muted"><?= h(rl_admin_dt($r['new_turma_live_at'] ?? null)) ?></div>
                             </td>
+                            <?php
+                                $origemRaw = (string)($r['origem'] ?? '');
+                                if ($origemRaw === '') {
+                                    $origemRaw = ((string)($r['user_agent'] ?? '') === 'admin_manual') ? 'suporte' : 'aluno';
+                                }
+                                $origemLabel = $origemRaw === 'suporte' ? 'Suporte' : 'Aluno';
+                            ?>
+                            <td><span class="badge <?= $origemRaw === 'suporte' ? 'badge-neutral' : 'badge-info' ?>"><?= h($origemLabel) ?></span></td>
                             <td><span class="badge badge-info"><?= h($r['status_visual'] ?? 'Reagendado') ?></span></td>
                             <td>
                                 <div class="rl-event-pills">
