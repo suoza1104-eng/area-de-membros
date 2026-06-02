@@ -178,7 +178,7 @@ $alunoNome = (string)($user['nome'] ?? 'Aluno');
       <div class="<?= rl_h($cls) ?>"<?= $style ?> data-items="<?= $day['has'] ? rl_h(json_encode($items, JSON_UNESCAPED_UNICODE)) : '' ?>">
         <div class="n"><?= rl_h($d->format('d/m/y')) ?></div>
         <?php if ($day['has']): ?><div class="pill ok">Liberada</div><div class="muted"><?= rl_h($liveTime) ?></div>
-        <?php elseif ($day['blocked']): ?><div class="pill no">Indisponivel</div><div class="muted">Sem repescagem</div>
+        <?php elseif ($day['blocked']): ?><div class="pill no">Indisponivel</div><div class="muted">Indisponivel</div>
         <?php else: ?><div class="pill no">Esgotado</div><div class="muted">Sem opcao</div><?php endif; ?>
       </div>
       <?php endforeach; ?>
