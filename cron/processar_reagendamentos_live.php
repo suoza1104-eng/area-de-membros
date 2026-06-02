@@ -63,6 +63,7 @@ try {
           AND sf_disparo_at IS NOT NULL
           AND sf_sent_at IS NULL
           AND sf_disparo_at <= NOW()
+          AND new_turma_live_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
         ORDER BY sf_disparo_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
