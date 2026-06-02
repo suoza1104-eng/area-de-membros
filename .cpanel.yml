@@ -5,5 +5,4 @@ deployment:
     - /usr/bin/rsync -av --delete --no-perms --exclude='.git' --exclude='uploads/' --exclude='vendor/' /home1/prof2543/repositories/area-de-membros/ $DEPLOYPATH
     - /bin/chmod 755 /home1/prof2543/public_html
     - /bin/chmod 755 $DEPLOYPATH
-    - /usr/bin/find $DEPLOYPATH -type d -exec /bin/chmod 755 {} \;
-    - /usr/bin/find $DEPLOYPATH -type f -exec /bin/chmod 644 {} \;
+    - /bin/chmod -R u=rwX,go=rX $DEPLOYPATH
