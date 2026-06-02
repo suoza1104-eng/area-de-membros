@@ -1,0 +1,5 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home1/prof2543/public_html/area_membros/
+    - /usr/bin/rsync -av --delete --exclude='.git' --exclude='uploads/' --exclude='vendor/' /home1/prof2543/repositories/area-de-membros/ $DEPLOYPATH
