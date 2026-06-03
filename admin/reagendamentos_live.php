@@ -61,6 +61,37 @@ function rl_format_offset(int $minutes): string {
     $abs = abs($minutes);
     return $sign . intdiv($abs, 60) . ':' . str_pad((string)($abs % 60), 2, '0', STR_PAD_LEFT);
 }
+function rl_log_context_summary(?string $json): string {
+    $json = trim((string)$json);
+    if ($json === '') return '-';
+    $data = json_decode($json, true);
+    if (!is_array($data)) return substr($json, 0, 180);
+
+    $parts = [];
+    foreach ([
+        'evento' => 'Evento',
+        'origem' => 'Origem',
+        'sf_disparo_at' => 'Disparo',
+        'new_turma_live_at' => 'Live',
+    ] as $key => $label) {
+        if (!empty($data[$key]) && is_scalar($data[$key])) {
+            $parts[] = $label . ': ' . (string)$data[$key];
+        }
+    }
+    if (isset($data['extra']) && is_array($data['extra'])) {
+        if (!empty($data['extra']['data_live'])) $parts[] = 'Live: ' . (string)$data['extra']['data_live'];
+        if (!empty($data['extra']['codigo_turma'])) $parts[] = 'Turma: ' . (string)$data['extra']['codigo_turma'];
+    }
+    if (!$parts) {
+        $flat = [];
+        foreach ($data as $key => $value) {
+            if (is_scalar($value)) $flat[] = $key . ': ' . (string)$value;
+            if (count($flat) >= 4) break;
+        }
+        $parts = $flat;
+    }
+    return $parts ? implode(' | ', $parts) : '-';
+}
 
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS live_reschedule_tokens (
@@ -115,6 +146,7 @@ try {
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
     }
+    reagendamento_live_ensure_logs($pdo);
 } catch (Throwable $e) {
     // A tela continua carregando para exibir o erro nas acoes dependentes.
 }
@@ -479,6 +511,63 @@ try {
     $lives = [];
 }
 
+$logAluno = trim((string)($_GET['log_aluno'] ?? ''));
+$logTurma = trim((string)($_GET['log_turma'] ?? ''));
+$logStatus = trim((string)($_GET['log_status'] ?? ''));
+$logEtapa = trim((string)($_GET['log_etapa'] ?? ''));
+$logFrom = trim((string)($_GET['log_from'] ?? ''));
+$logTo = trim((string)($_GET['log_to'] ?? ''));
+$whereLogs = [];
+$paramsLogs = [];
+if ($logAluno !== '') {
+    $whereLogs[] = "(u.nome LIKE :log_aluno OR u.email LIKE :log_aluno OR u.telefone LIKE :log_aluno OR l.user_id = :log_aluno_id)";
+    $paramsLogs[':log_aluno'] = '%' . $logAluno . '%';
+    $paramsLogs[':log_aluno_id'] = ctype_digit($logAluno) ? (int)$logAluno : 0;
+}
+if ($logTurma !== '') {
+    $whereLogs[] = "(r.new_codigo_turma = :log_turma OR r.old_codigo_turma = :log_turma)";
+    $paramsLogs[':log_turma'] = $logTurma;
+}
+if (in_array($logStatus, ['pendente', 'sucesso', 'falha'], true)) {
+    $whereLogs[] = "l.status = :log_status";
+    $paramsLogs[':log_status'] = $logStatus;
+}
+if ($logEtapa !== '') {
+    $whereLogs[] = "l.etapa = :log_etapa";
+    $paramsLogs[':log_etapa'] = $logEtapa;
+}
+if ($logFrom !== '') {
+    $whereLogs[] = "l.created_at >= :log_from";
+    $paramsLogs[':log_from'] = $logFrom . ' 00:00:00';
+}
+if ($logTo !== '') {
+    $whereLogs[] = "l.created_at <= :log_to";
+    $paramsLogs[':log_to'] = $logTo . ' 23:59:59';
+}
+$whereLogsSql = $whereLogs ? 'WHERE ' . implode(' AND ', $whereLogs) : '';
+
+try {
+    $st = $pdo->prepare("SELECT l.*, r.new_codigo_turma, r.old_codigo_turma, r.new_turma_live_at, r.sf_disparo_at, r.sf_sent_at, u.nome, u.email, u.telefone
+        FROM reagendamentos_live_process_logs l
+        LEFT JOIN reagendamentos_live r ON r.id = l.reagendamento_id
+        LEFT JOIN users u ON u.id = l.user_id
+        $whereLogsSql
+        ORDER BY l.created_at DESC, l.id DESC
+        LIMIT 250");
+    $st->execute($paramsLogs);
+    $processLogs = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $processLogs = [];
+}
+try {
+    $logEtapas = $pdo->query("SELECT DISTINCT etapa FROM reagendamentos_live_process_logs WHERE etapa IS NOT NULL AND etapa <> '' ORDER BY etapa ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {
+    $logEtapas = [];
+}
+$logTotal = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live_process_logs l LEFT JOIN reagendamentos_live r ON r.id = l.reagendamento_id LEFT JOIN users u ON u.id = l.user_id $whereLogsSql", $paramsLogs);
+$logSucessos = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live_process_logs l LEFT JOIN reagendamentos_live r ON r.id = l.reagendamento_id LEFT JOIN users u ON u.id = l.user_id $whereLogsSql" . ($whereLogsSql ? " AND" : " WHERE") . " l.status = 'sucesso'", $paramsLogs);
+$logFalhas = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live_process_logs l LEFT JOIN reagendamentos_live r ON r.id = l.reagendamento_id LEFT JOIN users u ON u.id = l.user_id $whereLogsSql" . ($whereLogsSql ? " AND" : " WHERE") . " l.status = 'falha'", $paramsLogs);
+
 require __DIR__ . '/_header.php';
 ?>
 <style>
@@ -498,6 +587,18 @@ require __DIR__ . '/_header.php';
 .rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
 .rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-log-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:16px; border-bottom:1px solid var(--border); }
+.rl-log-kpis { display:flex; gap:8px; flex-wrap:wrap; }
+.rl-log-kpi { min-width:92px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:rgba(15,23,42,.42); }
+.rl-log-kpi span { display:block; color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
+.rl-log-kpi strong { display:block; color:var(--text); font-size:18px; line-height:1.2; margin-top:2px; }
+.rl-log-status { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:800; border:1px solid var(--border); }
+.rl-log-status.sucesso { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-log-status.falha { background:var(--danger-dim); color:#fca5a5; border-color:rgba(239,68,68,.25); }
+.rl-log-status.pendente { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
+.rl-log-context { max-width:420px; white-space:normal; color:var(--muted); line-height:1.45; }
+.rl-log-detail summary { cursor:pointer; color:var(--primary); font-weight:800; font-size:11px; margin-top:6px; }
+.rl-log-detail pre { margin:8px 0 0; max-width:520px; max-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-word; border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(2,6,23,.55); color:#cbd5e1; font-size:11px; }
 .rl-chart-card { margin-bottom:16px; }
 .rl-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
 .rl-chart-wrap { height:300px; width:100%; }
@@ -826,6 +927,114 @@ require __DIR__ . '/_header.php';
                 </table>
             </div>
         </div>
+    </div>
+</div>
+
+<div class="card" id="logs-processamento" style="padding:0;overflow:hidden;margin-top:16px">
+    <div class="rl-log-head">
+        <div>
+            <div class="card-header-title">Logs de processamento</div>
+            <div class="text-muted text-sm">Agendamentos criados, tentativas no horario do disparo e retorno do SuperFuncionario.</div>
+        </div>
+        <div class="rl-log-kpis">
+            <div class="rl-log-kpi"><span>Total</span><strong><?= number_format($logTotal, 0, ',', '.') ?></strong></div>
+            <div class="rl-log-kpi"><span>Sucessos</span><strong><?= number_format($logSucessos, 0, ',', '.') ?></strong></div>
+            <div class="rl-log-kpi"><span>Falhas</span><strong><?= number_format($logFalhas, 0, ',', '.') ?></strong></div>
+        </div>
+    </div>
+
+    <form method="get" class="filter-bar" style="border-bottom:1px solid var(--border);border-radius:0;margin:0">
+        <div class="filter-group" style="min-width:220px">
+            <label>Aluno</label>
+            <input name="log_aluno" value="<?= h($logAluno) ?>" placeholder="Nome, email, telefone ou ID">
+        </div>
+        <div class="filter-group">
+            <label>Turma</label>
+            <select name="log_turma">
+                <option value="">Todas</option>
+                <?php foreach ($turmasFiltro as $tc): ?>
+                    <option value="<?= h($tc) ?>" <?= $logTurma === (string)$tc ? 'selected' : '' ?>><?= h($tc) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Status</label>
+            <select name="log_status">
+                <option value="">Todos</option>
+                <option value="pendente" <?= $logStatus === 'pendente' ? 'selected' : '' ?>>Pendente</option>
+                <option value="sucesso" <?= $logStatus === 'sucesso' ? 'selected' : '' ?>>Sucesso</option>
+                <option value="falha" <?= $logStatus === 'falha' ? 'selected' : '' ?>>Falha</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Etapa</label>
+            <select name="log_etapa">
+                <option value="">Todas</option>
+                <?php foreach ($logEtapas as $et): ?>
+                    <option value="<?= h($et) ?>" <?= $logEtapa === (string)$et ? 'selected' : '' ?>><?= h($et) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="filter-group"><label>De</label><input type="date" name="log_from" value="<?= h($logFrom) ?>"></div>
+        <div class="filter-group"><label>Ate</label><input type="date" name="log_to" value="<?= h($logTo) ?>"></div>
+        <div class="filter-actions">
+            <button class="btn btn-primary btn-sm">Filtrar logs</button>
+            <a class="reset-link" href="reagendamentos_live.php#logs-processamento">Limpar</a>
+        </div>
+    </form>
+
+    <div class="table-wrap">
+        <table class="rl-table-small">
+            <thead>
+                <tr>
+                    <th>Quando</th>
+                    <th>Aluno</th>
+                    <th>Turma / live</th>
+                    <th>Etapa</th>
+                    <th>Status</th>
+                    <th>Mensagem</th>
+                    <th>Contexto</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if (!$processLogs): ?>
+                <tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">Nenhum log encontrado para os filtros atuais.</td></tr>
+            <?php endif; ?>
+            <?php foreach ($processLogs as $lg):
+                $logStatusClass = preg_replace('/[^a-z0-9_-]+/i', '', (string)($lg['status'] ?? ''));
+                $turmaLog = (string)($lg['new_codigo_turma'] ?: ($lg['old_codigo_turma'] ?? ''));
+                $contextRaw = (string)($lg['context_json'] ?? '');
+            ?>
+                <tr>
+                    <td>
+                        <div class="fw-700"><?= h(rl_admin_dt($lg['created_at'] ?? null)) ?></div>
+                        <div class="text-xs text-muted">Log #<?= (int)$lg['id'] ?> &middot; Reag. #<?= (int)($lg['reagendamento_id'] ?? 0) ?></div>
+                    </td>
+                    <td>
+                        <div class="fw-700"><?= h($lg['nome'] ?? ('Aluno #' . (int)($lg['user_id'] ?? 0))) ?></div>
+                        <div class="text-xs text-muted">#<?= (int)($lg['user_id'] ?? 0) ?> &middot; <?= h($lg['email'] ?? '') ?></div>
+                    </td>
+                    <td>
+                        <div class="fw-700"><?= h($turmaLog !== '' ? $turmaLog : '-') ?></div>
+                        <div class="text-xs text-muted">Live: <?= h(rl_admin_dt($lg['new_turma_live_at'] ?? null)) ?></div>
+                        <div class="text-xs text-muted">Disparo: <?= h(rl_admin_dt($lg['sf_disparo_at'] ?? null)) ?></div>
+                    </td>
+                    <td><span class="badge badge-neutral"><?= h($lg['etapa'] ?? '') ?></span></td>
+                    <td><span class="rl-log-status <?= h($logStatusClass) ?>"><?= h($lg['status'] ?? '') ?></span></td>
+                    <td><?= h($lg['mensagem'] ?? '') ?></td>
+                    <td>
+                        <div class="rl-log-context"><?= h(rl_log_context_summary($contextRaw)) ?></div>
+                        <?php if (trim($contextRaw) !== ''): ?>
+                            <details class="rl-log-detail">
+                                <summary>Ver JSON</summary>
+                                <pre><?= h(json_encode(json_decode($contextRaw, true) ?: $contextRaw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT)) ?></pre>
+                            </details>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
     </div>
 </div>
 
