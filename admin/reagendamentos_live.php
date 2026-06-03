@@ -73,6 +73,8 @@ function rl_log_context_summary(?string $json): string {
         'origem' => 'Origem',
         'sf_disparo_at' => 'Disparo',
         'new_turma_live_at' => 'Live',
+        'atraso_minutos' => 'Atraso min',
+        'atraso_segundos' => 'Atraso seg',
     ] as $key => $label) {
         if (!empty($data[$key]) && is_scalar($data[$key])) {
             $parts[] = $label . ': ' . (string)$data[$key];
@@ -110,6 +112,55 @@ function rl_dispatch_reagendada(PDO $pdo, int $userId, int $histId, string $oldC
             'status' => 'reagendado',
         ],
     ]);
+}
+function rl_cron_extra_admin(array $r): array {
+    $codigo = (string)($r['new_codigo_turma'] ?: $r['old_codigo_turma']);
+    $newLive = (string)($r['new_turma_live_at'] ?? '');
+    return [
+        'reagendamento_id' => (int)$r['id'],
+        'codigo_turma' => $codigo,
+        'data_live' => rl_admin_dt($newLive),
+        'data_live_iso' => $newLive,
+        'live_url' => (string)($r['live_url'] ?? ''),
+        'status' => (string)($r['status'] ?? ''),
+        'reagendamento' => [
+            'id' => (int)$r['id'],
+            'turma_original' => $codigo,
+            'live_antiga' => rl_admin_dt((string)($r['old_turma_live_at'] ?? '')),
+            'live_nova' => rl_admin_dt($newLive),
+            'live_nova_iso' => $newLive,
+            'live_url' => (string)($r['live_url'] ?? ''),
+            'status' => (string)($r['status'] ?? ''),
+        ],
+    ];
+}
+function rl_disparar_lembrete_imediato(PDO $pdo, int $reagId): bool {
+    $st = $pdo->prepare("SELECT * FROM reagendamentos_live WHERE id = :id AND sf_sent_at IS NULL LIMIT 1");
+    $st->execute([':id' => $reagId]);
+    $r = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$r) return false;
+
+    $extra = rl_cron_extra_admin($r);
+    reagendamento_live_log($pdo, $reagId, (int)$r['user_id'], 'lembrete_imediato_inicio', 'pendente', 'Reagendamento salvo muito perto do horario; tentando disparo imediato.', [
+        'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
+        'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+        'origem' => 'admin_reagendamentos_live',
+    ]);
+    $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+    if ($ok) {
+        $pdo->prepare("UPDATE reagendamentos_live SET status='enviado', sf_sent_at=NOW(), expired_checked_at=NULL WHERE id=:id LIMIT 1")
+            ->execute([':id' => $reagId]);
+        reagendamento_live_log($pdo, $reagId, (int)$r['user_id'], 'lembrete_imediato_resultado', 'sucesso', 'SuperFuncionario confirmou o envio imediato.', [
+            'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+            'extra' => $extra,
+        ]);
+        return true;
+    }
+    reagendamento_live_log($pdo, $reagId, (int)$r['user_id'], 'lembrete_imediato_resultado', 'falha', 'SuperFuncionario nao confirmou o envio imediato; cron continua responsavel por novas tentativas.', [
+        'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+        'extra' => $extra,
+    ]);
+    return false;
 }
 
 try {
@@ -275,7 +326,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'origem'=>'admin_manual',
                 'reagendamento'=>['id'=>$histId,'turma_original'=>$oldCodigo,'live_antiga'=>rl_admin_dt($oldLive),'live_nova'=>$dLive->format('d/m/Y H:i'),'live_nova_iso'=>$newLive,'live_url'=>$liveUrl,'status'=>'reagendado'],
             ]);
-            $msg = 'Aluno reagendado manualmente.';
+            $immediateSent = false;
+            if (new DateTimeImmutable($dispatchAt) <= (new DateTimeImmutable('now'))->modify('+120 seconds')) {
+                $immediateSent = rl_disparar_lembrete_imediato($pdo, $histId);
+            }
+            $msg = $immediateSent
+                ? 'Aluno reagendado manualmente e lembrete disparado imediatamente.'
+                : 'Aluno reagendado manualmente.';
         } elseif ($acao === 'editar_reagendamento') {
             $reagId = (int)($_POST['reagendamento_id'] ?? 0);
             $manualDt = trim((string)($_POST['manual_data_live'] ?? ''));
@@ -344,7 +401,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             $pdo->commit();
             rl_dispatch_reagendada($pdo, $userId, $reagId, $oldCodigo, $oldLive, $dLive, $newLive, $liveUrl, 'admin_reagendamentos_live');
-            $msg = 'Reagendamento atualizado e gatilho LIVE_REAGENDADA disparado.';
+            $immediateSent = false;
+            if (new DateTimeImmutable($dispatchAt) <= (new DateTimeImmutable('now'))->modify('+120 seconds')) {
+                $immediateSent = rl_disparar_lembrete_imediato($pdo, $reagId);
+            }
+            $msg = $immediateSent
+                ? 'Reagendamento atualizado, gatilho LIVE_REAGENDADA disparado e lembrete enviado imediatamente.'
+                : 'Reagendamento atualizado e gatilho LIVE_REAGENDADA disparado.';
         } elseif ($acao === 'gerar_link') {
             $userId = (int)($_POST['user_id'] ?? 0);
             if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');

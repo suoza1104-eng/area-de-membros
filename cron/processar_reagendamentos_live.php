@@ -71,9 +71,13 @@ try {
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
         $extra = rl_cron_extra($r);
-        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_inicio', 'pendente', 'Horario do lembrete atingido.', [
+        $dispatchTs = !empty($r['sf_disparo_at']) ? strtotime((string)$r['sf_disparo_at']) : false;
+        $atrasoSeg = $dispatchTs ? max(0, time() - $dispatchTs) : 0;
+        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_inicio', 'pendente', 'Horario do lembrete atingido pelo cron.', [
             'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
             'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+            'atraso_segundos' => $atrasoSeg,
+            'atraso_minutos' => round($atrasoSeg / 60, 2),
         ]);
         $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
         if ($ok) {
