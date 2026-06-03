@@ -56,6 +56,9 @@ $expired = 0;
 $expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
 if ($expireGraceMin < 0) $expireGraceMin = 0;
 if ($expireGraceMin > 1440) $expireGraceMin = 1440;
+$dispatchGraceMin = (int)get_setting('reagendar_dispatch_grace_min', '180');
+if ($dispatchGraceMin < 1) $dispatchGraceMin = 1;
+if ($dispatchGraceMin > 1440) $dispatchGraceMin = 1440;
 
 try {
     $rows = $pdo->query("SELECT * FROM reagendamentos_live
@@ -63,7 +66,7 @@ try {
           AND sf_disparo_at IS NOT NULL
           AND sf_sent_at IS NULL
           AND sf_disparo_at <= NOW()
-          AND new_turma_live_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+          AND sf_disparo_at >= DATE_SUB(NOW(), INTERVAL {$dispatchGraceMin} MINUTE)
         ORDER BY sf_disparo_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
