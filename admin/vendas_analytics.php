@@ -645,6 +645,74 @@ try {
     $opt_turmas = [];
 }
 
+$salesPage = max(1, (int)($_GET['sales_page'] ?? 1));
+$salesPerPage = 100;
+$salesOffset = ($salesPage - 1) * $salesPerPage;
+
+try {
+    $stmtSalesDetailTotal = $pdo->prepare("
+        SELECT COUNT(*) AS total
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereSales
+    ");
+    $stmtSalesDetailTotal->execute($paramsSales);
+    $salesDetailTotal = (int)($stmtSalesDetailTotal->fetchColumn() ?: 0);
+} catch (\Throwable $e) {
+    $salesDetailTotal = 0;
+}
+$salesDetailPages = max(1, (int)ceil($salesDetailTotal / $salesPerPage));
+if ($salesPage > $salesDetailPages) {
+    $salesPage = $salesDetailPages;
+    $salesOffset = ($salesPage - 1) * $salesPerPage;
+}
+
+try {
+    $stmtSalesDetail = $pdo->prepare("
+        SELECT
+            s.id,
+            s.transaction_code,
+            s.status,
+            s.transaction_date,
+            s.payment_confirmed_at,
+            s.product_code,
+            s.product_name,
+            s.price_name,
+            s.currency,
+            s.gross_revenue,
+            s.net_revenue,
+            s.producer_net,
+            s.buyer_name,
+            s.buyer_email,
+            s.buyer_phone_raw,
+            s.buyer_phone_norm,
+            s.matched_user_id,
+            s.match_method,
+            s.utm_source,
+            s.utm_medium,
+            s.utm_campaign,
+            s.utm_term,
+            s.utm_content,
+            s.imported_at,
+            us.nome AS aluno_nome,
+            us.email AS aluno_email,
+            us.telefone AS aluno_telefone,
+            us.created_at AS aluno_created_at,
+            $salesTurmaExpr AS turma_atribuida,
+            $turmaHistExprSales AS turma_historico,
+            $turmaCurrentExprSales AS turma_atual
+        FROM hotmart_sales s
+        $salesJoinUserForTurma
+        $sqlWhereSales
+        ORDER BY s.transaction_date DESC, s.id DESC
+        LIMIT {$salesPerPage} OFFSET {$salesOffset}
+    ");
+    $stmtSalesDetail->execute($paramsSales);
+    $salesDetailRows = $stmtSalesDetail->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (\Throwable $e) {
+    $salesDetailRows = [];
+}
+
 /**
  * ===== Orgânicos não encontrados =====
  */
@@ -703,6 +771,11 @@ function buildSortLink(string $col, string $currentSort, string $currentDir): st
 function sortArrow(string $col, string $currentSort, string $currentDir): string {
     if ($currentSort !== $col) return '↕';
     return ($currentDir === 'asc') ? '↑' : '↓';
+}
+function salesDetailPageLink(int $page): string {
+    $params = $_GET;
+    $params['sales_page'] = max(1, $page);
+    return 'vendas_analytics.php?' . http_build_query($params) . '#todas-vendas';
 }
 ?>
 
@@ -869,6 +942,19 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
   .th-sort .arrow{ font-size:12px; opacity:.85; }
   .sales-page .table-striped{ min-width:100%; }
   .sales-page .table-striped a{ color:var(--primary); }
+  .sales-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+  .sales-detail-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .sales-status{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid rgba(148,163,184,.22);background:rgba(148,163,184,.12);color:#cbd5e1}
+  .sales-status.aprovado,.sales-status.completo{background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.28)}
+  .sales-status.reembolsado,.sales-status.chargeback,.sales-status.cancelado{background:rgba(239,68,68,.14);color:#fca5a5;border-color:rgba(239,68,68,.28)}
+  .sales-person strong{display:block;color:var(--text);font-size:12px;line-height:1.25}
+  .sales-person span{display:block;color:var(--muted);font-size:11px;line-height:1.35;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sales-money strong{display:block;color:#86efac}
+  .sales-money span{display:block;color:var(--muted);font-size:11px}
+  .sales-utm{max-width:340px;color:var(--muted);font-size:11px;line-height:1.45}
+  .sales-utm b{color:#cbd5e1}
+  .sales-pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}
+  .sales-pagination .page-info{color:var(--muted);font-size:12px;padding:0 4px}
   @media (max-width: 900px){
     .sales-grid{ grid-template-columns:1fr; }
     .sales-page .filter-box > div{ flex-basis:100%; }
@@ -1160,6 +1246,71 @@ function sortArrow(string $col, string $currentSort, string $currentDir): string
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Todas as vendas -->
+  <div class="card-dark table-wide" id="todas-vendas">
+    <div class="sales-detail-head">
+      <div>
+        <h3 style="margin:0;">Todas as vendas detalhadas</h3>
+        <div class="muted" style="margin-top:8px;">Respeita os filtros globais acima: periodo, status, produto, turma e UTMs.</div>
+      </div>
+      <div class="sales-detail-meta">
+        <span class="badge-dark"><?= number_format($salesDetailTotal, 0, ',', '.') ?> venda(s)</span>
+        <span class="badge-dark">Pagina <?= number_format($salesPage, 0, ',', '.') ?> de <?= number_format($salesDetailPages, 0, ',', '.') ?></span>
+      </div>
+    </div>
+
+    <div style="overflow:auto; margin-top:12px;">
+      <table class="table table-striped" style="width:100%; min-width:1500px;">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Status</th>
+            <th>Comprador Hotmart</th>
+            <th>Aluno vinculado</th>
+            <th>Turma</th>
+            <th>Produto / oferta</th>
+            <th>Valores</th>
+            <th>Match</th>
+            <th>UTMs</th>
+            <th>Transacao</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($salesDetailRows as $r):
+            $statusClass = strtolower(preg_replace('/[^a-z0-9_-]+/i', '', (string)($r['status'] ?? '')));
+            $turmaAtrib = (string)($r['turma_atribuida'] ?? '');
+            $turmaHist = (string)($r['turma_historico'] ?? '');
+            $turmaAtual = (string)($r['turma_atual'] ?? '');
+            $alunoNome = trim((string)($r['aluno_nome'] ?? ''));
+          ?>
+            <tr>
+              <td><strong><?= htmlspecialchars((string)($r['transaction_date'] ?? '-')) ?></strong><?php if (!empty($r['payment_confirmed_at'])): ?><div class="muted" style="font-size:11px;">Confirmado: <?= htmlspecialchars((string)$r['payment_confirmed_at']) ?></div><?php endif; ?></td>
+              <td><span class="sales-status <?= htmlspecialchars($statusClass) ?>"><?= htmlspecialchars((string)($r['status'] ?? '-')) ?></span></td>
+              <td><div class="sales-person"><strong><?= htmlspecialchars((string)($r['buyer_name'] ?: '-')) ?></strong><span><?= htmlspecialchars((string)($r['buyer_email'] ?: '-')) ?></span><span><?= htmlspecialchars((string)($r['buyer_phone_norm'] ?: ($r['buyer_phone_raw'] ?? '-'))) ?></span></div></td>
+              <td><div class="sales-person"><strong><?= $alunoNome !== '' ? htmlspecialchars($alunoNome) : 'Sem aluno vinculado' ?></strong><span>#<?= (int)($r['matched_user_id'] ?? 0) ?> &middot; <?= htmlspecialchars((string)($r['aluno_email'] ?: '-')) ?></span><span><?= htmlspecialchars((string)($r['aluno_telefone'] ?: '-')) ?></span></div></td>
+              <td><strong><?= htmlspecialchars($turmaAtrib !== '' ? $turmaAtrib : 'Sem turma') ?></strong><div class="muted" style="font-size:11px;">Historico: <?= htmlspecialchars($turmaHist !== '' ? $turmaHist : '-') ?></div><div class="muted" style="font-size:11px;">Atual: <?= htmlspecialchars($turmaAtual !== '' ? $turmaAtual : '-') ?></div></td>
+              <td><strong><?= htmlspecialchars((string)($r['product_name'] ?: '-')) ?></strong><div class="muted" style="font-size:11px;"><?= htmlspecialchars((string)($r['price_name'] ?: '-')) ?></div><div class="muted" style="font-size:11px;">Produto #<?= htmlspecialchars((string)($r['product_code'] ?: '-')) ?></div></td>
+              <td><div class="sales-money"><strong><?= htmlspecialchars((string)($r['currency'] ?: 'BRL')) ?> <?= number_format((float)($r['producer_net'] ?? 0), 2, ',', '.') ?></strong><span>Liquido: <?= number_format((float)($r['net_revenue'] ?? 0), 2, ',', '.') ?></span><span>Bruto: <?= number_format((float)($r['gross_revenue'] ?? 0), 2, ',', '.') ?></span></div></td>
+              <td><span class="badge-dark"><?= htmlspecialchars((string)($r['match_method'] ?? 'none')) ?></span><div class="muted" style="font-size:11px;">Venda #<?= (int)$r['id'] ?></div></td>
+              <td><div class="sales-utm"><div><b>Source:</b> <?= htmlspecialchars((string)($r['utm_source'] ?: 'organico')) ?></div><div><b>Medium:</b> <?= htmlspecialchars((string)($r['utm_medium'] ?: '-')) ?></div><div><b>Campaign:</b> <?= htmlspecialchars((string)($r['utm_campaign'] ?: '-')) ?></div><div><b>Term:</b> <?= htmlspecialchars((string)($r['utm_term'] ?: '-')) ?></div><div><b>Content:</b> <?= htmlspecialchars((string)($r['utm_content'] ?: '-')) ?></div></div></td>
+              <td><strong><?= htmlspecialchars((string)($r['transaction_code'] ?? '-')) ?></strong><div class="muted" style="font-size:11px;">Importado: <?= htmlspecialchars((string)($r['imported_at'] ?? '-')) ?></div></td>
+            </tr>
+          <?php endforeach; ?>
+          <?php if (!$salesDetailRows): ?>
+            <tr><td colspan="10">Nenhuma venda encontrada para os filtros selecionados.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php if ($salesDetailPages > 1): ?>
+      <div class="sales-pagination">
+        <?php if ($salesPage > 1): ?><a class="btn btn-ghost btn-sm" href="<?= htmlspecialchars(salesDetailPageLink(1)) ?>">Primeira</a><a class="btn btn-ghost btn-sm" href="<?= htmlspecialchars(salesDetailPageLink($salesPage - 1)) ?>">Anterior</a><?php endif; ?>
+        <span class="page-info">Mostrando <?= number_format($salesOffset + 1, 0, ',', '.') ?>-<?= number_format(min($salesOffset + $salesPerPage, $salesDetailTotal), 0, ',', '.') ?> de <?= number_format($salesDetailTotal, 0, ',', '.') ?></span>
+        <?php if ($salesPage < $salesDetailPages): ?><a class="btn btn-ghost btn-sm" href="<?= htmlspecialchars(salesDetailPageLink($salesPage + 1)) ?>">Proxima</a><a class="btn btn-ghost btn-sm" href="<?= htmlspecialchars(salesDetailPageLink($salesDetailPages)) ?>">Ultima</a><?php endif; ?>
+      </div>
+    <?php endif; ?>
   </div>
 
   <!-- Orgânicos não encontrados -->
