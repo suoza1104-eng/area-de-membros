@@ -206,7 +206,9 @@ function reagendamento_live_ensure_logs(PDO $pdo): void {
 
 function reagendamento_live_log(PDO $pdo, ?int $reagendamentoId, ?int $userId, string $etapa, string $status, string $mensagem = '', array $context = []): void {
     try {
-        reagendamento_live_ensure_logs($pdo);
+        if (!$pdo->inTransaction()) {
+            reagendamento_live_ensure_logs($pdo);
+        }
         $st = $pdo->prepare("
             INSERT INTO reagendamentos_live_process_logs
                 (reagendamento_id, user_id, etapa, status, mensagem, context_json, created_at)
