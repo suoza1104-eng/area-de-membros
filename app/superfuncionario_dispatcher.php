@@ -358,14 +358,14 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
 /** ---------------------------------
  *  Disparo principal (chamado pelo app)
  * ----------------------------------*/
-function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): void
+function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
     $cfg = sf_get_config($pdo);
-    if ((int)$cfg['is_enabled'] !== 1) return;
-    if ($cfg['token'] === '') return;
+    if ((int)$cfg['is_enabled'] !== 1) return false;
+    if ($cfg['token'] === '') return false;
 
     $rules = sf_get_rules_for_event($pdo, $evento);
-    if (!$rules) return;
+    if (!$rules) return false;
 
     // Payload base disponível como contexto de resolução
     $payload = [
@@ -376,6 +376,7 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
     ];
 
     $userRow = sf_get_user_row($pdo, $user);
+    $sentOk = false;
 
     foreach ($rules as $rule) {
         $ruleId = (int)($rule['id'] ?? 0);
@@ -472,6 +473,9 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
         }
 
         $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
+        if ((bool)$res['ok']) {
+            $sentOk = true;
+        }
 
         // Log enriquecido com metadados dos campos personalizados
         $logRequest = json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']];
@@ -492,6 +496,8 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             (string)($res['response'] ?? '')
         );
     }
+
+    return $sentOk;
 }
 
 function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStatus, string $errorText, $request, string $responseText): void
