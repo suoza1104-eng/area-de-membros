@@ -92,6 +92,25 @@ function rl_log_context_summary(?string $json): string {
     }
     return $parts ? implode(' | ', $parts) : '-';
 }
+function rl_dispatch_reagendada(PDO $pdo, int $userId, int $histId, string $oldCodigo, ?string $oldLive, DateTimeImmutable $dLive, string $newLive, string $liveUrl, string $origem): void {
+    disparar_webhooks('LIVE_REAGENDADA', $userId, [
+        'reagendamento_id' => $histId,
+        'codigo_turma' => $oldCodigo,
+        'data_live' => $dLive->format('d/m/Y H:i'),
+        'data_live_iso' => $newLive,
+        'live_url' => $liveUrl,
+        'origem' => $origem,
+        'reagendamento' => [
+            'id' => $histId,
+            'turma_original' => $oldCodigo,
+            'live_antiga' => rl_admin_dt($oldLive),
+            'live_nova' => $dLive->format('d/m/Y H:i'),
+            'live_nova_iso' => $newLive,
+            'live_url' => $liveUrl,
+            'status' => 'reagendado',
+        ],
+    ]);
+}
 
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS live_reschedule_tokens (
@@ -257,6 +276,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'reagendamento'=>['id'=>$histId,'turma_original'=>$oldCodigo,'live_antiga'=>rl_admin_dt($oldLive),'live_nova'=>$dLive->format('d/m/Y H:i'),'live_nova_iso'=>$newLive,'live_url'=>$liveUrl,'status'=>'reagendado'],
             ]);
             $msg = 'Aluno reagendado manualmente.';
+        } elseif ($acao === 'editar_reagendamento') {
+            $reagId = (int)($_POST['reagendamento_id'] ?? 0);
+            $manualDt = trim((string)($_POST['manual_data_live'] ?? ''));
+            if ($reagId <= 0) throw new RuntimeException('Reagendamento invalido.');
+            if ($manualDt === '') throw new RuntimeException('Informe a nova data/hora da live.');
+            $dLive = new DateTimeImmutable(str_replace('T', ' ', $manualDt));
+            if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
+            $newLive = $dLive->format('Y-m-d H:i:s');
+            $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
+
+            $st = $pdo->prepare("SELECT r.*, u.codigo_turma, u.turma_codigo, u.turma_live_at, u.data_live
+                FROM reagendamentos_live r
+                LEFT JOIN users u ON u.id = r.user_id
+                WHERE r.id = :id
+                LIMIT 1");
+            $st->execute([':id' => $reagId]);
+            $rEdit = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$rEdit) throw new RuntimeException('Reagendamento nao encontrado.');
+            $userId = (int)$rEdit['user_id'];
+            $oldCodigo = (string)($rEdit['new_codigo_turma'] ?: ($rEdit['old_codigo_turma'] ?: ($rEdit['codigo_turma'] ?? ($rEdit['turma_codigo'] ?? ''))));
+            $oldLive = (string)($rEdit['new_turma_live_at'] ?: ($rEdit['turma_live_at'] ?? ($rEdit['data_live'] ?? '')));
+            $sets = [];
+            $params = [':id' => $userId];
+            if (rl_col_exists($pdo, 'users', 'turma_live_at')) { $sets[] = 'turma_live_at=:tl'; $params[':tl'] = $newLive; }
+            if (rl_col_exists($pdo, 'users', 'data_live')) { $sets[] = 'data_live=:dl'; $params[':dl'] = $newLive; }
+            if (!$sets) throw new RuntimeException('Aluno sem campo de data da live.');
+
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=:id LIMIT 1')->execute($params);
+            $pdo->prepare("UPDATE reagendamentos_live
+                SET old_codigo_turma = :oc,
+                    new_codigo_turma = :nc,
+                    old_turma_live_at = :ol,
+                    new_turma_live_at = :nl,
+                    status = 'reagendado',
+                    live_url = :url,
+                    sf_disparo_at = :sf,
+                    sf_delay_ms = :delay,
+                    sf_sent_at = NULL,
+                    expired_checked_at = NULL,
+                    ip = :ip,
+                    user_agent = 'admin_edit',
+                    origem = 'suporte'
+                WHERE id = :rid
+                LIMIT 1")
+                ->execute([
+                    ':oc' => $oldCodigo ?: null,
+                    ':nc' => $oldCodigo ?: null,
+                    ':ol' => $oldLive ?: null,
+                    ':nl' => $newLive,
+                    ':url' => $liveUrl ?: null,
+                    ':sf' => $dispatchAt,
+                    ':delay' => $dispatchDelayMs,
+                    ':ip' => $_SERVER['REMOTE_ADDR'] ?? null,
+                    ':rid' => $reagId,
+                ]);
+            $pdo->prepare("UPDATE reagendamentos_live
+                SET status='substituido', expired_checked_at=COALESCE(expired_checked_at, NOW())
+                WHERE user_id=:uid AND id<>:rid AND status='reagendado' AND sf_sent_at IS NULL")
+                ->execute([':uid' => $userId, ':rid' => $reagId]);
+            reagendamento_live_log($pdo, $reagId, $userId, 'agendamento_editado', 'pendente', 'Reagendamento editado pelo suporte.', [
+                'old_turma_live_at' => $oldLive,
+                'new_turma_live_at' => $newLive,
+                'sf_disparo_at' => $dispatchAt,
+                'origem' => 'admin_reagendamentos_live',
+            ]);
+            $pdo->commit();
+            rl_dispatch_reagendada($pdo, $userId, $reagId, $oldCodigo, $oldLive, $dLive, $newLive, $liveUrl, 'admin_reagendamentos_live');
+            $msg = 'Reagendamento atualizado e gatilho LIVE_REAGENDADA disparado.';
         } elseif ($acao === 'gerar_link') {
             $userId = (int)($_POST['user_id'] ?? 0);
             if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');
@@ -581,6 +669,7 @@ require __DIR__ . '/_header.php';
 .rl-link-box { display:flex; gap:8px; align-items:center; min-width:0; }
 .rl-link-box input { min-width:0; font-size:12px; }
 .rl-table-small td { font-size:12px; }
+.rl-table-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 .rl-copy { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rl-event-pills { display:flex; gap:4px; flex-wrap:wrap; }
 .rl-event-pill { display:inline-flex; align-items:center; padding:1px 7px; border-radius:999px; font-size:10px; font-weight:700; border:1px solid var(--border); color:var(--muted); background:rgba(100,116,139,.08); }
@@ -599,6 +688,12 @@ require __DIR__ . '/_header.php';
 .rl-log-context { max-width:420px; white-space:normal; color:var(--muted); line-height:1.45; }
 .rl-log-detail summary { cursor:pointer; color:var(--primary); font-weight:800; font-size:11px; margin-top:6px; }
 .rl-log-detail pre { margin:8px 0 0; max-width:520px; max-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-word; border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(2,6,23,.55); color:#cbd5e1; font-size:11px; }
+.rl-modal-backdrop { position:fixed; inset:0; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(2,6,23,.72); z-index:1000; }
+.rl-modal-backdrop.open { display:flex; }
+.rl-modal { width:min(520px, 100%); border:1px solid var(--border); border-radius:16px; background:var(--bg-card); box-shadow:var(--shadow); padding:18px; }
+.rl-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.rl-modal-title { font-size:16px; font-weight:800; color:var(--text); }
+.rl-modal-close { width:34px; height:34px; border-radius:10px; border:1px solid var(--border); background:rgba(15,23,42,.65); color:var(--text); cursor:pointer; }
 .rl-chart-card { margin-bottom:16px; }
 .rl-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
 .rl-chart-wrap { height:300px; width:100%; }
@@ -770,10 +865,10 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th></tr></thead>
+                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th><th style="text-align:right">Acoes</th></tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
-                        <tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
+                        <tr><td colspan="9" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $r): ?>
                         <tr>
@@ -809,6 +904,19 @@ require __DIR__ . '/_header.php';
                             <td>
                                 <div><?= h(rl_admin_dt($r['created_at'] ?? null)) ?></div>
                                 <div class="text-xs text-muted"><?= h($r['ip'] ?? '') ?></div>
+                            </td>
+                            <td>
+                                <div class="rl-table-actions">
+                                    <button type="button"
+                                        class="btn btn-ghost btn-xs"
+                                        onclick="openEditReagendamento(this)"
+                                        data-id="<?= (int)$r['id'] ?>"
+                                        data-user="<?= (int)$r['user_id'] ?>"
+                                        data-aluno="<?= h($r['nome'] ?? ('Aluno #' . (int)$r['user_id'])) ?>"
+                                        data-live="<?= h($r['new_turma_live_at'] ? date('Y-m-d\TH:i', strtotime((string)$r['new_turma_live_at'])) : '') ?>">
+                                        Editar
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -930,6 +1038,31 @@ require __DIR__ . '/_header.php';
     </div>
 </div>
 
+<div class="rl-modal-backdrop" id="modalEditarReagendamento" onclick="closeEditReagendamento(event)">
+    <div class="rl-modal" onclick="event.stopPropagation()">
+        <div class="rl-modal-head">
+            <div>
+                <div class="rl-modal-title">Editar reagendamento</div>
+                <div class="text-sm text-muted" id="editReagAluno">-</div>
+            </div>
+            <button type="button" class="rl-modal-close" onclick="closeEditReagendamento()">x</button>
+        </div>
+        <form method="post">
+            <input type="hidden" name="acao" value="editar_reagendamento">
+            <input type="hidden" name="reagendamento_id" id="editReagId">
+            <div class="form-group">
+                <label class="form-label">Nova data/hora da live</label>
+                <input type="datetime-local" name="manual_data_live" id="editReagLive" required>
+            </div>
+            <div class="text-xs text-muted mb-3">Ao salvar, o aluno sera atualizado, o lembrete sera reagendado e o evento LIVE_REAGENDADA sera disparado nas integracoes.</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="closeEditReagendamento()">Cancelar</button>
+                <button class="btn btn-primary btn-sm">Salvar e disparar gatilho</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="card" id="logs-processamento" style="padding:0;overflow:hidden;margin-top:16px">
     <div class="rl-log-head">
         <div>
@@ -1048,6 +1181,25 @@ const REAG_CHART_VENDAS = <?= json_encode($chartVendaData, JSON_UNESCAPED_UNICOD
 let blackoutSelected = new Set(BLACKOUT_INIT);
 let blackoutMonth = new Date();
 blackoutMonth.setDate(1);
+function openEditReagendamento(btn) {
+    var modal = document.getElementById('modalEditarReagendamento');
+    if (!modal || !btn) return;
+    var id = btn.getAttribute('data-id') || '';
+    var aluno = btn.getAttribute('data-aluno') || 'Aluno';
+    var live = btn.getAttribute('data-live') || '';
+    var idInput = document.getElementById('editReagId');
+    var liveInput = document.getElementById('editReagLive');
+    var alunoBox = document.getElementById('editReagAluno');
+    if (idInput) idInput.value = id;
+    if (liveInput) liveInput.value = live;
+    if (alunoBox) alunoBox.textContent = aluno + ' | Reagendamento #' + id;
+    modal.classList.add('open');
+}
+function closeEditReagendamento(ev) {
+    if (ev && ev.target && ev.currentTarget && ev.target !== ev.currentTarget) return;
+    var modal = document.getElementById('modalEditarReagendamento');
+    if (modal) modal.classList.remove('open');
+}
 function parseOffsetMinutes(value) {
     value = String(value || '').trim();
     if (!value) return 0;
