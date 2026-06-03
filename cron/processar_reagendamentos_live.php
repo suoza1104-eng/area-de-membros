@@ -67,10 +67,25 @@ try {
         ORDER BY sf_disparo_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
-        $user = rl_cron_user($pdo, (int)$r['user_id']);
-        disparar_webhooks('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], rl_cron_extra($r));
-        $pdo->prepare("UPDATE reagendamentos_live SET sf_sent_at = NOW() WHERE id = :id")->execute([':id' => (int)$r['id']]);
-        $sent++;
+        $extra = rl_cron_extra($r);
+        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_inicio', 'pendente', 'Horario do lembrete atingido.', [
+            'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
+            'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+        ]);
+        $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+        if ($ok) {
+            $pdo->prepare("UPDATE reagendamentos_live SET sf_sent_at = NOW() WHERE id = :id")->execute([':id' => (int)$r['id']]);
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'sucesso', 'SuperFuncionario confirmou o envio.', [
+                'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                'extra' => $extra,
+            ]);
+            $sent++;
+        } else {
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'falha', 'SuperFuncionario nao confirmou o envio; reagendamento permanece pendente.', [
+                'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                'extra' => $extra,
+            ]);
+        }
         $delay = max(0, min(30000, (int)($r['sf_delay_ms'] ?? 500)));
         if ($delay > 0) usleep($delay * 1000);
     }

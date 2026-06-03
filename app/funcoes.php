@@ -160,7 +160,7 @@ function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = 
 /**
  * Execução síncrona real do disparo (usada no cron e no shutdown da web).
  */
-function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): void {
+function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): bool {
     $pdo = getPDO();
 
     // Monta dados básicos do usuário (se informado)
@@ -181,7 +181,48 @@ function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $ex
     disparar_evento_webhooks($pdo, $evento, $user, $extra);
 
     // Disparo opcional para SuperFuncionário (se houver regras ativas)
-    sf_disparar_evento($pdo, $evento, $user, $extra);
+    return sf_disparar_evento($pdo, $evento, $user, $extra);
+}
+
+function reagendamento_live_ensure_logs(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS reagendamentos_live_process_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            reagendamento_id INT NULL,
+            user_id INT NULL,
+            etapa VARCHAR(80) NOT NULL,
+            status VARCHAR(30) NOT NULL,
+            mensagem TEXT NULL,
+            context_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_rlpl_reag (reagendamento_id),
+            KEY idx_rlpl_user (user_id),
+            KEY idx_rlpl_etapa (etapa),
+            KEY idx_rlpl_status (status),
+            KEY idx_rlpl_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+}
+
+function reagendamento_live_log(PDO $pdo, ?int $reagendamentoId, ?int $userId, string $etapa, string $status, string $mensagem = '', array $context = []): void {
+    try {
+        reagendamento_live_ensure_logs($pdo);
+        $st = $pdo->prepare("
+            INSERT INTO reagendamentos_live_process_logs
+                (reagendamento_id, user_id, etapa, status, mensagem, context_json, created_at)
+            VALUES (:rid, :uid, :etapa, :status, :mensagem, :context_json, NOW())
+        ");
+        $st->execute([
+            ':rid' => $reagendamentoId,
+            ':uid' => $userId,
+            ':etapa' => $etapa,
+            ':status' => $status,
+            ':mensagem' => $mensagem,
+            ':context_json' => $context ? json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+        ]);
+    } catch (Throwable $e) {
+        @error_log('reagendamento_live_log: ' . $e->getMessage());
+    }
 }
 
 /**

@@ -209,6 +209,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 VALUES (:u,:oc,:nc,:ol,:nl,'reagendado',:url,:sf,:delay,:ip,:ua,'suporte',:wh,NOW())")
                 ->execute([':u'=>$userId, ':oc'=>$oldCodigo ?: null, ':nc'=>$oldCodigo ?: null, ':ol'=>$oldLive ?: null, ':nl'=>$newLive, ':url'=>$liveUrl ?: null, ':sf'=>$dispatchAt, ':delay'=>$dispatchDelayMs, ':ip'=>$_SERVER['REMOTE_ADDR'] ?? null, ':ua'=>'admin_manual', ':wh'=>null]);
             $histId = (int)$pdo->lastInsertId();
+            reagendamento_live_log($pdo, $histId, $userId, 'agendamento_criado', 'pendente', 'Reagendamento criado pela tela de reagendamentos.', [
+                'new_turma_live_at' => $newLive,
+                'sf_disparo_at' => $dispatchAt,
+                'origem' => 'admin_reagendamentos_live',
+            ]);
             $pdo->commit();
             disparar_webhooks('LIVE_REAGENDADA', $userId, [
                 'reagendamento_id'=>$histId,

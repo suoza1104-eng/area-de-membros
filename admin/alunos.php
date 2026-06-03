@@ -238,6 +238,11 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
                 ':ua' => 'admin_alunos',
             ]);
         $histId = (int)$pdo->lastInsertId();
+        reagendamento_live_log($pdo, $histId, $userId, 'agendamento_criado', 'pendente', 'Reagendamento criado pelo admin de alunos.', [
+            'new_turma_live_at' => $newLive,
+            'sf_disparo_at' => $dispatchAt,
+            'origem' => 'admin_alunos',
+        ]);
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
