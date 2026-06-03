@@ -101,6 +101,7 @@ try {
         WHERE r.status = 'reagendado'
           AND r.new_turma_live_at <= DATE_SUB(NOW(), INTERVAL {$expireGraceMin} MINUTE)
           AND r.expired_checked_at IS NULL
+          AND (r.sf_disparo_at IS NULL OR r.sf_sent_at IS NOT NULL)
           AND NOT EXISTS (
               SELECT 1
               FROM live_event_recebimentos ler
