@@ -189,8 +189,8 @@ $dispatchOffsetMin = (int)get_setting('reagendar_dispatch_offset_min', '0');
 $dispatchOffsetText = rl_format_offset($dispatchOffsetMin);
 $dispatchDelayMs = (int)get_setting('reagendar_dispatch_delay_ms', '500');
 if ($dispatchDelayMs < 0) $dispatchDelayMs = 500;
-$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
-if ($expireGraceMin < 0) $expireGraceMin = 60;
+$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '10');
+if ($expireGraceMin < 0) $expireGraceMin = 10;
 if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -219,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dispatchDelayMs = (int)($_POST['reagendar_dispatch_delay_ms'] ?? 500);
             if ($dispatchDelayMs < 0) $dispatchDelayMs = 0;
             if ($dispatchDelayMs > 30000) $dispatchDelayMs = 30000;
-            $expireGraceMin = (int)($_POST['reagendar_expire_grace_min'] ?? 60);
+            $expireGraceMin = (int)($_POST['reagendar_expire_grace_min'] ?? 10);
             if ($expireGraceMin < 0) $expireGraceMin = 0;
             if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 
@@ -485,12 +485,21 @@ try {
             ($exprOferta) AS teve_oferta,
             ($exprCompra) AS teve_compra,
             CASE
-                WHEN r.status = 'expirou' THEN 'Expirou'
-                WHEN ($exprCompra) THEN 'Comprou'
-                WHEN ($exprOferta) THEN 'Ficou ate oferta'
-                WHEN ($exprAcessou) THEN 'Acessou'
+                WHEN r.status = 'enviado' OR r.sf_sent_at IS NOT NULL THEN 'Enviado'
+                WHEN r.status = 'substituido' THEN 'Substituido'
+                WHEN r.status = 'expirou' THEN 'Expirado sem envio'
+                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at > NOW() THEN 'Aguardando'
+                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at <= NOW() THEN 'Pendente'
                 ELSE 'Reagendado'
             END AS status_visual,
+            CASE
+                WHEN r.status = 'enviado' OR r.sf_sent_at IS NOT NULL THEN 'enviado'
+                WHEN r.status = 'substituido' THEN 'substituido'
+                WHEN r.status = 'expirou' THEN 'expirado'
+                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at > NOW() THEN 'aguardando'
+                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at <= NOW() THEN 'pendente'
+                ELSE 'reagendado'
+            END AS status_visual_key,
             (SELECT COUNT(*) FROM reagendamentos_live rr WHERE rr.user_id = r.user_id) AS frequencia_aluno
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
@@ -676,6 +685,12 @@ require __DIR__ . '/_header.php';
 .rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
 .rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-history-status { display:inline-flex; align-items:center; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:800; border:1px solid var(--border); }
+.rl-history-status.aguardando { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
+.rl-history-status.pendente { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
+.rl-history-status.enviado { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-history-status.expirado { background:var(--danger-dim); color:#fca5a5; border-color:rgba(239,68,68,.25); }
+.rl-history-status.substituido, .rl-history-status.reagendado { background:rgba(100,116,139,.10); color:#cbd5e1; border-color:rgba(100,116,139,.22); }
 .rl-log-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:16px; border-bottom:1px solid var(--border); }
 .rl-log-kpis { display:flex; gap:8px; flex-wrap:wrap; }
 .rl-log-kpi { min-width:92px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:rgba(15,23,42,.42); }
@@ -816,7 +831,7 @@ require __DIR__ . '/_header.php';
                     <div class="form-group">
                         <label class="form-label">Prazo para considerar expirado (min)</label>
                         <input type="number" min="0" max="1440" name="reagendar_expire_grace_min" value="<?= (int)$expireGraceMin ?>">
-                        <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 60: so dispara expirado a partir de 20:30 se o aluno nao acessou.</div>
+                        <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 10: so aparece expirado se chegar 19:40 sem envio confirmado.</div>
                     </div>
                 </div>
                 <div class="form-group">
@@ -865,10 +880,10 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Eventos</th><th>Freq.</th><th>Quando</th><th style="text-align:right">Acoes</th></tr></thead>
+                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Disparo</th><th>Eventos</th><th>Freq.</th><th>Quando</th><th style="text-align:right">Acoes</th></tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
-                        <tr><td colspan="9" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
+                        <tr><td colspan="10" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $r): ?>
                         <tr>
@@ -892,7 +907,14 @@ require __DIR__ . '/_header.php';
                                 $origemLabel = $origemRaw === 'suporte' ? 'Suporte' : 'Aluno';
                             ?>
                             <td><span class="badge <?= $origemRaw === 'suporte' ? 'badge-neutral' : 'badge-info' ?>"><?= h($origemLabel) ?></span></td>
-                            <td><span class="badge badge-info"><?= h($r['status_visual'] ?? 'Reagendado') ?></span></td>
+                            <?php $statusKey = preg_replace('/[^a-z0-9_-]+/i', '', (string)($r['status_visual_key'] ?? 'reagendado')); ?>
+                            <td><span class="rl-history-status <?= h($statusKey) ?>"><?= h($r['status_visual'] ?? 'Reagendado') ?></span></td>
+                            <td>
+                                <div class="text-xs text-muted">Previsto</div>
+                                <div class="fw-700"><?= h(rl_admin_dt($r['sf_disparo_at'] ?? null)) ?></div>
+                                <div class="text-xs text-muted mt-1">Real</div>
+                                <div><?= h(rl_admin_dt($r['sf_sent_at'] ?? null)) ?></div>
+                            </td>
                             <td>
                                 <div class="rl-event-pills">
                                     <span class="rl-event-pill <?= !empty($r['teve_acesso']) ? 'on acesso' : '' ?>">Entrada</span>

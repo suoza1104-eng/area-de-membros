@@ -53,7 +53,7 @@ if (!rl_cron_table_exists($pdo, 'reagendamentos_live')) {
 
 $sent = 0;
 $expired = 0;
-$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '60');
+$expireGraceMin = (int)get_setting('reagendar_expire_grace_min', '10');
 if ($expireGraceMin < 0) $expireGraceMin = 0;
 if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 $dispatchGraceMin = (int)get_setting('reagendar_dispatch_grace_min', '180');
@@ -77,7 +77,7 @@ try {
         ]);
         $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
         if ($ok) {
-            $pdo->prepare("UPDATE reagendamentos_live SET sf_sent_at = NOW() WHERE id = :id")->execute([':id' => (int)$r['id']]);
+            $pdo->prepare("UPDATE reagendamentos_live SET status='enviado', sf_sent_at = NOW() WHERE id = :id")->execute([':id' => (int)$r['id']]);
             reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'sucesso', 'SuperFuncionario confirmou o envio.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
                 'extra' => $extra,
@@ -101,7 +101,7 @@ try {
         WHERE r.status = 'reagendado'
           AND r.new_turma_live_at <= DATE_SUB(NOW(), INTERVAL {$expireGraceMin} MINUTE)
           AND r.expired_checked_at IS NULL
-          AND (r.sf_disparo_at IS NULL OR r.sf_sent_at IS NOT NULL)
+          AND r.sf_sent_at IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM live_event_recebimentos ler
@@ -117,6 +117,11 @@ try {
     foreach ($rows as $r) {
         $pdo->prepare("UPDATE reagendamentos_live SET status='expirou', expired_checked_at=NOW() WHERE id=:id")->execute([':id' => (int)$r['id']]);
         $r['status'] = 'expirou';
+        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'expirado_sem_envio', 'falha', 'Passou do prazo de tolerancia sem confirmacao de envio.', [
+            'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+            'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
+            'expire_grace_min' => $expireGraceMin,
+        ]);
         disparar_webhooks('LIVE_REAGENDAMENTO_EXPIRADO', (int)$r['user_id'], rl_cron_extra($r));
         $expired++;
     }
