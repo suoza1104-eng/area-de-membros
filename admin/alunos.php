@@ -279,6 +279,10 @@ $hasSenha   = col_ok($pdo,'users','senha');
 $hasPassword = col_ok($pdo,'users','password');
 $senhaCol   = $hasSenha ? 'senha' : ($hasPassword ? 'password' : '');
 $hasUtm     = col_ok($pdo,'users','utm_source');
+$hasHotmartSales = table_ok($pdo, 'hotmart_sales')
+    && col_ok($pdo, 'hotmart_sales', 'matched_user_id')
+    && col_ok($pdo, 'hotmart_sales', 'status')
+    && col_ok($pdo, 'hotmart_sales', 'gross_revenue');
 
 // ── Detecta turmas disponíveis ────────────────────────────────────────────
 $turmas = [];
@@ -518,6 +522,26 @@ $sqlCount = "SELECT COUNT(*) FROM users u $whereSql";
 $stCount  = $pdo->prepare($sqlCount);
 $stCount->execute($params);
 $totalGeral = (int)$stCount->fetchColumn();
+
+$compradores = 0;
+$faturamento = 0.0;
+if ($hasHotmartSales) {
+    $sqlVendas = "
+        SELECT
+            COUNT(DISTINCT u.id) AS compradores,
+            COALESCE(SUM(s.gross_revenue), 0) AS faturamento
+        FROM users u
+        JOIN hotmart_sales s ON s.matched_user_id = u.id
+        $whereSql
+        " . ($whereSql ? ' AND ' : ' WHERE ') . "
+            LOWER(COALESCE(s.status, '')) IN ('aprovado','completo','approved','complete','paid')
+    ";
+    $stVendas = $pdo->prepare($sqlVendas);
+    $stVendas->execute($params);
+    $totaisVendas = $stVendas->fetch(PDO::FETCH_ASSOC) ?: [];
+    $compradores = (int)($totaisVendas['compradores'] ?? 0);
+    $faturamento = (float)($totaisVendas['faturamento'] ?? 0);
+}
 
 $sql = "
 SELECT
@@ -822,6 +846,14 @@ require __DIR__ . '/_header.php';
     <div class="al-kpi">
         <div class="al-kpi-v" style="color:var(--info)"><?= $comTurma ?></div>
         <div class="al-kpi-l">Com turma</div>
+    </div>
+    <div class="al-kpi">
+        <div class="al-kpi-v" style="color:var(--warning)"><?= number_format($compradores, 0, ',', '.') ?></div>
+        <div class="al-kpi-l">Compraram</div>
+    </div>
+    <div class="al-kpi">
+        <div class="al-kpi-v" style="color:var(--success)">R$ <?= number_format($faturamento, 2, ',', '.') ?></div>
+        <div class="al-kpi-l">Faturamento</div>
     </div>
 </div>
 
