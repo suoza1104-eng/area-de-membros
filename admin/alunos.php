@@ -479,17 +479,59 @@ if ($fDateTo !== '' && $colCreated !== '') {
     $where[]          = "u.`$colCreated` <= :dto";
     $params[':dto']   = $fDateTo . ' 23:59:59';
 }
+
+$utmOptions = [
+    'utm_source' => [],
+    'utm_medium' => [],
+    'utm_campaign' => [],
+];
+if ($hasUtm) {
+    $utmSelected = [
+        'utm_source' => $fUtmSrc,
+        'utm_medium' => $fUtmMed,
+        'utm_campaign' => $fUtmCamp,
+    ];
+    foreach (array_keys($utmOptions) as $utmColumn) {
+        $optionWhere = $where;
+        $optionParams = $params;
+        foreach ($utmSelected as $filterColumn => $filterValue) {
+            if ($filterColumn === $utmColumn || $filterValue === '') continue;
+            $key = ':opt_' . $filterColumn;
+            $optionWhere[] = "u.`$filterColumn` = $key";
+            $optionParams[$key] = $filterValue;
+        }
+        $optionWhere[] = "TRIM(COALESCE(u.`$utmColumn`, '')) <> ''";
+        $optionWhereSql = 'WHERE ' . implode(' AND ', $optionWhere);
+        try {
+            $stOptions = $pdo->prepare("
+                SELECT DISTINCT TRIM(u.`$utmColumn`) AS valor
+                FROM users u
+                $optionWhereSql
+                ORDER BY valor ASC
+                LIMIT 1000
+            ");
+            $stOptions->execute($optionParams);
+            $utmOptions[$utmColumn] = $stOptions->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        } catch (Throwable $e) {}
+
+        $selectedValue = $utmSelected[$utmColumn];
+        if ($selectedValue !== '' && !in_array($selectedValue, $utmOptions[$utmColumn], true)) {
+            array_unshift($utmOptions[$utmColumn], $selectedValue);
+        }
+    }
+}
+
 if ($fUtmSrc !== '' && $hasUtm) {
-    $where[]       = "u.utm_source LIKE :us";
-    $params[':us'] = '%' . $fUtmSrc . '%';
+    $where[]       = "u.utm_source = :us";
+    $params[':us'] = $fUtmSrc;
 }
 if ($fUtmMed !== '' && $hasUtm) {
-    $where[]       = "u.utm_medium LIKE :um";
-    $params[':um'] = '%' . $fUtmMed . '%';
+    $where[]       = "u.utm_medium = :um";
+    $params[':um'] = $fUtmMed;
 }
 if ($fUtmCamp !== '' && $hasUtm) {
-    $where[]        = "u.utm_campaign LIKE :uc";
-    $params[':uc']  = '%' . $fUtmCamp . '%';
+    $where[]        = "u.utm_campaign = :uc";
+    $params[':uc']  = $fUtmCamp;
 }
 
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
@@ -807,15 +849,30 @@ require __DIR__ . '/_header.php';
         <div class="adv-panel <?= $temFiltroUtm?'open':'' ?>" id="panel-utm">
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Source</label>
-                <input type="text" name="utm_source" value="<?= h($fUtmSrc) ?>" placeholder="google, facebook…">
+                <select name="utm_source">
+                    <option value="">Todas</option>
+                    <?php foreach ($utmOptions['utm_source'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmSrc === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Medium</label>
-                <input type="text" name="utm_medium" value="<?= h($fUtmMed) ?>" placeholder="cpc, email…">
+                <select name="utm_medium">
+                    <option value="">Todos</option>
+                    <?php foreach ($utmOptions['utm_medium'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmMed === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Campaign</label>
-                <input type="text" name="utm_campaign" value="<?= h($fUtmCamp) ?>" placeholder="nome_campanha">
+                <select name="utm_campaign">
+                    <option value="">Todas</option>
+                    <?php foreach ($utmOptions['utm_campaign'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmCamp === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
         <?php endif; ?>
