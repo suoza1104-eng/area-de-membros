@@ -63,7 +63,7 @@ Futuramente deve armazenar:
 
 ### Fase 1 - Integrar Evolution API e conectar uma instancia via QR Code
 
-Status: Em andamento
+Status: Concluida
 
 Objetivo:
 
@@ -90,13 +90,36 @@ Criterios de conclusao:
 
 Observacoes:
 
-- validar se sera usado Docker na VPS;
-- validar porta/domino onde a Evolution API ficara disponivel;
+- Evolution API instalada em VPS HostGator com AlmaLinux 9.8;
+- Docker e Docker Compose instalados e validados;
+- API acessivel em `http://69.6.215.67:8080`;
+- Evolution API validada na versao `2.3.7`;
+- instancia `monitor01` criada com integracao `WHATSAPP-BAILEYS`;
+- QR Code gerado pelo Evolution Manager;
+- numero secundario conectado;
+- status final validado em `/instance/connectionState/monitor01` com `state=open`;
 - usar numero secundario para teste.
 - tela administrativa criada em `admin/whatsapp_monitor.php`;
 - camada PHP de integracao criada em `app/evolution_api.php`;
 - arquivos Docker de referencia criados em `infra/evolution-api/`;
-- ainda falta subir a Evolution API real, configurar URL/API key e escanear o QR Code.
+
+Dados operacionais atuais:
+
+- VPS: HostGator;
+- OS: AlmaLinux 9.8;
+- pasta da Evolution API na VPS: `/opt/evolution-api`;
+- containers: `evolution_api`, `evolution_postgres`, `evolution_redis`;
+- URL base para o painel PHP: `http://69.6.215.67:8080`;
+- API key: definida em `/opt/evolution-api/.env` na variavel `AUTHENTICATION_API_KEY`; nao expor em codigo, prints ou logs;
+- timeout sugerido no painel PHP: `30` segundos, podendo usar `60` em caso de lentidao.
+
+Cuidados validados:
+
+- nao ativar webhooks nesta fase;
+- nao ativar blacklist ou remocao automatica nesta fase;
+- nao usar o numero principal do WhatsApp;
+- nao rodar `docker compose down -v`, pois isso pode apagar volumes/dados/sessao;
+- para reiniciar sem apagar dados, usar `cd /opt/evolution-api && docker compose restart`.
 
 ### Fase 2 - Receber webhooks de grupo apenas para log bruto
 
@@ -216,13 +239,13 @@ Criterios de conclusao:
 - [x] Criar tela administrativa inicial para Evolution API.
 - [x] Criar camada PHP para criar instancia, gerar QR e consultar status.
 - [x] Criar arquivos de referencia para Evolution API via Docker.
-- [ ] Definir ambiente da Evolution API: local, VPS ou subdominio.
-- [ ] Confirmar se Docker esta disponivel na VPS.
-- [ ] Subir Evolution API isolada.
-- [ ] Criar primeira instancia de teste.
-- [ ] Gerar e exibir QR Code real.
-- [ ] Conectar numero secundario.
-- [ ] Confirmar status conectado.
+- [x] Definir ambiente da Evolution API: VPS HostGator.
+- [x] Confirmar se Docker esta disponivel na VPS.
+- [x] Subir Evolution API isolada.
+- [x] Criar primeira instancia de teste.
+- [x] Gerar e exibir QR Code real.
+- [x] Conectar numero secundario.
+- [x] Confirmar status conectado.
 - [ ] Testar eventos de grupo.
 - [ ] Criar armazenamento de logs.
 - [ ] Criar blacklist.
@@ -233,8 +256,8 @@ Criterios de conclusao:
 
 ## Decisoes Pendentes
 
-- Usar Evolution API self-hosted na mesma VPS ou em VPS separada.
-- Definir dominio/subdominio para a Evolution API.
+- Avaliar se a Evolution API ficara em IP/porta `8080` ou em subdominio com HTTPS.
+- Definir dominio/subdominio para a Evolution API, se for sair do acesso por IP.
 - Definir dominio/URL publica para webhook.
 - Escolher banco usado pela Evolution API.
 - Decidir se o processamento dos webhooks sera direto ou via fila simples.
@@ -261,4 +284,9 @@ Criterios de conclusao:
 - Criado `admin/whatsapp_monitor.php` para configurar URL/API key, criar instancia, gerar QR e consultar status.
 - Criados arquivos `infra/evolution-api/docker-compose.yml`, `.env.example` e `README.md`.
 - Adicionado item "WhatsApp Monitor" no menu administrativo.
-- Fase 1 ainda nao concluida: falta executar a Evolution API em ambiente real e validar QR/conexao com numero secundario.
+- Fase 1 concluida em VPS HostGator.
+- Ambiente validado: AlmaLinux 9.8, Docker `29.5.3`, Docker Compose `v5.1.4`.
+- Evolution API rodando em `http://69.6.215.67:8080`, versao `2.3.7`.
+- Instancia `monitor01` criada e conectada com numero secundario.
+- Status final validado: `state=open`, interpretado como conectado.
+- Proxima etapa: Fase 2, criar endpoint para receber webhooks de grupos e registrar payload bruto, ainda sem acoes automaticas.
