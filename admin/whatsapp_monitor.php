@@ -24,6 +24,13 @@ function wh_status_badge(string $status): string {
     return '<span class="badge ' . $class . '">' . wh_h($status ?: 'DISCONNECTED') . '</span>';
 }
 
+function wh_clean_phone(?string $participant): string {
+    $participant = trim((string)$participant);
+    if ($participant === '') return '';
+    $participant = preg_replace('/@.*$/', '', $participant) ?? $participant;
+    return preg_replace('/\D+/', '', $participant) ?? '';
+}
+
 $notice = '';
 $error = '';
 
@@ -360,6 +367,7 @@ include __DIR__ . '/_header.php';
                             <th>Grupo</th>
                             <th>Acao</th>
                             <th>Participante</th>
+                            <th>Telefone</th>
                             <th>Payload</th>
                         </tr>
                     </thead>
@@ -374,6 +382,7 @@ include __DIR__ . '/_header.php';
                             <td><?= wh_h((string)($log['group_id'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['action'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['participant_number'] ?? '-')) ?></td>
+                            <td><?= wh_h(wh_clean_phone((string)($log['participant_number'] ?? '')) ?: '-') ?></td>
                             <td><div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div></td>
                         </tr>
                     <?php endforeach; ?>
