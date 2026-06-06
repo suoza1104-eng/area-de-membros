@@ -32,7 +32,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','whatsapp_monitor','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -55,6 +55,7 @@ $titleMap = [
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
     'superfuncionario' => 'SuperFuncionário',
+    'whatsapp_monitor' => 'WhatsApp Monitor',
     'monitor'          => 'Rastreamento',
     'logs'             => 'Logs',
     'aparencia'        => 'Aparência',
@@ -720,7 +721,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -740,6 +741,16 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M2 12h2M20 12h2M12 2v2M12 20v2"/>
       </svg>
       SuperFuncionário
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_monitor']): ?>
+    <a href="whatsapp_monitor.php" class="sb-item <?= $currentMenu === 'whatsapp_monitor' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M5 4h14a2 2 0 012 2v10a2 2 0 01-2 2H8l-5 3V6a2 2 0 012-2z"/>
+        <path d="M8 9h8M8 13h5"/>
+      </svg>
+      WhatsApp Monitor
     </a>
     <?php endif; ?>
 
