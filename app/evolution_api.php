@@ -231,12 +231,27 @@ function evolution_extract_raw_event_fields(array $payload): array {
     if (is_array($participants)) {
         $first = reset($participants);
         if (is_scalar($first)) $participant = (string)$first;
-        elseif (is_array($first)) $participant = (string)($first['id'] ?? $first['number'] ?? $first['jid'] ?? '');
+        elseif (is_array($first)) $participant = (string)($first['phoneNumber'] ?? $first['number'] ?? $first['id'] ?? $first['jid'] ?? '');
     } elseif (is_scalar($participants)) {
         $participant = (string)$participants;
     }
     if ($participant === '') {
-        $participant = (string)($data['participant'] ?? $data['number'] ?? $payload['participant'] ?? '');
+        $participantsData = $data['participantsData'] ?? [];
+        if (is_array($participantsData)) {
+            $firstData = reset($participantsData);
+            if (is_array($firstData)) {
+                $jid = $firstData['jid'] ?? [];
+                if (is_array($jid)) {
+                    $participant = (string)($jid['phoneNumber'] ?? $jid['id'] ?? '');
+                }
+                if ($participant === '') {
+                    $participant = (string)($firstData['phoneNumber'] ?? '');
+                }
+            }
+        }
+    }
+    if ($participant === '') {
+        $participant = (string)($data['participant'] ?? $data['phoneNumber'] ?? $data['number'] ?? $payload['participant'] ?? '');
     }
 
     return [

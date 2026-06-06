@@ -160,7 +160,8 @@ Ainda falta validar em grupo real:
 - validado em grupo real com eventos recebidos;
 - eventos `group-participants.update` registrados;
 - acoes `add` e `remove` identificadas;
-- campos principais confirmados: instancia, grupo, acao e participante.
+- campos principais confirmados: instancia, grupo, acao e participante;
+- observacao importante: quando o participante vem como `@lid`, este nao deve ser tratado como telefone real; o telefone correto vem de `data.participants[0].phoneNumber`, exemplo `5511948642358@s.whatsapp.net`.
 
 ### Fase 3 - Modelagem de dados definitiva
 

@@ -31,6 +31,33 @@ function wh_clean_phone(?string $participant): string {
     return preg_replace('/\D+/', '', $participant) ?? '';
 }
 
+function wh_phone_from_payload(?string $rawPayload, ?string $fallbackParticipant = null): string {
+    $payload = json_decode((string)$rawPayload, true);
+    if (is_array($payload)) {
+        $participants = $payload['data']['participants'] ?? [];
+        if (is_array($participants)) {
+            $first = reset($participants);
+            if (is_array($first)) {
+                $phone = wh_clean_phone((string)($first['phoneNumber'] ?? ''));
+                if ($phone !== '') return $phone;
+            }
+        }
+
+        $participantsData = $payload['data']['participantsData'] ?? [];
+        if (is_array($participantsData)) {
+            $firstData = reset($participantsData);
+            if (is_array($firstData)) {
+                $jid = $firstData['jid'] ?? [];
+                if (is_array($jid)) {
+                    $phone = wh_clean_phone((string)($jid['phoneNumber'] ?? ''));
+                    if ($phone !== '') return $phone;
+                }
+            }
+        }
+    }
+    return wh_clean_phone($fallbackParticipant);
+}
+
 $notice = '';
 $error = '';
 
@@ -382,7 +409,7 @@ include __DIR__ . '/_header.php';
                             <td><?= wh_h((string)($log['group_id'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['action'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['participant_number'] ?? '-')) ?></td>
-                            <td><?= wh_h(wh_clean_phone((string)($log['participant_number'] ?? '')) ?: '-') ?></td>
+                            <td><?= wh_h(wh_phone_from_payload((string)$log['payload_raw'], (string)($log['participant_number'] ?? '')) ?: '-') ?></td>
                             <td><div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div></td>
                         </tr>
                     <?php endforeach; ?>
