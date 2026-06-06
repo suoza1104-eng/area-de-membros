@@ -200,12 +200,16 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
 }
 
 function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): array {
-    return evolution_http('POST', '/webhook/set/' . rawurlencode($instanceKey), [
+    $webhook = [
         'enabled' => true,
         'url' => $webhookUrl,
         'events' => ['GROUP_PARTICIPANTS_UPDATE'],
         'headers' => new stdClass(),
         'base64' => false,
+    ];
+
+    return evolution_http('POST', '/webhook/set/' . rawurlencode($instanceKey), [
+        'webhook' => $webhook,
     ]);
 }
 
