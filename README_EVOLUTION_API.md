@@ -123,7 +123,7 @@ Cuidados validados:
 
 ### Fase 2 - Receber webhooks de grupo apenas para log bruto
 
-Status: Pendente
+Status: Em andamento
 
 Objetivo:
 
@@ -143,6 +143,23 @@ Criterios de conclusao:
 - payload bruto fica registrado;
 - campos principais sao identificados: instancia, grupo, acao e participante;
 - eventos reais de grupo foram validados.
+
+Implementado ate agora:
+
+- endpoint criado em `public/whatsapp_webhook.php`;
+- tabela de logs brutos criada como `whatsapp_webhook_raw_logs`;
+- tela `admin/whatsapp_monitor.php` exibe URL do webhook, botao para configurar webhook na Evolution e ultimos payloads recebidos;
+- configuracao usa `POST /webhook/set/{instance}`;
+- evento configurado: `GROUP_PARTICIPANTS_UPDATE`;
+- token secreto do webhook salvo em `settings.evolution_webhook_token`;
+- nenhuma acao automatica e executada.
+
+Ainda falta validar em grupo real:
+
+- colocar a instancia `monitor01` em um grupo de teste;
+- fazer entrada/saida de participante;
+- confirmar payload na tabela;
+- documentar o formato real enviado pela Evolution API 2.3.7.
 
 ### Fase 3 - Modelagem de dados definitiva
 
@@ -247,7 +264,7 @@ Criterios de conclusao:
 - [x] Conectar numero secundario.
 - [x] Confirmar status conectado.
 - [ ] Testar eventos de grupo.
-- [ ] Criar armazenamento de logs.
+- [x] Criar armazenamento de logs.
 - [ ] Criar blacklist.
 - [ ] Testar remocao manual.
 - [ ] Ativar remocao automatica em grupo controlado.
@@ -290,3 +307,8 @@ Criterios de conclusao:
 - Instancia `monitor01` criada e conectada com numero secundario.
 - Status final validado: `state=open`, interpretado como conectado.
 - Proxima etapa: Fase 2, criar endpoint para receber webhooks de grupos e registrar payload bruto, ainda sem acoes automaticas.
+- Implementacao inicial da Fase 2 criada.
+- Criado endpoint `public/whatsapp_webhook.php`.
+- Criada tabela `whatsapp_webhook_raw_logs`.
+- Tela `admin/whatsapp_monitor.php` atualizada com URL do webhook, configuracao na Evolution e visualizacao de payloads.
+- Fase 2 ainda depende de validacao com evento real em grupo de teste.

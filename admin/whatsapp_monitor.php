@@ -93,6 +93,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_monitor.php?deleted=1');
             exit;
         }
+
+        if ($action === 'set_group_webhook') {
+            $instanceKey = trim((string)($_POST['webhook_instance_key'] ?? ''));
+            if ($instanceKey === '') throw new RuntimeException('Informe a chave da instancia.');
+            $webhookUrl = rtrim(BASE_URL, '/') . '/whatsapp_webhook.php?t=' . evolution_get_webhook_token();
+            $res = evolution_set_group_webhook($instanceKey, $webhookUrl);
+            if (!$res['ok']) {
+                throw new RuntimeException('Falha ao configurar webhook: ' . ($res['error'] ?: $res['raw']));
+            }
+            set_setting('evolution_webhook_instance_key', $instanceKey);
+            header('Location: whatsapp_monitor.php?webhook_set=1');
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -103,10 +116,23 @@ if (isset($_GET['created'])) $notice = 'Instancia criada. Se o QR nao aparecer, 
 if (isset($_GET['qr'])) $notice = 'QR Code solicitado. Leia com o WhatsApp do numero de teste.';
 if (isset($_GET['status'])) $notice = 'Status atualizado.';
 if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
+if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
 
 $cfg = evolution_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $activeId = (int)($_GET['qr'] ?? $_GET['created'] ?? $_GET['status'] ?? 0);
+$webhookToken = evolution_get_webhook_token();
+$webhookUrl = rtrim(BASE_URL, '/') . '/whatsapp_webhook.php?t=' . $webhookToken;
+$webhookInstanceKey = (string)get_setting('evolution_webhook_instance_key', 'monitor01');
+$rawLogs = [];
+try {
+    $rawLogs = $pdo->query("
+        SELECT id, token_ok, event_type, instance_key, group_id, action, participant_number, payload_raw, source_ip, received_at
+        FROM whatsapp_webhook_raw_logs
+        ORDER BY id DESC
+        LIMIT 80
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 
 include __DIR__ . '/_header.php';
 ?>
@@ -136,6 +162,11 @@ include __DIR__ . '/_header.php';
 .wm-help { font-size:12px; color:var(--muted); line-height:1.6; }
 .wm-code { font-family:monospace; background:rgba(255,255,255,.06); border:1px solid var(--border); border-radius:8px; padding:8px; font-size:11px; color:#93c5fd; max-height:110px; overflow:auto; word-break:break-all; }
 .wm-danger-note { border:1px solid rgba(245,158,11,.28); background:rgba(245,158,11,.08); color:#fcd34d; border-radius:12px; padding:10px 12px; font-size:12px; margin-bottom:14px; }
+.wm-full { margin-top:16px; }
+.wm-url-row { display:flex; gap:8px; align-items:center; }
+.wm-url-row input { font-family:monospace; font-size:12px; }
+.wm-log-table td { font-size:12px; vertical-align:top; }
+.wm-payload { max-width:520px; max-height:90px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-family:monospace; font-size:11px; color:#93c5fd; background:rgba(255,255,255,.035); border:1px solid var(--border); border-radius:8px; padding:7px; }
 @media(max-width:1000px){ .wm-grid,.wm-qrbox{grid-template-columns:1fr}.wm-row{grid-template-columns:1fr}.wm-qr{width:100%;max-width:260px} }
 </style>
 
@@ -282,6 +313,74 @@ include __DIR__ . '/_header.php';
             <?php endforeach; ?>
         </div>
     </div>
+
+    <div class="wm-card wm-full">
+        <h2>Webhook de grupos - Fase 2</h2>
+        <div class="wm-card-sub">Recebe apenas eventos <span class="code">GROUP_PARTICIPANTS_UPDATE</span> e salva payload bruto. Nenhuma acao automatica e executada.</div>
+
+        <div class="wm-danger-note">
+            Configure primeiro em grupo de teste. O endpoint abaixo responde 200 e registra o payload para analisarmos o formato real da Evolution API.
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">URL do webhook</label>
+            <div class="wm-url-row">
+                <input id="wm-webhook-url" type="text" readonly value="<?= wh_h($webhookUrl) ?>">
+                <button class="btn btn-ghost btn-sm" type="button" onclick="copyWebhookUrl()">Copiar</button>
+            </div>
+        </div>
+
+        <form method="post" class="wm-actions">
+            <input type="hidden" name="action" value="set_group_webhook">
+            <div style="min-width:260px;flex:1;max-width:420px">
+                <label class="form-label">Chave da instancia na Evolution</label>
+                <input type="text" name="webhook_instance_key" value="<?= wh_h($webhookInstanceKey) ?>" placeholder="monitor01">
+            </div>
+            <button class="btn btn-primary" type="submit">Configurar webhook na Evolution</button>
+        </form>
+    </div>
+
+    <div class="wm-card wm-full">
+        <h2>Payloads recebidos</h2>
+        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>.</div>
+
+        <?php if (!$rawLogs): ?>
+            <div class="text-muted text-sm">Nenhum payload recebido ainda. Configure o webhook e faca um teste de entrada/saida em grupo.</div>
+        <?php else: ?>
+            <div class="table-wrap">
+                <table class="wm-log-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Recebido</th>
+                            <th>Token</th>
+                            <th>Evento</th>
+                            <th>Instancia</th>
+                            <th>Grupo</th>
+                            <th>Acao</th>
+                            <th>Participante</th>
+                            <th>Payload</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($rawLogs as $log): ?>
+                        <tr>
+                            <td><?= (int)$log['id'] ?></td>
+                            <td style="white-space:nowrap"><?= wh_h((string)$log['received_at']) ?></td>
+                            <td><?= (int)$log['token_ok'] === 1 ? '<span class="badge badge-success">OK</span>' : '<span class="badge badge-danger">Falhou</span>' ?></td>
+                            <td><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
+                            <td><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
+                            <td><?= wh_h((string)($log['group_id'] ?? '-')) ?></td>
+                            <td><?= wh_h((string)($log['action'] ?? '-')) ?></td>
+                            <td><?= wh_h((string)($log['participant_number'] ?? '-')) ?></td>
+                            <td><div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
@@ -293,6 +392,15 @@ document.querySelectorAll('.wm-qrcode').forEach(function(canvas) {
         if (err) canvas.replaceWith(document.createTextNode('Falha ao renderizar QR'));
     });
 });
+function copyWebhookUrl() {
+    var input = document.getElementById('wm-webhook-url');
+    if (!input) return;
+    input.select();
+    input.setSelectionRange(0, 99999);
+    navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(input.value)
+        : document.execCommand('copy');
+}
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

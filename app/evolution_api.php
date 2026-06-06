@@ -31,6 +31,27 @@ function evolution_ensure_tables(PDO $pdo): void {
             valor LONGTEXT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_webhook_raw_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            token_ok TINYINT(1) NOT NULL DEFAULT 0,
+            event_type VARCHAR(100) NULL,
+            instance_key VARCHAR(120) NULL,
+            group_id VARCHAR(160) NULL,
+            action VARCHAR(60) NULL,
+            participant_number VARCHAR(60) NULL,
+            payload_raw LONGTEXT NOT NULL,
+            headers_json TEXT NULL,
+            source_ip VARCHAR(80) NULL,
+            received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_wwrl_received (received_at),
+            KEY idx_wwrl_event (event_type),
+            KEY idx_wwrl_instance (instance_key),
+            KEY idx_wwrl_group (group_id),
+            KEY idx_wwrl_participant (participant_number)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
 function evolution_get_config(): array {
@@ -38,7 +59,17 @@ function evolution_get_config(): array {
         'base_url' => rtrim((string)get_setting('evolution_base_url', ''), '/'),
         'apikey' => (string)get_setting('evolution_apikey', ''),
         'timeout' => max(3, (int)get_setting('evolution_timeout_seconds', '20')),
+        'webhook_token' => evolution_get_webhook_token(),
     ];
+}
+
+function evolution_get_webhook_token(): string {
+    $token = preg_replace('/[^a-f0-9]/i', '', (string)get_setting('evolution_webhook_token', ''));
+    if (strlen($token) === 64) return strtolower($token);
+
+    $token = bin2hex(random_bytes(32));
+    set_setting('evolution_webhook_token', $token);
+    return $token;
 }
 
 function evolution_set_config(string $baseUrl, string $apikey, int $timeout): void {
@@ -166,6 +197,51 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
     }
     evolution_update_instance_from_response($pdo, (int)$instance['id'], $res, $status);
     return $res;
+}
+
+function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): array {
+    return evolution_http('POST', '/webhook/set/' . rawurlencode($instanceKey), [
+        'enabled' => true,
+        'url' => $webhookUrl,
+        'webhookByEvents' => false,
+        'webhookBase64' => false,
+        'events' => ['GROUP_PARTICIPANTS_UPDATE'],
+    ]);
+}
+
+function evolution_find_webhook(string $instanceKey): array {
+    return evolution_http('GET', '/webhook/find/' . rawurlencode($instanceKey));
+}
+
+function evolution_extract_raw_event_fields(array $payload): array {
+    $eventType = (string)($payload['event'] ?? $payload['eventType'] ?? $payload['type'] ?? '');
+    $instance = (string)($payload['instance'] ?? $payload['instanceName'] ?? $payload['instance_key'] ?? '');
+    $data = $payload['data'] ?? [];
+    if (!is_array($data)) $data = [];
+
+    $groupId = (string)($data['id'] ?? $data['groupId'] ?? $data['remoteJid'] ?? $data['jid'] ?? $payload['groupId'] ?? '');
+    $action = (string)($data['action'] ?? $payload['action'] ?? '');
+
+    $participant = '';
+    $participants = $data['participants'] ?? $data['participant'] ?? $payload['participants'] ?? null;
+    if (is_array($participants)) {
+        $first = reset($participants);
+        if (is_scalar($first)) $participant = (string)$first;
+        elseif (is_array($first)) $participant = (string)($first['id'] ?? $first['number'] ?? $first['jid'] ?? '');
+    } elseif (is_scalar($participants)) {
+        $participant = (string)$participants;
+    }
+    if ($participant === '') {
+        $participant = (string)($data['participant'] ?? $data['number'] ?? $payload['participant'] ?? '');
+    }
+
+    return [
+        'event_type' => $eventType !== '' ? $eventType : null,
+        'instance_key' => $instance !== '' ? $instance : null,
+        'group_id' => $groupId !== '' ? $groupId : null,
+        'action' => $action !== '' ? $action : null,
+        'participant_number' => $participant !== '' ? preg_replace('/[^0-9@._-]+/', '', $participant) : null,
+    ];
 }
 
 function evolution_update_instance_from_response(PDO $pdo, int $id, array $res, string $fallbackStatus): void {
