@@ -203,9 +203,9 @@ function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): a
     return evolution_http('POST', '/webhook/set/' . rawurlencode($instanceKey), [
         'enabled' => true,
         'url' => $webhookUrl,
-        'webhookByEvents' => false,
-        'webhookBase64' => false,
         'events' => ['GROUP_PARTICIPANTS_UPDATE'],
+        'headers' => new stdClass(),
+        'base64' => false,
     ]);
 }
 

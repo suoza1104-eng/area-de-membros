@@ -100,7 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $webhookUrl = rtrim(BASE_URL, '/') . '/whatsapp_webhook.php?t=' . evolution_get_webhook_token();
             $res = evolution_set_group_webhook($instanceKey, $webhookUrl);
             if (!$res['ok']) {
-                throw new RuntimeException('Falha ao configurar webhook: ' . ($res['error'] ?: $res['raw']));
+                $detail = trim((string)($res['raw'] ?: $res['error']));
+                throw new RuntimeException('Falha ao configurar webhook: ' . substr($detail, 0, 900));
             }
             set_setting('evolution_webhook_instance_key', $instanceKey);
             header('Location: whatsapp_monitor.php?webhook_set=1');

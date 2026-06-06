@@ -151,6 +151,7 @@ Implementado ate agora:
 - tela `admin/whatsapp_monitor.php` exibe URL do webhook, botao para configurar webhook na Evolution e ultimos payloads recebidos;
 - configuracao usa `POST /webhook/set/{instance}`;
 - evento configurado: `GROUP_PARTICIPANTS_UPDATE`;
+- payload de configuracao ajustado para Evolution API 2.3.7/Foundation: `enabled`, `url`, `events`, `headers`, `base64`;
 - token secreto do webhook salvo em `settings.evolution_webhook_token`;
 - nenhuma acao automatica e executada.
 
