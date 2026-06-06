@@ -123,7 +123,7 @@ Cuidados validados:
 
 ### Fase 2 - Receber webhooks de grupo apenas para log bruto
 
-Status: Em andamento
+Status: Concluida
 
 Objetivo:
 
@@ -157,10 +157,10 @@ Implementado ate agora:
 
 Ainda falta validar em grupo real:
 
-- colocar a instancia `monitor01` em um grupo de teste;
-- fazer entrada/saida de participante;
-- confirmar payload na tabela;
-- documentar o formato real enviado pela Evolution API 2.3.7.
+- validado em grupo real com eventos recebidos;
+- eventos `group-participants.update` registrados;
+- acoes `add` e `remove` identificadas;
+- campos principais confirmados: instancia, grupo, acao e participante.
 
 ### Fase 3 - Modelagem de dados definitiva
 
@@ -264,7 +264,7 @@ Criterios de conclusao:
 - [x] Gerar e exibir QR Code real.
 - [x] Conectar numero secundario.
 - [x] Confirmar status conectado.
-- [ ] Testar eventos de grupo.
+- [x] Testar eventos de grupo.
 - [x] Criar armazenamento de logs.
 - [ ] Criar blacklist.
 - [ ] Testar remocao manual.
@@ -313,3 +313,8 @@ Criterios de conclusao:
 - Criada tabela `whatsapp_webhook_raw_logs`.
 - Tela `admin/whatsapp_monitor.php` atualizada com URL do webhook, configuracao na Evolution e visualizacao de payloads.
 - Fase 2 ainda depende de validacao com evento real em grupo de teste.
+- Fase 2 validada com payloads reais no painel.
+- Eventos recebidos: `group-participants.update`.
+- Acoes observadas: `add` e `remove`.
+- Campos extraidos com sucesso: instancia, grupo, acao e participante.
+- Proxima etapa recomendada: Fase 3, modelagem definitiva dos eventos e tela operacional de consulta antes de ativar blacklist/remocao automatica.
