@@ -731,16 +731,15 @@ Isso e esperado quando houve clique no CTA (`live_events.tipo = 'compra'`) mas a
 
 ## Ultima mudanca documentada
 
-Commit de referencia:
+Alteracao documentada:
 
 ```text
-9349656 Atualiza metricas do dashboard
+Dashboard: ranking de inscricoes Top 5 e ranking de entradas em grupos
 ```
 
 Resumo:
 
-- Renomeia metrica de live `Compra` para `Clicou CTA`.
-- Adiciona metrica separada de compras reais via Hotmart.
-- Adiciona filtro multi-turma no dashboard.
-- Adiciona cards de conversao em vendas e showup.
-- Adiciona compras reais no comparativo por turma.
+- Limita o ranking de inscricoes do dashboard ao Top 5 por padrao, com expansao para ver os demais.
+- Adiciona ranking de alunos que mais entraram em grupos de WhatsApp.
+- Mostra total de entradas e quantidade de grupos diferentes por aluno.
+- Permite abrir o historico do aluno no ranking de grupos, exibindo entradas, saidas, grupo, telefone, participante, autor e status de grupo ignorado.

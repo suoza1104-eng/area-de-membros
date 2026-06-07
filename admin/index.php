@@ -629,6 +629,8 @@ unset($fstep);
 // ========================
 $rankingRows   = [];
 $rankHistorico = [];
+$groupRankingRows = [];
+$groupRankingHistorico = [];
 $hasIL         = false;
 $hasWHL        = false;
 $hasUtmCols    = false;
@@ -730,6 +732,62 @@ if ($hasIL) {
     } catch (Throwable $e) {
         $rankingRows = [];
     }
+}
+
+// ========================
+// 7) RANKING ENTRADAS EM GRUPOS WHATSAPP
+// ========================
+try {
+    $pdo->query("SELECT 1 FROM whatsapp_group_events LIMIT 0");
+    $groupRankingRows = $pdo->query("
+        SELECT
+            u.id,
+            u.nome,
+            u.email,
+            u.telefone,
+            COUNT(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN 1 END) AS qtd_entradas,
+            COUNT(DISTINCT CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.group_id END) AS grupos_distintos,
+            MIN(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.created_at END) AS primeira_entrada,
+            MAX(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.created_at END) AS ultima_entrada
+        FROM whatsapp_group_events ge
+        JOIN users u ON u.id = ge.user_id
+        WHERE ge.user_id IS NOT NULL
+          AND ge.user_id > 0
+        GROUP BY u.id, u.nome, u.email, u.telefone
+        HAVING qtd_entradas > 0
+        ORDER BY qtd_entradas DESC, grupos_distintos DESC, ultima_entrada DESC
+        LIMIT 30
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    if ($groupRankingRows) {
+        $ids = [];
+        foreach ($groupRankingRows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) $ids[] = $id;
+        }
+        $ids = array_values(array_unique($ids));
+        if ($ids) {
+            $in = implode(',', $ids);
+            $histRows = $pdo->query("
+                SELECT
+                    ge.*,
+                    wg.group_name,
+                    wg.picture_url,
+                    wg.is_ignored
+                FROM whatsapp_group_events ge
+                LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+                WHERE ge.user_id IN ($in)
+                  AND ge.interpreted_event IN ('WHATSAPP_GRUPO_ENTROU','WHATSAPP_GRUPO_SAIU','WHATSAPP_GRUPO_REMOVIDO_ADMIN')
+                ORDER BY ge.user_id ASC, ge.created_at DESC, ge.id DESC
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($histRows as $h) {
+                $groupRankingHistorico[(int)$h['user_id']][] = $h;
+            }
+        }
+    }
+} catch (Throwable $e) {
+    $groupRankingRows = [];
+    $groupRankingHistorico = [];
 }
 
 ?>
@@ -1567,7 +1625,7 @@ dashTurmaRender();
 <!-- ═══════════════════════════════════════════════════════════════════ -->
 <!-- RANKING DE MÚLTIPLAS INSCRIÇÕES                                    -->
 <!-- ═══════════════════════════════════════════════════════════════════ -->
-<?php if ($rankingRows): ?>
+<?php if ($rankingRows || $groupRankingRows): ?>
 <style>
 .rk-table { width:100%; border-collapse:collapse; font-size:13px; }
 .rk-table thead th {
@@ -1579,6 +1637,16 @@ dashTurmaRender();
 .rk-table tbody td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
 .rk-table .main-row { cursor:pointer; transition:background var(--t); }
 .rk-table .main-row:hover td { background:var(--bg-hover); }
+.rk-panel:not(.expanded) tr.rk-extra-row { display:none; }
+.rk-list-toggle {
+    width:30px; height:30px; border-radius:var(--r-full);
+    display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--border); background:var(--bg-hover);
+    color:var(--primary); cursor:pointer; transition:all var(--t);
+}
+.rk-list-toggle:hover { border-color:var(--primary); background:var(--primary-dim); }
+.rk-list-toggle svg { transition:transform .2s; }
+.rk-panel.expanded .rk-list-toggle svg { transform:rotate(180deg); }
 .rk-expand-icon { display:inline-block; font-size:11px; color:var(--muted); transition:transform .2s; }
 .main-row.open .rk-expand-icon { transform:rotate(90deg); color:var(--primary); }
 
@@ -1619,15 +1687,24 @@ dashTurmaRender();
     min-width:32px; height:24px; padding:0 8px;
     border-radius:var(--r-full); font-size:12px; font-weight:700;
 }
+.rk-group-card-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.rk-group-avatar { width:30px; height:30px; border-radius:var(--r-full); object-fit:cover; border:1px solid var(--border); background:var(--bg-hover); }
 </style>
+<?php endif; ?>
 
-<div class="panel" style="margin-top:0">
+<?php if ($rankingRows): ?>
+<div class="panel rk-panel" id="rkpanel-insc" style="margin-top:0">
     <div class="panel-title" style="margin-bottom:14px">
         <span style="display:flex;align-items:center;gap:8px">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
             Ranking de inscrições
         </span>
-        <span style="font-size:11px;color:var(--muted);font-weight:400">
+        <span style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);font-weight:400">
+            <?php if (count($rankingRows) > 5): ?>
+            <button type="button" class="rk-list-toggle" title="Mostrar todos" onclick="event.stopPropagation(); rkToggleList('insc')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <?php endif; ?>
             Top <?= count($rankingRows) ?> alunos — clique para ver o histórico de cada inscrição
         </span>
     </div>
@@ -1672,8 +1749,9 @@ dashTurmaRender();
             elseif ($qtd === 2)    $countColor = 'color:#fcd34d;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.2)';
             else                   $countColor = 'color:var(--muted);background:var(--bg-hover);border:1px solid var(--border)';
             $hist = $rankHistorico[$chave] ?? [];
+            $extraRow = $ri >= 5 ? ' rk-extra-row' : '';
         ?>
-        <tr class="main-row" id="rkrow-<?= $ri ?>" onclick="rkToggle(<?= $ri ?>)">
+        <tr class="main-row<?= $extraRow ?>" id="rkrow-<?= $ri ?>" onclick="rkToggle(<?= $ri ?>)">
             <td><span class="rk-expand-icon">▶</span></td>
             <td><span class="rank-badge <?= $rankCls ?>"><?= $rankN ?></span></td>
             <td>
@@ -1693,7 +1771,7 @@ dashTurmaRender();
                 <a href="aluno_editar.php?id=<?= $uid ?>" class="btn btn-ghost btn-xs">Editar</a>
             </td>
         </tr>
-        <tr>
+        <tr class="<?= trim($extraRow) ?>">
             <td colspan="8" style="padding:0;border-bottom:none">
                 <div class="rk-detail" id="rkdet-<?= $ri ?>">
                     <div class="rk-detail-inner">
@@ -1792,6 +1870,154 @@ dashTurmaRender();
 </div>
 <?php endif; ?>
 
+<?php if ($groupRankingRows): ?>
+<?php
+$grDt = static function (?string $d): string {
+    if (!$d || trim($d) === '') return '—';
+    try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
+};
+$grEventLabel = static function (string $event): string {
+    switch ($event) {
+        case 'WHATSAPP_GRUPO_ENTROU':
+            return 'Entrou no grupo';
+        case 'WHATSAPP_GRUPO_SAIU':
+            return 'Saiu por conta propria';
+        case 'WHATSAPP_GRUPO_REMOVIDO_ADMIN':
+            return 'Removido por admin';
+        default:
+            return $event;
+    }
+};
+?>
+<div class="panel rk-panel" id="rkpanel-grupos" style="margin-top:16px">
+    <div class="panel-title" style="margin-bottom:14px">
+        <span style="display:flex;align-items:center;gap:8px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Ranking de entradas em grupos
+        </span>
+        <span style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);font-weight:400">
+            <?php if (count($groupRankingRows) > 5): ?>
+            <button type="button" class="rk-list-toggle" title="Mostrar todos" onclick="event.stopPropagation(); rkToggleList('grupos')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <?php endif; ?>
+            Top <?= min(5, count($groupRankingRows)) ?> de <?= count($groupRankingRows) ?> alunos — clique para ver entradas e saidas
+        </span>
+    </div>
+
+    <div style="overflow-x:auto">
+    <table class="rk-table" style="min-width:820px">
+        <thead>
+            <tr>
+                <th style="width:30px"></th>
+                <th style="width:36px">#</th>
+                <th>Nome / E-mail</th>
+                <th>Telefone</th>
+                <th style="text-align:center">Entradas</th>
+                <th style="text-align:center">Grupos diferentes</th>
+                <th>Primeira entrada</th>
+                <th>Ultima entrada</th>
+                <th style="text-align:right">Acoes</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($groupRankingRows as $gi => $gr):
+            $uid = (int)($gr['id'] ?? 0);
+            $rankN = $gi + 1;
+            if ($rankN === 1)      $rankCls = 'rank-1';
+            elseif ($rankN === 2)  $rankCls = 'rank-2';
+            elseif ($rankN === 3)  $rankCls = 'rank-3';
+            else                   $rankCls = 'rank-n';
+            $entries = (int)($gr['qtd_entradas'] ?? 0);
+            $distinctGroups = (int)($gr['grupos_distintos'] ?? 0);
+            $hist = $groupRankingHistorico[$uid] ?? [];
+            $extraRow = $gi >= 5 ? ' rk-extra-row' : '';
+            $entryColor = $entries >= 5
+                ? 'color:#f87171;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25)'
+                : 'color:#fcd34d;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.2)';
+        ?>
+        <tr class="main-row<?= $extraRow ?>" id="grrow-<?= $gi ?>" onclick="grToggle(<?= $gi ?>)">
+            <td><span class="rk-expand-icon">▶</span></td>
+            <td><span class="rank-badge <?= $rankCls ?>"><?= $rankN ?></span></td>
+            <td>
+                <div style="font-weight:600;color:var(--text)"><?= htmlspecialchars((string)($gr['nome'] ?? '-')) ?></div>
+                <div style="font-size:11px;color:var(--muted)"><?= htmlspecialchars((string)($gr['email'] ?? '-')) ?></div>
+            </td>
+            <td style="font-size:12px;color:var(--muted)"><?= htmlspecialchars(trim((string)($gr['telefone'] ?? ''))) ?: '—' ?></td>
+            <td style="text-align:center"><span class="insc-count-badge" style="<?= $entryColor ?>"><?= $entries ?>x</span></td>
+            <td style="text-align:center"><span class="insc-count-badge" style="color:#93c5fd;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25)"><?= $distinctGroups ?></span></td>
+            <td style="font-size:12px;color:var(--muted)"><?= $grDt((string)($gr['primeira_entrada'] ?? '')) ?></td>
+            <td style="font-size:12px;color:var(--muted)"><?= $grDt((string)($gr['ultima_entrada'] ?? '')) ?></td>
+            <td style="text-align:right" onclick="event.stopPropagation()">
+                <a href="aluno_editar.php?id=<?= $uid ?>" class="btn btn-ghost btn-xs">Editar</a>
+            </td>
+        </tr>
+        <tr class="<?= trim($extraRow) ?>">
+            <td colspan="9" style="padding:0;border-bottom:none">
+                <div class="rk-detail" id="grdet-<?= $gi ?>">
+                    <div class="rk-detail-inner">
+                        <div class="rk-detail-title">
+                            Historico de grupos (<?= count($hist) ?> <?= count($hist) === 1 ? 'evento' : 'eventos' ?>)
+                        </div>
+                        <?php if ($hist): ?>
+                        <div class="rk-insc-grid">
+                            <?php foreach ($hist as $hi => $h):
+                                $groupName = trim((string)($h['group_name'] ?? ''));
+                                $groupId = trim((string)($h['group_id'] ?? ''));
+                                $picture = trim((string)($h['picture_url'] ?? ''));
+                                $participantPhone = trim((string)($h['participant_phone'] ?? ''));
+                                $participantId = trim((string)($h['participant_id'] ?? ''));
+                                $authorId = trim((string)($h['author_id'] ?? ''));
+                                $action = trim((string)($h['action'] ?? ''));
+                                $ignored = (int)($h['is_ignored'] ?? 0) === 1;
+                            ?>
+                            <div class="rk-insc-card">
+                                <div class="rk-group-card-head">
+                                    <?php if ($picture !== ''): ?>
+                                    <img class="rk-group-avatar" src="<?= htmlspecialchars($picture) ?>" alt="">
+                                    <?php endif; ?>
+                                    <div style="min-width:0">
+                                        <div style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupName !== '' ? $groupName : $groupId) ?></div>
+                                        <div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupId) ?></div>
+                                    </div>
+                                </div>
+                                <div class="rk-insc-date">
+                                    <?= htmlspecialchars($grEventLabel((string)($h['interpreted_event'] ?? ''))) ?>
+                                    <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi + 1 ?></span>
+                                </div>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Data</span><span class="rk-insc-v"><?= $grDt((string)($h['created_at'] ?? '')) ?></span></div>
+                                <?php if ($participantPhone !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Telefone</span><span class="rk-insc-v"><?= htmlspecialchars($participantPhone) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($action !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Acao</span><span class="rk-insc-v"><?= htmlspecialchars($action) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($participantId !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Participante</span><span class="rk-insc-v"><?= htmlspecialchars($participantId) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($authorId !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Autor</span><span class="rk-insc-v"><?= htmlspecialchars($authorId) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($ignored): ?>
+                                <div style="font-size:10px;color:var(--warning);margin-top:6px">Grupo marcado para ignorar</div>
+                                <?php endif; ?>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php else: ?>
+                        <div style="font-size:12px;color:var(--dim)">Sem historico detalhado disponivel.</div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+</div>
+<?php endif; ?>
+
 <script>
 function rkToggle(i) {
     var row = document.getElementById('rkrow-' + i);
@@ -1800,6 +2026,19 @@ function rkToggle(i) {
     var open = det.classList.contains('open');
     det.classList.toggle('open', !open);
     row.classList.toggle('open', !open);
+}
+function grToggle(i) {
+    var row = document.getElementById('grrow-' + i);
+    var det = document.getElementById('grdet-' + i);
+    if (!det) return;
+    var open = det.classList.contains('open');
+    det.classList.toggle('open', !open);
+    row.classList.toggle('open', !open);
+}
+function rkToggleList(key) {
+    var panel = document.getElementById(key === 'grupos' ? 'rkpanel-grupos' : 'rkpanel-insc');
+    if (!panel) return;
+    panel.classList.toggle('expanded');
 }
 </script>
 
