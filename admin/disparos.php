@@ -242,6 +242,28 @@ if ($acao !== '') {
         return ['where' => $where, 'params' => $params];
     }
 
+    function dpUsuarioValor(array $usuario, string $chave): string {
+        $map = [
+            'turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
+            'codigo_turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
+            'data_live' => $usuario['data_live'] ?? ($usuario['turma_live_at'] ?? ''),
+            'live' => $usuario['data_live'] ?? ($usuario['turma_live_at'] ?? ''),
+        ];
+        $valor = array_key_exists($chave, $map) ? $map[$chave] : ($usuario[$chave] ?? '');
+        if (is_array($valor) || is_object($valor)) return json_encode($valor, JSON_UNESCAPED_UNICODE);
+        return (string)$valor;
+    }
+
+    function dpResolverValorAcao(array $usuario, string $valor): string {
+        $valor = trim($valor);
+        if ($valor === '') return '';
+        if (strpos($valor, 'literal:') === 0) return substr($valor, 8);
+        if (strpos($valor, 'user.') === 0) return dpUsuarioValor($usuario, substr($valor, 5));
+        return preg_replace_callback('/\{\{\s*user\.([a-zA-Z0-9_]+)\s*\}\}/', function($m) use ($usuario) {
+            return dpUsuarioValor($usuario, $m[1]);
+        }, $valor);
+    }
+
     // Helper: envia via SF
     function enviarSF(array $usuario, array $acoes, PDO $pdo): array {
         try {
@@ -259,6 +281,12 @@ if ($acao !== '') {
                 }
             } elseif ($a['tipo'] === 'tag_sf' && !empty($a['valor'])) {
                 $sfAcoes[] = ['action' => 'add_tag', 'tag_name' => $a['valor']];
+            } elseif ($a['tipo'] === 'custom_field' && !empty($a['campo'])) {
+                $sfAcoes[] = [
+                    'action' => 'set_field_value',
+                    'field_name' => trim((string)$a['campo']),
+                    'value' => dpResolverValorAcao($usuario, (string)($a['valor'] ?? '')),
+                ];
             }
         }
         if (empty($sfAcoes)) return ['ok' => true, 'msg' => 'sem_acao_sf'];
@@ -469,7 +497,15 @@ if ($acao !== '') {
                     $totalGeral = (int)$stCnt->fetchColumn();
                 }
 
-                $stUsers = $pdo->prepare("SELECT u.id, u.nome, u.email, u.telefone FROM users u WHERE {$aw['where']} LIMIT $limit OFFSET $offset");
+                $stUsers = $pdo->prepare(
+                    "SELECT u.id, u.nome, u.email, u.telefone,
+                            (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
+                            (SELECT t.data_live
+                               FROM turmas t
+                              WHERE t.codigo = (SELECT il3.codigo_turma FROM inscricao_logs il3 WHERE il3.user_id = u.id ORDER BY il3.created_at DESC LIMIT 1)
+                              LIMIT 1) AS data_live
+                     FROM users u WHERE {$aw['where']} LIMIT $limit OFFSET $offset"
+                );
                 $stUsers->execute($aw['params']);
                 $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
 
@@ -833,6 +869,17 @@ require_once __DIR__ . '/_header.php';
       <div class="filter-group">
         <div class="filter-group-header">Ações</div>
         <div id="dpAcoes"></div>
+        <datalist id="dpCampoValorSugestoes">
+          <option value="user.nome"></option>
+          <option value="user.id"></option>
+          <option value="user.email"></option>
+          <option value="user.telefone"></option>
+          <option value="user.turma"></option>
+          <option value="user.codigo_turma"></option>
+          <option value="user.data_live"></option>
+          <option value="literal:valor fixo"></option>
+          <option value="{{user.nome}} - {{user.turma}}"></option>
+        </datalist>
         <button class="btn-add-filter" onclick="dpAddAcao()">+ Adicionar ação</button>
       </div>
 
@@ -1029,6 +1076,7 @@ const ACAO_TIPOS = [
     {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
     {v:'tag_sf',     l:'Inserir tag SF'},
     {v:'tag_sistema',l:'Inserir tag sistema'},
+    {v:'custom_field',l:'Atualizar campo personalizado SF'},
 ];
 
 function dpBuildSelect(tipos, val) {
@@ -1096,16 +1144,28 @@ function dpMakeFilterRow(tipos, data, cont) {
 function dpAddFiltroInc(data) { dpMakeFilterRow(INC_TIPOS, data || null, document.getElementById('dpFiltrosInc')); }
 function dpAddFiltroExc(data) { dpMakeFilterRow(EXC_TIPOS, data || null, document.getElementById('dpFiltrosExc')); }
 
+function dpBuildAcaoInputs(tipo, data) {
+    const valor = data ? (data.valor || '') : '';
+    if (tipo === 'custom_field') {
+        const campo = data ? (data.campo || '') : '';
+        return `<input class="acao-campo" type="text" value="${dpEsc(campo)}" placeholder="campo no SF" style="flex:1;min-width:130px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`
+            + `<input class="acao-valor" type="text" list="dpCampoValorSugestoes" value="${dpEsc(valor)}" placeholder="valor ou origem ex: user.nome" style="flex:1;min-width:150px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
+    }
+    return `<input class="acao-valor" type="text" value="${dpEsc(valor)}" placeholder="valor" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
+}
+
 function dpAddAcao(data) {
     const cont = document.getElementById('dpAcoes');
     const div  = document.createElement('div');
     div.className = 'acao-row';
     const tipo  = data ? data.tipo  : 'flow';
-    const valor = data ? data.valor : '';
     div.innerHTML = '<select style="min-width:160px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
         + ACAO_TIPOS.map(t => `<option value="${t.v}"${tipo===t.v?' selected':''}>${t.l}</option>`).join('')
-        + `</select><input type="text" value="${dpEsc(valor)}" placeholder="valor" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`
+        + `</select><span class="acao-inputs" style="display:flex;gap:6px;flex:1">${dpBuildAcaoInputs(tipo, data || {})}</span>`
         + '<button class="btn-rm" onclick="this.parentNode.remove()">×</button>';
+    div.querySelector('select').addEventListener('change', function() {
+        div.querySelector('.acao-inputs').innerHTML = dpBuildAcaoInputs(this.value, {});
+    });
     cont.appendChild(div);
 }
 
@@ -1184,8 +1244,13 @@ function dpColetarAcoes() {
     const acoes = [];
     document.querySelectorAll('#dpAcoes .acao-row').forEach(row => {
         const tipo  = row.querySelector('select')?.value || '';
-        const valor = row.querySelector('input')?.value || '';
-        if (tipo) acoes.push({tipo, valor});
+        const valor = row.querySelector('.acao-valor')?.value || '';
+        if (tipo === 'custom_field') {
+            const campo = row.querySelector('.acao-campo')?.value || '';
+            if (campo.trim()) acoes.push({tipo, campo, valor});
+        } else if (tipo) {
+            acoes.push({tipo, valor});
+        }
     });
     return acoes;
 }

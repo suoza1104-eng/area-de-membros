@@ -464,6 +464,42 @@ if (isset($_GET['toggle'])) {
     exit;
 }
 
+// === AJAX: preview do publico da turma com os filtros atuais do formulario ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_audience_preview') {
+    header('Content-Type: application/json; charset=utf-8');
+    $tid = (int)($_POST['turma_id'] ?? 0);
+    if ($tid <= 0) {
+        echo json_encode(['ok'=>false,'msg'=>'Turma invalida']);
+        exit;
+    }
+    try {
+        $stTurma = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+        $stTurma->execute([':id'=>$tid]);
+        $turma = $stTurma->fetch(PDO::FETCH_ASSOC);
+        if (!$turma) {
+            echo json_encode(['ok'=>false,'msg'=>'Turma nao encontrada']);
+            exit;
+        }
+
+        $includeSel = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
+        $excludeSel = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
+        $includeRescheduled = isset($_POST['live_include_rescheduled']) ? 1 : 0;
+        $turma['live_filter_tag_ids'] = json_encode([
+            'include_any' => $includeSel,
+            'exclude_any' => $excludeSel,
+            'exclude_purchase' => isset($_POST['live_exclude_purchase']) ? 1 : 0,
+            'exclude_cert' => isset($_POST['live_exclude_cert']) ? 1 : 0,
+            'exclude_rescheduled' => $includeRescheduled ? 0 : 1,
+        ], JSON_UNESCAPED_UNICODE);
+
+        $audience = sf_admin_audience($pdo, $turma);
+        echo json_encode(['ok'=>true] + $audience, JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);
+    }
+    exit;
+}
+
 // === POST: salvar config SF por turma ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_save') {
     $tid        = (int)($_POST['turma_id'] ?? 0);
@@ -1361,11 +1397,11 @@ include __DIR__ . '/_header.php';
                             <div class="sf-audience-top">
                                 <div>
                                     <div class="sf-metric-label">Publico previsto deste disparo</div>
-                                    <div class="sf-metric-sub">Calculado com os filtros salvos desta turma.</div>
+                                    <div class="sf-metric-sub" id="sf-audience-status">Calculado com os filtros selecionados nesta tela.</div>
                                 </div>
-                                <div class="sf-audience-count"><?= (int)$sfAudience['total'] ?></div>
+                                <div class="sf-audience-count" id="sf-audience-count"><?= (int)$sfAudience['total'] ?></div>
                             </div>
-                            <div class="sf-metric-sub">
+                            <div class="sf-metric-sub" id="sf-audience-skipped">
                                 Fora do envio: compra <?= (int)$sfAudience['skipped']['compra'] ?>,
                                 certificado <?= (int)$sfAudience['skipped']['certificado'] ?>,
                                 tags <?= (int)$sfAudience['skipped']['tags'] ?>,
@@ -1374,10 +1410,11 @@ include __DIR__ . '/_header.php';
                             </div>
                             <details class="sf-audience-list">
                                 <summary class="sf-audience-toggle">Mostrar pessoas atingidas</summary>
-                                <?php if (empty($sfAudience['rows'])): ?>
-                                    <div class="note">Nenhum aluno elegivel com os filtros atuais.</div>
-                                <?php else: ?>
-                                    <div style="overflow-x:auto;margin-top:8px;">
+                                <div id="sf-audience-body">
+                                    <?php if (empty($sfAudience['rows'])): ?>
+                                        <div class="note">Nenhum aluno elegivel com os filtros atuais.</div>
+                                    <?php else: ?>
+                                        <div style="overflow-x:auto;margin-top:8px;">
                                         <table class="sf-audience-table">
                                             <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Turma</th><th>Tags</th><th>%</th></tr></thead>
                                             <tbody>
@@ -1396,8 +1433,9 @@ include __DIR__ . '/_header.php';
                                         <?php if ((int)$sfAudience['total'] > count($sfAudience['rows'])): ?>
                                             <div class="note">Mostrando os primeiros <?= count($sfAudience['rows']) ?> de <?= (int)$sfAudience['total'] ?> alunos elegiveis.</div>
                                         <?php endif; ?>
-                                    </div>
-                                <?php endif; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </details>
                         </div>
 
@@ -1767,6 +1805,70 @@ if (sfTurmaForm) {
             e.preventDefault();
             alert('Informe o deslocamento no formato -2:30, 0:00 ou 1:15.');
         }
+    });
+
+    var sfAudienceTimer = null;
+    function sfAudienceEsc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch];
+        });
+    }
+    function sfAudienceRowsHtml(rows, total) {
+        rows = Array.isArray(rows) ? rows : [];
+        total = parseInt(total || 0, 10);
+        if (!rows.length) return '<div class="note">Nenhum aluno elegivel com os filtros atuais.</div>';
+        var html = '<div style="overflow-x:auto;margin-top:8px;"><table class="sf-audience-table">'
+            + '<thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Turma</th><th>Tags</th><th>%</th></tr></thead><tbody>';
+        rows.forEach(function(u) {
+            html += '<tr>'
+                + '<td title="' + sfAudienceEsc(u.nome) + '">' + sfAudienceEsc(u.nome) + '</td>'
+                + '<td title="' + sfAudienceEsc(u.email) + '">' + sfAudienceEsc(u.email) + '</td>'
+                + '<td>' + sfAudienceEsc(u.telefone) + '</td>'
+                + '<td>' + sfAudienceEsc(u.turma) + '</td>'
+                + '<td title="' + sfAudienceEsc(u.tags) + '">' + sfAudienceEsc(u.tags || '-') + '</td>'
+                + '<td>' + parseInt(u.andamento || 0, 10) + '%</td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        if (total > rows.length) html += '<div class="note">Mostrando os primeiros ' + rows.length + ' de ' + total + ' alunos elegiveis.</div>';
+        return html + '</div>';
+    }
+    async function updateSfAudiencePreview() {
+        var countEl = document.getElementById('sf-audience-count');
+        var skippedEl = document.getElementById('sf-audience-skipped');
+        var bodyEl = document.getElementById('sf-audience-body');
+        var statusEl = document.getElementById('sf-audience-status');
+        if (!countEl || !skippedEl || !bodyEl) return;
+
+        countEl.textContent = '...';
+        if (statusEl) statusEl.textContent = 'Recalculando com os filtros selecionados...';
+        var fd = new FormData(sfTurmaForm);
+        fd.set('action', 'sf_turma_audience_preview');
+        try {
+            var res = await fetch('superfuncionario.php', {method:'POST', body:fd});
+            var j = await res.json();
+            if (!j.ok) throw new Error(j.msg || 'Erro ao calcular publico');
+            var skipped = j.skipped || {};
+            countEl.textContent = parseInt(j.total || 0, 10);
+            skippedEl.textContent = 'Fora do envio: compra ' + parseInt(skipped.compra || 0, 10)
+                + ', certificado ' + parseInt(skipped.certificado || 0, 10)
+                + ', tags ' + parseInt(skipped.tags || 0, 10)
+                + ', progresso ' + parseInt(skipped.progresso || 0, 10)
+                + ', reagendados ' + parseInt(skipped.reagendado || 0, 10) + '.';
+            bodyEl.innerHTML = sfAudienceRowsHtml(j.rows || [], j.total || 0);
+            if (statusEl) statusEl.textContent = 'Calculado com os filtros selecionados nesta tela.';
+        } catch (e) {
+            countEl.textContent = '?';
+            if (statusEl) statusEl.textContent = 'Nao foi possivel recalcular agora.';
+            bodyEl.innerHTML = '<div class="note">Erro ao recalcular: ' + sfAudienceEsc(e.message) + '</div>';
+        }
+    }
+    function scheduleSfAudiencePreview() {
+        clearTimeout(sfAudienceTimer);
+        sfAudienceTimer = setTimeout(updateSfAudiencePreview, 250);
+    }
+    sfTurmaForm.querySelectorAll('input[name="live_exclude_purchase"],input[name="live_exclude_cert"],input[name="live_include_rescheduled"],input[name="live_include_tag_ids[]"],input[name="live_exclude_tag_ids[]"]').forEach(function(el) {
+        el.addEventListener('change', scheduleSfAudiencePreview);
     });
 }
 
