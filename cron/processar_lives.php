@@ -66,6 +66,7 @@ function live_filter_config($raw): array {
         'exclude_cert'     => 0,
         'exclude_zero'     => 0,
         'exclude_purchase' => 0,
+        'exclude_rescheduled' => 1,
     ];
 
     $raw = trim((string)$raw);
@@ -79,6 +80,7 @@ function live_filter_config($raw): array {
         foreach (['exclude_cert', 'exclude_zero', 'exclude_purchase'] as $k) {
             $cfg[$k] = (int)(!!($json[$k] ?? 0));
         }
+        $cfg['exclude_rescheduled'] = array_key_exists('exclude_rescheduled', $json) ? (int)(!!$json['exclude_rescheduled']) : 1;
         return $cfg;
     }
 
@@ -126,6 +128,32 @@ function user_has_purchase(PDO $pdo, int $userId): bool {
         }
     } catch (Throwable $e) {}
     return false;
+}
+
+function user_has_active_live_reschedule(PDO $pdo, int $userId, ?string $turmaLiveAt): bool {
+    if ($userId <= 0 || !table_exists($pdo, 'reagendamentos_live')) return false;
+    try {
+        $st = $pdo->prepare("
+            SELECT new_turma_live_at
+              FROM reagendamentos_live
+             WHERE user_id = :u
+               AND status IN ('reagendado', 'enviado')
+               AND new_turma_live_at IS NOT NULL
+               AND new_turma_live_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+          ORDER BY created_at DESC, id DESC
+             LIMIT 1
+        ");
+        $st->execute([':u' => $userId]);
+        $newLiveAt = (string)($st->fetchColumn() ?: '');
+        if ($newLiveAt === '') return false;
+
+        $newTs = strtotime($newLiveAt);
+        $turmaTs = $turmaLiveAt ? strtotime($turmaLiveAt) : false;
+        if (!$newTs || !$turmaTs) return true;
+        return abs($newTs - $turmaTs) > 60;
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 /**
@@ -350,6 +378,7 @@ foreach ($turmas as $turma) {
     $excludeCert = (int)$filterCfg['exclude_cert'] === 1;
     $excludeZero = (int)$filterCfg['exclude_zero'] === 1;
     $excludePurchase = (int)$filterCfg['exclude_purchase'] === 1;
+    $excludeRescheduled = (int)$filterCfg['exclude_rescheduled'] === 1;
     $tagIds = $includeTagIds;
 
     // ----------------------------------------------------------------------------------
@@ -395,6 +424,7 @@ foreach ($turmas as $turma) {
         if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) continue;
         if ($excludeCert && user_has_certificate($pdo, $uid)) continue;
         if ($excludePurchase && user_has_purchase($pdo, $uid)) continue;
+        if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) continue;
 
         // Extra disponível para resolução de campos SF e payload do webhook
         $extra = [

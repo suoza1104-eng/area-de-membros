@@ -286,15 +286,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
     $delayMs    = max(0, min(30000, (int)($_POST['delay_ms'] ?? 500)));
     $excludePurchase = isset($_POST['live_exclude_purchase']) ? 1 : 0;
     $excludeCert     = isset($_POST['live_exclude_cert']) ? 1 : 0;
+    $includeRescheduled = isset($_POST['live_include_rescheduled']) ? 1 : 0;
+    $excludeRescheduled = $includeRescheduled ? 0 : 1;
     $includeSel      = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
     $excludeSel      = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
     $filterCfg       = null;
-    if ($includeSel || $excludeSel || $excludePurchase || $excludeCert) {
+    if ($includeSel || $excludeSel || $excludePurchase || $excludeCert || $includeRescheduled) {
         $filterCfg = json_encode([
             'include_any'      => $includeSel,
             'exclude_any'      => $excludeSel,
             'exclude_purchase' => $excludePurchase,
             'exclude_cert'     => $excludeCert,
+            'exclude_rescheduled' => $excludeRescheduled,
         ], JSON_UNESCAPED_UNICODE);
     }
     $sfSources  = $_POST['sf_field_source'] ?? [];
@@ -1027,7 +1030,7 @@ include __DIR__ . '/_header.php';
                     $sfLiveIso = !empty($sfEditTurma['data_live']) ? date('c', strtotime((string)$sfEditTurma['data_live'])) : '';
                     $sfDisparoPreview = sf_format_datetime_local((string)($sfEditTurma['live_disparo_data'] ?? ''));
                     $sfFilterRaw = $sfEditTurma['live_filter_tag_ids'] ?? '';
-                    $sfFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_purchase'=>0,'exclude_cert'=>0];
+                    $sfFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_purchase'=>0,'exclude_cert'=>0,'exclude_rescheduled'=>1];
                     if ($sfFilterRaw) {
                         $sfj = json_decode((string)$sfFilterRaw, true);
                         if (is_array($sfj)) {
@@ -1035,12 +1038,14 @@ include __DIR__ . '/_header.php';
                             $sfFilter['exclude_any'] = array_values(array_filter(array_map('intval', $sfj['exclude_any'] ?? []), fn($v)=>$v>0));
                             $sfFilter['exclude_purchase'] = (int)(!!($sfj['exclude_purchase'] ?? 0));
                             $sfFilter['exclude_cert'] = (int)(!!($sfj['exclude_cert'] ?? 0));
+                            $sfFilter['exclude_rescheduled'] = array_key_exists('exclude_rescheduled', $sfj) ? (int)(!!$sfj['exclude_rescheduled']) : 1;
                         }
                     }
                     $sfSelInc = []; foreach ($sfFilter['include_any'] as $tid) $sfSelInc[(int)$tid] = true;
                     $sfSelExc = []; foreach ($sfFilter['exclude_any'] as $tid) $sfSelExc[(int)$tid] = true;
                     $sfExcPurchase = (int)$sfFilter['exclude_purchase'] === 1;
                     $sfExcCert = (int)$sfFilter['exclude_cert'] === 1;
+                    $sfIncludeRescheduled = (int)$sfFilter['exclude_rescheduled'] !== 1;
                 ?>
                     <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
                         <input type="hidden" name="action" value="sf_turma_save">
@@ -1094,7 +1099,12 @@ include __DIR__ . '/_header.php';
                                 <input type="checkbox" name="live_exclude_cert" value="1" <?= $sfExcCert ? 'checked' : '' ?>>
                                 <span style="font-size:13px;">Excluir quem ja gerou certificado</span>
                             </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_include_rescheduled" value="1" <?= $sfIncludeRescheduled ? 'checked' : '' ?>>
+                                <span style="font-size:13px;">Incluir alunos que reagendaram a live</span>
+                            </label>
                         </div>
+                        <div class="note" style="margin-top:-6px;margin-bottom:12px;">Por padrao, alunos com live individual reagendada ficam fora do disparo coletivo da turma.</div>
 
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
                             <div>

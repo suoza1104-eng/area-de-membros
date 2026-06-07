@@ -29,11 +29,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'live_
     $disparoDB     = $disparo ? date('Y-m-d H:i:s', strtotime($disparo)) : null;
     $excludeCert   = isset($_POST['live_exclude_cert']) ? 1 : 0;
     $excludeZero   = isset($_POST['live_exclude_zero']) ? 1 : 0;
+    $includeRescheduled = isset($_POST['live_include_rescheduled']) ? 1 : 0;
+    $excludeRescheduled = $includeRescheduled ? 0 : 1;
     $includeSel    = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
     $excludeSel2   = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
     $filterCfg     = null;
-    if ($includeSel || $excludeSel2 || $excludeCert || $excludeZero) {
-        $filterCfg = json_encode(['include_any'=>$includeSel,'exclude_any'=>$excludeSel2,'exclude_cert'=>$excludeCert,'exclude_zero'=>$excludeZero], JSON_UNESCAPED_UNICODE);
+    if ($includeSel || $excludeSel2 || $excludeCert || $excludeZero || $includeRescheduled) {
+        $filterCfg = json_encode(['include_any'=>$includeSel,'exclude_any'=>$excludeSel2,'exclude_cert'=>$excludeCert,'exclude_zero'=>$excludeZero,'exclude_rescheduled'=>$excludeRescheduled], JSON_UNESCAPED_UNICODE);
     }
     if ($tid > 0) {
         try {
@@ -652,7 +654,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 <?php if ($liveEditTurma): ?>
                     <?php
                     $ltFilterRaw = $liveEditTurma['live_filter_tag_ids'] ?? '';
-                    $ltFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_cert'=>0,'exclude_zero'=>0];
+                    $ltFilter = ['include_any'=>[],'exclude_any'=>[],'exclude_cert'=>0,'exclude_zero'=>0,'exclude_rescheduled'=>1];
                     if ($ltFilterRaw) {
                         $ltj = json_decode((string)$ltFilterRaw, true);
                         if (is_array($ltj)) {
@@ -660,12 +662,14 @@ document.addEventListener('DOMContentLoaded', function () {
                             $ltFilter['exclude_any'] = array_values(array_filter(array_map('intval', $ltj['exclude_any'] ?? []), fn($v)=>$v>0));
                             $ltFilter['exclude_cert'] = (int)(!!($ltj['exclude_cert'] ?? 0));
                             $ltFilter['exclude_zero'] = (int)(!!($ltj['exclude_zero'] ?? 0));
+                            $ltFilter['exclude_rescheduled'] = array_key_exists('exclude_rescheduled', $ltj) ? (int)(!!$ltj['exclude_rescheduled']) : 1;
                         }
                     }
                     $ltSelInc = []; foreach ($ltFilter['include_any'] as $tid) $ltSelInc[(int)$tid] = true;
                     $ltSelExc = []; foreach ($ltFilter['exclude_any'] as $tid) $ltSelExc[(int)$tid] = true;
                     $ltExcCert = (int)($ltFilter['exclude_cert']) === 1;
                     $ltExcZero = (int)($ltFilter['exclude_zero']) === 1;
+                    $ltIncludeRescheduled = (int)$ltFilter['exclude_rescheduled'] !== 1;
                     ?>
                     <form method="post" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:18px;">
                         <input type="hidden" name="action" value="live_turma_save">
@@ -735,7 +739,12 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <input type="checkbox" name="live_exclude_zero" value="1" <?= $ltExcZero?'checked':'' ?>>
                                 <span style="font-size:13px;">Excluir alunos com 0% de progresso</span>
                             </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="live_include_rescheduled" value="1" <?= $ltIncludeRescheduled?'checked':'' ?>>
+                                <span style="font-size:13px;">Incluir alunos que reagendaram a live</span>
+                            </label>
                         </div>
+                        <div class="note" style="margin-top:-10px;margin-bottom:16px;">Por padrao, alunos com live individual reagendada ficam fora do disparo coletivo da turma.</div>
 
                         <div style="display:flex;gap:10px;flex-wrap:wrap;">
                             <button type="submit" class="btn">💾 Salvar configuração</button>
