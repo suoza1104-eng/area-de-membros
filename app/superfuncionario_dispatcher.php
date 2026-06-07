@@ -663,12 +663,29 @@ function sf_disparar_live_turma(PDO $pdo, array $turmaSf, array $aluno, array $e
     $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
 
     $logRequest = json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']];
+    $responseJson = json_decode((string)($res['response'] ?? ''), true);
     $logRequest['_debug'] = [
         'custom_fields_count' => count($fields),
         'custom_fields_keys'  => $fieldResult['resolved_keys'],
         'skipped_keys'        => $fieldResult['skipped_keys'],
         'source'              => 'live_turma',
         'turma'               => $turmaSf['codigo'] ?? '',
+        'planned_at'          => $turmaSf['live_disparo_data'] ?? null,
+        'actual_at'           => date('Y-m-d H:i:s'),
+        'contact'             => [
+            'email' => $email,
+            'phone' => $phone,
+            'name'  => $name,
+        ],
+        'actions_count'       => count($actions),
+        'tags_requested'      => $tags,
+        'flows_requested'     => $flows,
+        'fields_requested'    => array_values(array_map(static fn($f) => $f['field_name'] ?? '', $fields)),
+        'sf_response'         => [
+            'success'         => is_array($responseJson) && array_key_exists('success', $responseJson) ? (bool)$responseJson['success'] : null,
+            'contact_created' => is_array($responseJson) && array_key_exists('contact_created', $responseJson) ? (bool)$responseJson['contact_created'] : null,
+            'contact_id'      => is_array($responseJson) ? (string)($responseJson['data']['id'] ?? '') : '',
+        ],
     ];
 
     sf_log(

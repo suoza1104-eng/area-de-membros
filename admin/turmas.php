@@ -22,6 +22,18 @@ function dt_local_value(?string $dbValue): string {
     return date('Y-m-d\TH:i', $ts);
 }
 
+function dt_br_short(?string $dbValue): string {
+    if (!$dbValue) return '—';
+    $ts = strtotime($dbValue);
+    return $ts ? date('d/m/Y H:i', $ts) : '—';
+}
+
+function sort_ts(?string $dbValue): int {
+    if (!$dbValue) return 0;
+    $ts = strtotime($dbValue);
+    return $ts ? (int)$ts : 0;
+}
+
 // ===================== CLONE (pré-preenche formulário) =====================
 $cloneFill = null;
 if (isset($_GET['clone_fill'])) {
@@ -159,6 +171,11 @@ include __DIR__ . '/_header.php';
 .badge-warn { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.25); }
 .table-turmas td, .table-turmas th { font-size: 12px; }
 .table-turmas td { vertical-align: middle; }
+.table-turmas th { user-select:none; }
+.sort-head { appearance:none; border:0; background:transparent; color:inherit; font:inherit; font-weight:700; text-transform:inherit; letter-spacing:inherit; padding:0; cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
+.sort-head::after { content:"↕"; font-size:10px; color:var(--muted); opacity:.7; }
+.sort-head.asc::after { content:"↑"; color:#facc15; opacity:1; }
+.sort-head.desc::after { content:"↓"; color:#facc15; opacity:1; }
 </style>
 
 <div class="page-turmas">
@@ -253,16 +270,16 @@ include __DIR__ . '/_header.php';
         <p style="color:var(--muted);font-size:13px;">Nenhuma turma cadastrada ainda.</p>
     <?php else: ?>
     <div style="overflow-x:auto;">
-    <table class="table table-turmas" style="width:100%;min-width:900px;">
+    <table class="table table-turmas" id="turmas-sort-table" style="width:100%;min-width:900px;">
         <thead>
         <tr>
-            <th>Código</th>
-            <th>Janela</th>
-            <th>Live</th>
-            <th>Senha</th>
-            <th>Webhook</th>
-            <th>SF</th>
-            <th>Disparado</th>
+            <th><button type="button" class="sort-head" data-sort="codigo">Código</button></th>
+            <th><button type="button" class="sort-head" data-sort="janela">Janela</button></th>
+            <th><button type="button" class="sort-head" data-sort="live">Live</button></th>
+            <th><button type="button" class="sort-head" data-sort="senha">Senha</button></th>
+            <th><button type="button" class="sort-head" data-sort="webhook">Webhook</button></th>
+            <th><button type="button" class="sort-head" data-sort="sf">SF</button></th>
+            <th><button type="button" class="sort-head" data-sort="disparado">Disparado</button></th>
             <th>Ações</th>
         </tr>
         </thead>
@@ -274,19 +291,19 @@ include __DIR__ . '/_header.php';
             $disparada = (int)($t['live_disparada'] ?? 0) === 1;
             ?>
             <tr>
-                <td>
+                <td data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
                     <strong><?= h((string)$t['codigo']) ?></strong>
                     <?php if (!empty($t['codigo_live'])): ?>
                         <br><span style="font-size:10.5px;color:var(--muted);"><?= h((string)$t['codigo_live']) ?></span>
                     <?php endif; ?>
                 </td>
-                <td style="white-space:nowrap;font-size:11px;">
-                    <?= h(substr((string)($t['janela_inicio']??''),0,16)) ?><br>
-                    <span style="color:var(--muted)">→ <?= h(substr((string)($t['janela_fim']??''),0,16)) ?></span>
+                <td data-sort-janela="<?= sort_ts($t['janela_inicio'] ?? null) ?>" style="white-space:nowrap;font-size:11px;">
+                    <?= h(dt_br_short($t['janela_inicio'] ?? null)) ?><br>
+                    <span style="color:var(--muted)">→ <?= h(dt_br_short($t['janela_fim'] ?? null)) ?></span>
                 </td>
-                <td style="white-space:nowrap;font-size:11px;"><?= h(substr((string)($t['data_live']??'—'),0,16)) ?></td>
-                <td style="font-size:11px;color:var(--muted);"><?= h((string)($t['senha_certificado']??'—')) ?></td>
-                <td>
+                <td data-sort-live="<?= sort_ts($t['data_live'] ?? null) ?>" style="white-space:nowrap;font-size:11px;"><?= h(dt_br_short($t['data_live'] ?? null)) ?></td>
+                <td data-sort-senha="<?= h(strtolower((string)($t['senha_certificado'] ?? ''))) ?>" style="font-size:11px;color:var(--muted);"><?= h((string)($t['senha_certificado']??'—')) ?></td>
+                <td data-sort-webhook="<?= $whEnabled ? 2 : (!empty($t['webhook_live_url']) ? 1 : 0) ?>">
                     <?php if ($whEnabled): ?>
                         <span class="badge-ok">ON</span>
                     <?php elseif (!empty($t['webhook_live_url'])): ?>
@@ -295,14 +312,14 @@ include __DIR__ . '/_header.php';
                         <span class="badge-off">—</span>
                     <?php endif; ?>
                 </td>
-                <td>
+                <td data-sort-sf="<?= $sfEnabled2 ? 1 : 0 ?>">
                     <?php if ($sfEnabled2): ?>
                         <span class="badge-ok">ON</span>
                     <?php else: ?>
                         <span class="badge-off">OFF</span>
                     <?php endif; ?>
                 </td>
-                <td>
+                <td data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
                     <?php if ($disparada): ?>
                         <span class="badge-ok">Sim</span>
                     <?php else: ?>
@@ -329,5 +346,47 @@ include __DIR__ . '/_header.php';
 <?php if ($cloneFill): ?>
 <script>document.getElementById('form-turma').scrollIntoView({behavior:'smooth',block:'start'});</script>
 <?php endif; ?>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var table = document.getElementById('turmas-sort-table');
+    if (!table || !table.tBodies.length) return;
+
+    var currentKey = '';
+    var currentDir = 'asc';
+
+    function readValue(row, key) {
+        var cell = row.querySelector('[data-sort-' + key + ']');
+        if (!cell) return '';
+        var raw = cell.getAttribute('data-sort-' + key) || '';
+        if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+        return raw.toLowerCase();
+    }
+
+    table.querySelectorAll('.sort-head').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var key = btn.getAttribute('data-sort');
+            var dir = currentKey === key && currentDir === 'asc' ? 'desc' : 'asc';
+            currentKey = key;
+            currentDir = dir;
+
+            table.querySelectorAll('.sort-head').forEach(function (b) {
+                b.classList.remove('asc', 'desc');
+            });
+            btn.classList.add(dir);
+
+            var rows = Array.from(table.tBodies[0].rows);
+            rows.sort(function (a, b) {
+                var av = readValue(a, key);
+                var bv = readValue(b, key);
+                if (av < bv) return dir === 'asc' ? -1 : 1;
+                if (av > bv) return dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+            rows.forEach(function (row) { table.tBodies[0].appendChild(row); });
+        });
+    });
+});
+</script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

@@ -43,6 +43,174 @@ function sf_format_datetime_local(?string $dbValue): string {
     return $ts ? date('d/m/Y H:i:s', $ts) : '';
 }
 
+function sf_admin_table_exists(PDO $pdo, string $table): bool {
+    try {
+        $st = $pdo->prepare("SHOW TABLES LIKE :t");
+        $st->execute([':t' => $table]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) { return false; }
+}
+
+function sf_admin_first_table(PDO $pdo, array $tables): ?string {
+    foreach ($tables as $table) {
+        if (sf_admin_table_exists($pdo, $table)) return $table;
+    }
+    return null;
+}
+
+function sf_admin_live_filter($raw): array {
+    $cfg = ['include_any'=>[],'exclude_any'=>[],'exclude_purchase'=>0,'exclude_cert'=>0,'exclude_zero'=>0,'exclude_rescheduled'=>1];
+    $json = json_decode(trim((string)$raw), true);
+    if (is_array($json)) {
+        $cfg['include_any'] = array_values(array_filter(array_map('intval', $json['include_any'] ?? []), fn($v)=>$v>0));
+        $cfg['exclude_any'] = array_values(array_filter(array_map('intval', $json['exclude_any'] ?? []), fn($v)=>$v>0));
+        foreach (['exclude_purchase','exclude_cert','exclude_zero'] as $k) $cfg[$k] = (int)(!!($json[$k] ?? 0));
+        $cfg['exclude_rescheduled'] = array_key_exists('exclude_rescheduled', $json) ? (int)(!!$json['exclude_rescheduled']) : 1;
+    }
+    return $cfg;
+}
+
+function sf_admin_user_has_any_tag(PDO $pdo, ?string $relTable, int $userId, array $tagIds): bool {
+    if (!$relTable || $userId <= 0 || !$tagIds) return false;
+    try {
+        $in = implode(',', array_fill(0, count($tagIds), '?'));
+        $st = $pdo->prepare("SELECT 1 FROM `$relTable` WHERE user_id = ? AND tag_id IN ($in) LIMIT 1");
+        $st->execute(array_merge([$userId], $tagIds));
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) { return false; }
+}
+
+function sf_admin_user_tags(PDO $pdo, ?string $relTable, int $userId): string {
+    if (!$relTable || $userId <= 0 || !sf_admin_table_exists($pdo, 'tags')) return '';
+    try {
+        $st = $pdo->prepare("SELECT t.nome FROM `$relTable` ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = :u ORDER BY t.nome ASC LIMIT 12");
+        $st->execute([':u' => $userId]);
+        return implode(', ', array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN) ?: []));
+    } catch (Throwable $e) { return ''; }
+}
+
+function sf_admin_user_has_certificate(PDO $pdo, int $userId): bool {
+    if ($userId <= 0 || !sf_admin_table_exists($pdo, 'certificates')) return false;
+    try {
+        $st = $pdo->prepare("SELECT 1 FROM certificates WHERE user_id = :u LIMIT 1");
+        $st->execute([':u'=>$userId]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) { return false; }
+}
+
+function sf_admin_user_has_purchase(PDO $pdo, int $userId): bool {
+    if ($userId <= 0) return false;
+    try {
+        if (sf_admin_table_exists($pdo, 'hotmart_sales')) {
+            $st = $pdo->prepare("SELECT 1 FROM hotmart_sales WHERE matched_user_id = :u AND LOWER(COALESCE(status,'')) IN ('aprovado','completo','approved','complete','paid') LIMIT 1");
+            $st->execute([':u'=>$userId]);
+            if ($st->fetchColumn()) return true;
+        }
+    } catch (Throwable $e) {}
+    return false;
+}
+
+function sf_admin_user_has_reschedule(PDO $pdo, int $userId, ?string $turmaLiveAt): bool {
+    if ($userId <= 0 || !sf_admin_table_exists($pdo, 'reagendamentos_live')) return false;
+    try {
+        $st = $pdo->prepare("SELECT new_turma_live_at FROM reagendamentos_live WHERE user_id=:u AND status IN ('reagendado','enviado') AND new_turma_live_at IS NOT NULL AND new_turma_live_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR) ORDER BY created_at DESC, id DESC LIMIT 1");
+        $st->execute([':u'=>$userId]);
+        $newLive = (string)($st->fetchColumn() ?: '');
+        if ($newLive === '') return false;
+        $newTs = strtotime($newLive);
+        $turmaTs = $turmaLiveAt ? strtotime($turmaLiveAt) : false;
+        if (!$newTs || !$turmaTs) return true;
+        return abs($newTs - $turmaTs) > 60;
+    } catch (Throwable $e) { return false; }
+}
+
+function sf_admin_total_required_lessons(PDO $pdo): int {
+    if (!sf_admin_table_exists($pdo, 'lessons')) return 0;
+    try { return (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1 AND conta_para_conclusao = 1")->fetchColumn(); }
+    catch (Throwable $e) {
+        try { return (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1")->fetchColumn(); }
+        catch (Throwable $e2) { return 0; }
+    }
+}
+
+function sf_admin_progress(PDO $pdo, int $userId, int $total): int {
+    if ($userId <= 0 || $total <= 0 || !sf_admin_table_exists($pdo, 'lesson_progress')) return 0;
+    try {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id WHERE lp.user_id=:u AND lp.status='completed' AND l.ativo=1 AND l.conta_para_conclusao=1");
+        $st->execute([':u'=>$userId]);
+        return max(0, min(100, (int)round(((int)$st->fetchColumn() / $total) * 100)));
+    } catch (Throwable $e) { return 0; }
+}
+
+function sf_admin_audience(PDO $pdo, array $turma, int $limit = 80): array {
+    $codigo = (string)($turma['codigo'] ?? '');
+    $filter = sf_admin_live_filter($turma['live_filter_tag_ids'] ?? null);
+    $relTable = sf_admin_first_table($pdo, ['user_tags','usuarios_tags','aluno_tags','users_tags','tags_users','user_tag_rel','user_tag_relations']);
+    $totalLessons = sf_admin_total_required_lessons($pdo);
+    $rows = [];
+    $total = 0;
+    $skipped = ['tags'=>0,'certificado'=>0,'compra'=>0,'progresso'=>0,'reagendado'=>0];
+    if ($codigo === '') return ['total'=>0,'rows'=>[],'skipped'=>$skipped];
+
+    try {
+        $st = $pdo->prepare("SELECT * FROM users WHERE codigo_turma = :c ORDER BY nome ASC, id ASC");
+        $st->execute([':c'=>$codigo]);
+        $users = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) { $users = []; }
+
+    foreach ($users as $u) {
+        $uid = (int)($u['id'] ?? 0);
+        if ($filter['include_any'] && !sf_admin_user_has_any_tag($pdo, $relTable, $uid, $filter['include_any'])) { $skipped['tags']++; continue; }
+        if ($filter['exclude_any'] && sf_admin_user_has_any_tag($pdo, $relTable, $uid, $filter['exclude_any'])) { $skipped['tags']++; continue; }
+        if ((int)$filter['exclude_cert'] === 1 && sf_admin_user_has_certificate($pdo, $uid)) { $skipped['certificado']++; continue; }
+        if ((int)$filter['exclude_purchase'] === 1 && sf_admin_user_has_purchase($pdo, $uid)) { $skipped['compra']++; continue; }
+        $progress = sf_admin_progress($pdo, $uid, $totalLessons);
+        if ((int)$filter['exclude_zero'] === 1 && $progress <= 0) { $skipped['progresso']++; continue; }
+        if ((int)$filter['exclude_rescheduled'] === 1 && sf_admin_user_has_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $skipped['reagendado']++; continue; }
+        $total++;
+        if (count($rows) < $limit) {
+            $rows[] = [
+                'nome' => (string)($u['nome'] ?? ''),
+                'email' => (string)($u['email'] ?? ''),
+                'telefone' => (string)($u['telefone'] ?? ''),
+                'turma' => (string)($u['codigo_turma'] ?? $codigo),
+                'tags' => sf_admin_user_tags($pdo, $relTable, $uid),
+                'andamento' => $progress,
+            ];
+        }
+    }
+    return ['total'=>$total,'rows'=>$rows,'skipped'=>$skipped];
+}
+
+function sf_admin_log_summary(PDO $pdo, string $codigo, ?string $plannedAt): array {
+    $out = ['total'=>0,'ok'=>0,'fail'=>0,'api_fail'=>0,'first'=>'','last'=>'','planned'=>$plannedAt ?: '', 'tags'=>[], 'flows'=>[], 'contacts_created'=>0];
+    if ($codigo === '') return $out;
+    try {
+        $st = $pdo->prepare("SELECT ok,http_status,request_json,response_text,created_at FROM superfuncionario_logs WHERE evento = :e ORDER BY id DESC LIMIT 600");
+        $st->execute([':e'=>'LIVE_TURMA_' . $codigo]);
+        $logs = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) { return $out; }
+    foreach ($logs as $l) {
+        $out['total']++;
+        if ((int)($l['ok'] ?? 0) === 1) $out['ok']++; else $out['fail']++;
+        $created = (string)($l['created_at'] ?? '');
+        if ($created !== '') {
+            if ($out['last'] === '') $out['last'] = $created;
+            $out['first'] = $created;
+        }
+        $req = json_decode((string)($l['request_json'] ?? ''), true);
+        $dbg = is_array($req) ? (array)($req['_debug'] ?? []) : [];
+        foreach ((array)($dbg['tags_requested'] ?? []) as $tag) if ($tag !== '') $out['tags'][(string)$tag] = true;
+        foreach ((array)($dbg['flows_requested'] ?? []) as $flow) if ($flow !== '') $out['flows'][(string)$flow] = true;
+        $resp = json_decode((string)($l['response_text'] ?? ''), true);
+        if (is_array($resp) && array_key_exists('success', $resp) && !$resp['success']) $out['api_fail']++;
+        if (is_array($resp) && !empty($resp['contact_created'])) $out['contacts_created']++;
+    }
+    $out['tags'] = array_keys($out['tags']);
+    $out['flows'] = array_keys($out['flows']);
+    return $out;
+}
+
 // garante tabelas
 sf_ensure_tables($pdo);
 
@@ -626,6 +794,21 @@ include __DIR__ . '/_header.php';
     .live-actions .btn.sm { width:36px; height:32px; padding:0; justify-content:center; flex:0 0 auto; }
     .log-ok   { color: #4ade80; }
     .log-fail { color: #f87171; }
+    .sf-metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:10px 0 12px; }
+    .sf-metric-card { border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,.025); padding:10px 12px; }
+    .sf-metric-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px; }
+    .sf-metric-value { font-size:18px; font-weight:800; color:var(--text); }
+    .sf-metric-sub { font-size:11px; color:var(--muted); margin-top:4px; line-height:1.4; }
+    .sf-details-row { display:none; background:rgba(255,255,255,.018); }
+    .sf-details-row.open { display:table-row; }
+    .sf-audience-card { border:1px solid rgba(59,130,246,.28); border-radius:12px; background:rgba(59,130,246,.055); padding:14px; margin:0 0 16px; }
+    .sf-audience-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .sf-audience-count { font-size:28px; line-height:1; font-weight:800; color:#bfdbfe; }
+    .sf-audience-list { margin-top:12px; border-top:1px solid var(--border); padding-top:10px; }
+    .sf-audience-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    .sf-audience-table th,.sf-audience-table td { border-bottom:1px solid var(--border); padding:7px 6px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sf-audience-toggle { cursor:pointer; color:#bfdbfe; font-size:12px; font-weight:700; margin-top:10px; }
+    @media(max-width: 900px) { .sf-metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
     .empty-state {
         text-align: center; padding: 32px; color: var(--muted);
@@ -1087,6 +1270,7 @@ include __DIR__ . '/_header.php';
                     $sfExcPurchase = (int)$sfFilter['exclude_purchase'] === 1;
                     $sfExcCert = (int)$sfFilter['exclude_cert'] === 1;
                     $sfIncludeRescheduled = (int)$sfFilter['exclude_rescheduled'] !== 1;
+                    $sfAudience = sf_admin_audience($pdo, $sfEditTurma);
                 ?>
                     <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
                         <input type="hidden" name="action" value="sf_turma_save">
@@ -1173,6 +1357,50 @@ include __DIR__ . '/_header.php';
                             </div>
                         </div>
 
+                        <div class="sf-audience-card">
+                            <div class="sf-audience-top">
+                                <div>
+                                    <div class="sf-metric-label">Publico previsto deste disparo</div>
+                                    <div class="sf-metric-sub">Calculado com os filtros salvos desta turma.</div>
+                                </div>
+                                <div class="sf-audience-count"><?= (int)$sfAudience['total'] ?></div>
+                            </div>
+                            <div class="sf-metric-sub">
+                                Fora do envio: compra <?= (int)$sfAudience['skipped']['compra'] ?>,
+                                certificado <?= (int)$sfAudience['skipped']['certificado'] ?>,
+                                tags <?= (int)$sfAudience['skipped']['tags'] ?>,
+                                progresso <?= (int)$sfAudience['skipped']['progresso'] ?>,
+                                reagendados <?= (int)$sfAudience['skipped']['reagendado'] ?>.
+                            </div>
+                            <details class="sf-audience-list">
+                                <summary class="sf-audience-toggle">Mostrar pessoas atingidas</summary>
+                                <?php if (empty($sfAudience['rows'])): ?>
+                                    <div class="note">Nenhum aluno elegivel com os filtros atuais.</div>
+                                <?php else: ?>
+                                    <div style="overflow-x:auto;margin-top:8px;">
+                                        <table class="sf-audience-table">
+                                            <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Turma</th><th>Tags</th><th>%</th></tr></thead>
+                                            <tbody>
+                                            <?php foreach ($sfAudience['rows'] as $ar): ?>
+                                                <tr>
+                                                    <td title="<?= h($ar['nome']) ?>"><?= h($ar['nome']) ?></td>
+                                                    <td title="<?= h($ar['email']) ?>"><?= h($ar['email']) ?></td>
+                                                    <td><?= h($ar['telefone']) ?></td>
+                                                    <td><?= h($ar['turma']) ?></td>
+                                                    <td title="<?= h($ar['tags']) ?>"><?= h($ar['tags'] ?: '-') ?></td>
+                                                    <td><?= (int)$ar['andamento'] ?>%</td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                        <?php if ((int)$sfAudience['total'] > count($sfAudience['rows'])): ?>
+                                            <div class="note">Mostrando os primeiros <?= count($sfAudience['rows']) ?> de <?= (int)$sfAudience['total'] ?> alunos elegiveis.</div>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endif; ?>
+                            </details>
+                        </div>
+
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
                             <div>
                                 <label class="lbl">Tags SF — uma por linha</label>
@@ -1247,6 +1475,8 @@ include __DIR__ . '/_header.php';
                         $stlDisp  = (int)($stl['live_disparada'] ?? 0) === 1;
                         $stlTags  = trim((string)($stl['sf_tags_text'] ?? ''));
                         $stlFlows = trim((string)($stl['sf_flows_text'] ?? ''));
+                        $stlSummary = sf_admin_log_summary($pdo, (string)($stl['codigo'] ?? ''), (string)($stl['live_disparo_data'] ?? ''));
+                        $stlRate = $stlSummary['total'] > 0 ? round(($stlSummary['ok'] / $stlSummary['total']) * 100, 1) : 0;
                     ?>
                         <tr>
                             <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
@@ -1267,8 +1497,29 @@ include __DIR__ . '/_header.php';
                             <td>
                                 <div class="live-actions">
                                 <a href="?sf_edit=<?= (int)$stl['id'] ?>" class="btn ghost sm">⚙️</a>
+                                <button type="button" class="btn ghost sm" onclick="toggleSfMetrics(<?= (int)$stl['id'] ?>)" title="Metricas">&#128200;</button>
                                 <a href="turmas.php?reset_disparo=<?= (int)$stl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')" title="Resetar">↺</a>
                                 </div>
+                            </td>
+                        </tr>
+                        <tr id="sf-metrics-<?= (int)$stl['id'] ?>" class="sf-details-row">
+                            <td colspan="8">
+                                <div class="sf-metric-grid">
+                                    <div class="sf-metric-card"><div class="sf-metric-label">Disparos</div><div class="sf-metric-value"><?= (int)$stlSummary['total'] ?></div><div class="sf-metric-sub">Registros no SF</div></div>
+                                    <div class="sf-metric-card"><div class="sf-metric-label">Acertos</div><div class="sf-metric-value"><?= (int)$stlSummary['ok'] ?></div><div class="sf-metric-sub"><?= h((string)$stlRate) ?>% de sucesso HTTP</div></div>
+                                    <div class="sf-metric-card"><div class="sf-metric-label">Falhas</div><div class="sf-metric-value"><?= (int)$stlSummary['fail'] ?></div><div class="sf-metric-sub">API success=false: <?= (int)$stlSummary['api_fail'] ?></div></div>
+                                    <div class="sf-metric-card"><div class="sf-metric-label">Contatos criados</div><div class="sf-metric-value"><?= (int)$stlSummary['contacts_created'] ?></div><div class="sf-metric-sub">Demais ja existiam</div></div>
+                                </div>
+                                <div class="sf-metric-sub">
+                                    Planejado: <?= h(sf_format_datetime_local((string)$stlSummary['planned'])) ?: '-' ?> |
+                                    Primeiro envio real: <?= h(sf_format_datetime_local((string)$stlSummary['first'])) ?: '-' ?> |
+                                    Ultimo envio real: <?= h(sf_format_datetime_local((string)$stlSummary['last'])) ?: '-' ?>
+                                </div>
+                                <div class="sf-metric-sub">
+                                    Tags solicitadas: <?= h(implode(', ', $stlSummary['tags']) ?: ($stlTags ?: '-')) ?> |
+                                    Flows solicitados: <?= h(implode(', ', $stlSummary['flows']) ?: ($stlFlows ?: '-')) ?>
+                                </div>
+                                <div class="note">O SuperFuncionario retorna sucesso por contato. Erro individual de tag/flow so aparece aqui se a API retornar essa falha no response.</div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -1517,6 +1768,12 @@ if (sfTurmaForm) {
             alert('Informe o deslocamento no formato -2:30, 0:00 ou 1:15.');
         }
     });
+}
+
+function toggleSfMetrics(id) {
+    var row = document.getElementById('sf-metrics-' + id);
+    if (!row) return;
+    row.classList.toggle('open');
 }
 </script>
 
