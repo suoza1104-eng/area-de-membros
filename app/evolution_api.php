@@ -587,6 +587,30 @@ function evolution_phone_variants(?string $phone): array {
         $variants[] = substr($phone, -10);
     }
 
+    $expanded = $variants;
+    foreach ($variants as $variant) {
+        $variant = evolution_clean_whatsapp_phone($variant);
+        if ($variant === '') continue;
+
+        $local = $variant;
+        if (strpos($local, '55') === 0 && strlen($local) > 11) {
+            $local = substr($local, 2);
+        }
+
+        // Brasil: alguns provedores entregam celular sem o nono digito.
+        // Compara tanto DDD+8 digitos quanto DDD+9+8 digitos.
+        if (strlen($local) === 10) {
+            $withNine = substr($local, 0, 2) . '9' . substr($local, 2);
+            $expanded[] = $withNine;
+            $expanded[] = '55' . $withNine;
+        } elseif (strlen($local) === 11 && substr($local, 2, 1) === '9') {
+            $withoutNine = substr($local, 0, 2) . substr($local, 3);
+            $expanded[] = $withoutNine;
+            $expanded[] = '55' . $withoutNine;
+        }
+    }
+
+    $variants = $expanded;
     return array_values(array_unique(array_filter($variants)));
 }
 
