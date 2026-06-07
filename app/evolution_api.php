@@ -948,6 +948,16 @@ function evolution_backfill_unmatched_group_events(PDO $pdo, int $limit = 500): 
 
         evolution_upsert_group($pdo, $fields);
 
+        if (evolution_is_group_ignored($pdo, $fields['group_id'] ?? null)) {
+            try {
+                $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET trigger_status = 'ignored_group', trigger_error = NULL WHERE id = :id LIMIT 1")
+                    ->execute([':id' => (int)$row['id']]);
+            } catch (Throwable $e) {}
+            evolution_record_group_event($pdo, (int)$row['id'], $fields, null, null, 'ignored_group');
+            $stillMissing++;
+            continue;
+        }
+
         if ($userId <= 0) {
             $stillMissing++;
             evolution_record_group_event($pdo, (int)$row['id'], $fields, null, $blacklist, $blacklist ? 'blacklist_detected_no_user' : 'user_not_found');
@@ -1007,14 +1017,16 @@ function evolution_apply_tags_to_identified_group_events(PDO $pdo, int $limit = 
     try {
         $rows = $pdo->query("
             SELECT l.id, l.user_id, l.interpreted_event, l.participant_phone,
-                   ge.is_blacklisted
+                   ge.is_blacklisted, g.is_ignored AS group_is_ignored
               FROM whatsapp_webhook_raw_logs l
               LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
+              LEFT JOIN whatsapp_groups g ON g.group_id = l.group_id
              WHERE l.token_ok = 1
                AND l.user_id IS NOT NULL
                AND l.user_id > 0
                AND l.interpreted_event IS NOT NULL
                AND l.interpreted_event <> ''
+               AND COALESCE(g.is_ignored, 0) = 0
              ORDER BY l.id DESC
              LIMIT {$limit}
         ")->fetchAll(PDO::FETCH_ASSOC) ?: [];

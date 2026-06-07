@@ -88,6 +88,19 @@ function wh_trigger_label(?string $status): string {
     return $labels[$status] ?? ($status !== '' ? $status : '-');
 }
 
+function wh_receipt_badge(array $log): string {
+    $triggerStatus = (string)($log['trigger_status'] ?? '');
+    if ($triggerStatus === 'ignored_group') {
+        return '<span class="badge badge-neutral">Grupo ignorado</span>';
+    }
+    if ($triggerStatus === 'ignored') {
+        return '<span class="badge badge-neutral">Ignorado</span>';
+    }
+    return (int)($log['token_ok'] ?? 0) === 1
+        ? '<span class="badge badge-success">OK</span>'
+        : '<span class="badge badge-danger">Falhou</span>';
+}
+
 $notice = '';
 $error = '';
 
@@ -395,9 +408,27 @@ include __DIR__ . '/_header.php';
 .wm-full { margin-top:16px; }
 .wm-url-row { display:flex; gap:8px; align-items:center; }
 .wm-url-row input { font-family:monospace; font-size:12px; }
-.wm-log-table td { font-size:12px; vertical-align:top; }
-.wm-payload { max-width:520px; max-height:90px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-family:monospace; font-size:11px; color:#93c5fd; background:rgba(255,255,255,.035); border:1px solid var(--border); border-radius:8px; padding:7px; }
-.wm-group-cell { display:flex; align-items:center; gap:10px; min-width:220px; }
+.wm-log-table { width:100%; table-layout:fixed; }
+.wm-log-table th,.wm-log-table td { overflow:hidden; text-overflow:ellipsis; }
+.wm-log-table td { font-size:12px; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }
+.wm-payload { max-width:100%; max-height:130px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-family:monospace; font-size:11px; color:#93c5fd; background:rgba(255,255,255,.035); border:1px solid var(--border); border-radius:8px; padding:7px; }
+.wm-payload-details summary { cursor:pointer; color:#93c5fd; font-size:11px; white-space:nowrap; }
+.wm-group-cell { display:flex; align-items:center; gap:10px; min-width:0; }
+.wm-group-cell > div:last-child { min-width:0; overflow:hidden; }
+.wm-ellipsis { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wm-break { overflow-wrap:anywhere; word-break:break-word; }
+.wm-log-table.payloads th:nth-child(1), .wm-log-table.payloads td:nth-child(1) { width:42px; }
+.wm-log-table.payloads th:nth-child(2), .wm-log-table.payloads td:nth-child(2) { width:112px; }
+.wm-log-table.payloads th:nth-child(3), .wm-log-table.payloads td:nth-child(3) { width:82px; }
+.wm-log-table.payloads th:nth-child(4), .wm-log-table.payloads td:nth-child(4) { width:95px; }
+.wm-log-table.payloads th:nth-child(5), .wm-log-table.payloads td:nth-child(5) { width:170px; }
+.wm-log-table.payloads th:nth-child(6), .wm-log-table.payloads td:nth-child(6) { width:220px; }
+.wm-log-table.payloads th:nth-child(7), .wm-log-table.payloads td:nth-child(7) { width:76px; }
+.wm-log-table.payloads th:nth-child(8), .wm-log-table.payloads td:nth-child(8) { width:118px; }
+.wm-log-table.payloads th:nth-child(9), .wm-log-table.payloads td:nth-child(9) { width:150px; }
+.wm-log-table.payloads th:nth-child(10), .wm-log-table.payloads td:nth-child(10) { width:90px; }
+.wm-log-table.payloads th:nth-child(11), .wm-log-table.payloads td:nth-child(11) { width:120px; }
+.wm-log-table.payloads th:nth-child(12), .wm-log-table.payloads td:nth-child(12) { width:118px; }
 .wm-group-avatar { width:34px; height:34px; border-radius:999px; overflow:hidden; flex:0 0 auto; background:rgba(255,255,255,.08); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; font-weight:700; }
 .wm-group-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
 @media(max-width:1000px){ .wm-grid,.wm-qrbox{grid-template-columns:1fr}.wm-row{grid-template-columns:1fr}.wm-qr{width:100%;max-width:260px} }
@@ -708,7 +739,7 @@ include __DIR__ . '/_header.php';
             <div class="text-muted text-sm">Nenhum payload recebido ainda. Configure o webhook e faca um teste de entrada/saida em grupo.</div>
         <?php else: ?>
             <div class="table-wrap">
-                <table class="wm-log-table">
+                <table class="wm-log-table payloads">
                     <thead>
                         <tr>
                             <th>ID</th>
@@ -735,10 +766,10 @@ include __DIR__ . '/_header.php';
                         ?>
                         <tr>
                             <td><?= (int)$log['id'] ?></td>
-                            <td style="white-space:nowrap"><?= wh_h((string)$log['received_at']) ?></td>
-                            <td><?= (int)$log['token_ok'] === 1 ? '<span class="badge badge-success">OK</span>' : '<span class="badge badge-danger">Falhou</span>' ?></td>
-                            <td><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
-                            <td><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
+                            <td><?= wh_h(substr((string)$log['received_at'], 5, 11)) ?></td>
+                            <td><?= wh_receipt_badge($log) ?></td>
+                            <td class="wm-break"><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
+                            <td class="wm-break"><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
                             <td>
                                 <div class="wm-group-cell">
                                     <div class="wm-group-avatar">
@@ -750,10 +781,10 @@ include __DIR__ . '/_header.php';
                                     </div>
                                     <div>
                                         <?php if (!empty($log['group_name'])): ?>
-                                            <div><?= wh_h((string)$log['group_name']) ?></div>
-                                            <div class="text-xs text-muted"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
-                                        <?php else: ?>
-                                            <div><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                                <div class="wm-ellipsis" title="<?= wh_h((string)$log['group_name']) ?>"><?= wh_h((string)$log['group_name']) ?></div>
+                                                <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                            <?php else: ?>
+                                                <div class="wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
                                         <?php endif; ?>
                                         <?php if ((int)($log['group_is_ignored'] ?? 0) === 1): ?>
                                             <div class="text-xs text-muted">Grupo ignorado</div>
@@ -767,12 +798,12 @@ include __DIR__ . '/_header.php';
                             </td>
                             <td>
                                 <div><?= wh_h($phone ?: '-') ?></div>
-                                <?php if (!empty($log['participant_id'])): ?><div class="text-xs text-muted"><?= wh_h((string)$log['participant_id']) ?></div><?php endif; ?>
+                                <?php if (!empty($log['participant_id'])): ?><div class="text-xs text-muted wm-break"><?= wh_h((string)$log['participant_id']) ?></div><?php endif; ?>
                             </td>
                             <td>
                                 <?php if ($userId > 0): ?>
                                     <a href="aluno_editar.php?id=<?= $userId ?>"><?= wh_h($userName !== '' ? $userName : ('Aluno #' . $userId)) ?></a>
-                                    <div class="text-xs text-muted"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
+                                    <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
                                 <?php else: ?>
                                     <span class="text-muted">Nao encontrado</span>
                                 <?php endif; ?>
@@ -789,7 +820,12 @@ include __DIR__ . '/_header.php';
                                 <div><?= wh_h(wh_trigger_label((string)($log['trigger_status'] ?? ''))) ?></div>
                                 <?php if (!empty($log['trigger_error'])): ?><div class="text-xs text-muted"><?= wh_h(substr((string)$log['trigger_error'], 0, 160)) ?></div><?php endif; ?>
                             </td>
-                            <td><div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div></td>
+                            <td>
+                                <details class="wm-payload-details">
+                                    <summary>Ver payload</summary>
+                                    <div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div>
+                                </details>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
