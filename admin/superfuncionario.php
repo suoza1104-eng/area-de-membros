@@ -795,6 +795,19 @@ include __DIR__ . '/_header.php';
                                         <strong>RETORNO_AGENDADO <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado pelo cron quando um retorno de contato chega na data e hora marcada.</em>
                                     </div>
+                                    <div class="ev-group-label">WhatsApp Grupos</div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_ENTROU">
+                                        <strong>WHATSAPP_GRUPO_ENTROU <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado entrou em grupo monitorado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_SAIU">
+                                        <strong>WHATSAPP_GRUPO_SAIU <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado saiu por conta propria de grupo monitorado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">
+                                        <strong>WHATSAPP_GRUPO_REMOVIDO_ADMIN <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado foi removido por admin de grupo monitorado.</em>
+                                    </div>
                                     <div class="ev-group-label">Certificado</div>
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">
                                         <strong>CERT_EMITIDO <span class="ev-pill cert">Certificado</span></strong>
@@ -840,19 +853,6 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="LIVE_EVENTO">
                                         <strong>LIVE_EVENTO <span class="ev-pill live">Live</span></strong>
                                         <em>Evento customizado vindo de Eventos Live.</em>
-                                    </div>
-                                    <div class="ev-group-label">WhatsApp Grupos</div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_ENTROU">
-                                        <strong>WHATSAPP_GRUPO_ENTROU <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado entrou em grupo monitorado.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_SAIU">
-                                        <strong>WHATSAPP_GRUPO_SAIU <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado saiu por conta propria de grupo monitorado.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">
-                                        <strong>WHATSAPP_GRUPO_REMOVIDO_ADMIN <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado foi removido por admin de grupo monitorado.</em>
                                     </div>
                                     <?php
                                     $hasLessons = false;
