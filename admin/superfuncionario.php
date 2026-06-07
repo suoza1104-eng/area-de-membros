@@ -352,7 +352,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
 
             $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,delay_ms=:delay,live_filter_tag_ids=:filters,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
                 ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':delay'=>$delayMs,':filters'=>$filterCfg,':ldd'=>$liveDisparoData,':id'=>$tid]);
-        } catch (Throwable $e) {}
+        } catch (Throwable $e) {
+            header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Erro ao salvar configuracao da turma: ' . $e->getMessage()));
+            exit;
+        }
     }
     header('Location: superfuncionario.php?sf_edit=' . $tid . '&saved=1');
     exit;

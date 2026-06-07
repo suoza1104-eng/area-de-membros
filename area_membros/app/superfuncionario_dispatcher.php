@@ -70,6 +70,40 @@ function sf_ensure_tables(PDO $pdo): void
             KEY idx_ok (ok)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
+
+    sf_ensure_turma_columns($pdo);
+}
+
+function sf_ensure_turma_columns(PDO $pdo): void
+{
+    try {
+        $pdo->query("SELECT id FROM turmas LIMIT 0");
+    } catch (Throwable $e) {
+        return;
+    }
+
+    $columns = [
+        'sf_enabled'          => "ALTER TABLE turmas ADD COLUMN sf_enabled TINYINT(1) NOT NULL DEFAULT 0",
+        'sf_tags_text'        => "ALTER TABLE turmas ADD COLUMN sf_tags_text TEXT NULL",
+        'sf_flows_text'       => "ALTER TABLE turmas ADD COLUMN sf_flows_text TEXT NULL",
+        'sf_fields_json'      => "ALTER TABLE turmas ADD COLUMN sf_fields_json LONGTEXT NULL",
+        'delay_ms'            => "ALTER TABLE turmas ADD COLUMN delay_ms INT NOT NULL DEFAULT 500",
+        'live_filter_tag_ids' => "ALTER TABLE turmas ADD COLUMN live_filter_tag_ids LONGTEXT NULL",
+        'live_disparo_data'   => "ALTER TABLE turmas ADD COLUMN live_disparo_data DATETIME NULL",
+        'live_disparada'      => "ALTER TABLE turmas ADD COLUMN live_disparada TINYINT(1) NOT NULL DEFAULT 0",
+    ];
+
+    foreach ($columns as $name => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM turmas LIKE :col");
+            $st->execute([':col' => $name]);
+            if (!$st->fetch()) {
+                $pdo->exec($sql);
+            }
+        } catch (Throwable $e) {
+            // Let the save path report the real error if a required column is still missing.
+        }
+    }
 }
 
 /** -----------------------------
