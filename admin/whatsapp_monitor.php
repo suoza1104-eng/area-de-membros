@@ -78,6 +78,8 @@ function wh_trigger_label(?string $status): string {
         'triggered' => 'Gatilhos acionados',
         'blacklist_detected' => 'Blacklist detectada',
         'blacklist_detected_no_user' => 'Blacklist sem aluno',
+        'blacklist_detected_backfill' => 'Blacklist retroativa',
+        'identified_backfill' => 'Aluno identificado',
         'ignored_group' => 'Grupo ignorado',
         'user_not_found' => 'Aluno nao encontrado',
         'ignored' => 'Ignorado',
@@ -265,6 +267,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_monitor.php?group_scope_saved=1');
             exit;
         }
+
+        if ($action === 'backfill_event_users') {
+            $res = evolution_backfill_unmatched_group_events($pdo, 1000);
+            header(
+                'Location: whatsapp_monitor.php?backfill_done=1'
+                . '&processed=' . (int)($res['processed'] ?? 0)
+                . '&matched=' . (int)($res['matched'] ?? 0)
+                . '&missing=' . (int)($res['still_missing'] ?? 0)
+            );
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -279,6 +292,12 @@ if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evo
 if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
 if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
 if (isset($_GET['group_scope_saved'])) $notice = 'Configuracao do grupo atualizada.';
+if (isset($_GET['backfill_done'])) {
+    $notice = 'Reprocessamento concluido: '
+        . (int)($_GET['processed'] ?? 0) . ' evento(s) analisado(s), '
+        . (int)($_GET['matched'] ?? 0) . ' aluno(s) identificado(s), '
+        . (int)($_GET['missing'] ?? 0) . ' ainda sem aluno.';
+}
 
 $cfg = evolution_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -664,6 +683,7 @@ include __DIR__ . '/_header.php';
         <form method="post" class="wm-actions" style="margin-bottom:12px">
             <input type="hidden" name="action" value="refresh_group_names">
             <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
+            <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
         </form>
 
         <?php if (!$rawLogs): ?>

@@ -253,6 +253,7 @@ Implementado:
 - `admin/whatsapp_monitor.php` exibe grupos detectados, contagem de eventos e batidas de blacklist;
 - `admin/whatsapp_monitor.php` exibe o nome do grupo quando ja carregado e oferece botao para atualizar nomes dos grupos detectados;
 - `admin/whatsapp_monitor.php` exibe foto do grupo quando disponivel e permite marcar/desmarcar grupos ignorados;
+- `admin/whatsapp_monitor.php` oferece reprocessamento retroativo de eventos antigos sem aluno, usando a normalizacao atual de telefone, sem disparar tags/webhooks novamente;
 - `admin/webhooks.php` e `admin/superfuncionario.php` listam `WHATSAPP_BLACKLIST_DETECTADO`.
 
 Comportamento de seguranca:
@@ -260,6 +261,7 @@ Comportamento de seguranca:
 - a deteccao de blacklist nao remove participante;
 - grupos novos entram por padrao como considerados (`is_ignored=0`);
 - grupos marcados como ignorados continuam com payload bruto registrado, mas nao aplicam tags, blacklist nem webhooks/SuperFuncionario;
+- o reprocessamento retroativo apenas atualiza `user_id` e status no historico; ele nao dispara tags, webhooks ou SuperFuncionario para eventos passados;
 - se o numero blacklistado nao cruzar com aluno, o evento fica registrado como `blacklist_detected_no_user`, sem Webhook/SuperFuncionario;
 - a remocao manual/automatica segue pendente para uma fase posterior.
 
@@ -436,4 +438,5 @@ Criterios de conclusao:
 - Nome/titulo do grupo passa a ser buscado via `findGroupInfos` da Evolution API e salvo em `whatsapp_groups.group_name`.
 - Foto do grupo passa a ser salva em `whatsapp_groups.picture_url` quando a Evolution API retornar `pictureUrl`.
 - Painel passa a permitir marcar grupos como ignorados; eventos desses grupos ficam registrados, mas nao geram tags/gatilhos.
+- Painel passa a permitir reprocessar eventos antigos sem aluno para preencher `user_id` com a regra atual de normalizacao de telefone.
 - Proxima etapa recomendada: remocao manual controlada via Evolution API antes de qualquer remocao automatica.

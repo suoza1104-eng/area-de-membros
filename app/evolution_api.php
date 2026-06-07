@@ -875,6 +875,105 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     }
 }
 
+function evolution_backfill_unmatched_group_events(PDO $pdo, int $limit = 500): array {
+    $limit = max(1, min(2000, $limit));
+    $processed = 0;
+    $matched = 0;
+    $stillMissing = 0;
+
+    try {
+        $rows = $pdo->query("
+            SELECT *
+              FROM whatsapp_webhook_raw_logs
+             WHERE token_ok = 1
+               AND (user_id IS NULL OR user_id = 0)
+             ORDER BY id DESC
+             LIMIT {$limit}
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return ['processed' => 0, 'matched' => 0, 'still_missing' => 0, 'error' => $e->getMessage()];
+    }
+
+    foreach ($rows as $row) {
+        $processed++;
+        $payload = json_decode((string)($row['payload_raw'] ?? ''), true);
+        $fields = is_array($payload) ? evolution_extract_raw_event_fields($payload) : [];
+
+        foreach ([
+            'event_type',
+            'instance_key',
+            'group_id',
+            'action',
+            'participant_number',
+            'participant_phone',
+            'participant_id',
+            'author_id',
+            'interpreted_event',
+        ] as $key) {
+            if (empty($fields[$key]) && isset($row[$key])) {
+                $fields[$key] = $row[$key];
+            }
+        }
+
+        $phone = (string)($fields['participant_phone'] ?? '');
+        $user = evolution_find_user_by_phone($pdo, $phone);
+        $userId = $user ? (int)($user['id'] ?? 0) : 0;
+        $blacklist = strtolower((string)($fields['action'] ?? '')) === 'add'
+            ? evolution_find_active_blacklist($pdo, $phone)
+            : null;
+
+        evolution_upsert_group($pdo, $fields);
+
+        if ($userId <= 0) {
+            $stillMissing++;
+            evolution_record_group_event($pdo, (int)$row['id'], $fields, null, $blacklist, $blacklist ? 'blacklist_detected_no_user' : 'user_not_found');
+            continue;
+        }
+
+        $matched++;
+        try {
+            $st = $pdo->prepare("
+                UPDATE whatsapp_webhook_raw_logs
+                   SET event_type = COALESCE(:event_type, event_type),
+                       instance_key = COALESCE(:instance_key, instance_key),
+                       group_id = COALESCE(:group_id, group_id),
+                       action = COALESCE(:action, action),
+                       participant_number = COALESCE(:participant_number, participant_number),
+                       participant_phone = COALESCE(:participant_phone, participant_phone),
+                       participant_id = COALESCE(:participant_id, participant_id),
+                       author_id = COALESCE(:author_id, author_id),
+                       interpreted_event = COALESCE(:interpreted_event, interpreted_event),
+                       user_id = :user_id,
+                       trigger_status = 'identified_backfill',
+                       trigger_error = NULL
+                 WHERE id = :id
+                 LIMIT 1
+            ");
+            $st->execute([
+                ':event_type' => $fields['event_type'] ?? null,
+                ':instance_key' => $fields['instance_key'] ?? null,
+                ':group_id' => $fields['group_id'] ?? null,
+                ':action' => $fields['action'] ?? null,
+                ':participant_number' => $fields['participant_number'] ?? null,
+                ':participant_phone' => $fields['participant_phone'] ?? null,
+                ':participant_id' => $fields['participant_id'] ?? null,
+                ':author_id' => $fields['author_id'] ?? null,
+                ':interpreted_event' => $fields['interpreted_event'] ?? null,
+                ':user_id' => $userId,
+                ':id' => (int)$row['id'],
+            ]);
+        } catch (Throwable $e) {}
+
+        evolution_record_group_event($pdo, (int)$row['id'], $fields, $userId, $blacklist, $blacklist ? 'blacklist_detected_backfill' : 'identified_backfill');
+    }
+
+    return [
+        'processed' => $processed,
+        'matched' => $matched,
+        'still_missing' => $stillMissing,
+    ];
+}
+
 function evolution_update_instance_from_response(PDO $pdo, int $id, array $res, string $fallbackStatus): void {
     $data = is_array($res['data']) ? $res['data'] : [];
     $qr = evolution_extract_qr($data);
