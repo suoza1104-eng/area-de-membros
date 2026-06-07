@@ -58,6 +58,31 @@ function wh_phone_from_payload(?string $rawPayload, ?string $fallbackParticipant
     return wh_clean_phone($fallbackParticipant);
 }
 
+function wh_event_label(?string $event, ?string $action = null): string {
+    $event = trim((string)$event);
+    $labels = [
+        'WHATSAPP_GRUPO_ENTROU' => 'Entrou no grupo',
+        'WHATSAPP_GRUPO_SAIU' => 'Saiu por conta propria',
+        'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Removido por admin',
+        'WHATSAPP_GRUPO_PROMOVIDO_ADMIN' => 'Promovido a admin',
+        'WHATSAPP_GRUPO_REBAIXADO_ADMIN' => 'Rebaixado de admin',
+    ];
+    if (isset($labels[$event])) return $labels[$event];
+    $action = trim((string)$action);
+    return $action !== '' ? $action : '-';
+}
+
+function wh_trigger_label(?string $status): string {
+    $status = trim((string)$status);
+    $labels = [
+        'triggered' => 'Gatilhos acionados',
+        'user_not_found' => 'Aluno nao encontrado',
+        'ignored' => 'Ignorado',
+        'error' => 'Erro',
+    ];
+    return $labels[$status] ?? ($status !== '' ? $status : '-');
+}
+
 $notice = '';
 $error = '';
 
@@ -162,9 +187,15 @@ $webhookInstanceKey = (string)get_setting('evolution_webhook_instance_key', 'mon
 $rawLogs = [];
 try {
     $rawLogs = $pdo->query("
-        SELECT id, token_ok, event_type, instance_key, group_id, action, participant_number, payload_raw, source_ip, received_at
-        FROM whatsapp_webhook_raw_logs
-        ORDER BY id DESC
+        SELECT l.id, l.token_ok, l.event_type, l.instance_key, l.group_id, l.action,
+               l.participant_number, l.participant_phone, l.participant_id, l.author_id,
+               l.interpreted_event, l.user_id, l.trigger_status, l.trigger_error,
+               l.payload_raw, l.source_ip, l.received_at,
+               u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
+               u.codigo_turma AS user_codigo_turma
+        FROM whatsapp_webhook_raw_logs l
+        LEFT JOIN users u ON u.id = l.user_id
+        ORDER BY l.id DESC
         LIMIT 80
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
@@ -209,7 +240,7 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Fase 1: conectar uma instancia da Evolution API por QR Code. Esta tela nao recebe webhooks, nao monitora grupos e nao remove participantes.</p>
+            <p>Conecta instancias da Evolution API, recebe eventos de grupos, cruza participantes com alunos e dispara tags/webhooks/SuperFuncionario. Nenhuma remocao automatica e executada.</p>
         </div>
         <a class="btn btn-ghost" href="../README_EVOLUTION_API.md" target="_blank">README</a>
     </div>
@@ -350,8 +381,8 @@ include __DIR__ . '/_header.php';
     </div>
 
     <div class="wm-card wm-full">
-        <h2>Webhook de grupos - Fase 2</h2>
-        <div class="wm-card-sub">Recebe apenas eventos <span class="code">GROUP_PARTICIPANTS_UPDATE</span> e salva payload bruto. Nenhuma acao automatica e executada.</div>
+        <h2>Webhook de grupos</h2>
+        <div class="wm-card-sub">Recebe eventos <span class="code">GROUP_PARTICIPANTS_UPDATE</span>, interpreta entrada/saida/remocao e dispara gatilhos apenas quando encontra o aluno pelo telefone.</div>
 
         <div class="wm-danger-note">
             Configure primeiro em grupo de teste. O endpoint abaixo responde 200 e registra o payload para analisarmos o formato real da Evolution API.
@@ -392,14 +423,21 @@ include __DIR__ . '/_header.php';
                             <th>Evento</th>
                             <th>Instancia</th>
                             <th>Grupo</th>
-                            <th>Acao</th>
-                            <th>Participante</th>
+                            <th>Evento</th>
                             <th>Telefone</th>
+                            <th>Aluno</th>
+                            <th>Gatilho</th>
                             <th>Payload</th>
                         </tr>
                     </thead>
                     <tbody>
                     <?php foreach ($rawLogs as $log): ?>
+                        <?php
+                        $phone = (string)($log['participant_phone'] ?? '');
+                        if ($phone === '') $phone = wh_phone_from_payload((string)$log['payload_raw'], (string)($log['participant_number'] ?? ''));
+                        $userName = trim((string)($log['user_nome'] ?? ''));
+                        $userId = (int)($log['user_id'] ?? 0);
+                        ?>
                         <tr>
                             <td><?= (int)$log['id'] ?></td>
                             <td style="white-space:nowrap"><?= wh_h((string)$log['received_at']) ?></td>
@@ -407,9 +445,26 @@ include __DIR__ . '/_header.php';
                             <td><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['group_id'] ?? '-')) ?></td>
-                            <td><?= wh_h((string)($log['action'] ?? '-')) ?></td>
-                            <td><?= wh_h((string)($log['participant_number'] ?? '-')) ?></td>
-                            <td><?= wh_h(wh_phone_from_payload((string)$log['payload_raw'], (string)($log['participant_number'] ?? '')) ?: '-') ?></td>
+                            <td>
+                                <div><?= wh_h(wh_event_label((string)($log['interpreted_event'] ?? ''), (string)($log['action'] ?? ''))) ?></div>
+                                <div class="text-xs text-muted"><?= wh_h((string)($log['action'] ?? '-')) ?></div>
+                            </td>
+                            <td>
+                                <div><?= wh_h($phone ?: '-') ?></div>
+                                <?php if (!empty($log['participant_id'])): ?><div class="text-xs text-muted"><?= wh_h((string)$log['participant_id']) ?></div><?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($userId > 0): ?>
+                                    <a href="aluno_editar.php?id=<?= $userId ?>"><?= wh_h($userName !== '' ? $userName : ('Aluno #' . $userId)) ?></a>
+                                    <div class="text-xs text-muted"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
+                                <?php else: ?>
+                                    <span class="text-muted">Nao encontrado</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <div><?= wh_h(wh_trigger_label((string)($log['trigger_status'] ?? ''))) ?></div>
+                                <?php if (!empty($log['trigger_error'])): ?><div class="text-xs text-muted"><?= wh_h(substr((string)$log['trigger_error'], 0, 160)) ?></div><?php endif; ?>
+                            </td>
                             <td><div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div></td>
                         </tr>
                     <?php endforeach; ?>

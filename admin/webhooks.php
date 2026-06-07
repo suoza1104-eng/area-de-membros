@@ -117,6 +117,23 @@ $eventGroups = [
         'CONCLUIU_TRILHA'      => ['label' => 'Concluiu a trilha',             'desc' => 'Disparado quando o aluno finaliza todas as aulas obrigatórias.', 'extra' => 'user.id, user.nome'],
         'RETORNO_AGENDADO'     => ['label' => 'Retorno agendado chegou',       'desc' => 'Disparado pelo cron quando um retorno de contato chega na data e hora marcada.', 'extra' => 'extra.agendamento_id, extra.tipo, extra.scheduled_at, extra.assunto, extra.mensagem, extra.mensagem_renderizada, extra.origem'],
     ],
+    'WhatsApp Grupos' => [
+        'WHATSAPP_GRUPO_ENTROU' => [
+            'label' => 'WhatsApp - entrou no grupo',
+            'desc' => 'Disparado quando a Evolution API informa entrada de participante e o telefone cruza com um aluno cadastrado. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+        'WHATSAPP_GRUPO_SAIU' => [
+            'label' => 'WhatsApp - saiu por conta propria',
+            'desc' => 'Disparado quando action=remove e o author e o proprio participante. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+        'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => [
+            'label' => 'WhatsApp - removido por admin',
+            'desc' => 'Disparado quando action=remove e o author e diferente do participante. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+    ],
     'Certificado' => [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],
         'REENVIO_CERTIFICADO'  => ['label' => 'Reenvio de certificado',        'desc' => 'Disparado quando o admin clica em reenviar certificado ou quando um webhook de entrada configurado para reenvio é recebido.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url, extra.certificado_id, extra.origem'],

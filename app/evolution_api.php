@@ -41,6 +41,13 @@ function evolution_ensure_tables(PDO $pdo): void {
             group_id VARCHAR(160) NULL,
             action VARCHAR(60) NULL,
             participant_number VARCHAR(60) NULL,
+            participant_phone VARCHAR(30) NULL,
+            participant_id VARCHAR(120) NULL,
+            author_id VARCHAR(120) NULL,
+            interpreted_event VARCHAR(80) NULL,
+            user_id INT NULL,
+            trigger_status VARCHAR(30) NULL,
+            trigger_error TEXT NULL,
             payload_raw LONGTEXT NOT NULL,
             headers_json TEXT NULL,
             source_ip VARCHAR(80) NULL,
@@ -49,9 +56,45 @@ function evolution_ensure_tables(PDO $pdo): void {
             KEY idx_wwrl_event (event_type),
             KEY idx_wwrl_instance (instance_key),
             KEY idx_wwrl_group (group_id),
-            KEY idx_wwrl_participant (participant_number)
+            KEY idx_wwrl_participant (participant_number),
+            KEY idx_wwrl_phone (participant_phone),
+            KEY idx_wwrl_user (user_id),
+            KEY idx_wwrl_interpreted (interpreted_event)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $columns = [
+        'participant_phone' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN participant_phone VARCHAR(30) NULL AFTER participant_number",
+        'participant_id' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN participant_id VARCHAR(120) NULL AFTER participant_phone",
+        'author_id' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN author_id VARCHAR(120) NULL AFTER participant_id",
+        'interpreted_event' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN interpreted_event VARCHAR(80) NULL AFTER author_id",
+        'user_id' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN user_id INT NULL AFTER interpreted_event",
+        'trigger_status' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN trigger_status VARCHAR(30) NULL AFTER user_id",
+        'trigger_error' => "ALTER TABLE whatsapp_webhook_raw_logs ADD COLUMN trigger_error TEXT NULL AFTER trigger_status",
+    ];
+    foreach ($columns as $column => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM whatsapp_webhook_raw_logs LIKE :c");
+            $st->execute([':c' => $column]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                $pdo->exec($sql);
+            }
+        } catch (Throwable $e) {}
+    }
+
+    foreach ([
+        'idx_wwrl_phone' => 'participant_phone',
+        'idx_wwrl_user' => 'user_id',
+        'idx_wwrl_interpreted' => 'interpreted_event',
+    ] as $idx => $column) {
+        try {
+            $st = $pdo->prepare("SHOW INDEX FROM whatsapp_webhook_raw_logs WHERE Key_name = :k");
+            $st->execute([':k' => $idx]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                $pdo->exec("ALTER TABLE whatsapp_webhook_raw_logs ADD KEY {$idx} ({$column})");
+            }
+        } catch (Throwable $e) {}
+    }
 }
 
 function evolution_get_config(): array {
@@ -227,11 +270,17 @@ function evolution_extract_raw_event_fields(array $payload): array {
     $action = (string)($data['action'] ?? $payload['action'] ?? '');
 
     $participant = '';
+    $participantId = '';
+    $participantPhone = '';
     $participants = $data['participants'] ?? $data['participant'] ?? $payload['participants'] ?? null;
     if (is_array($participants)) {
         $first = reset($participants);
         if (is_scalar($first)) $participant = (string)$first;
-        elseif (is_array($first)) $participant = (string)($first['phoneNumber'] ?? $first['number'] ?? $first['id'] ?? $first['jid'] ?? '');
+        elseif (is_array($first)) {
+            $participantPhone = (string)($first['phoneNumber'] ?? $first['number'] ?? '');
+            $participantId = (string)($first['id'] ?? $first['jid'] ?? '');
+            $participant = $participantPhone !== '' ? $participantPhone : $participantId;
+        }
     } elseif (is_scalar($participants)) {
         $participant = (string)$participants;
     }
@@ -242,7 +291,9 @@ function evolution_extract_raw_event_fields(array $payload): array {
             if (is_array($firstData)) {
                 $jid = $firstData['jid'] ?? [];
                 if (is_array($jid)) {
-                    $participant = (string)($jid['phoneNumber'] ?? $jid['id'] ?? '');
+                    $participantPhone = (string)($jid['phoneNumber'] ?? '');
+                    $participantId = (string)($jid['id'] ?? '');
+                    $participant = $participantPhone !== '' ? $participantPhone : $participantId;
                 }
                 if ($participant === '') {
                     $participant = (string)($firstData['phoneNumber'] ?? '');
@@ -253,14 +304,164 @@ function evolution_extract_raw_event_fields(array $payload): array {
     if ($participant === '') {
         $participant = (string)($data['participant'] ?? $data['phoneNumber'] ?? $data['number'] ?? $payload['participant'] ?? '');
     }
+    if ($participantPhone === '') {
+        $participantPhone = $participant;
+    }
+    if ($participantId === '' && strpos($participant, '@lid') !== false) {
+        $participantId = $participant;
+    }
+
+    $authorId = (string)($data['author'] ?? $payload['author'] ?? '');
+    $cleanPhone = evolution_clean_whatsapp_phone($participantPhone);
+    $cleanParticipantId = evolution_clean_whatsapp_id($participantId);
+    $cleanAuthorId = evolution_clean_whatsapp_id($authorId);
+    $interpreted = evolution_interpret_group_participant_action($action, $cleanParticipantId, $cleanAuthorId);
 
     return [
         'event_type' => $eventType !== '' ? $eventType : null,
         'instance_key' => $instance !== '' ? $instance : null,
         'group_id' => $groupId !== '' ? $groupId : null,
         'action' => $action !== '' ? $action : null,
-        'participant_number' => $participant !== '' ? preg_replace('/[^0-9@._-]+/', '', $participant) : null,
+        'participant_number' => $participant !== '' ? preg_replace('/[^A-Za-z0-9@._-]+/', '', $participant) : null,
+        'participant_phone' => $cleanPhone !== '' ? $cleanPhone : null,
+        'participant_id' => $cleanParticipantId !== '' ? $cleanParticipantId : null,
+        'author_id' => $cleanAuthorId !== '' ? $cleanAuthorId : null,
+        'interpreted_event' => $interpreted,
     ];
+}
+
+function evolution_clean_whatsapp_phone(?string $value): string {
+    $value = trim((string)$value);
+    if ($value === '' || $value === '[object Object]') return '';
+    $value = preg_replace('/@.*$/', '', $value) ?? $value;
+    return preg_replace('/\D+/', '', $value) ?? '';
+}
+
+function evolution_clean_whatsapp_id(?string $value): string {
+    $value = trim((string)$value);
+    if ($value === '' || $value === '[object Object]') return '';
+    return preg_replace('/[^A-Za-z0-9@._-]+/', '', $value) ?? '';
+}
+
+function evolution_interpret_group_participant_action(?string $action, ?string $participantId, ?string $authorId): ?string {
+    $action = strtolower(trim((string)$action));
+    $participantId = trim((string)$participantId);
+    $authorId = trim((string)$authorId);
+
+    if ($action === 'add') return 'WHATSAPP_GRUPO_ENTROU';
+    if ($action === 'remove') {
+        if ($participantId !== '' && $authorId !== '' && $participantId === $authorId) {
+            return 'WHATSAPP_GRUPO_SAIU';
+        }
+        return 'WHATSAPP_GRUPO_REMOVIDO_ADMIN';
+    }
+    if ($action === 'promote') return 'WHATSAPP_GRUPO_PROMOVIDO_ADMIN';
+    if ($action === 'demote') return 'WHATSAPP_GRUPO_REBAIXADO_ADMIN';
+    return null;
+}
+
+function evolution_tag_for_interpreted_event(?string $event): ?string {
+    $event = trim((string)$event);
+    return in_array($event, [
+        'WHATSAPP_GRUPO_ENTROU',
+        'WHATSAPP_GRUPO_SAIU',
+        'WHATSAPP_GRUPO_REMOVIDO_ADMIN',
+    ], true) ? $event : null;
+}
+
+function evolution_find_user_by_phone(PDO $pdo, ?string $phone): ?array {
+    $phone = evolution_clean_whatsapp_phone($phone);
+    if ($phone === '') return null;
+
+    $variants = [$phone];
+    if (strpos($phone, '55') === 0 && strlen($phone) > 11) {
+        $variants[] = substr($phone, 2);
+    }
+    if (strlen($phone) >= 11) {
+        $variants[] = substr($phone, -11);
+    }
+    if (strlen($phone) >= 10) {
+        $variants[] = substr($phone, -10);
+    }
+    $variants = array_values(array_unique(array_filter($variants)));
+
+    $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
+    $where = [];
+    $params = [];
+    foreach ($variants as $i => $variant) {
+        $key = ':p' . $i;
+        $where[] = "{$cleanExpr} = {$key}";
+        $params[$key] = $variant;
+    }
+    if (!$where) return null;
+
+    try {
+        $st = $pdo->prepare("SELECT * FROM users WHERE " . implode(' OR ', $where) . " ORDER BY id DESC LIMIT 1");
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) && $row ? $row : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function evolution_process_group_event(PDO $pdo, int $logId, array $fields): array {
+    $event = (string)($fields['interpreted_event'] ?? '');
+    $tag = evolution_tag_for_interpreted_event($event);
+    if ($tag === '') $tag = null;
+
+    if ($event === '' || $tag === null) {
+        $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET trigger_status = 'ignored' WHERE id = :id LIMIT 1")
+            ->execute([':id' => $logId]);
+        return ['status' => 'ignored', 'user_id' => null, 'event' => $event];
+    }
+
+    $user = evolution_find_user_by_phone($pdo, (string)($fields['participant_phone'] ?? ''));
+    $userId = $user ? (int)($user['id'] ?? 0) : 0;
+    if ($userId <= 0) {
+        $pdo->prepare("
+            UPDATE whatsapp_webhook_raw_logs
+               SET trigger_status = 'user_not_found', trigger_error = NULL
+             WHERE id = :id
+             LIMIT 1
+        ")->execute([':id' => $logId]);
+        return ['status' => 'user_not_found', 'user_id' => null, 'event' => $event];
+    }
+
+    $extra = [
+        'telefone' => $fields['participant_phone'] ?? null,
+        'group_id' => $fields['group_id'] ?? null,
+        'participant_id' => $fields['participant_id'] ?? null,
+        'author_id' => $fields['author_id'] ?? null,
+        'action_original' => $fields['action'] ?? null,
+        'tipo_interpretado' => $event,
+        'payload_log_id' => $logId,
+        'origem' => 'evolution_group_participants_update',
+    ];
+
+    try {
+        adicionar_tag($userId, $tag, 'whatsapp_group', $logId);
+        disparar_webhooks($event, $userId, $extra);
+        $pdo->prepare("
+            UPDATE whatsapp_webhook_raw_logs
+               SET user_id = :uid, trigger_status = 'triggered', trigger_error = NULL
+             WHERE id = :id
+             LIMIT 1
+        ")->execute([':uid' => $userId, ':id' => $logId]);
+        return ['status' => 'triggered', 'user_id' => $userId, 'event' => $event];
+    } catch (Throwable $e) {
+        $pdo->prepare("
+            UPDATE whatsapp_webhook_raw_logs
+               SET user_id = :uid, trigger_status = 'error', trigger_error = :err
+             WHERE id = :id
+             LIMIT 1
+        ")->execute([
+            ':uid' => $userId,
+            ':err' => substr($e->getMessage(), 0, 1000),
+            ':id' => $logId,
+        ]);
+        return ['status' => 'error', 'user_id' => $userId, 'event' => $event, 'error' => $e->getMessage()];
+    }
 }
 
 function evolution_update_instance_from_response(PDO $pdo, int $id, array $res, string $fallbackStatus): void {

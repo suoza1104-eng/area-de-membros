@@ -65,6 +65,9 @@ $eventOptions = [
     'LIVE_OFERTA'           => 'Live — ficou até a oferta',
     'LIVE_COMPRA'           => 'Live — clicou na compra',
     'LIVE_EVENTO'           => 'Live — evento customizado',
+    'WHATSAPP_GRUPO_ENTROU' => 'WhatsApp - aluno entrou no grupo',
+    'WHATSAPP_GRUPO_SAIU'   => 'WhatsApp - aluno saiu por conta propria',
+    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'WhatsApp - aluno removido por admin',
 ];
 
 // dinâmico por aula
@@ -106,6 +109,15 @@ $fieldOptions = [
         'extra.andamento'                 => 'andamento (% conclusão — LIVE_TURMA)',
         'extra.aulas_concluidas'          => 'aulas_concluidas (LIVE_TURMA)',
         'extra.aulas_totais'              => 'aulas_totais (LIVE_TURMA)',
+    ],
+    'Extra - WHATSAPP_GRUPOS' => [
+        'extra.telefone' => 'telefone limpo',
+        'extra.group_id' => 'ID do grupo',
+        'extra.participant_id' => 'ID participante/LID',
+        'extra.author_id' => 'ID autor da acao',
+        'extra.action_original' => 'action original da Evolution',
+        'extra.tipo_interpretado' => 'evento interpretado',
+        'extra.payload_log_id' => 'ID do payload no monitor',
     ],
     'Extra — CERT_EMITIDO' => [
         'extra.pdf_url'           => 'pdf_url (link do certificado)',
@@ -149,6 +161,9 @@ $eventHints = [
     'LIVE_REAGENDADA'    => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>, <code>extra.reagendamento</code>',
     'LIVE_REAGENDAMENTO_LEMBRETE' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
     'LIVE_REAGENDAMENTO_EXPIRADO' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
+    'WHATSAPP_GRUPO_ENTROU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_ENTROU e aplicada no aluno.',
+    'WHATSAPP_GRUPO_SAIU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_SAIU e aplicada no aluno.',
+    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_REMOVIDO_ADMIN e aplicada no aluno.',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -702,6 +717,9 @@ include __DIR__ . '/_header.php';
                     'LIVE_REAGENDADA'   => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url', 'extra.reagendamento'],
                     'LIVE_REAGENDAMENTO_LEMBRETE' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
                     'LIVE_REAGENDAMENTO_EXPIRADO' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
+                    'WHATSAPP_GRUPO_ENTROU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
+                    'WHATSAPP_GRUPO_SAIU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
+                    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
                 ];
                 foreach ($payloadRef as $ev => $fields): ?>
                     <div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);">
@@ -822,6 +840,19 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="LIVE_EVENTO">
                                         <strong>LIVE_EVENTO <span class="ev-pill live">Live</span></strong>
                                         <em>Evento customizado vindo de Eventos Live.</em>
+                                    </div>
+                                    <div class="ev-group-label">WhatsApp Grupos</div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_ENTROU">
+                                        <strong>WHATSAPP_GRUPO_ENTROU <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado entrou em grupo monitorado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_SAIU">
+                                        <strong>WHATSAPP_GRUPO_SAIU <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado saiu por conta propria de grupo monitorado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">
+                                        <strong>WHATSAPP_GRUPO_REMOVIDO_ADMIN <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Aluno identificado foi removido por admin de grupo monitorado.</em>
                                     </div>
                                     <?php
                                     $hasLessons = false;

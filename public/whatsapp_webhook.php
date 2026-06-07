@@ -34,9 +34,9 @@ $fields = evolution_extract_raw_event_fields($payload);
 try {
     $stmt = $pdo->prepare("
         INSERT INTO whatsapp_webhook_raw_logs
-            (token_ok, event_type, instance_key, group_id, action, participant_number, payload_raw, headers_json, source_ip, received_at)
+            (token_ok, event_type, instance_key, group_id, action, participant_number, participant_phone, participant_id, author_id, interpreted_event, payload_raw, headers_json, source_ip, received_at)
         VALUES
-            (:token_ok, :event_type, :instance_key, :group_id, :action, :participant_number, :payload_raw, :headers_json, :source_ip, NOW())
+            (:token_ok, :event_type, :instance_key, :group_id, :action, :participant_number, :participant_phone, :participant_id, :author_id, :interpreted_event, :payload_raw, :headers_json, :source_ip, NOW())
     ");
     $stmt->execute([
         ':token_ok' => $tokenOk ? 1 : 0,
@@ -45,6 +45,10 @@ try {
         ':group_id' => $fields['group_id'],
         ':action' => $fields['action'],
         ':participant_number' => $fields['participant_number'],
+        ':participant_phone' => $fields['participant_phone'],
+        ':participant_id' => $fields['participant_id'],
+        ':author_id' => $fields['author_id'],
+        ':interpreted_event' => $fields['interpreted_event'],
         ':payload_raw' => $rawBody !== '' ? $rawBody : '{}',
         ':headers_json' => json_encode($headers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         ':source_ip' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
@@ -62,4 +66,6 @@ if (!$tokenOk) {
     exit;
 }
 
-echo json_encode(['ok' => true, 'logged' => $id]);
+$process = evolution_process_group_event($pdo, $id, $fields);
+
+echo json_encode(['ok' => true, 'logged' => $id, 'process' => $process]);

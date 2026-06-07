@@ -163,7 +163,55 @@ Ainda falta validar em grupo real:
 - campos principais confirmados: instancia, grupo, acao e participante;
 - observacao importante: quando o participante vem como `@lid`, este nao deve ser tratado como telefone real; o telefone correto vem de `data.participants[0].phoneNumber`, exemplo `5511948642358@s.whatsapp.net`.
 
-### Fase 3 - Modelagem de dados definitiva
+### Fase 3 - Eventos operacionais, tags e gatilhos
+
+Status: Concluida
+
+Objetivo:
+
+- interpretar eventos tecnicos da Evolution API em eventos operacionais;
+- cruzar o telefone do participante com alunos cadastrados;
+- aplicar tags automaticas no aluno;
+- disparar webhooks e regras do SuperFuncionario usando o mecanismo atual do sistema.
+
+Eventos implantados:
+
+- `WHATSAPP_GRUPO_ENTROU`: participante entrou no grupo;
+- `WHATSAPP_GRUPO_SAIU`: participante saiu por conta propria (`action=remove` e `author` igual ao participante);
+- `WHATSAPP_GRUPO_REMOVIDO_ADMIN`: participante foi removido por outra pessoa/admin (`action=remove` e `author` diferente do participante).
+
+Tags aplicadas automaticamente:
+
+- `WHATSAPP_GRUPO_ENTROU`;
+- `WHATSAPP_GRUPO_SAIU`;
+- `WHATSAPP_GRUPO_REMOVIDO_ADMIN`.
+
+Payload extra enviado para webhooks/SuperFuncionario:
+
+- `extra.telefone`;
+- `extra.group_id`;
+- `extra.participant_id`;
+- `extra.author_id`;
+- `extra.action_original`;
+- `extra.tipo_interpretado`;
+- `extra.payload_log_id`;
+- `extra.origem`.
+
+Implementado:
+
+- `app/evolution_api.php` normaliza telefone, participante, autor e tipo de evento;
+- `public/whatsapp_webhook.php` grava os campos normalizados e aciona tags/gatilhos quando o token e valido;
+- `admin/whatsapp_monitor.php` mostra evento interpretado, telefone limpo, aluno encontrado e status do gatilho;
+- `admin/webhooks.php` lista os novos eventos para configuracao;
+- `admin/superfuncionario.php` lista os novos eventos e campos `extra.*` para regras e campos personalizados.
+
+Comportamento de seguranca:
+
+- se o token do webhook for invalido, o payload e registrado, mas nenhum gatilho e disparado;
+- se o telefone nao cruzar com um aluno, o evento fica como `Aluno nao encontrado` e nao dispara webhook/SuperFuncionario;
+- nenhuma remocao automatica de participante foi ativada nesta fase.
+
+### Fase 4 - Modelagem de dados definitiva
 
 Status: Pendente
 
@@ -188,7 +236,7 @@ Criterios de conclusao:
 - indices definidos;
 - impacto no banco atual analisado antes da execucao.
 
-### Fase 4 - Blacklist e auto-remocao
+### Fase 5 - Blacklist e auto-remocao
 
 Status: Pendente
 
@@ -213,7 +261,7 @@ Criterios de conclusao:
 - remocao automatica testada em grupo controlado;
 - falhas de API registradas em log.
 
-### Fase 5 - Painel administrativo
+### Fase 6 - Painel administrativo
 
 Status: Pendente
 
@@ -237,7 +285,7 @@ Criterios de conclusao:
 - blacklist editavel;
 - logs filtraveis por grupo, numero e data.
 
-### Fase 6 - Alertas SuperFuncionario/Webhook
+### Fase 7 - Alertas SuperFuncionario/Webhook
 
 Status: Pendente
 
@@ -267,6 +315,10 @@ Criterios de conclusao:
 - [x] Confirmar status conectado.
 - [x] Testar eventos de grupo.
 - [x] Criar armazenamento de logs.
+- [x] Interpretar eventos `add`/`remove` em leitura operacional.
+- [x] Cruzar telefone do participante com alunos.
+- [x] Aplicar tags automaticas de eventos de grupo.
+- [x] Disparar Webhooks e SuperFuncionario para eventos de grupo identificados.
 - [ ] Criar blacklist.
 - [ ] Testar remocao manual.
 - [ ] Ativar remocao automatica em grupo controlado.
@@ -318,4 +370,9 @@ Criterios de conclusao:
 - Eventos recebidos: `group-participants.update`.
 - Acoes observadas: `add` e `remove`.
 - Campos extraidos com sucesso: instancia, grupo, acao e participante.
-- Proxima etapa recomendada: Fase 3, modelagem definitiva dos eventos e tela operacional de consulta antes de ativar blacklist/remocao automatica.
+- Implementada Fase 3 de eventos operacionais.
+- Campos normalizados gravados: telefone limpo, participante, autor e evento interpretado.
+- Eventos implantados para tags/webhooks/SuperFuncionario: `WHATSAPP_GRUPO_ENTROU`, `WHATSAPP_GRUPO_SAIU`, `WHATSAPP_GRUPO_REMOVIDO_ADMIN`.
+- Painel `admin/whatsapp_monitor.php` passa a exibir aluno encontrado e status do gatilho.
+- Telas `admin/webhooks.php` e `admin/superfuncionario.php` passam a listar os eventos de WhatsApp.
+- Proxima etapa recomendada: modelagem definitiva/blacklist e somente depois remocao automatica em grupo controlado.
