@@ -175,6 +175,71 @@ function sf_get_user_row(PDO $pdo, array $user): array
     return $user;
 }
 
+function sf_col_exists(PDO $pdo, string $table, string $col): bool
+{
+    try {
+        $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :col");
+        $st->execute([':col' => $col]);
+        return (bool)$st->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function sf_get_turma_codigo_from_context(PDO $pdo, array $userRow, array $extra): string
+{
+    foreach (['codigo_turma', 'turma_codigo'] as $key) {
+        if (!empty($extra[$key])) return trim((string)$extra[$key]);
+    }
+    if (isset($extra['turma']) && is_array($extra['turma']) && !empty($extra['turma']['codigo'])) {
+        return trim((string)$extra['turma']['codigo']);
+    }
+    foreach (['codigo_turma', 'turma_codigo'] as $key) {
+        if (!empty($userRow[$key])) return trim((string)$userRow[$key]);
+    }
+    return '';
+}
+
+function sf_lookup_turma_live_info(PDO $pdo, string $codigoTurma): array
+{
+    $codigoTurma = trim($codigoTurma);
+    if ($codigoTurma === '' || !sf_col_exists($pdo, 'turmas', 'codigo')) return [];
+
+    $cols = ['codigo'];
+    if (sf_col_exists($pdo, 'turmas', 'codigo_live')) $cols[] = 'codigo_live';
+    if (sf_col_exists($pdo, 'turmas', 'data_live')) $cols[] = 'data_live';
+    if (count($cols) === 1) return [];
+
+    try {
+        $st = $pdo->prepare("SELECT " . implode(',', $cols) . " FROM turmas WHERE codigo = :codigo LIMIT 1");
+        $st->execute([':codigo' => $codigoTurma]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function sf_enrich_extra_live(PDO $pdo, array $userRow, array $extra): array
+{
+    $codigoTurma = sf_get_turma_codigo_from_context($pdo, $userRow, $extra);
+    if ($codigoTurma === '') return $extra;
+
+    $turma = sf_lookup_turma_live_info($pdo, $codigoTurma);
+    if (!$turma) return $extra;
+
+    $codigoLiveAtual = trim((string)($extra['codigo_live'] ?? ''));
+    $codigoLiveTurma = trim((string)($turma['codigo_live'] ?? ''));
+    if ($codigoLiveTurma !== '' && ($codigoLiveAtual === '' || $codigoLiveAtual === $codigoTurma)) {
+        $extra['codigo_live'] = $codigoLiveTurma;
+    }
+
+    if (empty($extra['data_live']) && !empty($turma['data_live'])) {
+        $extra['data_live'] = (string)$turma['data_live'];
+    }
+
+    return $extra;
+}
+
 /** ---------------------------------
  *  Deep path traversal
  *
@@ -401,6 +466,9 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
     $rules = sf_get_rules_for_event($pdo, $evento);
     if (!$rules) return false;
 
+    $userRow = sf_get_user_row($pdo, $user);
+    $extra = sf_enrich_extra_live($pdo, $userRow, $extra);
+
     // Payload base disponível como contexto de resolução
     $payload = [
         'evento'    => $evento,
@@ -409,7 +477,6 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
         'timestamp' => date('c'),
     ];
 
-    $userRow = sf_get_user_row($pdo, $user);
     $sentOk = false;
 
     foreach ($rules as $rule) {

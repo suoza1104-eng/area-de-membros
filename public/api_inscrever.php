@@ -186,6 +186,7 @@ try {
     $turma = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $codigo_turma = $turma['codigo'] ?? null;
+    $codigo_live  = trim((string)($turma['codigo_live'] ?? ''));
     $data_live    = $turma['data_live'] ?? null;
 
     // busca por email
@@ -348,7 +349,7 @@ try {
 
     $extras = [
         'codigo_turma'             => $codigo_turma,
-        'codigo_live'              => $codigo_turma,
+        'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
         'data_live'                => $data_live,
         'qtd_inscricoes'           => $qtdInscricoes,
         'primeira_inscricao'       => $primeiraInscricao,

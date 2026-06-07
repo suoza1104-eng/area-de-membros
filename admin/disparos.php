@@ -24,6 +24,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS disparos (
     intervalo_seg   INT UNSIGNED NOT NULL DEFAULT 0,
     filtros_json    MEDIUMTEXT NULL,
     acoes_json      MEDIUMTEXT NULL,
+    batch_size      INT UNSIGNED NOT NULL DEFAULT 1,
     total_enviados  INT UNSIGNED NOT NULL DEFAULT 0,
     total_erros     INT UNSIGNED NOT NULL DEFAULT 0,
     criado_em       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -53,6 +54,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS user_tags_sistema (
 // Migração de colunas — cada ALTER ignorado se coluna já existir
 foreach ([
     'intervalo_ms INT UNSIGNED NOT NULL DEFAULT 0',
+    'batch_size INT UNSIGNED NOT NULL DEFAULT 1',
     'horario_ativo TINYINT(1) NOT NULL DEFAULT 0',
     'horario_inicio TIME NULL',
     'horario_fim TIME NULL',
@@ -405,6 +407,7 @@ if ($acao !== '') {
             $tipo = in_array($_POST['tipo'] ?? '', ['instantaneo','agendado']) ? $_POST['tipo'] : 'instantaneo';
             $agendado_em   = !empty($_POST['agendado_em'])   ? $_POST['agendado_em']   : null;
             $intervalo_ms  = (int)($_POST['intervalo_ms'] ?? 0);
+            $batch_size    = max(1, min(500, (int)($_POST['batch_size'] ?? 1)));
             $filtros_json  = $_POST['filtros_json']  ?? '{}';
             $acoes_json    = $_POST['acoes_json']    ?? '[]';
             $status        = ($id > 0) ? ($_POST['status'] ?? 'rascunho') : 'rascunho';
@@ -416,11 +419,11 @@ if ($acao !== '') {
             if ($nome === '') { echo json_encode(['ok' => false, 'msg' => 'Nome obrigatório']); exit; }
 
             if ($id > 0) {
-                $st = $pdo->prepare("UPDATE disparos SET nome=:nome, tipo=:tipo, agendado_em=:ag, intervalo_ms=:iv, filtros_json=:fj, acoes_json=:aj, status=:st, horario_ativo=:ha, horario_inicio=:hi, horario_fim=:hf, dias_semana=:ds WHERE id=:id");
-                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':fj'=>$filtros_json,':aj'=>$acoes_json,':st'=>$status,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana,':id'=>$id]);
+                $st = $pdo->prepare("UPDATE disparos SET nome=:nome, tipo=:tipo, agendado_em=:ag, intervalo_ms=:iv, batch_size=:bs, filtros_json=:fj, acoes_json=:aj, status=:st, horario_ativo=:ha, horario_inicio=:hi, horario_fim=:hf, dias_semana=:ds WHERE id=:id");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':bs'=>$batch_size,':fj'=>$filtros_json,':aj'=>$acoes_json,':st'=>$status,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana,':id'=>$id]);
             } else {
-                $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, filtros_json, acoes_json, horario_ativo, horario_inicio, horario_fim, dias_semana) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,:ha,:hi,:hf,:ds)");
-                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':fj'=>$filtros_json,':aj'=>$acoes_json,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana]);
+                $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, batch_size, filtros_json, acoes_json, horario_ativo, horario_inicio, horario_fim, dias_semana) VALUES (:nome,:tipo,:ag,:iv,:bs,:fj,:aj,:ha,:hi,:hf,:ds)");
+                $st->execute([':nome'=>$nome,':tipo'=>$tipo,':ag'=>$agendado_em,':iv'=>$intervalo_ms,':bs'=>$batch_size,':fj'=>$filtros_json,':aj'=>$acoes_json,':ha'=>$horario_ativo,':hi'=>$horario_inicio,':hf'=>$horario_fim,':ds'=>$dias_semana]);
                 $id = (int)$pdo->lastInsertId();
             }
             echo json_encode(['ok' => true, 'id' => $id]);
@@ -443,7 +446,7 @@ if ($acao !== '') {
             $row->execute([':id'=>$id]);
             $row = $row->fetch(PDO::FETCH_ASSOC);
             if (!$row) { echo json_encode(['ok' => false, 'msg' => 'Não encontrado']); exit; }
-            $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_seg, filtros_json, acoes_json, status) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,'rascunho')");
+            $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, filtros_json, acoes_json, status) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,'rascunho')");
             $st->execute([':nome'=>'[Cópia] '.$row['nome'],':tipo'=>$row['tipo'],':ag'=>$row['agendado_em'],':iv'=>$row['intervalo_seg'],':fj'=>$row['filtros_json'],':aj'=>$row['acoes_json']]);
             echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]);
             exit;
@@ -452,7 +455,7 @@ if ($acao !== '') {
         case 'set_status':
             $id     = (int)($_POST['id'] ?? 0);
             $novoSt = $_POST['status'] ?? '';
-            $allowed = ['rascunho','aguardando','pausado','concluido'];
+            $allowed = ['rascunho','aguardando','executando','pausado','concluido','erro'];
             if ($id > 0 && in_array($novoSt, $allowed, true)) {
                 $pdo->prepare("UPDATE disparos SET status = :st WHERE id = :id")->execute([':st'=>$novoSt,':id'=>$id]);
             }
@@ -526,18 +529,20 @@ if ($acao !== '') {
             try {
                 $id     = (int)($_POST['id'] ?? 0);
                 $offset = (int)($_POST['offset'] ?? 0);
-                $limit  = 1;
 
                 $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
                 $row->execute([':id'=>$id]);
                 $row = $row->fetch(PDO::FETCH_ASSOC);
                 if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
 
+                $limit   = max(1, min(500, (int)($row['batch_size'] ?? 1)));
                 $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
                 $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
 
                 if ($offset === 0) {
                     $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+                } else {
+                    $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
                 }
 
                 $aw = buildAudienceWhere($filtros, $pdo);
@@ -779,13 +784,21 @@ require_once __DIR__ . '/_header.php';
     background: var(--card-bg); border: 1px solid var(--border);
     border-radius: 14px; padding: 32px; width: 480px; max-width: 95vw;
     text-align: center;
+    position: relative;
 }
+.dp-modal-x {
+    position: absolute; right: 12px; top: 10px;
+    background: transparent; border: none; color: var(--text-muted);
+    font-size: 22px; line-height: 1; cursor: pointer;
+}
+.dp-modal-x:hover { color: var(--text); }
 .dp-progress-bar-wrap { background: #1a1a2a; border-radius: 8px; height: 12px; margin: 16px 0; overflow: hidden; }
 .dp-progress-bar { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 8px; transition: width .3s; }
 .dp-modal-stats { display: flex; gap: 24px; justify-content: center; margin-top: 10px; }
 .dp-stat { text-align: center; }
 .dp-stat-val { font-size: 22px; font-weight: 700; }
 .dp-stat-lbl { font-size: 11px; color: var(--text-muted); }
+.dp-progress-actions { display:flex; gap:10px; justify-content:center; margin-top:24px; flex-wrap:wrap; }
 
 /* ── Misc ── */
 .logic-toggle { display: flex; gap: 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
@@ -900,9 +913,15 @@ require_once __DIR__ . '/_header.php';
         </div>
       </div>
 
-      <div class="form-row">
-        <label>Intervalo entre lotes (ms) <span style="color:var(--text-muted)">[0 = sem pausa | ex: 2000 = 2s entre cada lote de 20]</span></label>
-        <input type="number" id="dpIntervaloMs" value="0" min="0" step="100">
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label>Intervalo entre lotes (ms) <span style="color:var(--text-muted)">[ex: 2000 = 2s]</span></label>
+          <input type="number" id="dpIntervaloMs" value="0" min="0" step="100">
+        </div>
+        <div>
+          <label>Disparos por lote <span style="color:var(--text-muted)">[1 = um a um]</span></label>
+          <input type="number" id="dpBatchSize" value="1" min="1" max="500" step="1">
+        </div>
       </div>
 
       <div class="form-row">
@@ -1000,6 +1019,7 @@ require_once __DIR__ . '/_header.php';
 <!-- Modal de progresso -->
 <div class="dp-modal-overlay" id="dpProgressModal">
   <div class="dp-modal-box">
+    <button type="button" class="dp-modal-x" onclick="dpFecharModal()" title="Fechar">×</button>
     <div style="font-size:18px;font-weight:700;margin-bottom:8px" id="dpProgressTitle">Disparando…</div>
     <div style="font-size:13px;color:var(--text-muted)" id="dpProgressSub">Aguarde…</div>
     <div class="dp-progress-bar-wrap">
@@ -1010,7 +1030,11 @@ require_once __DIR__ . '/_header.php';
       <div class="dp-stat"><div class="dp-stat-val" id="dpStatErr" style="color:#f87171">0</div><div class="dp-stat-lbl">Erros</div></div>
       <div class="dp-stat"><div class="dp-stat-val" id="dpStatTot">—</div><div class="dp-stat-lbl">Total</div></div>
     </div>
-    <button class="btn" style="margin-top:24px;display:none" id="dpProgressClose" onclick="dpFecharModal()">Fechar</button>
+    <div class="dp-progress-actions">
+      <button class="btn" id="dpProgressPause" onclick="dpPausarDisparo()">Pausar</button>
+      <button class="btn btn-danger" id="dpProgressAbort" onclick="dpAbortarDisparo()">Abortar</button>
+      <button class="btn" style="display:none" id="dpProgressClose" onclick="dpFecharModal()">Fechar</button>
+    </div>
   </div>
 </div>
 
@@ -1022,6 +1046,7 @@ let dpLogica = 'AND';
 let dpPreviewTimer = null;
 let dpPreviewContatosOpen = false;
 let dpExecutando = false; // flag global para parar loop
+let dpExecState = null;
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -1063,9 +1088,10 @@ async function dpCarregarLista() {
             </div>
             <div class="dp-card-actions">
                 <button class="btn btn-sm" onclick="dpToggleLogs(${d.id})" title="Logs do disparo">▾</button>
+                <button class="btn btn-sm" onclick="dpMostrarStatus(${d.id})" title="Status do disparo">↗</button>
                 ${canRun   ? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Disparar">▶</button>` : ''}
-                ${canPause ? `<button class="btn btn-sm" onclick="dpPararDisparo()" title="Pausar">⏸</button>` : ''}
-                ${canResume? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Retomar">▶</button>` : ''}
+                ${canPause ? `<button class="btn btn-sm" onclick="dpPausarDisparo(${d.id})" title="Pausar">⏸</button>` : ''}
+                ${canResume? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id}, {resume:true})" title="Retomar">▶</button>` : ''}
                 <button class="btn btn-sm" onclick="dpEditarDisparo(${d.id})" title="Editar">✏️</button>
                 <button class="btn btn-sm" onclick="dpClonarDisparo(${d.id})" title="Clonar">🗐</button>
                 <button class="btn btn-sm btn-danger" onclick="dpDeletar(${d.id})" title="Excluir">🗑</button>
@@ -1142,6 +1168,7 @@ function dpNovoDisparo() {
     document.getElementById('dpTipo').value = 'instantaneo';
     document.getElementById('dpAgendadoEm').value = '';
     document.getElementById('dpIntervaloMs').value = 0;
+    document.getElementById('dpBatchSize').value = 1;
     document.getElementById('dpHorarioAtivo').checked = false;
     document.getElementById('dpHorarioInicio').value = '08:00';
     document.getElementById('dpHorarioFim').value = '21:00';
@@ -1168,6 +1195,7 @@ async function dpEditarDisparo(id) {
     document.getElementById('dpTipo').value = d.tipo;
     document.getElementById('dpAgendadoEm').value = d.agendado_em ? d.agendado_em.replace(' ','T').slice(0,16) : '';
     document.getElementById('dpIntervaloMs').value = d.intervalo_ms || 0;
+    document.getElementById('dpBatchSize').value = d.batch_size || 1;
     document.getElementById('dpHorarioAtivo').checked = parseInt(d.horario_ativo || 0) === 1;
     document.getElementById('dpHorarioInicio').value = d.horario_inicio ? d.horario_inicio.slice(0,5) : '08:00';
     document.getElementById('dpHorarioFim').value    = d.horario_fim    ? d.horario_fim.slice(0,5)    : '21:00';
@@ -1440,6 +1468,7 @@ async function dpSalvar(retornaId) {
     fd.append('tipo',           document.getElementById('dpTipo').value);
     fd.append('agendado_em',    document.getElementById('dpAgendadoEm').value);
     fd.append('intervalo_ms',   document.getElementById('dpIntervaloMs').value);
+    fd.append('batch_size',     document.getElementById('dpBatchSize').value);
     fd.append('filtros_json',   JSON.stringify(dpColetarFiltros()));
     fd.append('acoes_json',     JSON.stringify(dpColetarAcoes()));
     fd.append('horario_ativo',  document.getElementById('dpHorarioAtivo').checked ? 1 : 0);
@@ -1501,7 +1530,8 @@ function dpProximoHorario(disparo) {
 }
 
 // ── Execução progressiva ──────────────────────────────────────────────────────
-async function dpIniciarDisparo(id) {
+async function dpIniciarDisparo(id, opts) {
+    opts = opts || {};
     // Buscar dados do disparo para verificar janela de horário
     let disparo = {};
     try {
@@ -1510,19 +1540,26 @@ async function dpIniciarDisparo(id) {
         if (j.ok) disparo = j.data;
     } catch(e) {}
 
+    const startOffset = (opts.resume || disparo.status === 'pausado')
+        ? Math.max(0, parseInt(disparo.total_enviados || 0) + parseInt(disparo.total_erros || 0))
+        : 0;
+
     dpFecharForm();
     dpExecutando = true;
+    dpExecState = {id, offset:startOffset, totalEnv:parseInt(disparo.total_enviados || 0), totalErr:parseInt(disparo.total_erros || 0), totalGeral:null};
     document.getElementById('dpProgressTitle').textContent = 'Disparando…';
     document.getElementById('dpProgressSub').textContent   = 'Preparando…';
     document.getElementById('dpProgressBar').style.width   = '0%';
-    document.getElementById('dpStatEnv').textContent = '0';
-    document.getElementById('dpStatErr').textContent = '0';
+    document.getElementById('dpStatEnv').textContent = dpExecState.totalEnv;
+    document.getElementById('dpStatErr').textContent = dpExecState.totalErr;
     document.getElementById('dpStatTot').textContent = '—';
+    document.getElementById('dpProgressPause').style.display = '';
+    document.getElementById('dpProgressAbort').style.display = '';
     document.getElementById('dpProgressClose').style.display = 'none';
     document.getElementById('dpProgressModal').classList.add('visible');
 
-    let offset = 0;
-    let totalEnv = 0, totalErr = 0, totalGeral = null;
+    let offset = startOffset;
+    let totalEnv = dpExecState.totalEnv, totalErr = dpExecState.totalErr, totalGeral = null;
     const intervaloMs = Math.max(0, parseInt(disparo.intervalo_ms || 0));
 
     while (dpExecutando) {
@@ -1548,12 +1585,16 @@ async function dpIniciarDisparo(id) {
             j = await r.json();
         } catch (e) {
             document.getElementById('dpProgressSub').textContent = 'Erro de rede: ' + e.message;
+            document.getElementById('dpProgressPause').style.display = 'none';
+            document.getElementById('dpProgressAbort').style.display = 'none';
             document.getElementById('dpProgressClose').style.display = '';
             break;
         }
         if (!j.ok) {
             document.getElementById('dpProgressTitle').textContent = 'Erro';
             document.getElementById('dpProgressSub').textContent = j.msg || 'Erro desconhecido';
+            document.getElementById('dpProgressPause').style.display = 'none';
+            document.getElementById('dpProgressAbort').style.display = 'none';
             document.getElementById('dpProgressClose').style.display = '';
             break;
         }
@@ -1561,6 +1602,7 @@ async function dpIniciarDisparo(id) {
         totalEnv += j.enviados;
         totalErr += j.erros;
         offset    = j.next_offset;
+        dpExecState = {id, offset, totalEnv, totalErr, totalGeral};
 
         document.getElementById('dpStatEnv').textContent = totalEnv;
         document.getElementById('dpStatErr').textContent = totalErr;
@@ -1576,7 +1618,10 @@ async function dpIniciarDisparo(id) {
             document.getElementById('dpProgressTitle').textContent = 'Concluído!';
             document.getElementById('dpProgressSub').textContent   = `${totalEnv} enviados, ${totalErr} erros`;
             document.getElementById('dpProgressBar').style.width   = '100%';
+            document.getElementById('dpProgressPause').style.display = 'none';
+            document.getElementById('dpProgressAbort').style.display = 'none';
             document.getElementById('dpProgressClose').style.display = '';
+            dpExecState = {id, offset, totalEnv, totalErr, totalGeral, done:true};
             dpCarregarLista();
             break;
         }
@@ -1584,7 +1629,33 @@ async function dpIniciarDisparo(id) {
     }
 }
 
+async function dpPausarDisparo(id) {
+    dpExecutando = false;
+    id = id || (dpExecState ? dpExecState.id : 0);
+    if (id) await dpSetStatus(id, 'pausado');
+    document.getElementById('dpProgressTitle').textContent = 'Pausado';
+    document.getElementById('dpProgressSub').textContent = 'Disparo pausado pelo usuario';
+    document.getElementById('dpProgressPause').style.display = 'none';
+    document.getElementById('dpProgressAbort').style.display = 'none';
+    document.getElementById('dpProgressClose').style.display = '';
+    dpCarregarLista();
+}
+
+async function dpAbortarDisparo(id) {
+    if (!confirm('Abortar este disparo agora?')) return;
+    dpExecutando = false;
+    id = id || (dpExecState ? dpExecState.id : 0);
+    if (id) await dpSetStatus(id, 'erro');
+    document.getElementById('dpProgressTitle').textContent = 'Abortado';
+    document.getElementById('dpProgressSub').textContent = 'Disparo abortado pelo usuario';
+    document.getElementById('dpProgressPause').style.display = 'none';
+    document.getElementById('dpProgressAbort').style.display = 'none';
+    document.getElementById('dpProgressClose').style.display = '';
+    dpCarregarLista();
+}
+
 function dpPararDisparo() {
+    return dpPausarDisparo();
     dpExecutando = false;
     document.getElementById('dpProgressTitle').textContent = 'Pausado';
     document.getElementById('dpProgressSub').textContent   = 'Disparo pausado pelo usuário';
@@ -1597,6 +1668,36 @@ function dpFecharModal() {
 }
 
 // ── Ações rápidas ─────────────────────────────────────────────────────────────
+async function dpMostrarStatus(id) {
+    if (dpExecState && dpExecState.id === id) {
+        document.getElementById('dpProgressModal').classList.add('visible');
+        return;
+    }
+
+    let d = null;
+    try {
+        const r = await fetch(`disparos.php?acao=get&id=${id}`);
+        const j = await r.json();
+        if (j.ok) d = j.data;
+    } catch(e) {}
+    if (!d) return alert('Nao foi possivel carregar o status do disparo');
+
+    const ok = parseInt(d.total_enviados || 0);
+    const er = parseInt(d.total_erros || 0);
+    const processed = ok + er;
+    document.getElementById('dpProgressTitle').textContent = 'Status do disparo';
+    document.getElementById('dpProgressSub').textContent = `${d.status} - ${processed} processados`;
+    document.getElementById('dpStatEnv').textContent = ok;
+    document.getElementById('dpStatErr').textContent = er;
+    document.getElementById('dpStatTot').textContent = processed || '—';
+    document.getElementById('dpProgressBar').style.width = d.status === 'concluido' ? '100%' : '0%';
+    document.getElementById('dpProgressPause').style.display = d.status === 'executando' ? '' : 'none';
+    document.getElementById('dpProgressAbort').style.display = d.status === 'executando' ? '' : 'none';
+    document.getElementById('dpProgressClose').style.display = '';
+    dpExecState = {id, offset:processed, totalEnv:ok, totalErr:er, totalGeral:null, status:d.status};
+    document.getElementById('dpProgressModal').classList.add('visible');
+}
+
 async function dpDeletar(id) {
     if (!confirm('Excluir este disparo e todo seu histórico?')) return;
     const fd = new FormData(); fd.append('acao','deletar'); fd.append('id',id);
