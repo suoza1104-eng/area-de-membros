@@ -267,7 +267,7 @@ if ($acao !== '') {
     // Helper: envia via SF
     function enviarSF(array $usuario, array $acoes, PDO $pdo): array {
         try {
-            $cfg = $pdo->query("SELECT * FROM superfuncionario_config WHERE id=1 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+            $cfg = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { $cfg = null; }
 
         if (!$cfg || empty($cfg['is_enabled'])) return ['ok' => false, 'msg' => 'SF desabilitado'];
@@ -299,8 +299,8 @@ if ($acao !== '') {
         ]);
 
         $url = rtrim($cfg['base_url'], '/') . '/' . ltrim($cfg['default_endpoint'] ?? '', '/');
-        $headerMode = $cfg['header_mode'] ?? 'X-ACCESS-TOKEN';
-        $authHeader = ($headerMode === 'Bearer')
+        $headerMode = strtolower((string)($cfg['header_mode'] ?? 'x-access-token'));
+        $authHeader = ($headerMode === 'bearer')
             ? 'Authorization: Bearer ' . $cfg['token']
             : 'X-ACCESS-TOKEN: ' . $cfg['token'];
 
@@ -526,7 +526,7 @@ if ($acao !== '') {
             try {
                 $id     = (int)($_POST['id'] ?? 0);
                 $offset = (int)($_POST['offset'] ?? 0);
-                $limit  = 20;
+                $limit  = 1;
 
                 $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
                 $row->execute([':id'=>$id]);
@@ -1006,7 +1006,7 @@ require_once __DIR__ . '/_header.php';
       <div class="dp-progress-bar" id="dpProgressBar" style="width:0%"></div>
     </div>
     <div class="dp-modal-stats">
-      <div class="dp-stat"><div class="dp-stat-val" id="dpStatEnv">0</div><div class="dp-stat-lbl">Enviados</div></div>
+      <div class="dp-stat"><div class="dp-stat-val" id="dpStatEnv">0</div><div class="dp-stat-lbl">Sucessos</div></div>
       <div class="dp-stat"><div class="dp-stat-val" id="dpStatErr" style="color:#f87171">0</div><div class="dp-stat-lbl">Erros</div></div>
       <div class="dp-stat"><div class="dp-stat-val" id="dpStatTot">—</div><div class="dp-stat-lbl">Total</div></div>
     </div>
@@ -1580,7 +1580,7 @@ async function dpIniciarDisparo(id) {
             dpCarregarLista();
             break;
         }
-        await new Promise(res => setTimeout(res, Math.max(300, intervaloMs)));
+        if (intervaloMs > 0) await new Promise(res => setTimeout(res, intervaloMs));
     }
 }
 
