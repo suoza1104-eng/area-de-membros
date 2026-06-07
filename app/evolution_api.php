@@ -563,13 +563,22 @@ function evolution_tag_for_interpreted_event(?string $event): ?string {
     ], true) ? $event : null;
 }
 
-function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
+function evolution_phone_variants(?string $phone): array {
     $phone = evolution_clean_whatsapp_phone($phone);
-    if ($phone === '') return null;
+    if ($phone === '') return [];
 
     $variants = [$phone];
     if (strpos($phone, '55') === 0 && strlen($phone) > 11) {
-        $variants[] = substr($phone, 2);
+        $withoutCountry = substr($phone, 2);
+        $variants[] = $withoutCountry;
+        if (strlen($withoutCountry) >= 11) {
+            $variants[] = substr($withoutCountry, -11);
+        }
+        if (strlen($withoutCountry) >= 10) {
+            $variants[] = substr($withoutCountry, -10);
+        }
+    } else {
+        $variants[] = '55' . $phone;
     }
     if (strlen($phone) >= 11) {
         $variants[] = substr($phone, -11);
@@ -577,7 +586,13 @@ function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
     if (strlen($phone) >= 10) {
         $variants[] = substr($phone, -10);
     }
-    $variants = array_values(array_unique(array_filter($variants)));
+
+    return array_values(array_unique(array_filter($variants)));
+}
+
+function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
+    $variants = evolution_phone_variants($phone);
+    if (!$variants) return null;
 
     $where = [];
     $params = [];
@@ -750,27 +765,15 @@ function evolution_record_group_event(PDO $pdo, int $logId, array $fields, ?int 
 }
 
 function evolution_find_user_by_phone(PDO $pdo, ?string $phone): ?array {
-    $phone = evolution_clean_whatsapp_phone($phone);
-    if ($phone === '') return null;
-
-    $variants = [$phone];
-    if (strpos($phone, '55') === 0 && strlen($phone) > 11) {
-        $variants[] = substr($phone, 2);
-    }
-    if (strlen($phone) >= 11) {
-        $variants[] = substr($phone, -11);
-    }
-    if (strlen($phone) >= 10) {
-        $variants[] = substr($phone, -10);
-    }
-    $variants = array_values(array_unique(array_filter($variants)));
+    $variants = evolution_phone_variants($phone);
+    if (!$variants) return null;
 
     $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
     $where = [];
     $params = [];
     foreach ($variants as $i => $variant) {
         $key = ':p' . $i;
-        $where[] = "{$cleanExpr} = {$key}";
+        $where[] = "({$cleanExpr} = {$key} OR CONCAT('55', {$cleanExpr}) = {$key})";
         $params[$key] = $variant;
     }
     if (!$where) return null;
