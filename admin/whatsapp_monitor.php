@@ -278,6 +278,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             exit;
         }
+
+        if ($action === 'apply_backfill_tags') {
+            $res = evolution_apply_tags_to_identified_group_events($pdo, 2000);
+            header(
+                'Location: whatsapp_monitor.php?backfill_tags_done=1'
+                . '&processed=' . (int)($res['processed'] ?? 0)
+                . '&tagged=' . (int)($res['tagged'] ?? 0)
+                . '&skipped=' . (int)($res['skipped'] ?? 0)
+            );
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -297,6 +308,12 @@ if (isset($_GET['backfill_done'])) {
         . (int)($_GET['processed'] ?? 0) . ' evento(s) analisado(s), '
         . (int)($_GET['matched'] ?? 0) . ' aluno(s) identificado(s), '
         . (int)($_GET['missing'] ?? 0) . ' ainda sem aluno.';
+}
+if (isset($_GET['backfill_tags_done'])) {
+    $notice = 'Tags retroativas aplicadas: '
+        . (int)($_GET['processed'] ?? 0) . ' evento(s) analisado(s), '
+        . (int)($_GET['tagged'] ?? 0) . ' tag(s) aplicada(s), '
+        . (int)($_GET['skipped'] ?? 0) . ' ignorado(s).';
 }
 
 $cfg = evolution_get_config();
@@ -684,6 +701,7 @@ include __DIR__ . '/_header.php';
             <input type="hidden" name="action" value="refresh_group_names">
             <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
             <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
+            <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
         </form>
 
         <?php if (!$rawLogs): ?>

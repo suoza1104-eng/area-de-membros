@@ -998,6 +998,58 @@ function evolution_backfill_unmatched_group_events(PDO $pdo, int $limit = 500): 
     ];
 }
 
+function evolution_apply_tags_to_identified_group_events(PDO $pdo, int $limit = 1000): array {
+    $limit = max(1, min(5000, $limit));
+    $processed = 0;
+    $tagged = 0;
+    $skipped = 0;
+
+    try {
+        $rows = $pdo->query("
+            SELECT l.id, l.user_id, l.interpreted_event, l.participant_phone,
+                   ge.is_blacklisted
+              FROM whatsapp_webhook_raw_logs l
+              LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
+             WHERE l.token_ok = 1
+               AND l.user_id IS NOT NULL
+               AND l.user_id > 0
+               AND l.interpreted_event IS NOT NULL
+               AND l.interpreted_event <> ''
+             ORDER BY l.id DESC
+             LIMIT {$limit}
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return ['processed' => 0, 'tagged' => 0, 'skipped' => 0, 'error' => $e->getMessage()];
+    }
+
+    foreach ($rows as $row) {
+        $processed++;
+        $userId = (int)($row['user_id'] ?? 0);
+        $event = (string)($row['interpreted_event'] ?? '');
+        $tag = evolution_tag_for_interpreted_event($event);
+        if ($userId <= 0 || $tag === null) {
+            $skipped++;
+            continue;
+        }
+
+        $ok = adicionar_tag($userId, $tag, 'whatsapp_group_backfill', (int)$row['id']);
+        if ($ok) $tagged++;
+        else $skipped++;
+
+        if ((int)($row['is_blacklisted'] ?? 0) === 1) {
+            if (adicionar_tag($userId, 'WHATSAPP_BLACKLIST_DETECTADO', 'whatsapp_blacklist_backfill', (int)$row['id'])) {
+                $tagged++;
+            }
+        }
+    }
+
+    return [
+        'processed' => $processed,
+        'tagged' => $tagged,
+        'skipped' => $skipped,
+    ];
+}
+
 function evolution_update_instance_from_response(PDO $pdo, int $id, array $res, string $fallbackStatus): void {
     $data = is_array($res['data']) ? $res['data'] : [];
     $qr = evolution_extract_qr($data);
