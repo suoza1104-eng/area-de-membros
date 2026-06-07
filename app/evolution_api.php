@@ -95,6 +95,62 @@ function evolution_ensure_tables(PDO $pdo): void {
             }
         } catch (Throwable $e) {}
     }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_groups (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            group_id VARCHAR(160) NOT NULL,
+            instance_key VARCHAR(120) NULL,
+            group_name VARCHAR(180) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_whatsapp_groups_group (group_id),
+            KEY idx_whatsapp_groups_instance (instance_key),
+            KEY idx_whatsapp_groups_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_blacklist_numbers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            phone_number VARCHAR(30) NOT NULL,
+            reason TEXT NULL,
+            origem VARCHAR(80) NOT NULL DEFAULT 'manual',
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_wbl_phone (phone_number),
+            KEY idx_wbl_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_group_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            raw_log_id INT NOT NULL,
+            event_type VARCHAR(100) NULL,
+            instance_key VARCHAR(120) NULL,
+            group_id VARCHAR(160) NULL,
+            action VARCHAR(60) NULL,
+            interpreted_event VARCHAR(80) NULL,
+            participant_phone VARCHAR(30) NULL,
+            participant_id VARCHAR(120) NULL,
+            author_id VARCHAR(120) NULL,
+            user_id INT NULL,
+            blacklist_id INT NULL,
+            is_blacklisted TINYINT(1) NOT NULL DEFAULT 0,
+            trigger_status VARCHAR(30) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_wge_raw_log (raw_log_id),
+            KEY idx_wge_created (created_at),
+            KEY idx_wge_group (group_id),
+            KEY idx_wge_phone (participant_phone),
+            KEY idx_wge_user (user_id),
+            KEY idx_wge_blacklisted (is_blacklisted),
+            KEY idx_wge_event (interpreted_event)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
 function evolution_get_config(): array {
@@ -369,6 +425,102 @@ function evolution_tag_for_interpreted_event(?string $event): ?string {
     ], true) ? $event : null;
 }
 
+function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
+    $phone = evolution_clean_whatsapp_phone($phone);
+    if ($phone === '') return null;
+
+    $variants = [$phone];
+    if (strpos($phone, '55') === 0 && strlen($phone) > 11) {
+        $variants[] = substr($phone, 2);
+    }
+    if (strlen($phone) >= 11) {
+        $variants[] = substr($phone, -11);
+    }
+    if (strlen($phone) >= 10) {
+        $variants[] = substr($phone, -10);
+    }
+    $variants = array_values(array_unique(array_filter($variants)));
+
+    $where = [];
+    $params = [];
+    foreach ($variants as $i => $variant) {
+        $key = ':p' . $i;
+        $where[] = "phone_number = {$key}";
+        $params[$key] = $variant;
+    }
+    if (!$where) return null;
+
+    try {
+        $st = $pdo->prepare("
+            SELECT *
+              FROM whatsapp_blacklist_numbers
+             WHERE is_active = 1
+               AND (" . implode(' OR ', $where) . ")
+             ORDER BY id DESC
+             LIMIT 1
+        ");
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) && $row ? $row : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function evolution_upsert_group(PDO $pdo, array $fields): void {
+    $groupId = trim((string)($fields['group_id'] ?? ''));
+    if ($groupId === '') return;
+
+    try {
+        $st = $pdo->prepare("
+            INSERT INTO whatsapp_groups (group_id, instance_key, first_seen_at, last_seen_at)
+            VALUES (:gid, :inst, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                instance_key = COALESCE(VALUES(instance_key), instance_key),
+                last_seen_at = NOW()
+        ");
+        $st->execute([
+            ':gid' => $groupId,
+            ':inst' => $fields['instance_key'] ?? null,
+        ]);
+    } catch (Throwable $e) {}
+}
+
+function evolution_record_group_event(PDO $pdo, int $logId, array $fields, ?int $userId, ?array $blacklist, string $status): void {
+    try {
+        $st = $pdo->prepare("
+            INSERT INTO whatsapp_group_events
+                (raw_log_id, event_type, instance_key, group_id, action, interpreted_event,
+                 participant_phone, participant_id, author_id, user_id, blacklist_id, is_blacklisted,
+                 trigger_status, created_at)
+            VALUES
+                (:raw_log_id, :event_type, :instance_key, :group_id, :action, :interpreted_event,
+                 :participant_phone, :participant_id, :author_id, :user_id, :blacklist_id, :is_blacklisted,
+                 :trigger_status, NOW())
+            ON DUPLICATE KEY UPDATE
+                user_id = VALUES(user_id),
+                blacklist_id = VALUES(blacklist_id),
+                is_blacklisted = VALUES(is_blacklisted),
+                trigger_status = VALUES(trigger_status)
+        ");
+        $st->execute([
+            ':raw_log_id' => $logId,
+            ':event_type' => $fields['event_type'] ?? null,
+            ':instance_key' => $fields['instance_key'] ?? null,
+            ':group_id' => $fields['group_id'] ?? null,
+            ':action' => $fields['action'] ?? null,
+            ':interpreted_event' => $fields['interpreted_event'] ?? null,
+            ':participant_phone' => $fields['participant_phone'] ?? null,
+            ':participant_id' => $fields['participant_id'] ?? null,
+            ':author_id' => $fields['author_id'] ?? null,
+            ':user_id' => $userId ?: null,
+            ':blacklist_id' => $blacklist ? (int)($blacklist['id'] ?? 0) : null,
+            ':is_blacklisted' => $blacklist ? 1 : 0,
+            ':trigger_status' => $status,
+        ]);
+    } catch (Throwable $e) {}
+}
+
 function evolution_find_user_by_phone(PDO $pdo, ?string $phone): ?array {
     $phone = evolution_clean_whatsapp_phone($phone);
     if ($phone === '') return null;
@@ -409,15 +561,21 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     $event = (string)($fields['interpreted_event'] ?? '');
     $tag = evolution_tag_for_interpreted_event($event);
     if ($tag === '') $tag = null;
+    evolution_upsert_group($pdo, $fields);
 
     if ($event === '' || $tag === null) {
         $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET trigger_status = 'ignored' WHERE id = :id LIMIT 1")
             ->execute([':id' => $logId]);
+        evolution_record_group_event($pdo, $logId, $fields, null, null, 'ignored');
         return ['status' => 'ignored', 'user_id' => null, 'event' => $event];
     }
 
     $user = evolution_find_user_by_phone($pdo, (string)($fields['participant_phone'] ?? ''));
     $userId = $user ? (int)($user['id'] ?? 0) : 0;
+    $blacklist = strtolower((string)($fields['action'] ?? '')) === 'add'
+        ? evolution_find_active_blacklist($pdo, (string)($fields['participant_phone'] ?? ''))
+        : null;
+
     if ($userId <= 0) {
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs
@@ -425,7 +583,8 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
              WHERE id = :id
              LIMIT 1
         ")->execute([':id' => $logId]);
-        return ['status' => 'user_not_found', 'user_id' => null, 'event' => $event];
+        evolution_record_group_event($pdo, $logId, $fields, null, $blacklist, $blacklist ? 'blacklist_detected_no_user' : 'user_not_found');
+        return ['status' => $blacklist ? 'blacklist_detected_no_user' : 'user_not_found', 'user_id' => null, 'event' => $event, 'blacklisted' => (bool)$blacklist];
     }
 
     $extra = [
@@ -438,17 +597,30 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
         'payload_log_id' => $logId,
         'origem' => 'evolution_group_participants_update',
     ];
+    if ($blacklist) {
+        $extra['blacklist'] = [
+            'id' => (int)($blacklist['id'] ?? 0),
+            'reason' => $blacklist['reason'] ?? null,
+            'origem' => $blacklist['origem'] ?? null,
+        ];
+    }
 
     try {
         adicionar_tag($userId, $tag, 'whatsapp_group', $logId);
         disparar_webhooks($event, $userId, $extra);
+        if ($blacklist) {
+            adicionar_tag($userId, 'WHATSAPP_BLACKLIST_DETECTADO', 'whatsapp_blacklist', $logId);
+            disparar_webhooks('WHATSAPP_BLACKLIST_DETECTADO', $userId, $extra);
+        }
+        $status = $blacklist ? 'blacklist_detected' : 'triggered';
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs
-               SET user_id = :uid, trigger_status = 'triggered', trigger_error = NULL
+               SET user_id = :uid, trigger_status = :status, trigger_error = NULL
              WHERE id = :id
              LIMIT 1
-        ")->execute([':uid' => $userId, ':id' => $logId]);
-        return ['status' => 'triggered', 'user_id' => $userId, 'event' => $event];
+        ")->execute([':uid' => $userId, ':status' => $status, ':id' => $logId]);
+        evolution_record_group_event($pdo, $logId, $fields, $userId, $blacklist, $status);
+        return ['status' => $status, 'user_id' => $userId, 'event' => $event, 'blacklisted' => (bool)$blacklist];
     } catch (Throwable $e) {
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs
@@ -460,6 +632,7 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
             ':err' => substr($e->getMessage(), 0, 1000),
             ':id' => $logId,
         ]);
+        evolution_record_group_event($pdo, $logId, $fields, $userId, $blacklist, 'error');
         return ['status' => 'error', 'user_id' => $userId, 'event' => $event, 'error' => $e->getMessage()];
     }
 }

@@ -76,6 +76,8 @@ function wh_trigger_label(?string $status): string {
     $status = trim((string)$status);
     $labels = [
         'triggered' => 'Gatilhos acionados',
+        'blacklist_detected' => 'Blacklist detectada',
+        'blacklist_detected_no_user' => 'Blacklist sem aluno',
         'user_not_found' => 'Aluno nao encontrado',
         'ignored' => 'Ignorado',
         'error' => 'Erro',
@@ -166,6 +168,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_monitor.php?webhook_set=1');
             exit;
         }
+
+        if ($action === 'add_blacklist_number') {
+            $phone = evolution_clean_whatsapp_phone((string)($_POST['blacklist_phone'] ?? ''));
+            $reason = trim((string)($_POST['blacklist_reason'] ?? ''));
+            if ($phone === '') throw new RuntimeException('Informe um telefone valido para a blacklist.');
+
+            $st = $pdo->prepare("
+                INSERT INTO whatsapp_blacklist_numbers (phone_number, reason, origem, is_active, created_at)
+                VALUES (:phone, :reason, 'manual', 1, NOW())
+                ON DUPLICATE KEY UPDATE
+                    reason = VALUES(reason),
+                    is_active = 1,
+                    updated_at = NOW()
+            ");
+            $st->execute([
+                ':phone' => $phone,
+                ':reason' => $reason !== '' ? $reason : null,
+            ]);
+            header('Location: whatsapp_monitor.php?blacklist_saved=1');
+            exit;
+        }
+
+        if ($action === 'toggle_blacklist_number') {
+            $id = (int)($_POST['blacklist_id'] ?? 0);
+            if ($id <= 0) throw new RuntimeException('Registro de blacklist invalido.');
+            $pdo->prepare("
+                UPDATE whatsapp_blacklist_numbers
+                   SET is_active = IF(is_active=1,0,1), updated_at = NOW()
+                 WHERE id = :id
+                 LIMIT 1
+            ")->execute([':id' => $id]);
+            header('Location: whatsapp_monitor.php?blacklist_saved=1');
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -177,6 +213,7 @@ if (isset($_GET['qr'])) $notice = 'QR Code solicitado. Leia com o WhatsApp do nu
 if (isset($_GET['status'])) $notice = 'Status atualizado.';
 if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
+if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
 
 $cfg = evolution_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -184,16 +221,40 @@ $activeId = (int)($_GET['qr'] ?? $_GET['created'] ?? $_GET['status'] ?? 0);
 $webhookToken = evolution_get_webhook_token();
 $webhookUrl = rtrim(BASE_URL, '/') . '/whatsapp_webhook.php?t=' . $webhookToken;
 $webhookInstanceKey = (string)get_setting('evolution_webhook_instance_key', 'monitor01');
+$blacklistRows = [];
+$groupRows = [];
+try {
+    $blacklistRows = $pdo->query("
+        SELECT *
+          FROM whatsapp_blacklist_numbers
+         ORDER BY is_active DESC, id DESC
+         LIMIT 80
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+try {
+    $groupRows = $pdo->query("
+        SELECT g.*,
+               (SELECT COUNT(*) FROM whatsapp_group_events ge WHERE ge.group_id = g.group_id) AS total_events,
+               (SELECT COUNT(*) FROM whatsapp_group_events ge WHERE ge.group_id = g.group_id AND ge.is_blacklisted = 1) AS total_blacklist
+          FROM whatsapp_groups g
+         ORDER BY g.last_seen_at DESC
+         LIMIT 40
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 $rawLogs = [];
 try {
     $rawLogs = $pdo->query("
         SELECT l.id, l.token_ok, l.event_type, l.instance_key, l.group_id, l.action,
                l.participant_number, l.participant_phone, l.participant_id, l.author_id,
                l.interpreted_event, l.user_id, l.trigger_status, l.trigger_error,
+               ge.is_blacklisted, ge.blacklist_id,
+               bl.reason AS blacklist_reason,
                l.payload_raw, l.source_ip, l.received_at,
                u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
                u.codigo_turma AS user_codigo_turma
         FROM whatsapp_webhook_raw_logs l
+        LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
+        LEFT JOIN whatsapp_blacklist_numbers bl ON bl.id = ge.blacklist_id
         LEFT JOIN users u ON u.id = l.user_id
         ORDER BY l.id DESC
         LIMIT 80
@@ -406,6 +467,93 @@ include __DIR__ . '/_header.php';
         </form>
     </div>
 
+    <div class="wm-grid wm-full">
+        <div class="wm-card">
+            <h2>Blacklist</h2>
+            <div class="wm-card-sub">Números cadastrados aqui geram alerta quando entram em grupo monitorado. Nenhuma remoção automática é executada.</div>
+
+            <form method="post">
+                <input type="hidden" name="action" value="add_blacklist_number">
+                <div class="form-group">
+                    <label class="form-label">Telefone</label>
+                    <input type="text" name="blacklist_phone" placeholder="5522999999999">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Motivo</label>
+                    <input type="text" name="blacklist_reason" placeholder="Spam, teste, bloqueio manual...">
+                </div>
+                <button class="btn btn-primary" type="submit">Adicionar na blacklist</button>
+            </form>
+
+            <?php if (!$blacklistRows): ?>
+                <div class="text-muted text-sm mt-3">Nenhum número na blacklist ainda.</div>
+            <?php else: ?>
+                <div class="table-wrap mt-3">
+                    <table class="wm-log-table">
+                        <thead>
+                            <tr>
+                                <th>Telefone</th>
+                                <th>Status</th>
+                                <th>Motivo</th>
+                                <th>Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($blacklistRows as $b): ?>
+                            <tr>
+                                <td><?= wh_h((string)$b['phone_number']) ?></td>
+                                <td><?= (int)$b['is_active'] === 1 ? '<span class="badge badge-danger">Ativo</span>' : '<span class="badge badge-neutral">Inativo</span>' ?></td>
+                                <td><?= wh_h((string)($b['reason'] ?? '-')) ?></td>
+                                <td>
+                                    <form method="post">
+                                        <input type="hidden" name="action" value="toggle_blacklist_number">
+                                        <input type="hidden" name="blacklist_id" value="<?= (int)$b['id'] ?>">
+                                        <button class="btn btn-ghost btn-sm" type="submit"><?= (int)$b['is_active'] === 1 ? 'Desativar' : 'Ativar' ?></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <div class="wm-card">
+            <h2>Grupos detectados</h2>
+            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Use como base para validar o monitoramento antes de qualquer ação automática.</div>
+
+            <?php if (!$groupRows): ?>
+                <div class="text-muted text-sm">Nenhum grupo detectado ainda.</div>
+            <?php else: ?>
+                <div class="table-wrap">
+                    <table class="wm-log-table">
+                        <thead>
+                            <tr>
+                                <th>Grupo</th>
+                                <th>Instância</th>
+                                <th>Eventos</th>
+                                <th>Blacklist</th>
+                                <th>Último evento</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($groupRows as $g): ?>
+                            <tr>
+                                <td><?= wh_h((string)$g['group_id']) ?></td>
+                                <td><?= wh_h((string)($g['instance_key'] ?? '-')) ?></td>
+                                <td><?= (int)($g['total_events'] ?? 0) ?></td>
+                                <td><?= (int)($g['total_blacklist'] ?? 0) ?></td>
+                                <td style="white-space:nowrap"><?= wh_h((string)($g['last_seen_at'] ?? '-')) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
     <div class="wm-card wm-full">
         <h2>Payloads recebidos</h2>
         <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>.</div>
@@ -426,6 +574,7 @@ include __DIR__ . '/_header.php';
                             <th>Evento</th>
                             <th>Telefone</th>
                             <th>Aluno</th>
+                            <th>Blacklist</th>
                             <th>Gatilho</th>
                             <th>Payload</th>
                         </tr>
@@ -459,6 +608,14 @@ include __DIR__ . '/_header.php';
                                     <div class="text-xs text-muted"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
                                 <?php else: ?>
                                     <span class="text-muted">Nao encontrado</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ((int)($log['is_blacklisted'] ?? 0) === 1): ?>
+                                    <span class="badge badge-danger">Detectada</span>
+                                    <div class="text-xs text-muted"><?= wh_h((string)($log['blacklist_reason'] ?? '')) ?></div>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
                                 <?php endif; ?>
                             </td>
                             <td>

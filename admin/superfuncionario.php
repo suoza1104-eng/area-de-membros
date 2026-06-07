@@ -68,6 +68,7 @@ $eventOptions = [
     'WHATSAPP_GRUPO_ENTROU' => 'WhatsApp - aluno entrou no grupo',
     'WHATSAPP_GRUPO_SAIU'   => 'WhatsApp - aluno saiu por conta propria',
     'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'WhatsApp - aluno removido por admin',
+    'WHATSAPP_BLACKLIST_DETECTADO' => 'WhatsApp - blacklist detectada',
 ];
 
 // dinâmico por aula
@@ -118,6 +119,9 @@ $fieldOptions = [
         'extra.action_original' => 'action original da Evolution',
         'extra.tipo_interpretado' => 'evento interpretado',
         'extra.payload_log_id' => 'ID do payload no monitor',
+        'extra.blacklist.id' => 'ID da blacklist',
+        'extra.blacklist.reason' => 'motivo da blacklist',
+        'extra.blacklist.origem' => 'origem da blacklist',
     ],
     'Extra — CERT_EMITIDO' => [
         'extra.pdf_url'           => 'pdf_url (link do certificado)',
@@ -164,6 +168,7 @@ $eventHints = [
     'WHATSAPP_GRUPO_ENTROU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_ENTROU e aplicada no aluno.',
     'WHATSAPP_GRUPO_SAIU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_SAIU e aplicada no aluno.',
     'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_REMOVIDO_ADMIN e aplicada no aluno.',
+    'WHATSAPP_BLACKLIST_DETECTADO' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.blacklist.id</code>, <code>extra.blacklist.reason</code>. A tag WHATSAPP_BLACKLIST_DETECTADO e aplicada no aluno. Nao remove participante automaticamente.',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -720,6 +725,7 @@ include __DIR__ . '/_header.php';
                     'WHATSAPP_GRUPO_ENTROU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
                     'WHATSAPP_GRUPO_SAIU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
                     'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
+                    'WHATSAPP_BLACKLIST_DETECTADO' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.blacklist.id', 'extra.blacklist.reason', 'extra.payload_log_id'],
                 ];
                 foreach ($payloadRef as $ev => $fields): ?>
                     <div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);">
@@ -807,6 +813,10 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">
                                         <strong>WHATSAPP_GRUPO_REMOVIDO_ADMIN <span class="ev-pill aluno">WhatsApp</span></strong>
                                         <em>Aluno identificado foi removido por admin de grupo monitorado.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="WHATSAPP_BLACKLIST_DETECTADO">
+                                        <strong>WHATSAPP_BLACKLIST_DETECTADO <span class="ev-pill aluno">WhatsApp</span></strong>
+                                        <em>Numero em blacklist entrou no grupo. Nenhuma remocao automatica e executada.</em>
                                     </div>
                                     <div class="ev-group-label">Certificado</div>
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">

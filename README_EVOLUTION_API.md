@@ -211,57 +211,99 @@ Comportamento de seguranca:
 - se o telefone nao cruzar com um aluno, o evento fica como `Aluno nao encontrado` e nao dispara webhook/SuperFuncionario;
 - nenhuma remocao automatica de participante foi ativada nesta fase.
 
-### Fase 4 - Modelagem de dados definitiva
+### Fase 4 - Base operacional e blacklist sem remocao
 
-Status: Pendente
+Status: Concluida
 
 Objetivo:
 
-- criar tabelas para instancias, grupos, blacklist e logs;
-- padronizar numeros de telefone;
-- preparar indices para consulta rapida.
+- criar tabelas operacionais para grupos, eventos normalizados e blacklist;
+- cadastrar numeros bloqueados pelo painel;
+- detectar entrada de numero blacklistado em grupo monitorado;
+- gerar tag e gatilho de alerta sem remover participantes automaticamente.
 
-Tabelas previstas:
+Tabelas implantadas:
 
-- `whatsapp_instances`;
-- `whatsapp_groups`;
-- `blacklist_numbers`;
-- `group_events_log`;
-- `whatsapp_webhook_jobs`, se for necessario processar em fila.
+- `whatsapp_groups`: grupos detectados nos webhooks, por `group_id` e instancia;
+- `whatsapp_blacklist_numbers`: numeros bloqueados, motivo, origem e status ativo/inativo;
+- `whatsapp_group_events`: historico normalizado ligado ao payload bruto.
+
+Evento implantado:
+
+- `WHATSAPP_BLACKLIST_DETECTADO`: disparado quando um numero ativo na blacklist entra em grupo monitorado e cruza com um aluno cadastrado.
+
+Tag aplicada automaticamente:
+
+- `WHATSAPP_BLACKLIST_DETECTADO`.
+
+Payload extra adicional:
+
+- `extra.blacklist.id`;
+- `extra.blacklist.reason`;
+- `extra.blacklist.origem`.
+
+Implementado:
+
+- `app/evolution_api.php` cria as tabelas operacionais e registra eventos normalizados;
+- `admin/whatsapp_monitor.php` permite cadastrar, ativar e desativar numeros na blacklist;
+- `admin/whatsapp_monitor.php` exibe grupos detectados, contagem de eventos e batidas de blacklist;
+- `admin/webhooks.php` e `admin/superfuncionario.php` listam `WHATSAPP_BLACKLIST_DETECTADO`.
+
+Comportamento de seguranca:
+
+- a deteccao de blacklist nao remove participante;
+- se o numero blacklistado nao cruzar com aluno, o evento fica registrado como `blacklist_detected_no_user`, sem Webhook/SuperFuncionario;
+- a remocao manual/automatica segue pendente para uma fase posterior.
 
 Criterios de conclusao:
 
-- schema revisado;
-- migrations ou SQL criados;
-- indices definidos;
-- impacto no banco atual analisado antes da execucao.
+- tabelas operacionais criadas automaticamente;
+- cadastro de blacklist disponivel no painel;
+- deteccao em evento `add` registrada;
+- alerta por tag/webhook/SuperFuncionario disponivel quando houver aluno identificado.
 
-### Fase 5 - Blacklist e auto-remocao
+### Fase 5 - Remocao manual controlada
 
 Status: Pendente
 
 Objetivo:
 
-- consultar blacklist quando um numero entrar em grupo;
-- remover automaticamente numeros bloqueados;
-- registrar logs de acao automatica.
+- permitir remover manualmente, pelo painel, um participante detectado como blacklistado;
+- validar endpoint correto da Evolution API;
+- confirmar que o numero conectado tem permissao de admin no grupo;
+- registrar sucesso/erro da tentativa de remocao.
 
 Fluxo esperado:
 
-1. Receber evento de participante adicionado.
-2. Normalizar o numero.
-3. Verificar blacklist.
-4. Se estiver bloqueado, chamar Evolution API para remover o participante.
-5. Registrar evento `kick_blacklist`.
+1. Detectar entrada de numero blacklistado.
+2. Exibir alerta no painel.
+3. Operador clica em remover manualmente.
+4. Sistema chama Evolution API.
+5. Resultado fica registrado em log.
 
 Criterios de conclusao:
 
-- blacklist funcional;
-- remocao manual validada antes da automatica;
-- remocao automatica testada em grupo controlado;
+- endpoint de remocao validado em grupo controlado;
+- permissao de admin confirmada;
 - falhas de API registradas em log.
 
-### Fase 6 - Painel administrativo
+### Fase 6 - Remocao automatica por blacklist
+
+Status: Pendente
+
+Objetivo:
+
+- ativar, por configuracao, remocao automatica de numeros blacklistados;
+- limitar a automacao por grupo/instancia;
+- manter logs completos da acao.
+
+Criterios de conclusao:
+
+- remocao automatica testada em grupo controlado;
+- opcao de liga/desliga disponivel;
+- erros e sucessos auditaveis.
+
+### Fase 7 - Painel administrativo completo
 
 Status: Pendente
 
@@ -285,7 +327,7 @@ Criterios de conclusao:
 - blacklist editavel;
 - logs filtraveis por grupo, numero e data.
 
-### Fase 7 - Alertas SuperFuncionario/Webhook
+### Fase 8 - Alertas SuperFuncionario/Webhook
 
 Status: Pendente
 
@@ -319,10 +361,13 @@ Criterios de conclusao:
 - [x] Cruzar telefone do participante com alunos.
 - [x] Aplicar tags automaticas de eventos de grupo.
 - [x] Disparar Webhooks e SuperFuncionario para eventos de grupo identificados.
-- [ ] Criar blacklist.
+- [x] Criar blacklist sem remocao automatica.
+- [x] Registrar grupos detectados.
+- [x] Registrar eventos normalizados.
+- [x] Disparar alerta `WHATSAPP_BLACKLIST_DETECTADO`.
 - [ ] Testar remocao manual.
 - [ ] Ativar remocao automatica em grupo controlado.
-- [ ] Criar painel administrativo.
+- [x] Criar painel administrativo inicial para blacklist/grupos.
 - [ ] Integrar alertas com SuperFuncionario.
 
 ## Decisoes Pendentes
@@ -376,3 +421,8 @@ Criterios de conclusao:
 - Painel `admin/whatsapp_monitor.php` passa a exibir aluno encontrado e status do gatilho.
 - Telas `admin/webhooks.php` e `admin/superfuncionario.php` passam a listar os eventos de WhatsApp.
 - Proxima etapa recomendada: modelagem definitiva/blacklist e somente depois remocao automatica em grupo controlado.
+- Implementada Fase 4 de base operacional e blacklist sem remocao.
+- Criadas tabelas `whatsapp_groups`, `whatsapp_blacklist_numbers` e `whatsapp_group_events`.
+- Painel `admin/whatsapp_monitor.php` passa a cadastrar, ativar e desativar numeros da blacklist.
+- Entrada de numero blacklistado em grupo passa a registrar alerta e, quando houver aluno identificado, aplicar tag/disparar `WHATSAPP_BLACKLIST_DETECTADO`.
+- Proxima etapa recomendada: remocao manual controlada via Evolution API antes de qualquer remocao automatica.

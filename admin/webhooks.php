@@ -133,6 +133,11 @@ $eventGroups = [
             'desc' => 'Disparado quando action=remove e o author e diferente do participante. Aplica a tag de mesmo nome.',
             'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
         ],
+        'WHATSAPP_BLACKLIST_DETECTADO' => [
+            'label' => 'WhatsApp - blacklist detectada',
+            'desc' => 'Disparado quando um numero ativo na blacklist entra em grupo monitorado e cruza com um aluno cadastrado. Nao remove participante automaticamente.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id, extra.blacklist',
+        ],
     ],
     'Certificado' => [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],
