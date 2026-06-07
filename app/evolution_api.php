@@ -102,14 +102,37 @@ function evolution_ensure_tables(PDO $pdo): void {
             group_id VARCHAR(160) NOT NULL,
             instance_key VARCHAR(120) NULL,
             group_name VARCHAR(180) NULL,
+            picture_url TEXT NULL,
+            is_ignored TINYINT(1) NOT NULL DEFAULT 0,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uk_whatsapp_groups_group (group_id),
             KEY idx_whatsapp_groups_instance (instance_key),
+            KEY idx_whatsapp_groups_ignored (is_ignored),
             KEY idx_whatsapp_groups_active (is_active)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    foreach ([
+        'picture_url' => "ALTER TABLE whatsapp_groups ADD COLUMN picture_url TEXT NULL AFTER group_name",
+        'is_ignored' => "ALTER TABLE whatsapp_groups ADD COLUMN is_ignored TINYINT(1) NOT NULL DEFAULT 0 AFTER picture_url",
+    ] as $column => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM whatsapp_groups LIKE :c");
+            $st->execute([':c' => $column]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                $pdo->exec($sql);
+            }
+        } catch (Throwable $e) {}
+    }
+    try {
+        $st = $pdo->prepare("SHOW INDEX FROM whatsapp_groups WHERE Key_name = 'idx_whatsapp_groups_ignored'");
+        $st->execute();
+        if (!$st->fetch(PDO::FETCH_ASSOC)) {
+            $pdo->exec("ALTER TABLE whatsapp_groups ADD KEY idx_whatsapp_groups_ignored (is_ignored)");
+        }
+    } catch (Throwable $e) {}
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_blacklist_numbers (
@@ -376,6 +399,31 @@ function evolution_extract_group_subject($data): ?string {
     return null;
 }
 
+function evolution_extract_group_picture_url($data): ?string {
+    if (!is_array($data)) return null;
+
+    $candidates = [
+        $data['group']['pictureUrl'] ?? null,
+        $data['group']['picture_url'] ?? null,
+        $data['pictureUrl'] ?? null,
+        $data['picture_url'] ?? null,
+        $data['data']['pictureUrl'] ?? null,
+        $data['response']['pictureUrl'] ?? null,
+    ];
+    foreach ($candidates as $candidate) {
+        $url = trim((string)$candidate);
+        if ($url !== '') return $url;
+    }
+
+    foreach ($data as $item) {
+        if (!is_array($item)) continue;
+        $url = evolution_extract_group_picture_url($item);
+        if ($url !== null) return $url;
+    }
+
+    return null;
+}
+
 function evolution_extract_group_rows($data): array {
     if (!is_array($data)) return [];
 
@@ -393,8 +441,12 @@ function evolution_extract_group_rows($data): array {
             if (!is_array($item)) continue;
             $id = trim((string)($item['id'] ?? $item['jid'] ?? $item['groupJid'] ?? ''));
             $subject = trim((string)($item['subject'] ?? $item['name'] ?? ''));
+            $pictureUrl = trim((string)($item['pictureUrl'] ?? $item['picture_url'] ?? ''));
             if ($id !== '' && $subject !== '') {
-                $rows[$id] = $subject;
+                $rows[$id] = [
+                    'subject' => $subject,
+                    'picture_url' => $pictureUrl !== '' ? $pictureUrl : null,
+                ];
             }
         }
     }
@@ -583,20 +635,22 @@ function evolution_sync_groups_for_instance(PDO $pdo, string $instanceKey): int 
 
     $groups = evolution_extract_group_rows($res['data']);
     $updated = 0;
-    foreach ($groups as $groupId => $subject) {
+    foreach ($groups as $groupId => $group) {
         try {
             $st = $pdo->prepare("
-                INSERT INTO whatsapp_groups (group_id, instance_key, group_name, first_seen_at, last_seen_at)
-                VALUES (:gid, :inst, :name, NOW(), NOW())
+                INSERT INTO whatsapp_groups (group_id, instance_key, group_name, picture_url, first_seen_at, last_seen_at)
+                VALUES (:gid, :inst, :name, :picture_url, NOW(), NOW())
                 ON DUPLICATE KEY UPDATE
                     instance_key = COALESCE(VALUES(instance_key), instance_key),
                     group_name = VALUES(group_name),
+                    picture_url = COALESCE(VALUES(picture_url), picture_url),
                     last_seen_at = NOW()
             ");
             $st->execute([
                 ':gid' => $groupId,
                 ':inst' => $instanceKey,
-                ':name' => substr($subject, 0, 180),
+                ':name' => substr((string)($group['subject'] ?? ''), 0, 180),
+                ':picture_url' => $group['picture_url'] ?? null,
             ]);
             $updated++;
         } catch (Throwable $e) {}
@@ -611,10 +665,12 @@ function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
     if ($groupId === '' || $instanceKey === '') return;
 
     try {
-        $st = $pdo->prepare("SELECT group_name FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st = $pdo->prepare("SELECT group_name, picture_url FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
         $st->execute([':gid' => $groupId]);
-        $current = trim((string)($st->fetchColumn() ?: ''));
-        if ($current !== '') return;
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        $currentName = trim((string)($row['group_name'] ?? ''));
+        $currentPicture = trim((string)($row['picture_url'] ?? ''));
+        if ($currentName !== '' && $currentPicture !== '') return;
     } catch (Throwable $e) {
         return;
     }
@@ -623,23 +679,39 @@ function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
     if (!$res['ok']) return;
 
     $subject = evolution_extract_group_subject($res['data']);
-    if ($subject === null || $subject === '') return;
+    $pictureUrl = evolution_extract_group_picture_url($res['data']);
+    if (($subject === null || $subject === '') && ($pictureUrl === null || $pictureUrl === '')) return;
 
     try {
         $st = $pdo->prepare("
             UPDATE whatsapp_groups
-               SET group_name = :name,
+               SET group_name = COALESCE(:name, group_name),
+                   picture_url = COALESCE(:picture_url, picture_url),
                    instance_key = COALESCE(:inst, instance_key),
                    last_seen_at = NOW()
              WHERE group_id = :gid
              LIMIT 1
         ");
         $st->execute([
-            ':name' => substr($subject, 0, 180),
+            ':name' => $subject !== null && $subject !== '' ? substr($subject, 0, 180) : null,
+            ':picture_url' => $pictureUrl !== null && $pictureUrl !== '' ? $pictureUrl : null,
             ':inst' => $instanceKey !== '' ? $instanceKey : null,
             ':gid' => $groupId,
         ]);
     } catch (Throwable $e) {}
+}
+
+function evolution_is_group_ignored(PDO $pdo, ?string $groupId): bool {
+    $groupId = trim((string)$groupId);
+    if ($groupId === '') return false;
+
+    try {
+        $st = $pdo->prepare("SELECT is_ignored FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st->execute([':gid' => $groupId]);
+        return (int)($st->fetchColumn() ?: 0) === 1;
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 function evolution_record_group_event(PDO $pdo, int $logId, array $fields, ?int $userId, ?array $blacklist, string $status): void {
@@ -718,6 +790,13 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     $tag = evolution_tag_for_interpreted_event($event);
     if ($tag === '') $tag = null;
     evolution_upsert_group($pdo, $fields);
+
+    if (evolution_is_group_ignored($pdo, $fields['group_id'] ?? null)) {
+        $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET trigger_status = 'ignored_group' WHERE id = :id LIMIT 1")
+            ->execute([':id' => $logId]);
+        evolution_record_group_event($pdo, $logId, $fields, null, null, 'ignored_group');
+        return ['status' => 'ignored_group', 'user_id' => null, 'event' => $event];
+    }
 
     if ($event === '' || $tag === null) {
         $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET trigger_status = 'ignored' WHERE id = :id LIMIT 1")

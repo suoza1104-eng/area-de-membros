@@ -78,6 +78,7 @@ function wh_trigger_label(?string $status): string {
         'triggered' => 'Gatilhos acionados',
         'blacklist_detected' => 'Blacklist detectada',
         'blacklist_detected_no_user' => 'Blacklist sem aluno',
+        'ignored_group' => 'Grupo ignorado',
         'user_not_found' => 'Aluno nao encontrado',
         'ignored' => 'Ignorado',
         'error' => 'Erro',
@@ -250,6 +251,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_monitor.php?groups_refreshed=' . $updated);
             exit;
         }
+
+        if ($action === 'toggle_group_ignored') {
+            $groupId = trim((string)($_POST['group_id'] ?? ''));
+            if ($groupId === '') throw new RuntimeException('Grupo invalido.');
+            $pdo->prepare("
+                UPDATE whatsapp_groups
+                   SET is_ignored = IF(is_ignored=1,0,1),
+                       last_seen_at = NOW()
+                 WHERE group_id = :gid
+                 LIMIT 1
+            ")->execute([':gid' => $groupId]);
+            header('Location: whatsapp_monitor.php?group_scope_saved=1');
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -263,6 +278,7 @@ if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel loca
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
 if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
+if (isset($_GET['group_scope_saved'])) $notice = 'Configuracao do grupo atualizada.';
 
 $cfg = evolution_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -299,7 +315,7 @@ try {
                ge.is_blacklisted, ge.blacklist_id,
                bl.reason AS blacklist_reason,
                l.payload_raw, l.source_ip, l.received_at,
-               g.group_name,
+               g.group_name, g.picture_url AS group_picture_url, g.is_ignored AS group_is_ignored,
                u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
                u.codigo_turma AS user_codigo_turma
         FROM whatsapp_webhook_raw_logs l
@@ -345,6 +361,9 @@ include __DIR__ . '/_header.php';
 .wm-url-row input { font-family:monospace; font-size:12px; }
 .wm-log-table td { font-size:12px; vertical-align:top; }
 .wm-payload { max-width:520px; max-height:90px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-family:monospace; font-size:11px; color:#93c5fd; background:rgba(255,255,255,.035); border:1px solid var(--border); border-radius:8px; padding:7px; }
+.wm-group-cell { display:flex; align-items:center; gap:10px; min-width:220px; }
+.wm-group-avatar { width:34px; height:34px; border-radius:999px; overflow:hidden; flex:0 0 auto; background:rgba(255,255,255,.08); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; font-weight:700; }
+.wm-group-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
 @media(max-width:1000px){ .wm-grid,.wm-qrbox{grid-template-columns:1fr}.wm-row{grid-template-columns:1fr}.wm-qr{width:100%;max-width:260px} }
 </style>
 
@@ -572,7 +591,7 @@ include __DIR__ . '/_header.php';
 
         <div class="wm-card">
             <h2>Grupos detectados</h2>
-            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Use como base para validar o monitoramento antes de qualquer ação automática.</div>
+            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Todo grupo novo entra como considerado por padrao; marque como ignorado para o sistema nao aplicar tags, blacklist nem gatilhos nele.</div>
             <form method="post" class="wm-actions" style="margin-bottom:12px">
                 <input type="hidden" name="action" value="refresh_group_names">
                 <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
@@ -587,6 +606,7 @@ include __DIR__ . '/_header.php';
                             <tr>
                                 <th>Grupo</th>
                                 <th>Instância</th>
+                                <th>Escopo</th>
                                 <th>Eventos</th>
                                 <th>Blacklist</th>
                                 <th>Último evento</th>
@@ -596,15 +616,36 @@ include __DIR__ . '/_header.php';
                         <?php foreach ($groupRows as $g): ?>
                             <tr>
                                 <td>
-                                    <?php if (!empty($g['group_name'])): ?>
-                                        <div><?= wh_h((string)$g['group_name']) ?></div>
-                                        <div class="text-xs text-muted"><?= wh_h((string)$g['group_id']) ?></div>
-                                    <?php else: ?>
-                                        <div><?= wh_h((string)$g['group_id']) ?></div>
-                                        <div class="text-xs text-muted">Nome ainda nao carregado</div>
-                                    <?php endif; ?>
+                                    <div class="wm-group-cell">
+                                        <div class="wm-group-avatar">
+                                            <?php if (!empty($g['picture_url'])): ?>
+                                                <img src="<?= wh_h((string)$g['picture_url']) ?>" alt="">
+                                            <?php else: ?>
+                                                <?= wh_h(substr((string)($g['group_name'] ?: $g['group_id']), 0, 1)) ?>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div>
+                                            <?php if (!empty($g['group_name'])): ?>
+                                                <div><?= wh_h((string)$g['group_name']) ?></div>
+                                                <div class="text-xs text-muted"><?= wh_h((string)$g['group_id']) ?></div>
+                                            <?php else: ?>
+                                                <div><?= wh_h((string)$g['group_id']) ?></div>
+                                                <div class="text-xs text-muted">Nome ainda nao carregado</div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
                                 </td>
                                 <td><?= wh_h((string)($g['instance_key'] ?? '-')) ?></td>
+                                <td>
+                                    <form method="post">
+                                        <input type="hidden" name="action" value="toggle_group_ignored">
+                                        <input type="hidden" name="group_id" value="<?= wh_h((string)$g['group_id']) ?>">
+                                        <label style="display:flex;align-items:center;gap:8px;white-space:nowrap">
+                                            <input type="checkbox" onchange="this.form.submit()" <?= (int)($g['is_ignored'] ?? 0) === 1 ? 'checked' : '' ?>>
+                                            <span><?= (int)($g['is_ignored'] ?? 0) === 1 ? 'Ignorado' : 'Considerado' ?></span>
+                                        </label>
+                                    </form>
+                                </td>
                                 <td><?= (int)($g['total_events'] ?? 0) ?></td>
                                 <td><?= (int)($g['total_blacklist'] ?? 0) ?></td>
                                 <td style="white-space:nowrap"><?= wh_h((string)($g['last_seen_at'] ?? '-')) ?></td>
@@ -661,12 +702,26 @@ include __DIR__ . '/_header.php';
                             <td><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
                             <td>
-                                <?php if (!empty($log['group_name'])): ?>
-                                    <div><?= wh_h((string)$log['group_name']) ?></div>
-                                    <div class="text-xs text-muted"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
-                                <?php else: ?>
-                                    <?= wh_h((string)($log['group_id'] ?? '-')) ?>
-                                <?php endif; ?>
+                                <div class="wm-group-cell">
+                                    <div class="wm-group-avatar">
+                                        <?php if (!empty($log['group_picture_url'])): ?>
+                                            <img src="<?= wh_h((string)$log['group_picture_url']) ?>" alt="">
+                                        <?php else: ?>
+                                            <?= wh_h(substr((string)($log['group_name'] ?: ($log['group_id'] ?? 'G')), 0, 1)) ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div>
+                                        <?php if (!empty($log['group_name'])): ?>
+                                            <div><?= wh_h((string)$log['group_name']) ?></div>
+                                            <div class="text-xs text-muted"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                        <?php else: ?>
+                                            <div><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                        <?php endif; ?>
+                                        <?php if ((int)($log['group_is_ignored'] ?? 0) === 1): ?>
+                                            <div class="text-xs text-muted">Grupo ignorado</div>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
                             </td>
                             <td>
                                 <div><?= wh_h(wh_event_label((string)($log['interpreted_event'] ?? ''), (string)($log['action'] ?? ''))) ?></div>
