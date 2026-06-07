@@ -204,19 +204,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'refresh_group_names') {
+            $instanceRows = $pdo->query("
+                SELECT DISTINCT instance_key
+                  FROM (
+                        SELECT instance_key FROM whatsapp_groups
+                        UNION
+                        SELECT instance_key FROM whatsapp_webhook_raw_logs
+                  ) x
+                 WHERE instance_key IS NOT NULL
+                   AND instance_key <> ''
+                 LIMIT 20
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            $updated = 0;
+            foreach ($instanceRows as $instRow) {
+                $updated += evolution_sync_groups_for_instance($pdo, (string)($instRow['instance_key'] ?? ''));
+            }
+
             $rows = $pdo->query("
                 SELECT group_id, instance_key
-                  FROM whatsapp_groups
+                  FROM (
+                        SELECT group_id, instance_key FROM whatsapp_groups
+                        UNION
+                        SELECT group_id, instance_key FROM whatsapp_webhook_raw_logs
+                  ) x
                  WHERE group_id IS NOT NULL
                    AND group_id <> ''
                    AND instance_key IS NOT NULL
                    AND instance_key <> ''
-                 ORDER BY last_seen_at DESC
-                 LIMIT 80
+                 ORDER BY group_id DESC
+                 LIMIT 120
             ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-            $updated = 0;
             foreach ($rows as $row) {
+                evolution_upsert_group($pdo, [
+                    'group_id' => $row['group_id'] ?? '',
+                    'instance_key' => $row['instance_key'] ?? '',
+                ]);
                 evolution_refresh_group_name_if_needed($pdo, [
                     'group_id' => $row['group_id'] ?? '',
                     'instance_key' => $row['instance_key'] ?? '',
@@ -596,6 +620,10 @@ include __DIR__ . '/_header.php';
     <div class="wm-card wm-full">
         <h2>Payloads recebidos</h2>
         <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>.</div>
+        <form method="post" class="wm-actions" style="margin-bottom:12px">
+            <input type="hidden" name="action" value="refresh_group_names">
+            <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
+        </form>
 
         <?php if (!$rawLogs): ?>
             <div class="text-muted text-sm">Nenhum payload recebido ainda. Configure o webhook e faca um teste de entrada/saida em grupo.</div>

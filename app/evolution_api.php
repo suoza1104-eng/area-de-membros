@@ -335,6 +335,24 @@ function evolution_find_group_info(string $instanceKey, string $groupId): array 
     );
 }
 
+function evolution_fetch_all_groups(string $instanceKey): array {
+    $instanceKey = trim($instanceKey);
+    if ($instanceKey === '') {
+        return [
+            'ok' => false,
+            'status' => 0,
+            'data' => null,
+            'raw' => '',
+            'error' => 'Instancia vazia.',
+        ];
+    }
+
+    return evolution_http(
+        'GET',
+        '/group/fetchAllGroups/' . rawurlencode($instanceKey) . '?getParticipants=false'
+    );
+}
+
 function evolution_extract_group_subject($data): ?string {
     if (!is_array($data)) return null;
 
@@ -356,6 +374,32 @@ function evolution_extract_group_subject($data): ?string {
     }
 
     return null;
+}
+
+function evolution_extract_group_rows($data): array {
+    if (!is_array($data)) return [];
+
+    $rows = [];
+    $candidateLists = [
+        $data,
+        $data['groups'] ?? null,
+        $data['data'] ?? null,
+        $data['response'] ?? null,
+    ];
+
+    foreach ($candidateLists as $candidate) {
+        if (!is_array($candidate)) continue;
+        foreach ($candidate as $item) {
+            if (!is_array($item)) continue;
+            $id = trim((string)($item['id'] ?? $item['jid'] ?? $item['groupJid'] ?? ''));
+            $subject = trim((string)($item['subject'] ?? $item['name'] ?? ''));
+            if ($id !== '' && $subject !== '') {
+                $rows[$id] = $subject;
+            }
+        }
+    }
+
+    return $rows;
 }
 
 function evolution_extract_raw_event_fields(array $payload): array {
@@ -528,6 +572,37 @@ function evolution_upsert_group(PDO $pdo, array $fields): void {
     } catch (Throwable $e) {}
 
     evolution_refresh_group_name_if_needed($pdo, $fields);
+}
+
+function evolution_sync_groups_for_instance(PDO $pdo, string $instanceKey): int {
+    $instanceKey = trim($instanceKey);
+    if ($instanceKey === '') return 0;
+
+    $res = evolution_fetch_all_groups($instanceKey);
+    if (!$res['ok']) return 0;
+
+    $groups = evolution_extract_group_rows($res['data']);
+    $updated = 0;
+    foreach ($groups as $groupId => $subject) {
+        try {
+            $st = $pdo->prepare("
+                INSERT INTO whatsapp_groups (group_id, instance_key, group_name, first_seen_at, last_seen_at)
+                VALUES (:gid, :inst, :name, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                    instance_key = COALESCE(VALUES(instance_key), instance_key),
+                    group_name = VALUES(group_name),
+                    last_seen_at = NOW()
+            ");
+            $st->execute([
+                ':gid' => $groupId,
+                ':inst' => $instanceKey,
+                ':name' => substr($subject, 0, 180),
+            ]);
+            $updated++;
+        } catch (Throwable $e) {}
+    }
+
+    return $updated;
 }
 
 function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {

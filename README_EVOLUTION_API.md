@@ -246,6 +246,7 @@ Implementado:
 
 - `app/evolution_api.php` cria as tabelas operacionais e registra eventos normalizados;
 - `app/evolution_api.php` busca o titulo do grupo pela Evolution API usando `GET /group/findGroupInfos/{instance}?groupJid={group_id}` e salva em `whatsapp_groups.group_name`;
+- `app/evolution_api.php` tambem sincroniza titulos em lote usando `GET /group/fetchAllGroups/{instance}?getParticipants=false` quando o painel solicita atualizacao;
 - `admin/whatsapp_monitor.php` permite cadastrar, ativar e desativar numeros na blacklist;
 - `admin/whatsapp_monitor.php` exibe grupos detectados, contagem de eventos e batidas de blacklist;
 - `admin/whatsapp_monitor.php` exibe o nome do grupo quando ja carregado e oferece botao para atualizar nomes dos grupos detectados;
