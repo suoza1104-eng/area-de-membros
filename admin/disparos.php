@@ -317,9 +317,13 @@ if ($acao !== '') {
         ]);
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
         curl_close($ch);
 
-        return ['ok' => $code >= 200 && $code < 300, 'msg' => (string)$resp];
+        $ok = $code >= 200 && $code < 300;
+        $msg = $resp === false ? ('Erro cURL: ' . ($curlErr ?: 'falha desconhecida')) : (string)$resp;
+        if (!$ok && trim($msg) === '') $msg = 'HTTP ' . (int)$code . ' sem resposta';
+        return ['ok' => $ok, 'msg' => $msg];
     }
 
     // Helper: aplica tags do sistema
@@ -470,6 +474,53 @@ if ($acao !== '') {
             echo json_encode(['ok'=>true,'data'=>$rows]);
             exit;
 
+        // Logs e resumo de um disparo
+        case 'logs':
+            $id = (int)($_GET['id'] ?? 0);
+            if ($id <= 0) { echo json_encode(['ok'=>false,'msg'=>'Disparo invalido']); exit; }
+            try {
+                $stSum = $pdo->prepare("
+                    SELECT
+                        COUNT(*) AS total,
+                        SUM(status='ok') AS ok_total,
+                        SUM(status='erro') AS erro_total
+                    FROM disparo_execucoes
+                    WHERE disparo_id = :id
+                ");
+                $stSum->execute([':id'=>$id]);
+                $sum = $stSum->fetch(PDO::FETCH_ASSOC) ?: ['total'=>0,'ok_total'=>0,'erro_total'=>0];
+
+                $stRows = $pdo->prepare("
+                    SELECT de.id, de.user_id, de.status, de.resposta, de.executado_em,
+                           u.nome, u.email, u.telefone
+                      FROM disparo_execucoes de
+                      LEFT JOIN users u ON u.id = de.user_id
+                     WHERE de.disparo_id = :id
+                     ORDER BY de.id DESC
+                     LIMIT 300
+                ");
+                $stRows->execute([':id'=>$id]);
+                $rows = $stRows->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+                $total = (int)($sum['total'] ?? 0);
+                $okTotal = (int)($sum['ok_total'] ?? 0);
+                $erroTotal = (int)($sum['erro_total'] ?? 0);
+                echo json_encode([
+                    'ok' => true,
+                    'summary' => [
+                        'total' => $total,
+                        'ok' => $okTotal,
+                        'erro' => $erroTotal,
+                        'taxa_ok' => $total > 0 ? round(($okTotal / $total) * 100, 1) : 0,
+                        'taxa_erro' => $total > 0 ? round(($erroTotal / $total) * 100, 1) : 0,
+                    ],
+                    'data' => $rows,
+                ], JSON_UNESCAPED_UNICODE);
+            } catch (Throwable $e) {
+                echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);
+            }
+            exit;
+
         // Executar lote de um disparo (chamado progressivamente via JS)
         case 'executar_batch':
             try {
@@ -601,12 +652,67 @@ require_once __DIR__ . '/_header.php';
     border-radius: 10px;
     padding: 16px 20px;
     margin-bottom: 12px;
+    display: block;
+}
+.dp-card-main {
     display: flex; align-items: center; gap: 14px;
 }
 .dp-card-info { flex: 1; min-width: 0; }
 .dp-card-nome { font-weight: 600; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dp-card-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap; }
 .dp-card-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.dp-logs-panel {
+    display: none;
+    border-top: 1px solid var(--border);
+    margin-top: 14px;
+    padding-top: 14px;
+}
+.dp-logs-panel.open { display: block; }
+.dp-log-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.dp-log-metric {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255,255,255,.025);
+    padding: 10px 12px;
+}
+.dp-log-metric-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 5px;
+}
+.dp-log-metric-value { font-size: 20px; font-weight: 800; }
+.dp-log-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.dp-log-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.dp-log-table th {
+    background: #101827;
+    color: var(--text-muted);
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+.dp-log-table td {
+    border-top: 1px solid var(--border);
+    padding: 8px 10px;
+    vertical-align: top;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dp-log-table .resp {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #cbd5e1;
+}
+.dp-log-ok { color: #34d399; font-weight: 700; }
+.dp-log-erro { color: #f87171; font-weight: 700; }
 
 /* Badges de status */
 .badge-rascunho   { background: #3a3a4a; color: #aaa; }
@@ -947,6 +1053,7 @@ async function dpCarregarLista() {
         const canResume= d.status === 'pausado';
 
         return `<div class="dp-card" id="dpCard${d.id}">
+            <div class="dp-card-main">
             <div class="dp-card-info">
                 <div class="dp-card-nome">${dpEsc(d.nome)}</div>
                 <div class="dp-card-meta">
@@ -955,6 +1062,7 @@ async function dpCarregarLista() {
                 </div>
             </div>
             <div class="dp-card-actions">
+                <button class="btn btn-sm" onclick="dpToggleLogs(${d.id})" title="Logs do disparo">▾</button>
                 ${canRun   ? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Disparar">▶</button>` : ''}
                 ${canPause ? `<button class="btn btn-sm" onclick="dpPararDisparo()" title="Pausar">⏸</button>` : ''}
                 ${canResume? `<button class="btn btn-sm btn-success" onclick="dpIniciarDisparo(${d.id})" title="Retomar">▶</button>` : ''}
@@ -962,11 +1070,72 @@ async function dpCarregarLista() {
                 <button class="btn btn-sm" onclick="dpClonarDisparo(${d.id})" title="Clonar">🗐</button>
                 <button class="btn btn-sm btn-danger" onclick="dpDeletar(${d.id})" title="Excluir">🗑</button>
             </div>
+            </div>
+            <div class="dp-logs-panel" id="dpLogs${d.id}"></div>
         </div>`;
     }).join('');
 }
 
 // ── Form ──────────────────────────────────────────────────────────────────────
+function dpShortResp(resp) {
+    resp = String(resp || '').trim();
+    if (!resp) return '-';
+    try {
+        const j = JSON.parse(resp);
+        if (j.message) return j.message;
+        if (j.error) return typeof j.error === 'string' ? j.error : JSON.stringify(j.error);
+        if (j.msg) return j.msg;
+        return JSON.stringify(j);
+    } catch(e) {
+        return resp;
+    }
+}
+
+async function dpToggleLogs(id) {
+    const panel = document.getElementById('dpLogs' + id);
+    if (!panel) return;
+    const opening = !panel.classList.contains('open');
+    panel.classList.toggle('open', opening);
+    if (!opening) return;
+
+    panel.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Carregando logs...</div>';
+    try {
+        const r = await fetch('disparos.php?acao=logs&id=' + encodeURIComponent(id));
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.msg || 'Erro ao carregar logs');
+        const s = j.summary || {};
+        panel.innerHTML = `<div class="dp-log-metrics">
+            <div class="dp-log-metric"><div class="dp-log-metric-label">Total processado</div><div class="dp-log-metric-value">${s.total || 0}</div></div>
+            <div class="dp-log-metric"><div class="dp-log-metric-label">Sucessos</div><div class="dp-log-metric-value dp-log-ok">${s.ok || 0}</div></div>
+            <div class="dp-log-metric"><div class="dp-log-metric-label">Erros</div><div class="dp-log-metric-value dp-log-erro">${s.erro || 0}</div></div>
+            <div class="dp-log-metric"><div class="dp-log-metric-label">Taxa de acerto</div><div class="dp-log-metric-value">${s.taxa_ok || 0}%</div></div>
+        </div>` + dpRenderLogsTable(j.data || []);
+    } catch(e) {
+        panel.innerHTML = `<div style="color:#f87171;font-size:12px">Erro ao carregar logs: ${dpEsc(e.message)}</div>`;
+    }
+}
+
+function dpRenderLogsTable(rows) {
+    if (!rows.length) return '<div style="color:var(--text-muted);font-size:12px">Nenhuma execucao registrada para este disparo.</div>';
+    return `<div class="dp-log-table-wrap"><table class="dp-log-table">
+        <thead><tr>
+            <th style="width:72px">Status</th>
+            <th style="width:170px">Contato</th>
+            <th style="width:150px">Telefone</th>
+            <th>Motivo / resposta</th>
+            <th style="width:145px">Horario</th>
+        </tr></thead>
+        <tbody>${rows.map(row => `<tr>
+            <td class="${row.status === 'ok' ? 'dp-log-ok' : 'dp-log-erro'}">${row.status === 'ok' ? 'OK' : 'ERRO'}</td>
+            <td title="${dpEsc(row.email || '')}">${dpEsc(row.nome || row.email || ('ID ' + row.user_id))}<br><span style="color:var(--text-muted)">${dpEsc(row.email || '')}</span></td>
+            <td>${dpEsc(row.telefone || '-')}</td>
+            <td class="resp">${dpEsc(dpShortResp(row.resposta))}</td>
+            <td>${dpFmtDate(row.executado_em)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+    ${rows.length === 300 ? '<div style="color:var(--text-muted);font-size:11px;margin-top:6px">Mostrando os 300 registros mais recentes.</div>' : ''}`;
+}
+
 function dpNovoDisparo() {
     document.getElementById('dpId').value = 0;
     document.getElementById('dpNome').value = '';
