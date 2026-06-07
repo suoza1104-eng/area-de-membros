@@ -245,8 +245,10 @@ Payload extra adicional:
 Implementado:
 
 - `app/evolution_api.php` cria as tabelas operacionais e registra eventos normalizados;
+- `app/evolution_api.php` busca o titulo do grupo pela Evolution API usando `GET /group/findGroupInfos/{instance}?groupJid={group_id}` e salva em `whatsapp_groups.group_name`;
 - `admin/whatsapp_monitor.php` permite cadastrar, ativar e desativar numeros na blacklist;
 - `admin/whatsapp_monitor.php` exibe grupos detectados, contagem de eventos e batidas de blacklist;
+- `admin/whatsapp_monitor.php` exibe o nome do grupo quando ja carregado e oferece botao para atualizar nomes dos grupos detectados;
 - `admin/webhooks.php` e `admin/superfuncionario.php` listam `WHATSAPP_BLACKLIST_DETECTADO`.
 
 Comportamento de seguranca:
@@ -425,4 +427,5 @@ Criterios de conclusao:
 - Criadas tabelas `whatsapp_groups`, `whatsapp_blacklist_numbers` e `whatsapp_group_events`.
 - Painel `admin/whatsapp_monitor.php` passa a cadastrar, ativar e desativar numeros da blacklist.
 - Entrada de numero blacklistado em grupo passa a registrar alerta e, quando houver aluno identificado, aplicar tag/disparar `WHATSAPP_BLACKLIST_DETECTADO`.
+- Nome/titulo do grupo passa a ser buscado via `findGroupInfos` da Evolution API e salvo em `whatsapp_groups.group_name`.
 - Proxima etapa recomendada: remocao manual controlada via Evolution API antes de qualquer remocao automatica.

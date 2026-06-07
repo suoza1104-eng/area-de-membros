@@ -202,6 +202,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_monitor.php?blacklist_saved=1');
             exit;
         }
+
+        if ($action === 'refresh_group_names') {
+            $rows = $pdo->query("
+                SELECT group_id, instance_key
+                  FROM whatsapp_groups
+                 WHERE group_id IS NOT NULL
+                   AND group_id <> ''
+                   AND instance_key IS NOT NULL
+                   AND instance_key <> ''
+                 ORDER BY last_seen_at DESC
+                 LIMIT 80
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            $updated = 0;
+            foreach ($rows as $row) {
+                evolution_refresh_group_name_if_needed($pdo, [
+                    'group_id' => $row['group_id'] ?? '',
+                    'instance_key' => $row['instance_key'] ?? '',
+                ]);
+                $updated++;
+            }
+            header('Location: whatsapp_monitor.php?groups_refreshed=' . $updated);
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -214,6 +238,7 @@ if (isset($_GET['status'])) $notice = 'Status atualizado.';
 if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
+if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
 
 $cfg = evolution_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -250,11 +275,13 @@ try {
                ge.is_blacklisted, ge.blacklist_id,
                bl.reason AS blacklist_reason,
                l.payload_raw, l.source_ip, l.received_at,
+               g.group_name,
                u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
                u.codigo_turma AS user_codigo_turma
         FROM whatsapp_webhook_raw_logs l
         LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
         LEFT JOIN whatsapp_blacklist_numbers bl ON bl.id = ge.blacklist_id
+        LEFT JOIN whatsapp_groups g ON g.group_id = l.group_id
         LEFT JOIN users u ON u.id = l.user_id
         ORDER BY l.id DESC
         LIMIT 80
@@ -522,6 +549,10 @@ include __DIR__ . '/_header.php';
         <div class="wm-card">
             <h2>Grupos detectados</h2>
             <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Use como base para validar o monitoramento antes de qualquer ação automática.</div>
+            <form method="post" class="wm-actions" style="margin-bottom:12px">
+                <input type="hidden" name="action" value="refresh_group_names">
+                <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
+            </form>
 
             <?php if (!$groupRows): ?>
                 <div class="text-muted text-sm">Nenhum grupo detectado ainda.</div>
@@ -540,7 +571,15 @@ include __DIR__ . '/_header.php';
                         <tbody>
                         <?php foreach ($groupRows as $g): ?>
                             <tr>
-                                <td><?= wh_h((string)$g['group_id']) ?></td>
+                                <td>
+                                    <?php if (!empty($g['group_name'])): ?>
+                                        <div><?= wh_h((string)$g['group_name']) ?></div>
+                                        <div class="text-xs text-muted"><?= wh_h((string)$g['group_id']) ?></div>
+                                    <?php else: ?>
+                                        <div><?= wh_h((string)$g['group_id']) ?></div>
+                                        <div class="text-xs text-muted">Nome ainda nao carregado</div>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?= wh_h((string)($g['instance_key'] ?? '-')) ?></td>
                                 <td><?= (int)($g['total_events'] ?? 0) ?></td>
                                 <td><?= (int)($g['total_blacklist'] ?? 0) ?></td>
@@ -593,7 +632,14 @@ include __DIR__ . '/_header.php';
                             <td><?= (int)$log['token_ok'] === 1 ? '<span class="badge badge-success">OK</span>' : '<span class="badge badge-danger">Falhou</span>' ?></td>
                             <td><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
                             <td><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
-                            <td><?= wh_h((string)($log['group_id'] ?? '-')) ?></td>
+                            <td>
+                                <?php if (!empty($log['group_name'])): ?>
+                                    <div><?= wh_h((string)$log['group_name']) ?></div>
+                                    <div class="text-xs text-muted"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                <?php else: ?>
+                                    <?= wh_h((string)($log['group_id'] ?? '-')) ?>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <div><?= wh_h(wh_event_label((string)($log['interpreted_event'] ?? ''), (string)($log['action'] ?? ''))) ?></div>
                                 <div class="text-xs text-muted"><?= wh_h((string)($log['action'] ?? '-')) ?></div>

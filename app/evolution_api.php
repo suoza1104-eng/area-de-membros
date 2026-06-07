@@ -316,6 +316,48 @@ function evolution_find_webhook(string $instanceKey): array {
     return evolution_http('GET', '/webhook/find/' . rawurlencode($instanceKey));
 }
 
+function evolution_find_group_info(string $instanceKey, string $groupId): array {
+    $instanceKey = trim($instanceKey);
+    $groupId = trim($groupId);
+    if ($instanceKey === '' || $groupId === '') {
+        return [
+            'ok' => false,
+            'status' => 0,
+            'data' => null,
+            'raw' => '',
+            'error' => 'Instancia ou grupo vazio.',
+        ];
+    }
+
+    return evolution_http(
+        'GET',
+        '/group/findGroupInfos/' . rawurlencode($instanceKey) . '?groupJid=' . rawurlencode($groupId)
+    );
+}
+
+function evolution_extract_group_subject($data): ?string {
+    if (!is_array($data)) return null;
+
+    $candidates = [
+        $data['group']['subject'] ?? null,
+        $data['subject'] ?? null,
+        $data['data']['subject'] ?? null,
+        $data['response']['subject'] ?? null,
+    ];
+    foreach ($candidates as $candidate) {
+        $subject = trim((string)$candidate);
+        if ($subject !== '') return $subject;
+    }
+
+    foreach ($data as $item) {
+        if (!is_array($item)) continue;
+        $subject = evolution_extract_group_subject($item);
+        if ($subject !== null) return $subject;
+    }
+
+    return null;
+}
+
 function evolution_extract_raw_event_fields(array $payload): array {
     $eventType = (string)($payload['event'] ?? $payload['eventType'] ?? $payload['type'] ?? '');
     $instance = (string)($payload['instance'] ?? $payload['instanceName'] ?? $payload['instance_key'] ?? '');
@@ -482,6 +524,45 @@ function evolution_upsert_group(PDO $pdo, array $fields): void {
         $st->execute([
             ':gid' => $groupId,
             ':inst' => $fields['instance_key'] ?? null,
+        ]);
+    } catch (Throwable $e) {}
+
+    evolution_refresh_group_name_if_needed($pdo, $fields);
+}
+
+function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
+    $groupId = trim((string)($fields['group_id'] ?? ''));
+    $instanceKey = trim((string)($fields['instance_key'] ?? ''));
+    if ($groupId === '' || $instanceKey === '') return;
+
+    try {
+        $st = $pdo->prepare("SELECT group_name FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st->execute([':gid' => $groupId]);
+        $current = trim((string)($st->fetchColumn() ?: ''));
+        if ($current !== '') return;
+    } catch (Throwable $e) {
+        return;
+    }
+
+    $res = evolution_find_group_info($instanceKey, $groupId);
+    if (!$res['ok']) return;
+
+    $subject = evolution_extract_group_subject($res['data']);
+    if ($subject === null || $subject === '') return;
+
+    try {
+        $st = $pdo->prepare("
+            UPDATE whatsapp_groups
+               SET group_name = :name,
+                   instance_key = COALESCE(:inst, instance_key),
+                   last_seen_at = NOW()
+             WHERE group_id = :gid
+             LIMIT 1
+        ");
+        $st->execute([
+            ':name' => substr($subject, 0, 180),
+            ':inst' => $instanceKey !== '' ? $instanceKey : null,
+            ':gid' => $groupId,
         ]);
     } catch (Throwable $e) {}
 }
