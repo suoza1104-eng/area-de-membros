@@ -545,6 +545,24 @@ if ($turmaCol) {
             $barTurmaData[$tid]['cert'] = (int)$r['n'];
         }
     } catch (Throwable $e) {}
+
+    // WhatsApp: alunos que entraram em pelo menos um grupo monitorado nao ignorado
+    try {
+        $sqlWg = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT ge.user_id) AS n
+                  FROM whatsapp_group_events ge
+                  JOIN users u ON u.id = ge.user_id
+                  LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+                  WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
+                    AND ge.user_id IS NOT NULL
+                    AND ge.user_id > 0
+                    AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
+                  GROUP BY u.`$turmaCol`";
+        $st = $pdo->prepare($sqlWg); $st->execute($paramsSemTurma);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
+            $barTurmaData[$tid]['grupo_entrou'] = (int)$r['n'];
+        }
+    } catch (Throwable $e) {}
 }
 
 // Mapa de label das turmas — chaves: id (int) E codigo (string)
@@ -1227,6 +1245,29 @@ dashTurmaRender();
 <!-- ═══ Comparativo POR TURMA (barras) ═══ -->
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span>Entrada em grupos por turma</span>
+        <span style="font-size:11px;color:var(--muted);font-weight:400">inscritos x alunos que entraram em algum grupo monitorado</span>
+    </div>
+    <details style="margin-bottom:12px">
+        <summary style="cursor:pointer;color:var(--muted);font-size:12px;font-weight:700">Filtrar turmas do grafico</summary>
+        <div style="margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.02)">
+            <input type="text" id="wgTurmaSearch" placeholder="Buscar turma..." oninput="wgRenderControls()"
+                   style="width:100%;box-sizing:border-box;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:7px 10px;font-size:12px;margin-bottom:8px">
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <button type="button" onclick="wgSelectAll(true)" class="btn btn-sm">Mostrar todas</button>
+                <button type="button" onclick="wgSelectAll(false)" class="btn btn-sm">Ocultar todas</button>
+                <button type="button" onclick="wgSelectTop()" class="btn btn-sm">Top 12</button>
+            </div>
+            <div id="wgTurmaControls" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:190px;overflow:auto"></div>
+        </div>
+    </details>
+    <div style="height:420px;min-height:260px">
+        <canvas id="chartWhatsappTurmas"></canvas>
+    </div>
+</div>
+
+<div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span>Comparativo por turma<?= empty($barTurmaData) ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — verifique se há turmas com inscritos no período)</span>' : '' ?></span>
         <span style="font-size:11px;color:var(--muted);font-weight:400">selecione turmas e modo (qtd ou %)</span>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1409,6 +1450,120 @@ dashTurmaRender();
     let btMode = 'qtd';
     let btSelectedTurmas = [];
     let btChart = null;
+    let wgSelectedTurmas = [];
+    let wgChart = null;
+
+    function wgTurmaIds() {
+        return Object.keys(BAR_TURMA_DATA)
+            .filter(tid => (BAR_TURMA_DATA[tid].inscritos || 0) > 0)
+            .sort((a,b) => (BAR_TURMA_DATA[b].inscritos||0) - (BAR_TURMA_DATA[a].inscritos||0));
+    }
+
+    function wgInit() {
+        if (!document.getElementById('chartWhatsappTurmas')) return;
+        const ids = wgTurmaIds();
+        wgSelectedTurmas = ids.slice(0, Math.min(12, ids.length));
+        wgRenderControls();
+        wgRenderChart();
+    }
+
+    function wgRenderControls() {
+        const cont = document.getElementById('wgTurmaControls');
+        if (!cont) return;
+        const q = (document.getElementById('wgTurmaSearch')?.value || '').trim().toLowerCase();
+        const ids = wgTurmaIds().filter(tid => {
+            const label = (TURMAS_LABEL[tid] || tid).toLowerCase();
+            return !q || label.includes(q);
+        });
+        if (!ids.length) {
+            cont.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px">Nenhuma turma encontrada</div>';
+            return;
+        }
+        cont.innerHTML = ids.map(tid => {
+            const d = BAR_TURMA_DATA[tid] || {};
+            const inscritos = d.inscritos || 0;
+            const entrou = d.grupo_entrou || 0;
+            const taxa = inscritos > 0 ? Math.round(entrou / inscritos * 1000) / 10 : 0;
+            const checked = wgSelectedTurmas.includes(tid) ? 'checked' : '';
+            return `<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);padding:5px 6px;border-radius:6px;background:rgba(255,255,255,.025)">
+                <input type="checkbox" ${checked} onchange="wgToggleTurma('${escAttr(tid)}', this.checked)" style="accent-color:var(--primary)">
+                <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(TURMAS_LABEL[tid] || tid)}</span>
+                <span style="margin-left:auto;color:var(--muted);font-size:11px">${taxa}%</span>
+            </label>`;
+        }).join('');
+    }
+
+    function wgToggleTurma(tid, show) {
+        const idx = wgSelectedTurmas.indexOf(tid);
+        if (show && idx < 0) wgSelectedTurmas.push(tid);
+        if (!show && idx >= 0) wgSelectedTurmas.splice(idx, 1);
+        wgRenderChart();
+    }
+
+    function wgSelectAll(show) {
+        wgSelectedTurmas = show ? wgTurmaIds() : [];
+        wgRenderControls();
+        wgRenderChart();
+    }
+
+    function wgSelectTop() {
+        wgSelectedTurmas = wgTurmaIds().slice(0, 12);
+        wgRenderControls();
+        wgRenderChart();
+    }
+
+    function wgRenderChart() {
+        const canvas = document.getElementById('chartWhatsappTurmas');
+        if (!canvas) return;
+        const ids = wgSelectedTurmas.slice().sort((a,b) => {
+            const da = BAR_TURMA_DATA[a] || {}, db = BAR_TURMA_DATA[b] || {};
+            const pa = (da.inscritos || 0) > 0 ? (da.grupo_entrou || 0) / da.inscritos : 0;
+            const pb = (db.inscritos || 0) > 0 ? (db.grupo_entrou || 0) / db.inscritos : 0;
+            return pb - pa;
+        });
+        const wrap = canvas.parentElement;
+        if (wrap) wrap.style.height = Math.max(260, Math.min(900, ids.length * 34 + 80)) + 'px';
+        const labels = ids.map(tid => TURMAS_LABEL[tid] || (tid === '' ? 'Sem turma' : ('Turma ' + tid)));
+        const taxas = ids.map(tid => {
+            const d = BAR_TURMA_DATA[tid] || {};
+            return (d.inscritos || 0) > 0 ? Math.round((d.grupo_entrou || 0) / d.inscritos * 1000) / 10 : 0;
+        });
+        if (wgChart) wgChart.destroy();
+        wgChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Taxa de entrada em grupos',
+                    data: taxas,
+                    backgroundColor: 'rgba(34,197,94,.72)',
+                    borderColor: '#22c55e',
+                    borderWidth: 1.5,
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { beginAtZero:true, max:100, ticks:{ callback:v => v + '%', color:'#94a3b8' }, grid:{ color:'rgba(26,37,64,.4)' } },
+                    y: { ticks:{ color:'#cbd5e1', font:{size:11} }, grid:{ display:false } }
+                },
+                plugins: {
+                    legend: { display:false },
+                    tooltip: {
+                        callbacks: {
+                            label: c => {
+                                const tid = ids[c.dataIndex];
+                                const d = BAR_TURMA_DATA[tid] || {};
+                                return `${d.grupo_entrou || 0} de ${d.inscritos || 0} alunos (${c.parsed.x}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     function btInit() {
         const wrap = document.getElementById('turmasPickerWrap');
@@ -1538,6 +1693,10 @@ dashTurmaRender();
     window.btDropFilter = btDropFilter;
     window.btDropPick = btDropPick;
     window.btDropAll = btDropAll;
+    window.wgRenderControls = wgRenderControls;
+    window.wgToggleTurma = wgToggleTurma;
+    window.wgSelectAll = wgSelectAll;
+    window.wgSelectTop = wgSelectTop;
 
     function btRender() {
         const labels = BAR_STAGES.map(s => s.label);
@@ -1617,6 +1776,7 @@ dashTurmaRender();
         });
     }
 
+    wgInit();
     btInit();
 
 })();
