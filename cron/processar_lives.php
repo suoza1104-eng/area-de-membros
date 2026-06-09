@@ -465,15 +465,6 @@ foreach ($turmas as $turma) {
             } catch (Throwable $e) {}
         }
 
-        // --- SuperFuncionário por turma (config específica da turma) ---
-        if ($sfEnabled) {
-            try {
-                sf_disparar_live_turma($pdo, $turma, $aluno, $extra);
-            } catch (Throwable $e) {
-                // falha de SF não para o loop
-            }
-        }
-
         // --- Regras globais: webhook e SF com evento LIVE_TURMA ---
         $userStd = [
             'id'       => $aluno['id']       ?? null,
