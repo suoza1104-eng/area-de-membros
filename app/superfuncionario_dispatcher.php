@@ -219,13 +219,32 @@ function sf_lookup_turma_live_info(PDO $pdo, string $codigoTurma): array
     }
 }
 
+function sf_format_live_br(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTime($value))->format('d/m/Y H:i');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
+function sf_format_live_iso(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTime($value))->format('Y-m-d H:i:s');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
 function sf_enrich_extra_live(PDO $pdo, array $userRow, array $extra): array
 {
     $codigoTurma = sf_get_turma_codigo_from_context($pdo, $userRow, $extra);
-    if ($codigoTurma === '') return $extra;
-
-    $turma = sf_lookup_turma_live_info($pdo, $codigoTurma);
-    if (!$turma) return $extra;
+    $turma = $codigoTurma !== '' ? sf_lookup_turma_live_info($pdo, $codigoTurma) : [];
 
     $codigoLiveAtual = trim((string)($extra['codigo_live'] ?? ''));
     $codigoLiveTurma = trim((string)($turma['codigo_live'] ?? ''));
@@ -233,8 +252,35 @@ function sf_enrich_extra_live(PDO $pdo, array $userRow, array $extra): array
         $extra['codigo_live'] = $codigoLiveTurma;
     }
 
-    if (empty($extra['data_live']) && !empty($turma['data_live'])) {
-        $extra['data_live'] = (string)$turma['data_live'];
+    $liveAtual = '';
+    foreach (['turma_live_at', 'data_live'] as $col) {
+        if (!empty($userRow[$col])) {
+            $liveAtual = (string)$userRow[$col];
+            break;
+        }
+    }
+    if ($liveAtual === '' && !empty($extra['data_live_iso'])) {
+        $liveAtual = (string)$extra['data_live_iso'];
+    }
+    if ($liveAtual === '' && !empty($extra['data_live'])) {
+        $liveAtual = (string)$extra['data_live'];
+    }
+    if ($liveAtual === '' && !empty($turma['data_live'])) {
+        $liveAtual = (string)$turma['data_live'];
+    }
+
+    if ($liveAtual !== '') {
+        $extra['data_live'] = sf_format_live_br($liveAtual);
+        $extra['data_live_iso'] = sf_format_live_iso($liveAtual);
+        if (!isset($extra['data']) || !is_array($extra['data'])) {
+            $extra['data'] = [];
+        }
+        $extra['data']['live'] = $extra['data_live'];
+        $extra['data']['live_iso'] = $extra['data_live_iso'];
+        if (isset($extra['reagendamento']) && is_array($extra['reagendamento'])) {
+            $extra['reagendamento']['live_nova'] = $extra['reagendamento']['live_nova'] ?? $extra['data_live'];
+            $extra['reagendamento']['live_nova_iso'] = $extra['reagendamento']['live_nova_iso'] ?? $extra['data_live_iso'];
+        }
     }
 
     return $extra;

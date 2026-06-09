@@ -149,6 +149,52 @@ function wh_get_data_live(PDO $pdo, ?string $turmaCodigo): ?string
     }
 }
 
+function wh_format_live_br(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTimeImmutable($value))->format('d/m/Y H:i');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
+function wh_format_live_iso(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTimeImmutable($value))->format('Y-m-d H:i:s');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
+function wh_get_user_live_at(PDO $pdo, array $user): ?string
+{
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId <= 0) return null;
+
+    $cols = [];
+    if (wh_col_exists($pdo, 'users', 'turma_live_at')) $cols[] = 'turma_live_at';
+    if (wh_col_exists($pdo, 'users', 'data_live')) $cols[] = 'data_live';
+    if (!$cols) return null;
+
+    try {
+        $st = $pdo->prepare("SELECT " . implode(',', $cols) . " FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        foreach (['turma_live_at', 'data_live'] as $col) {
+            if (!empty($row[$col])) return (string)$row[$col];
+        }
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    return null;
+}
+
 
 function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): array
 {
@@ -161,11 +207,24 @@ function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): 
         }
     }
 
-    if (empty($extra['data_live'])) {
-        $dataLive = wh_get_data_live($pdo, $turmaCodigo);
-        if ($dataLive !== null) {
-            $extra['data_live'] = $dataLive;
+    $liveAtual = wh_get_user_live_at($pdo, $user);
+    if ($liveAtual === null && !empty($extra['data_live_iso'])) {
+        $liveAtual = (string)$extra['data_live_iso'];
+    }
+    if ($liveAtual === null && !empty($extra['data_live'])) {
+        $liveAtual = (string)$extra['data_live'];
+    }
+    if ($liveAtual === null) {
+        $liveAtual = wh_get_data_live($pdo, $turmaCodigo);
+    }
+    if ($liveAtual !== null && trim((string)$liveAtual) !== '') {
+        $extra['data_live'] = wh_format_live_br($liveAtual);
+        $extra['data_live_iso'] = wh_format_live_iso($liveAtual);
+        if (!isset($extra['data']) || !is_array($extra['data'])) {
+            $extra['data'] = [];
         }
+        $extra['data']['live'] = $extra['data_live'];
+        $extra['data']['live_iso'] = $extra['data_live_iso'];
     }
 
     // Se existir um bloco de turma no extra, espelha os valores (sem sobrescrever)

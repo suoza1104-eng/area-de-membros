@@ -248,8 +248,8 @@ if ($acao !== '') {
         $map = [
             'turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
             'codigo_turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
-            'data_live' => $usuario['data_live'] ?? ($usuario['turma_live_at'] ?? ''),
-            'live' => $usuario['data_live'] ?? ($usuario['turma_live_at'] ?? ''),
+            'data_live' => $usuario['turma_live_at'] ?? ($usuario['user_data_live'] ?? ($usuario['data_live'] ?? '')),
+            'live' => $usuario['turma_live_at'] ?? ($usuario['user_data_live'] ?? ($usuario['data_live'] ?? '')),
         ];
         $valor = array_key_exists($chave, $map) ? $map[$chave] : ($usuario[$chave] ?? '');
         if (is_array($valor) || is_object($valor)) return json_encode($valor, JSON_UNESCAPED_UNICODE);
@@ -279,7 +279,9 @@ if ($acao !== '') {
         foreach ($acoes as $a) {
             if ($a['tipo'] === 'flow' && !empty($a['valor'])) {
                 foreach (array_filter(array_map('trim', explode(',', (string)$a['valor']))) as $fid) {
-                    $sfAcoes[] = ['action' => 'send_flow', 'flow_id' => (int)$fid];
+                    if (ctype_digit($fid)) {
+                        $sfAcoes[] = ['action' => 'send_flow', 'flow_id' => (int)$fid];
+                    }
                 }
             } elseif ($a['tipo'] === 'tag_sf' && !empty($a['valor'])) {
                 $sfAcoes[] = ['action' => 'add_tag', 'tag_name' => $a['valor']];
@@ -291,16 +293,19 @@ if ($acao !== '') {
                 ];
             }
         }
-        if (empty($sfAcoes)) return ['ok' => true, 'msg' => 'sem_acao_sf'];
+        if (empty($sfAcoes)) return ['ok' => false, 'msg' => 'Nenhuma acao SF valida foi montada'];
 
-        $payload = json_encode([
+        $payloadArr = [
             'email'      => $usuario['email'] ?? '',
             'phone'      => $usuario['telefone'] ?? '',
             'first_name' => $usuario['nome'] ?? '',
             'actions'    => $sfAcoes,
-        ]);
+        ];
+        $payload = json_encode($payloadArr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        $url = rtrim($cfg['base_url'], '/') . '/' . ltrim($cfg['default_endpoint'] ?? '', '/');
+        $endpoint = trim((string)($cfg['default_endpoint'] ?? ''));
+        if ($endpoint === '') $endpoint = '/api/contacts';
+        $url = rtrim($cfg['base_url'], '/') . '/' . ltrim($endpoint, '/');
         $headerMode = strtolower((string)($cfg['header_mode'] ?? 'x-access-token'));
         $authHeader = ($headerMode === 'bearer')
             ? 'Authorization: Bearer ' . $cfg['token']
@@ -322,9 +327,18 @@ if ($acao !== '') {
         $curlErr = curl_error($ch);
         curl_close($ch);
 
-        $ok = $code >= 200 && $code < 300;
-        $msg = $resp === false ? ('Erro cURL: ' . ($curlErr ?: 'falha desconhecida')) : (string)$resp;
-        if (!$ok && trim($msg) === '') $msg = 'HTTP ' . (int)$code . ' sem resposta';
+        $respText = $resp === false ? '' : (string)$resp;
+        $respJson = json_decode(trim($respText), true);
+        $apiSuccess = is_array($respJson) && array_key_exists('success', $respJson) ? (bool)$respJson['success'] : null;
+        $ok = $code >= 200 && $code < 300 && $apiSuccess !== false;
+        $msg = json_encode([
+            'http_status' => (int)$code,
+            'api_success' => $apiSuccess,
+            'request' => $payloadArr,
+            'response' => is_array($respJson) ? $respJson : $respText,
+            'curl_error' => $curlErr ?: null,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!$ok && trim((string)$msg) === '') $msg = 'HTTP ' . (int)$code . ' sem resposta';
         return ['ok' => $ok, 'msg' => $msg];
     }
 
@@ -540,6 +554,7 @@ if ($acao !== '') {
                 $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
 
                 if ($offset === 0) {
+                    $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
                     $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
                 } else {
                     $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
@@ -555,14 +570,28 @@ if ($acao !== '') {
 
                 $stUsers = $pdo->prepare(
                     "SELECT u.id, u.nome, u.email, u.telefone,
+                            u.codigo_turma,
+                            u.data_live AS user_data_live,
+                            u.turma_live_at,
                             (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
                             (SELECT t.data_live
                                FROM turmas t
                               WHERE t.codigo = (SELECT il3.codigo_turma FROM inscricao_logs il3 WHERE il3.user_id = u.id ORDER BY il3.created_at DESC LIMIT 1)
                               LIMIT 1) AS data_live
-                     FROM users u WHERE {$aw['where']} LIMIT $limit OFFSET $offset"
+                     FROM users u
+                     WHERE {$aw['where']}
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM disparo_execucoes de_done
+                            WHERE de_done.disparo_id = :dp_disparo_id
+                              AND de_done.user_id = u.id
+                       )
+                     ORDER BY u.id ASC
+                     LIMIT $limit"
                 );
-                $stUsers->execute($aw['params']);
+                $stUserParams = $aw['params'];
+                $stUserParams[':dp_disparo_id'] = $id;
+                $stUsers->execute($stUserParams);
                 $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
 
                 $enviados = 0;
@@ -572,7 +601,7 @@ if ($acao !== '') {
                     aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
                     $status = $r['ok'] ? 'ok' : 'erro';
                     $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
-                        ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,1000)]);
+                        ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,5000)]);
                     if ($r['ok']) $enviados++; else $erros++;
                 }
 
@@ -590,7 +619,7 @@ if ($acao !== '') {
                     'enviados'    => $enviados,
                     'erros'       => $erros,
                     'done'        => $done,
-                    'next_offset' => $offset + $limit,
+                    'next_offset' => $offset + count($userList),
                     'total'       => $totalGeral,
                 ]);
             } catch (Throwable $e) {

@@ -538,6 +538,25 @@ $selUtm     = $hasUtm
     ? "u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content,"
     : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
 
+$userVarColumns = [
+    'data_live' => 'data_live',
+    'turma_live_at' => 'turma_live_at',
+    'turma_codigo' => 'user_turma_codigo_raw',
+    'codigo_live' => 'codigo_live',
+    'created_at' => 'created_at',
+    'criado_em' => 'criado_em',
+    'updated_at' => 'updated_at',
+    'utm_term' => 'utm_term',
+];
+$selUserVars = '';
+foreach ($userVarColumns as $uvCol => $uvAlias) {
+    if (col_ok($pdo, 'users', $uvCol)) {
+        $selUserVars .= "u.`$uvCol` AS `$uvAlias`,";
+    } else {
+        $selUserVars .= "NULL AS `$uvAlias`,";
+    }
+}
+
 if ($hasIL) {
     $selWhl = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) AS qtd_cadastros,
                (SELECT MAX(il2.created_at) FROM inscricao_logs il2 WHERE il2.user_id = u.id) AS ultimo_cadastro,";
@@ -564,7 +583,7 @@ $totalGeral = (int)$stCount->fetchColumn();
 $sql = "
 SELECT
   u.id, u.nome, u.email, u.telefone,
-  $selTurma $selCreated $selUtm $selWhl $selCert
+  $selTurma $selCreated $selUtm $selUserVars $selWhl $selCert
   (SELECT GROUP_CONCAT(t.nome ORDER BY t.nome SEPARATOR '|')
    FROM user_tags ut JOIN tags t ON t.id = ut.tag_id
    WHERE ut.user_id = u.id) AS tags_lista
@@ -721,6 +740,17 @@ require __DIR__ . '/_header.php';
 .retorno-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; color:var(--muted); margin-bottom:5px; }
 .retorno-msg { font-size:12px; color:var(--text); white-space:pre-wrap; max-height:48px; overflow:hidden; }
 .retorno-empty { font-size:12px; color:var(--dim); }
+.vars-block { grid-column:1/-1; border-top:1px solid var(--border); padding-top:14px; }
+.vars-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:6px 10px; }
+.var-row {
+    display:grid; grid-template-columns:minmax(170px,.9fr) minmax(0,1.1fr); gap:10px;
+    align-items:start; border:1px solid var(--border); border-radius:var(--r);
+    padding:7px 9px; background:rgba(2,6,23,.28); min-width:0;
+}
+.var-meta { min-width:0; }
+.var-meta code { display:block; color:#bfdbfe; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.var-desc { margin-top:2px; color:var(--muted); font-size:10px; line-height:1.35; }
+.var-row > span { color:var(--text); font-size:11px; text-align:right; word-break:break-word; min-width:0; }
 .modal-box.modal-wide { max-width:620px; }
 
 /* ── KPI bar ──────────────────────────────────────────────── */
@@ -916,6 +946,44 @@ require __DIR__ . '/_header.php';
                 $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
                 $retornosAluno = $retornosPorUser[(int)$a['id']] ?? [];
+                $liveAtual = trim((string)($a['turma_live_at'] ?? ''));
+                if ($liveAtual === '') $liveAtual = trim((string)($a['data_live'] ?? ''));
+                $liveAtualBr = fmtDtHora($liveAtual);
+                $codigoLiveAtual = trim((string)($a['codigo_live'] ?? ''));
+                if ($codigoLiveAtual === '') $codigoLiveAtual = $turma;
+                $systemVars = [
+                    'user.id' => ['value' => (string)($a['id'] ?? ''), 'desc' => 'ID interno do aluno. Formato: numero.'],
+                    'user.nome' => ['value' => (string)($a['nome'] ?? ''), 'desc' => 'Nome cadastrado do aluno. Formato: texto.'],
+                    'user.email' => ['value' => (string)($a['email'] ?? ''), 'desc' => 'Email/login atual. Formato: email.'],
+                    'user.telefone' => ['value' => (string)($a['telefone'] ?? ''), 'desc' => 'Telefone atual do cadastro. Formato: texto.'],
+                    'user.codigo_turma' => ['value' => $turma, 'desc' => 'Codigo da turma atual. Formato: texto/numero.'],
+                    'user.turma_codigo' => ['value' => (string)($a['user_turma_codigo_raw'] ?? ''), 'desc' => 'Codigo alternativo da turma, se existir. Formato: texto/numero.'],
+                    'user.data_live' => ['value' => (string)($a['data_live'] ?? ''), 'desc' => 'Live atual gravada no aluno. Formato banco: Y-m-d H:i:s.'],
+                    'user.turma_live_at' => ['value' => (string)($a['turma_live_at'] ?? ''), 'desc' => 'Live atual gravada no aluno. Formato banco: Y-m-d H:i:s.'],
+                    'user.codigo_live' => ['value' => (string)($a['codigo_live'] ?? ''), 'desc' => 'Codigo/slug da live, se salvo no aluno. Formato: texto.'],
+                    'user.created_at' => ['value' => (string)($a['created_at'] ?? ($a['primeiro_cadastro'] ?? '')), 'desc' => 'Data de cadastro. Formato banco: Y-m-d H:i:s.'],
+                    'user.criado_em' => ['value' => (string)($a['criado_em'] ?? ''), 'desc' => 'Data de cadastro alternativa. Formato banco.'],
+                    'user.updated_at' => ['value' => (string)($a['updated_at'] ?? ''), 'desc' => 'Ultima atualizacao do cadastro. Formato banco.'],
+                    'user.utm_source' => ['value' => (string)($a['utm_source'] ?? ''), 'desc' => 'Origem UTM. Formato: texto.'],
+                    'user.utm_medium' => ['value' => (string)($a['utm_medium'] ?? ''), 'desc' => 'Midia UTM. Formato: texto.'],
+                    'user.utm_campaign' => ['value' => (string)($a['utm_campaign'] ?? ''), 'desc' => 'Campanha UTM. Formato: texto.'],
+                    'user.utm_content' => ['value' => (string)($a['utm_content'] ?? ''), 'desc' => 'Conteudo UTM. Formato: texto.'],
+                    'user.utm_term' => ['value' => (string)($a['utm_term'] ?? ''), 'desc' => 'Termo UTM. Formato: texto.'],
+                    'extra.codigo_turma' => ['value' => $turma, 'desc' => 'Codigo da turma enviado no evento. Formato: texto/numero.'],
+                    'extra.codigo_live' => ['value' => $codigoLiveAtual, 'desc' => 'Codigo/slug da live enviado no evento. Formato: texto.'],
+                    'extra.data_live' => ['value' => $liveAtualBr, 'desc' => 'Data atual da live enviada em eventos. Formato BR: dd/mm/aaaa hh:mm.'],
+                    'extra.data.live' => ['value' => $liveAtualBr, 'desc' => 'Alias de extra.data_live. Formato BR: dd/mm/aaaa hh:mm.'],
+                    'extra.data_live_iso' => ['value' => $liveAtual, 'desc' => 'Data atual da live enviada em eventos. Formato banco: Y-m-d H:i:s.'],
+                    'extra.data.live_iso' => ['value' => $liveAtual, 'desc' => 'Alias de extra.data_live_iso. Formato banco: Y-m-d H:i:s.'],
+                    'extra.reagendamento.data_live' => ['value' => $liveAtualBr, 'desc' => 'Live nova dentro do bloco de reagendamento. Formato BR.'],
+                    'extra.tags' => ['value' => implode(', ', $tags), 'desc' => 'Tags atuais do aluno. Formato: lista separada por virgula.'],
+                    'extra.qtd_inscricoes' => ['value' => (string)$qtd, 'desc' => 'Quantidade de inscricoes detectadas. Formato: numero.'],
+                    'extra.primeira_inscricao' => ['value' => $primCad, 'desc' => 'Primeira inscricao. Formato banco/data.'],
+                    'extra.ultima_inscricao' => ['value' => $ultCad, 'desc' => 'Ultima inscricao. Formato banco/data.'],
+                    'extra.certificado.codigo' => ['value' => $certCod, 'desc' => 'Codigo publico do certificado. Formato: texto.'],
+                    'extra.certificado.pdf_url' => ['value' => $certPdf, 'desc' => 'URL do PDF do certificado. Formato: URL.'],
+                    'extra.certificado.emitido_em' => ['value' => $certEmitido, 'desc' => 'Data de emissao do certificado. Formato banco.'],
+                ];
             ?>
             <tr class="main-row" id="row-<?= $i ?>" onclick="toggleExpand(<?= $i ?>)">
                 <td><span class="expand-icon">▶</span></td>
@@ -1052,6 +1120,24 @@ require __DIR__ . '/_header.php';
                             <?php else: ?>
                             <div class="retorno-empty">Nenhum retorno agendado para este aluno.</div>
                             <?php endif; ?>
+                        </div>
+                        <div class="vars-block">
+                            <div class="det-title">Variaveis do sistema</div>
+                            <div class="text-xs text-muted" style="margin-bottom:8px">Valores atuais disponiveis para consulta. A live atual do aluno fica em <code>user.turma_live_at</code> e <code>user.data_live</code>; em eventos, tambem aparece como <code>extra.data_live</code>.</div>
+                            <div class="vars-grid">
+                                <?php foreach ($systemVars as $varKey => $varInfo):
+                                    $varVal = (string)($varInfo['value'] ?? '');
+                                    $varDesc = (string)($varInfo['desc'] ?? '');
+                                ?>
+                                <div class="var-row">
+                                    <div class="var-meta">
+                                        <code><?= h($varKey) ?></code>
+                                        <div class="var-desc"><?= h($varDesc) ?></div>
+                                    </div>
+                                    <span><?= h(trim((string)$varVal) !== '' ? (string)$varVal : '-') ?></span>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
                         </div>
                     </div>
                 </td>
