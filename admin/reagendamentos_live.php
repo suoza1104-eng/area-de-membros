@@ -408,6 +408,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = $immediateSent
                 ? 'Reagendamento atualizado, gatilho LIVE_REAGENDADA disparado e lembrete enviado imediatamente.'
                 : 'Reagendamento atualizado e gatilho LIVE_REAGENDADA disparado.';
+        } elseif ($acao === 'excluir_reagendamento') {
+            $reagId = (int)($_POST['reagendamento_id'] ?? 0);
+            if ($reagId <= 0) throw new RuntimeException('Reagendamento invalido.');
+
+            $st = $pdo->prepare("SELECT id FROM reagendamentos_live WHERE id = :id LIMIT 1");
+            $st->execute([':id' => $reagId]);
+            if (!$st->fetchColumn()) throw new RuntimeException('Reagendamento nao encontrado.');
+
+            $pdo->beginTransaction();
+            if (rl_table_exists($pdo, 'reagendamentos_live_process_logs')) {
+                $pdo->prepare("DELETE FROM reagendamentos_live_process_logs WHERE reagendamento_id = :id")
+                    ->execute([':id' => $reagId]);
+            }
+            $pdo->prepare("DELETE FROM reagendamentos_live WHERE id = :id LIMIT 1")
+                ->execute([':id' => $reagId]);
+            $pdo->commit();
+            $msg = 'Reagendamento excluido e indicadores atualizados.';
         } elseif ($acao === 'gerar_link') {
             $userId = (int)($_POST['user_id'] ?? 0);
             if ($userId <= 0) throw new RuntimeException('Informe o ID do aluno.');
@@ -438,6 +455,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Link revogado.';
         }
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $msg = 'Erro: ' . $e->getMessage();
         $msgTipo = 'erro';
     }
@@ -1001,6 +1021,11 @@ require __DIR__ . '/_header.php';
                                         data-live="<?= h($r['new_turma_live_at'] ? date('Y-m-d\TH:i', strtotime((string)$r['new_turma_live_at'])) : '') ?>">
                                         Editar
                                     </button>
+                                    <form method="post" onsubmit="return confirm('Excluir este reagendamento e seus logs de processamento? Esta acao nao pode ser desfeita.');">
+                                        <input type="hidden" name="acao" value="excluir_reagendamento">
+                                        <input type="hidden" name="reagendamento_id" value="<?= (int)$r['id'] ?>">
+                                        <button class="btn btn-danger btn-xs">Excluir</button>
+                                    </form>
                                 </div>
                             </td>
                         </tr>
