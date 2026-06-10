@@ -134,6 +134,21 @@ function rl_cron_extra_admin(array $r): array {
         ],
     ];
 }
+function rl_available_reagendar_slots_admin(int $windowDays, int $qty, string $liveTime, array $blackoutDates, int $intervalDays): array {
+    $now = new DateTimeImmutable('now');
+    $blackouts = array_flip(array_filter(array_map('trim', $blackoutDates)));
+    $slots = [];
+    for ($i = 0; $i <= $windowDays && count($slots) < $qty; $i++) {
+        $day = $now->modify('+' . $i . ' days');
+        $key = $day->format('Y-m-d');
+        if (isset($blackouts[$key])) continue;
+        if ($i < 1 || (($i - 1) % $intervalDays) !== 0) continue;
+        $slot = new DateTimeImmutable($key . ' ' . $liveTime . ':00');
+        if ($slot <= $now) continue;
+        $slots[$slot->format('Y-m-d H:i:s')] = $slot;
+    }
+    return $slots;
+}
 function rl_disparar_lembrete_imediato(PDO $pdo, int $reagId): bool {
     $st = $pdo->prepare("SELECT * FROM reagendamentos_live WHERE id = :id AND sf_sent_at IS NULL LIMIT 1");
     $st->execute([':id' => $reagId]);
@@ -231,6 +246,10 @@ $ttlHours = (int)get_setting('reagendar_token_ttl_hours', '72');
 if ($ttlHours < 1) $ttlHours = 72;
 $windowDays = (int)get_setting('reagendar_window_days', '15');
 if ($windowDays < 1) $windowDays = 15;
+if ($windowDays > 365) $windowDays = 365;
+$intervalDays = (int)get_setting('reagendar_availability_interval_days', '1');
+if ($intervalDays < 1) $intervalDays = 1;
+if ($intervalDays > 365) $intervalDays = 365;
 $liveUrl = (string)get_setting('reagendar_live_url', '');
 $liveTime = (string)get_setting('reagendar_live_time', '19:30');
 if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
@@ -260,6 +279,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($windowDays < 1) $windowDays = 1;
             if ($windowDays > 365) $windowDays = 365;
 
+            $intervalDays = (int)($_POST['reagendar_availability_interval_days'] ?? $intervalDays);
+            if ($intervalDays < 1) $intervalDays = 1;
+            if ($intervalDays > 365) $intervalDays = 365;
+
             $liveUrl = trim((string)($_POST['reagendar_live_url'] ?? ''));
             $liveTime = trim((string)($_POST['reagendar_live_time'] ?? '19:30'));
             if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
@@ -278,6 +301,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             set_setting('reagendar_next_lives_count', (string)$opcoesN);
             set_setting('reagendar_token_ttl_hours', (string)$ttlHours);
             set_setting('reagendar_window_days', (string)$windowDays);
+            set_setting('reagendar_availability_interval_days', (string)$intervalDays);
             set_setting('reagendar_live_url', $liveUrl);
             set_setting('reagendar_live_time', $liveTime);
             set_setting('reagendar_blackout_dates', implode(',', $blackoutDates));
@@ -299,6 +323,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oldCodigo = (string)($u['codigo_turma'] ?? ($u['turma_codigo'] ?? ''));
             $oldLive = (string)($u['turma_live_at'] ?? ($u['data_live'] ?? ''));
             $newLive = $dLive->format('Y-m-d H:i:s');
+            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays);
+            if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $sets = [];
             $params = [':id'=>$userId];
             if (rl_col_exists($pdo, 'users', 'turma_live_at')) { $sets[] = 'turma_live_at=:tl'; $params[':tl'] = $newLive; }
@@ -341,6 +367,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dLive = new DateTimeImmutable(str_replace('T', ' ', $manualDt));
             if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
             $newLive = $dLive->format('Y-m-d H:i:s');
+            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays);
+            if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
 
             $st = $pdo->prepare("SELECT r.*, u.codigo_turma, u.turma_codigo, u.turma_live_at, u.data_live
@@ -672,24 +700,15 @@ try {
     $tokens = [];
 }
 
-try {
-    $alunosLiveWhere = [];
-    if (rl_col_exists($pdo, 'users', 'codigo_turma')) $alunosLiveWhere[] = 'u.codigo_turma = turmas.codigo';
-    if (rl_col_exists($pdo, 'users', 'turma_codigo')) $alunosLiveWhere[] = 'u.turma_codigo = turmas.codigo';
-    $alunosSub = $alunosLiveWhere
-        ? '(SELECT COUNT(*) FROM users u WHERE ' . implode(' OR ', $alunosLiveWhere) . ')'
-        : '0';
-    $st = $pdo->prepare("SELECT id, codigo, data_live,
-        $alunosSub AS alunos
-        FROM turmas
-        WHERE data_live >= :now AND data_live <= :end
-        ORDER BY data_live ASC, id ASC
-        LIMIT 50");
-    $st->execute([':now' => $nowSql, ':end' => $endSql]);
-    $lives = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {
-    $lives = [];
+$lives = [];
+foreach (rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays) as $slot) {
+    $lives[] = [
+        'codigo' => 'Repescagem',
+        'data_live' => $slot->format('Y-m-d H:i:s'),
+        'alunos' => null,
+    ];
 }
+$kpiLivesDisponiveis = count($lives);
 
 $logAluno = trim((string)($_GET['log_aluno'] ?? ''));
 $logTurma = trim((string)($_GET['log_turma'] ?? ''));
@@ -901,6 +920,18 @@ require __DIR__ . '/_header.php';
                         <input type="time" name="reagendar_live_time" value="<?= h($liveTime) ?>">
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Intervalo de disponibilidade (dias)</label>
+                        <input type="number" min="1" max="365" name="reagendar_availability_interval_days" value="<?= (int)$intervalDays ?>" oninput="updateDispatchPreview()">
+                        <div class="text-xs text-muted mt-2">Use 1 para todo dia a partir de amanha, 2 para dia sim/dia nao.</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prazo para considerar expirado (min)</label>
+                        <input type="number" min="0" max="1440" name="reagendar_expire_grace_min" value="<?= (int)$expireGraceMin ?>">
+                        <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 10: so aparece expirado se chegar 19:40 sem envio confirmado.</div>
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
                         <label class="form-label">Deslocamento do disparo</label>
                         <input type="text" id="dispatchOffset" name="reagendar_dispatch_offset" value="<?= h($dispatchOffsetText) ?>" placeholder="ex: -2:30" oninput="updateDispatchPreview()">
                         <div class="text-xs text-muted mt-2">Use <code>-2:30</code> para disparar 2h30 antes, <code>0:00</code> no horario da live ou <code>1:15</code> depois.</div>
@@ -908,13 +939,6 @@ require __DIR__ . '/_header.php';
                     <div class="form-group">
                         <label class="form-label">Delay entre disparos (ms)</label>
                         <input type="number" min="0" max="30000" name="reagendar_dispatch_delay_ms" value="<?= (int)$dispatchDelayMs ?>">
-                    </div>
-                </div>
-                <div class="grid-3">
-                    <div class="form-group">
-                        <label class="form-label">Prazo para considerar expirado (min)</label>
-                        <input type="number" min="0" max="1440" name="reagendar_expire_grace_min" value="<?= (int)$expireGraceMin ?>">
-                        <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 10: so aparece expirado se chegar 19:40 sem envio confirmado.</div>
                     </div>
                 </div>
                 <div class="form-group">
@@ -1129,7 +1153,7 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Lives disponiveis para reagendar</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Turma</th><th>Data live</th><th>Alunos</th></tr></thead>
+                    <thead><tr><th>Tipo</th><th>Data live</th><th>Intervalo</th></tr></thead>
                     <tbody>
                     <?php if (!$lives): ?>
                         <tr><td colspan="3" class="text-muted" style="text-align:center;padding:24px">Nenhuma live futura dentro da janela configurada.</td></tr>
@@ -1138,7 +1162,7 @@ require __DIR__ . '/_header.php';
                         <tr>
                             <td class="fw-700"><?= h($l['codigo'] ?? '') ?></td>
                             <td><?= h(rl_admin_dt($l['data_live'] ?? null)) ?></td>
-                            <td><?= number_format((int)($l['alunos'] ?? 0), 0, ',', '.') ?></td>
+                            <td><?= (int)$intervalDays ?> dia(s)</td>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -1285,6 +1309,7 @@ require __DIR__ . '/_header.php';
 const BLACKOUT_INIT = <?= json_encode($blackoutDates, JSON_UNESCAPED_UNICODE) ?>;
 const LIVE_TIME = <?= json_encode($liveTime) ?>;
 const WINDOW_DAYS = <?= (int)$windowDays ?>;
+const INTERVAL_DAYS_INIT = <?= (int)$intervalDays ?>;
 const REAG_CHART_LABELS = <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_DATA = <?= json_encode($chartReagData, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_VENDAS = <?= json_encode($chartVendaData, JSON_UNESCAPED_UNICODE) ?>;
@@ -1393,9 +1418,13 @@ function updateDispatchPreview() {
     var blackouts = blackoutSelected;
     var now = new Date();
     var live = null;
-    for (var i = 0; i < WINDOW_DAYS; i++) {
+    var intervalInput = document.querySelector('[name="reagendar_availability_interval_days"]');
+    var intervalDays = parseInt(intervalInput?.value || INTERVAL_DAYS_INIT || '1', 10);
+    if (!Number.isFinite(intervalDays) || intervalDays < 1) intervalDays = 1;
+    for (var i = 1; i < WINDOW_DAYS; i++) {
+        if (((i - 1) % intervalDays) !== 0) continue;
         var d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
-        var key = d.toISOString().slice(0, 10);
+        var key = isoLocalDate(d);
         if (blackouts.has(key)) continue;
         var parts = String(document.querySelector('[name="reagendar_live_time"]')?.value || LIVE_TIME || '19:30').split(':');
         d.setHours(parseInt(parts[0] || '19', 10), parseInt(parts[1] || '30', 10), 0, 0);
@@ -1466,6 +1495,8 @@ document.addEventListener('DOMContentLoaded', function() {
     updateDispatchPreview();
     var time = document.querySelector('[name="reagendar_live_time"]');
     if (time) time.addEventListener('input', updateDispatchPreview);
+    var interval = document.querySelector('[name="reagendar_availability_interval_days"]');
+    if (interval) interval.addEventListener('input', updateDispatchPreview);
 });
 function copyText(id) {
     var el = document.getElementById(id);

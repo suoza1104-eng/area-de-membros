@@ -139,6 +139,10 @@ function al_available_reagendar_slots(PDO $pdo): array {
     if ($days < 1) $days = 1;
     if ($days > 365) $days = 365;
 
+    $interval = (int)al_get_setting('reagendar_availability_interval_days', '1');
+    if ($interval < 1) $interval = 1;
+    if ($interval > 365) $interval = 365;
+
     $time = trim(al_get_setting('reagendar_live_time', '19:30'));
     if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
 
@@ -148,6 +152,7 @@ function al_available_reagendar_slots(PDO $pdo): array {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
+        if ($i < 1 || (($i - 1) % $interval) !== 0) continue;
 
         $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
         if ($slot <= $now) continue;

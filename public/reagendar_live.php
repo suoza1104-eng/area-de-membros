@@ -110,9 +110,11 @@ if ($opcoesN > 30) $opcoesN = 30;
 $janelaDias = (int)rl_get_setting_db($pdo, 'reagendar_window_days', '30');
 if ($janelaDias < 1) $janelaDias = 1;
 if ($janelaDias > 365) $janelaDias = 365;
+$intervaloDias = (int)rl_get_setting_db($pdo, 'reagendar_availability_interval_days', '1');
+if ($intervaloDias < 1) $intervaloDias = 1;
+if ($intervaloDias > 365) $intervaloDias = 365;
 $liveTime = trim((string)rl_get_setting_db($pdo, 'reagendar_live_time', '19:30'));
 if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
-$liveUrl = trim((string)rl_get_setting_db($pdo, 'reagendar_live_url', ''));
 $blackouts = array_flip(array_filter(array_map('trim', explode(',', (string)rl_get_setting_db($pdo, 'reagendar_blackout_dates', '')))));
 
 $now = new DateTimeImmutable('now');
@@ -122,15 +124,15 @@ for ($i = 0; $i < $janelaDias; $i++) {
     $day = $now->modify('+' . $i . ' days');
     $key = $day->format('Y-m-d');
     $blocked = isset($blackouts[$key]);
+    $matchesInterval = $i >= 1 && (($i - 1) % $intervaloDias) === 0;
     $slot = new DateTimeImmutable($key . ' ' . $liveTime . ':00');
-    $available = !$blocked && $slot > $now && $slotsCount < $opcoesN;
+    $available = !$blocked && $matchesInterval && $slot > $now && $slotsCount < $opcoesN;
     if ($available) {
         $slotsCount++;
         $map[$key][] = [
             'data_live' => $slot->format('Y-m-d H:i:s'),
             'data_br' => $slot->format('d/m/Y'),
             'hora' => $slot->format('H:i'),
-            'live_url' => $liveUrl,
         ];
     }
 }
@@ -139,7 +141,10 @@ $days = [];
 for ($i = 0; $i < $janelaDias; $i++) {
     $d = $now->modify('+' . $i . ' days');
     $k = $d->format('Y-m-d');
-    $days[] = ['key'=>$k, 'd'=>$d, 'blocked'=>isset($blackouts[$k]), 'has'=>!empty($map[$k]), 'items'=>$map[$k] ?? []];
+    $blocked = isset($blackouts[$k]);
+    $matchesInterval = $i >= 1 && (($i - 1) % $intervaloDias) === 0;
+    $status = !empty($map[$k]) ? 'disponivel' : ($i === 0 ? 'esgotado' : (($blocked || !$matchesInterval) ? 'indisponivel' : 'esgotado'));
+    $days[] = ['key'=>$k, 'd'=>$d, 'blocked'=>$blocked || ($i > 0 && !$matchesInterval), 'has'=>!empty($map[$k]), 'items'=>$map[$k] ?? [], 'status'=>$status];
 }
 
 $primary = (string)($appCfg['primary_color'] ?? '#facc15');
@@ -169,8 +174,7 @@ $alunoNome = (string)($user['nome'] ?? 'Aluno');
   </div>
   <div class="card">
     <h1>Escolha uma nova data para sua live</h1>
-    <p>As opcoes abaixo sao do webinario diario de repescagem. Dias indisponiveis aparecem bloqueados no calendario.</p>
-    <?php if ($liveUrl !== ''): ?><p style="margin-top:6px">Link da live: <strong><?= rl_h($liveUrl) ?></strong></p><?php endif; ?>
+    <p>As opcoes abaixo sao do webinario de repescagem. Dias indisponiveis aparecem bloqueados no calendario.</p>
     <div class="grid">
       <?php foreach (['Dom','Seg','Ter','Qua','Qui','Sex','Sab'] as $dow): ?><div class="dow"><?= rl_h($dow) ?></div><?php endforeach; ?>
       <?php $dayIndex = 0; ?>
@@ -178,7 +182,7 @@ $alunoNome = (string)($user['nome'] ?? 'Aluno');
       <div class="<?= rl_h($cls) ?>"<?= $style ?> data-items="<?= $day['has'] ? rl_h(json_encode($items, JSON_UNESCAPED_UNICODE)) : '' ?>">
         <div class="n"><?= rl_h($d->format('d/m/y')) ?></div>
         <?php if ($day['has']): ?><div class="pill ok">Liberada</div><div class="muted"><?= rl_h($liveTime) ?></div>
-        <?php elseif ($day['blocked']): ?><div class="pill no">Indisponivel</div><div class="muted">Indisponivel</div>
+        <?php elseif ($day['status'] === 'indisponivel'): ?><div class="pill no">Indisponivel</div><div class="muted">Indisponivel</div>
         <?php else: ?><div class="pill no">Esgotado</div><div class="muted">Sem opcao</div><?php endif; ?>
       </div>
       <?php endforeach; ?>
@@ -206,7 +210,7 @@ const modalBack=document.getElementById('modalBack'),times=document.getElementBy
 let selected=null,modalItems=[];
 function openModal(items){selected=null;modalItems=Array.isArray(items)?items:[];times.innerHTML='';btnConfirm.disabled=modalItems.length===0;modalHint.textContent='';modalTitle.textContent='Confirmar reagendamento';modalText.textContent=modalItems.length===1?'Confirme o horario disponivel:':'Selecione um horario:';modalActions.style.display='flex';successActions.style.display='none';times.style.display='flex';modalItems.forEach(it=>{const b=document.createElement('button');b.type='button';b.className='time-btn';b.textContent=(it.data_br||'')+' '+(it.hora||'');b.onclick=()=>{selected=it;btnConfirm.disabled=false;modalHint.textContent='Voce escolheu: '+b.textContent};times.appendChild(b)});modalBack.style.display='flex'}
 btnCancel.onclick=()=>modalBack.style.display='none';modalBack.onclick=e=>{if(e.target===modalBack)modalBack.style.display='none'};
-btnConfirm.onclick=async()=>{if(!selected&&modalItems.length===1)selected=modalItems[0];if(!selected){modalHint.textContent='Selecione um horario para continuar.';return}btnConfirm.disabled=true;btnConfirm.classList.add('loading');try{const res=await fetch('api_reagendar_live.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_live:selected.data_live})});const j=await res.json();if(!j||!j.ok){modalHint.textContent=(j&&(j.message||j.error))?(j.message||j.error):'Falha ao reagendar.';btnConfirm.disabled=false;btnConfirm.classList.remove('loading');return}modalTitle.textContent='Reagendamento confirmado';modalText.textContent='Sua nova live: '+(j.live_nova||'');modalHint.textContent=j.live_url?'Link da live: '+j.live_url:'Data confirmada.';times.style.display='none';modalActions.style.display='none';successActions.style.display='flex'}catch(e){modalHint.textContent='Erro de rede. Tente novamente.';btnConfirm.disabled=false}btnConfirm.classList.remove('loading')};
+btnConfirm.onclick=async()=>{if(!selected&&modalItems.length===1)selected=modalItems[0];if(!selected){modalHint.textContent='Selecione um horario para continuar.';return}btnConfirm.disabled=true;btnConfirm.classList.add('loading');try{const res=await fetch('api_reagendar_live.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_live:selected.data_live})});const j=await res.json();if(!j||!j.ok){modalHint.textContent=(j&&(j.message||j.error))?(j.message||j.error):'Falha ao reagendar.';btnConfirm.disabled=false;btnConfirm.classList.remove('loading');return}modalTitle.textContent='Reagendamento confirmado';modalText.textContent='Sua nova live: '+(j.live_nova||'');modalHint.textContent='Data confirmada.';times.style.display='none';modalActions.style.display='none';successActions.style.display='flex'}catch(e){modalHint.textContent='Erro de rede. Tente novamente.';btnConfirm.disabled=false}btnConfirm.classList.remove('loading')};
 document.querySelectorAll('.day.available').forEach(el=>el.onclick=()=>{try{openModal(JSON.parse(el.getAttribute('data-items')||'[]'))}catch(e){openModal([])}});
 })();
 </script>
