@@ -759,47 +759,66 @@ try {
     $pdo->query("SELECT 1 FROM whatsapp_group_events LIMIT 0");
     $groupRankingRows = $pdo->query("
         SELECT
+            CASE
+                WHEN ge.user_id IS NOT NULL AND ge.user_id > 0 THEN CONCAT('u:', ge.user_id)
+                WHEN COALESCE(NULLIF(TRIM(ge.participant_phone), ''), '') <> '' THEN CONCAT('p:', TRIM(ge.participant_phone))
+                WHEN COALESCE(NULLIF(TRIM(ge.participant_id), ''), '') <> '' THEN CONCAT('pid:', TRIM(ge.participant_id))
+                ELSE CONCAT('e:', ge.id)
+            END AS ranking_key,
             u.id,
             u.nome,
             u.email,
-            u.telefone,
-            COUNT(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN 1 END) AS qtd_entradas,
-            COUNT(DISTINCT CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.group_id END) AS grupos_distintos,
-            MIN(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.created_at END) AS primeira_entrada,
-            MAX(CASE WHEN ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU' THEN ge.created_at END) AS ultima_entrada
+            COALESCE(NULLIF(TRIM(u.telefone), ''), MAX(NULLIF(TRIM(ge.participant_phone), ''))) AS telefone,
+            MAX(ge.participant_phone) AS participant_phone,
+            MAX(ge.participant_id) AS participant_id,
+            COUNT(*) AS qtd_entradas,
+            COUNT(DISTINCT ge.group_id) AS grupos_distintos,
+            MIN(ge.created_at) AS primeira_entrada,
+            MAX(ge.created_at) AS ultima_entrada
         FROM whatsapp_group_events ge
-        JOIN users u ON u.id = ge.user_id
-        WHERE ge.user_id IS NOT NULL
-          AND ge.user_id > 0
-        GROUP BY u.id, u.nome, u.email, u.telefone
-        HAVING qtd_entradas > 0
+        LEFT JOIN users u ON u.id = ge.user_id
+        LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+        WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
+          AND COALESCE(wg.is_ignored, 0) = 0
+        GROUP BY ranking_key, u.id, u.nome, u.email, u.telefone
         ORDER BY qtd_entradas DESC, grupos_distintos DESC, ultima_entrada DESC
         LIMIT 30
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     if ($groupRankingRows) {
-        $ids = [];
+        $keys = [];
         foreach ($groupRankingRows as $row) {
-            $id = (int)($row['id'] ?? 0);
-            if ($id > 0) $ids[] = $id;
+            $key = trim((string)($row['ranking_key'] ?? ''));
+            if ($key !== '') $keys[] = $key;
         }
-        $ids = array_values(array_unique($ids));
-        if ($ids) {
-            $in = implode(',', $ids);
+        $keys = array_values(array_unique($keys));
+        if ($keys) {
+            $in = implode(',', array_map([$pdo, 'quote'], $keys));
             $histRows = $pdo->query("
                 SELECT
-                    ge.*,
-                    wg.group_name,
-                    wg.picture_url,
-                    wg.is_ignored
-                FROM whatsapp_group_events ge
-                LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
-                WHERE ge.user_id IN ($in)
-                  AND ge.interpreted_event IN ('WHATSAPP_GRUPO_ENTROU','WHATSAPP_GRUPO_SAIU','WHATSAPP_GRUPO_REMOVIDO_ADMIN')
-                ORDER BY ge.user_id ASC, ge.created_at DESC, ge.id DESC
+                    x.*
+                FROM (
+                    SELECT
+                        CASE
+                            WHEN ge.user_id IS NOT NULL AND ge.user_id > 0 THEN CONCAT('u:', ge.user_id)
+                            WHEN COALESCE(NULLIF(TRIM(ge.participant_phone), ''), '') <> '' THEN CONCAT('p:', TRIM(ge.participant_phone))
+                            WHEN COALESCE(NULLIF(TRIM(ge.participant_id), ''), '') <> '' THEN CONCAT('pid:', TRIM(ge.participant_id))
+                            ELSE CONCAT('e:', ge.id)
+                        END AS ranking_key,
+                        ge.*,
+                        wg.group_name,
+                        wg.picture_url,
+                        wg.is_ignored
+                    FROM whatsapp_group_events ge
+                    LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+                    WHERE ge.interpreted_event IN ('WHATSAPP_GRUPO_ENTROU','WHATSAPP_GRUPO_SAIU','WHATSAPP_GRUPO_REMOVIDO_ADMIN')
+                      AND COALESCE(wg.is_ignored, 0) = 0
+                ) x
+                WHERE x.ranking_key IN ($in)
+                ORDER BY x.ranking_key ASC, x.created_at DESC, x.id DESC
             ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
             foreach ($histRows as $h) {
-                $groupRankingHistorico[(int)$h['user_id']][] = $h;
+                $groupRankingHistorico[(string)$h['ranking_key']][] = $h;
             }
         }
     }
@@ -2061,7 +2080,7 @@ $grEventLabel = static function (string $event): string {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <?php endif; ?>
-            Top <?= min(5, count($groupRankingRows)) ?> de <?= count($groupRankingRows) ?> alunos — clique para ver entradas e saidas
+            Top <?= min(5, count($groupRankingRows)) ?> de <?= count($groupRankingRows) ?> participantes — clique para ver entradas e saidas
         </span>
     </div>
 
@@ -2071,7 +2090,7 @@ $grEventLabel = static function (string $event): string {
             <tr>
                 <th style="width:30px"></th>
                 <th style="width:36px">#</th>
-                <th>Nome / E-mail</th>
+                <th>Aluno / Identificacao</th>
                 <th>Telefone</th>
                 <th style="text-align:center">Entradas</th>
                 <th style="text-align:center">Grupos diferentes</th>
@@ -2083,6 +2102,7 @@ $grEventLabel = static function (string $event): string {
         <tbody>
         <?php foreach ($groupRankingRows as $gi => $gr):
             $uid = (int)($gr['id'] ?? 0);
+            $rankingKey = (string)($gr['ranking_key'] ?? ($uid > 0 ? 'u:' . $uid : ''));
             $rankN = $gi + 1;
             if ($rankN === 1)      $rankCls = 'rank-1';
             elseif ($rankN === 2)  $rankCls = 'rank-2';
@@ -2090,7 +2110,13 @@ $grEventLabel = static function (string $event): string {
             else                   $rankCls = 'rank-n';
             $entries = (int)($gr['qtd_entradas'] ?? 0);
             $distinctGroups = (int)($gr['grupos_distintos'] ?? 0);
-            $hist = $groupRankingHistorico[$uid] ?? [];
+            $hist = $groupRankingHistorico[$rankingKey] ?? [];
+            $displayName = $uid > 0
+                ? (string)($gr['nome'] ?? '-')
+                : 'Numero nao identificado';
+            $displaySub = $uid > 0
+                ? (string)($gr['email'] ?? '-')
+                : ((string)($gr['participant_id'] ?? '') ?: 'Sem aluno vinculado');
             $extraRow = $gi >= 5 ? ' rk-extra-row' : '';
             $entryColor = $entries >= 5
                 ? 'color:#f87171;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25)'
@@ -2100,8 +2126,8 @@ $grEventLabel = static function (string $event): string {
             <td><span class="rk-expand-icon">▶</span></td>
             <td><span class="rank-badge <?= $rankCls ?>"><?= $rankN ?></span></td>
             <td>
-                <div style="font-weight:600;color:var(--text)"><?= htmlspecialchars((string)($gr['nome'] ?? '-')) ?></div>
-                <div style="font-size:11px;color:var(--muted)"><?= htmlspecialchars((string)($gr['email'] ?? '-')) ?></div>
+                <div style="font-weight:600;color:var(--text)"><?= htmlspecialchars($displayName) ?></div>
+                <div style="font-size:11px;color:var(--muted)"><?= htmlspecialchars($displaySub) ?></div>
             </td>
             <td style="font-size:12px;color:var(--muted)"><?= htmlspecialchars(trim((string)($gr['telefone'] ?? ''))) ?: '—' ?></td>
             <td style="text-align:center"><span class="insc-count-badge" style="<?= $entryColor ?>"><?= $entries ?>x</span></td>
@@ -2109,7 +2135,11 @@ $grEventLabel = static function (string $event): string {
             <td style="font-size:12px;color:var(--muted)"><?= $grDt((string)($gr['primeira_entrada'] ?? '')) ?></td>
             <td style="font-size:12px;color:var(--muted)"><?= $grDt((string)($gr['ultima_entrada'] ?? '')) ?></td>
             <td style="text-align:right" onclick="event.stopPropagation()">
+                <?php if ($uid > 0): ?>
                 <a href="aluno_editar.php?id=<?= $uid ?>" class="btn btn-ghost btn-xs">Editar</a>
+                <?php else: ?>
+                <span style="font-size:11px;color:var(--muted)">Sem aluno</span>
+                <?php endif; ?>
             </td>
         </tr>
         <tr class="<?= trim($extraRow) ?>">
