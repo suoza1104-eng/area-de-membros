@@ -661,6 +661,49 @@ function whatsapp_ai_resolve_batch(PDO $pdo, int $batchId, string $actor): void 
     ")->execute([':actor' => $actor, ':bid' => $batchId]);
 }
 
+function whatsapp_ai_requeue_batch(PDO $pdo, int $batchId, string $actor): int {
+    if ($batchId <= 0) throw new RuntimeException('Pacote invalido.');
+
+    $ownTransaction = !$pdo->inTransaction();
+    if ($ownTransaction) $pdo->beginTransaction();
+
+    try {
+        $st = $pdo->prepare("SELECT id, status FROM whatsapp_ai_batches WHERE id = :id LIMIT 1 FOR UPDATE");
+        $st->execute([':id' => $batchId]);
+        $batch = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$batch) throw new RuntimeException('Pacote nao encontrado.');
+        if ((string)$batch['status'] !== 'error') {
+            throw new RuntimeException('Somente pacotes com erro podem ser reprocessados por aqui.');
+        }
+
+        $msgSt = $pdo->prepare("UPDATE whatsapp_ai_messages SET processed_batch_id = NULL WHERE processed_batch_id = :id");
+        $msgSt->execute([':id' => $batchId]);
+        $messageCount = $msgSt->rowCount();
+        if ($messageCount <= 0) {
+            throw new RuntimeException('Nenhuma mensagem encontrada para reprocessar neste pacote.');
+        }
+
+        $pdo->prepare("
+            UPDATE whatsapp_ai_batches
+               SET status='requeued',
+                   error_message=:msg,
+                   processed_at=NOW()
+             WHERE id=:id
+        ")->execute([
+            ':msg' => 'Reaberto para reprocessamento por ' . $actor,
+            ':id' => $batchId,
+        ]);
+
+        $pdo->prepare("DELETE FROM whatsapp_ai_actions WHERE batch_id = :id AND status IN ('pending', 'error')")
+            ->execute([':id' => $batchId]);
+
+        if ($ownTransaction) $pdo->commit();
+        return $messageCount;
+    } catch (Throwable $e) {
+        if ($ownTransaction && $pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
 function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
     whatsapp_ai_ensure_tables($pdo);
     $cfg = whatsapp_ai_get_config();

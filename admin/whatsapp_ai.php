@@ -127,6 +127,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: whatsapp_ai.php?batch_resolved=1');
             exit;
         }
+
+        if ($action === 'requeue_batch') {
+            $batchId = (int)($_POST['batch_id'] ?? 0);
+            $count = whatsapp_ai_requeue_batch($pdo, $batchId, wai_actor());
+            header('Location: whatsapp_ai.php?batch_requeued=' . (int)$count);
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -138,6 +145,7 @@ if (isset($_GET['token'])) $notice = 'Token do cron atualizado.';
 if (isset($_GET['action_done'])) $notice = 'Acao aprovada e executada.';
 if (isset($_GET['action_ignored'])) $notice = 'Acao ignorada.';
 if (isset($_GET['batch_resolved'])) $notice = 'Pacote marcado como resolvido.';
+if (isset($_GET['batch_requeued'])) $notice = 'Pacote reaberto: ' . (int)$_GET['batch_requeued'] . ' mensagem(ns) voltaram para a fila. Clique em Processar agora para analisar novamente.';
 
 $cfg = whatsapp_ai_get_config();
 $cronToken = $generatedCronToken !== '' ? $generatedCronToken : trim((string)get_setting('cron_whatsapp_ai_token', ''));
@@ -447,10 +455,10 @@ include __DIR__ . '/_header.php';
             <div class="wai-title">Ultimos pacotes analisados</div>
             <div style="overflow-x:auto">
                 <table class="wai-table">
-                    <thead><tr><th>Data</th><th>Grupo</th><th>Status</th><th>Categoria</th><th>Resumo</th></tr></thead>
+                    <thead><tr><th>Data</th><th>Grupo</th><th>Status</th><th>Categoria</th><th>Resumo</th><th></th></tr></thead>
                     <tbody>
                     <?php if (!$batches): ?>
-                    <tr><td colspan="5" style="color:var(--muted);text-align:center;padding:18px">Nenhum pacote analisado ainda.</td></tr>
+                    <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:18px">Nenhum pacote analisado ainda.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($batches as $b): ?>
                     <tr>
@@ -467,6 +475,15 @@ include __DIR__ . '/_header.php';
                         <td>
                             <div style="max-width:520px;color:var(--text)"><?= wai_h((string)($b['summary'] ?: $b['error_message'] ?: '-')) ?></div>
                             <?php if (!empty($b['suggested_response'])): ?><div class="wai-help">Sugestao: <?= wai_h((string)$b['suggested_response']) ?></div><?php endif; ?>
+                        </td>
+                        <td style="text-align:right">
+                            <?php if ((string)$b['status'] === 'error'): ?>
+                                <form method="post" style="margin:0">
+                                    <input type="hidden" name="action" value="requeue_batch">
+                                    <input type="hidden" name="batch_id" value="<?= (int)$b['id'] ?>">
+                                    <button class="btn btn-ghost btn-xs" type="submit" onclick="return confirm('Reabrir este pacote para reprocessar as mesmas mensagens?')">Reprocessar</button>
+                                </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endforeach; ?>
