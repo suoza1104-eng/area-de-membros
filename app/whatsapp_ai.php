@@ -84,6 +84,35 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
             KEY idx_wair_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_ai_actions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            batch_id INT NOT NULL,
+            group_id VARCHAR(160) NOT NULL,
+            action_type VARCHAR(80) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            target_user_id INT NULL,
+            target_phone VARCHAR(30) NULL,
+            target_name VARCHAR(180) NULL,
+            tag_name VARCHAR(120) NULL,
+            event_name VARCHAR(120) NULL,
+            message_text LONGTEXT NULL,
+            payload_json LONGTEXT NULL,
+            result_json LONGTEXT NULL,
+            approved_by VARCHAR(180) NULL,
+            approved_at DATETIME NULL,
+            executed_at DATETIME NULL,
+            ignored_by VARCHAR(180) NULL,
+            ignored_at DATETIME NULL,
+            error_message TEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_waia_batch (batch_id),
+            KEY idx_waia_group (group_id),
+            KEY idx_waia_status (status),
+            KEY idx_waia_type (action_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
 function whatsapp_ai_default_prompt(): string {
@@ -283,7 +312,7 @@ function whatsapp_ai_build_prompt(array $cfg, string $groupName, array $contexts
             'criterios_adicionais' => (string)$cfg['criteria'],
             'contextos_anteriores' => array_values($contexts),
             'mensagens' => $lines,
-            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto.',
+            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber.',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
     ];
 }
@@ -388,6 +417,226 @@ function whatsapp_ai_prune_contexts(PDO $pdo, string $groupId, int $keep): void 
         WHERE c.group_id = :gid2 AND keepers.id IS NULL
     ");
     $st->execute([':gid' => $groupId, ':gid2' => $groupId]);
+}
+
+function whatsapp_ai_normalize_action_type(string $type): string {
+    $type = strtolower(trim($type));
+    $type = preg_replace('/[^a-z0-9_]+/', '_', $type) ?? $type;
+    $map = [
+        'responder' => 'send_group_message',
+        'resposta' => 'send_group_message',
+        'responder_grupo' => 'send_group_message',
+        'enviar_mensagem' => 'send_group_message',
+        'send_message' => 'send_group_message',
+        'send_group_message' => 'send_group_message',
+        'aplicar_tag' => 'apply_tag',
+        'tag' => 'apply_tag',
+        'apply_tag' => 'apply_tag',
+        'disparar_webhook' => 'trigger_webhook',
+        'webhook' => 'trigger_webhook',
+        'trigger_webhook' => 'trigger_webhook',
+        'alerta' => 'internal_alert',
+        'criar_alerta' => 'internal_alert',
+        'internal_alert' => 'internal_alert',
+    ];
+    return $map[$type] ?? ($type !== '' ? $type : 'internal_alert');
+}
+
+function whatsapp_ai_find_user_for_action(PDO $pdo, array $action): ?array {
+    $userId = (int)($action['user_id'] ?? $action['aluno_id'] ?? $action['target_user_id'] ?? 0);
+    if ($userId > 0) {
+        $user = buscar_usuario_por_id($userId);
+        if ($user) return $user;
+    }
+
+    $phone = (string)($action['telefone'] ?? $action['phone'] ?? $action['aluno_telefone'] ?? $action['target_phone'] ?? '');
+    if ($phone !== '') {
+        $user = evolution_find_user_by_phone($pdo, $phone);
+        if ($user) return $user;
+    }
+
+    return null;
+}
+
+function whatsapp_ai_create_action(PDO $pdo, int $batchId, string $groupId, string $type, array $data): void {
+    $type = whatsapp_ai_normalize_action_type($type);
+    $user = whatsapp_ai_find_user_for_action($pdo, $data);
+    $phone = evolution_clean_whatsapp_phone((string)($data['telefone'] ?? $data['phone'] ?? $data['aluno_telefone'] ?? $data['target_phone'] ?? ''));
+    $message = trim((string)($data['message_text'] ?? $data['mensagem'] ?? $data['resposta'] ?? $data['resposta_sugerida'] ?? ''));
+    $tag = trim((string)($data['tag'] ?? $data['tag_name'] ?? ''));
+    $event = trim((string)($data['evento'] ?? $data['event'] ?? $data['event_name'] ?? ''));
+
+    if ($type === 'apply_tag' && $tag === '') {
+        $tag = 'IA_WHATSAPP_INTERVENCAO';
+    }
+    if ($type === 'trigger_webhook' && $event === '') {
+        $event = 'IA_WHATSAPP_INTERVENCAO';
+    }
+
+    $st = $pdo->prepare("
+        INSERT INTO whatsapp_ai_actions
+            (batch_id, group_id, action_type, status, target_user_id, target_phone, target_name, tag_name, event_name, message_text, payload_json, created_at)
+        VALUES
+            (:batch_id, :group_id, :action_type, 'pending', :target_user_id, :target_phone, :target_name, :tag_name, :event_name, :message_text, :payload_json, NOW())
+    ");
+    $st->execute([
+        ':batch_id' => $batchId,
+        ':group_id' => $groupId,
+        ':action_type' => $type,
+        ':target_user_id' => $user ? (int)($user['id'] ?? 0) : null,
+        ':target_phone' => $phone !== '' ? $phone : null,
+        ':target_name' => $user ? (string)($user['nome'] ?? '') : (string)($data['nome'] ?? $data['name'] ?? ''),
+        ':tag_name' => $tag !== '' ? $tag : null,
+        ':event_name' => $event !== '' ? $event : null,
+        ':message_text' => $message !== '' ? $message : null,
+        ':payload_json' => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+}
+
+function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, array $analysis): void {
+    $pdo->prepare("DELETE FROM whatsapp_ai_actions WHERE batch_id = :bid AND status = 'pending'")
+        ->execute([':bid' => $batchId]);
+
+    if (empty($analysis['precisa_intervencao'])) return;
+
+    $suggested = trim((string)($analysis['resposta_sugerida'] ?? ''));
+    if ($suggested !== '') {
+        whatsapp_ai_create_action($pdo, $batchId, $groupId, 'send_group_message', [
+            'resposta_sugerida' => $suggested,
+            'categoria' => $analysis['categoria'] ?? null,
+            'nivel' => $analysis['nivel'] ?? null,
+            'origem' => 'suggested_response',
+        ]);
+    }
+
+    $actions = $analysis['acoes'] ?? [];
+    if (!is_array($actions)) return;
+    foreach ($actions as $action) {
+        if (!is_array($action)) continue;
+        $type = (string)($action['tipo'] ?? $action['type'] ?? $action['acao'] ?? 'internal_alert');
+        whatsapp_ai_create_action($pdo, $batchId, $groupId, $type, $action);
+    }
+}
+
+function whatsapp_ai_send_group_message(PDO $pdo, string $groupId, string $message): array {
+    $groupId = trim($groupId);
+    $message = trim($message);
+    if ($groupId === '' || $message === '') {
+        throw new RuntimeException('Grupo ou mensagem vazios.');
+    }
+
+    $instanceKey = '';
+    try {
+        $st = $pdo->prepare("SELECT instance_key FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st->execute([':gid' => $groupId]);
+        $instanceKey = trim((string)($st->fetchColumn() ?: ''));
+    } catch (Throwable $e) {}
+    if ($instanceKey === '') {
+        $instanceKey = trim((string)get_setting('evolution_webhook_instance_key', ''));
+    }
+    if ($instanceKey === '') {
+        throw new RuntimeException('Instancia Evolution do grupo nao encontrada.');
+    }
+
+    $res = evolution_http('POST', '/message/sendText/' . rawurlencode($instanceKey), [
+        'number' => $groupId,
+        'text' => $message,
+    ]);
+    if (empty($res['ok'])) {
+        $detail = trim((string)($res['raw'] ?? $res['error'] ?? ''));
+        throw new RuntimeException('Falha ao enviar mensagem no grupo: ' . substr($detail, 0, 1000));
+    }
+    return $res;
+}
+
+function whatsapp_ai_approve_action(PDO $pdo, int $actionId, string $actor, ?string $messageOverride = null): array {
+    whatsapp_ai_ensure_tables($pdo);
+    $st = $pdo->prepare("SELECT * FROM whatsapp_ai_actions WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $actionId]);
+    $action = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$action) throw new RuntimeException('Acao nao encontrada.');
+    if ((string)$action['status'] !== 'pending') throw new RuntimeException('Acao ja processada.');
+
+    $type = (string)$action['action_type'];
+    $result = ['type' => $type, 'status' => 'executed'];
+    $message = $messageOverride !== null ? trim($messageOverride) : trim((string)($action['message_text'] ?? ''));
+    $userId = (int)($action['target_user_id'] ?? 0);
+
+    try {
+        if ($type === 'send_group_message') {
+            $result = whatsapp_ai_send_group_message($pdo, (string)$action['group_id'], $message);
+        } elseif ($type === 'apply_tag') {
+            if ($userId <= 0) throw new RuntimeException('Acao de tag sem aluno identificado.');
+            $tag = trim((string)($action['tag_name'] ?? ''));
+            if ($tag === '') throw new RuntimeException('Nome da tag vazio.');
+            if (!adicionar_tag($userId, $tag, 'whatsapp_ai', $actionId)) {
+                throw new RuntimeException('Nao foi possivel aplicar a tag.');
+            }
+            $result = ['ok' => true, 'tag' => $tag, 'user_id' => $userId];
+        } elseif ($type === 'trigger_webhook') {
+            if ($userId <= 0) throw new RuntimeException('Webhook sem aluno identificado.');
+            $event = trim((string)($action['event_name'] ?? ''));
+            if ($event === '') throw new RuntimeException('Evento do webhook vazio.');
+            disparar_webhooks($event, $userId, [
+                'origem' => 'whatsapp_ai',
+                'action_id' => $actionId,
+                'batch_id' => (int)$action['batch_id'],
+                'group_id' => (string)$action['group_id'],
+                'payload' => json_decode((string)($action['payload_json'] ?? '{}'), true) ?: [],
+            ]);
+            $result = ['ok' => true, 'event' => $event, 'user_id' => $userId];
+        } elseif ($type === 'internal_alert') {
+            $result = ['ok' => true, 'alert' => true];
+        } else {
+            $result = ['ok' => true, 'manual_only' => true, 'type' => $type];
+        }
+
+        $up = $pdo->prepare("
+            UPDATE whatsapp_ai_actions
+               SET status='executed',
+                   message_text=:message_text,
+                   result_json=:result_json,
+                   approved_by=:actor,
+                   approved_at=NOW(),
+                   executed_at=NOW(),
+                   error_message=NULL
+             WHERE id=:id
+        ");
+        $up->execute([
+            ':message_text' => $message !== '' ? $message : null,
+            ':result_json' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':actor' => $actor,
+            ':id' => $actionId,
+        ]);
+        return $result;
+    } catch (Throwable $e) {
+        $pdo->prepare("
+            UPDATE whatsapp_ai_actions
+               SET status='error', approved_by=:actor, approved_at=NOW(), error_message=:err
+             WHERE id=:id
+        ")->execute([
+            ':actor' => $actor,
+            ':err' => substr($e->getMessage(), 0, 1000),
+            ':id' => $actionId,
+        ]);
+        throw $e;
+    }
+}
+
+function whatsapp_ai_ignore_action(PDO $pdo, int $actionId, string $actor): void {
+    $pdo->prepare("
+        UPDATE whatsapp_ai_actions
+           SET status='ignored', ignored_by=:actor, ignored_at=NOW()
+         WHERE id=:id AND status='pending'
+    ")->execute([':actor' => $actor, ':id' => $actionId]);
+}
+
+function whatsapp_ai_resolve_batch(PDO $pdo, int $batchId, string $actor): void {
+    $pdo->prepare("
+        UPDATE whatsapp_ai_actions
+           SET status='ignored', ignored_by=:actor, ignored_at=NOW()
+         WHERE batch_id=:bid AND status='pending'
+    ")->execute([':actor' => $actor, ':bid' => $batchId]);
 }
 
 function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
@@ -504,6 +753,7 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
                     $ctxIns->execute([':gid' => $groupId, ':bid' => $batchId, ':summary' => $nextContext]);
                     whatsapp_ai_prune_contexts($pdo, $groupId, (int)$cfg['context_keep']);
                 }
+                whatsapp_ai_queue_actions($pdo, $batchId, $groupId, $a);
             } catch (Throwable $e) {
                 $pdo->prepare("UPDATE whatsapp_ai_batches SET status='error', error_message=:err, processed_at=NOW() WHERE id=:id")
                     ->execute([':err' => substr($e->getMessage(), 0, 1000), ':id' => $batchId]);
@@ -534,4 +784,3 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
         return $stats;
     }
 }
-

@@ -31,6 +31,22 @@ function wai_badge(string $text, string $kind = 'neutral'): string {
     return '<span style="display:inline-flex;align-items:center;padding:3px 8px;border:1px solid;border-radius:999px;font-size:11px;font-weight:700;' . $map[$kind] . '">' . wai_h($text) . '</span>';
 }
 
+function wai_actor(): string {
+    $name = trim((string)($_SESSION['equipe_nome'] ?? 'Administrador'));
+    $email = trim((string)($_SESSION['equipe_email'] ?? ''));
+    return $email !== '' ? $name . ' <' . $email . '>' : $name;
+}
+
+function wai_action_label(string $type): string {
+    $labels = [
+        'send_group_message' => 'Enviar mensagem no grupo',
+        'apply_tag' => 'Aplicar tag',
+        'trigger_webhook' => 'Disparar webhook',
+        'internal_alert' => 'Alerta interno',
+    ];
+    return $labels[$type] ?? $type;
+}
+
 $notice = '';
 $error = '';
 $runResult = null;
@@ -89,6 +105,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!empty($runResult['skipped'])) $notice = 'Processamento ignorado: IA desligada ou fora do horario configurado.';
             if (!empty($runResult['error'])) $error = (string)$runResult['error'];
         }
+
+        if ($action === 'approve_action') {
+            $actionId = (int)($_POST['action_id'] ?? 0);
+            $messageOverride = array_key_exists('message_text', $_POST) ? (string)$_POST['message_text'] : null;
+            whatsapp_ai_approve_action($pdo, $actionId, wai_actor(), $messageOverride);
+            header('Location: whatsapp_ai.php?action_done=1');
+            exit;
+        }
+
+        if ($action === 'ignore_action') {
+            $actionId = (int)($_POST['action_id'] ?? 0);
+            whatsapp_ai_ignore_action($pdo, $actionId, wai_actor());
+            header('Location: whatsapp_ai.php?action_ignored=1');
+            exit;
+        }
+
+        if ($action === 'resolve_batch') {
+            $batchId = (int)($_POST['batch_id'] ?? 0);
+            whatsapp_ai_resolve_batch($pdo, $batchId, wai_actor());
+            header('Location: whatsapp_ai.php?batch_resolved=1');
+            exit;
+        }
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -97,6 +135,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (isset($_GET['saved'])) $notice = 'Configuracao da IA salva.';
 if (isset($_GET['groups'])) $notice = 'Configuracao do grupo atualizada.';
 if (isset($_GET['token'])) $notice = 'Token do cron atualizado.';
+if (isset($_GET['action_done'])) $notice = 'Acao aprovada e executada.';
+if (isset($_GET['action_ignored'])) $notice = 'Acao ignorada.';
+if (isset($_GET['batch_resolved'])) $notice = 'Pacote marcado como resolvido.';
 
 $cfg = whatsapp_ai_get_config();
 $cronToken = $generatedCronToken !== '' ? $generatedCronToken : trim((string)get_setting('cron_whatsapp_ai_token', ''));
@@ -107,11 +148,13 @@ $stats = [
     'batches' => 0,
     'interventions' => 0,
     'contexts' => 0,
+    'actions_pending' => 0,
 ];
 try { $stats['pending'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_messages WHERE processed_batch_id IS NULL")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['batches'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_batches")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['interventions'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_batches WHERE needs_intervention = 1")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['contexts'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_contexts")->fetchColumn(); } catch (Throwable $e) {}
+try { $stats['actions_pending'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_actions WHERE status = 'pending'")->fetchColumn(); } catch (Throwable $e) {}
 
 $groups = [];
 try {
@@ -136,6 +179,54 @@ try {
          LIMIT 30
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
+
+$actions = [];
+try {
+    $actions = $pdo->query("
+        SELECT a.*, b.summary, b.category, b.severity, b.suggested_response, b.created_at AS batch_created_at, g.group_name
+          FROM whatsapp_ai_actions a
+          JOIN whatsapp_ai_batches b ON b.id = a.batch_id
+          LEFT JOIN whatsapp_groups g ON g.group_id = a.group_id
+         WHERE a.status IN ('pending','error')
+         ORDER BY FIELD(a.status, 'pending', 'error'), a.created_at DESC, a.id DESC
+         LIMIT 40
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$recentActions = [];
+try {
+    $recentActions = $pdo->query("
+        SELECT a.*, b.category, g.group_name
+          FROM whatsapp_ai_actions a
+          JOIN whatsapp_ai_batches b ON b.id = a.batch_id
+          LEFT JOIN whatsapp_groups g ON g.group_id = a.group_id
+         WHERE a.status <> 'pending'
+         ORDER BY COALESCE(a.executed_at, a.ignored_at, a.approved_at, a.created_at) DESC, a.id DESC
+         LIMIT 20
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$actionMessages = [];
+if ($actions) {
+    $batchIds = array_values(array_unique(array_map(static fn($a) => (int)$a['batch_id'], $actions)));
+    $in = implode(',', array_filter($batchIds));
+    if ($in !== '') {
+        try {
+            $rows = $pdo->query("
+                SELECT m.*, u.nome AS aluno_nome
+                  FROM whatsapp_ai_messages m
+                  LEFT JOIN users u ON u.id = m.user_id
+                 WHERE m.processed_batch_id IN ($in)
+                 ORDER BY m.processed_batch_id ASC, m.message_at ASC, m.id ASC
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($rows as $row) {
+                $bid = (int)$row['processed_batch_id'];
+                if (!isset($actionMessages[$bid])) $actionMessages[$bid] = [];
+                if (count($actionMessages[$bid]) < 8) $actionMessages[$bid][] = $row;
+            }
+        } catch (Throwable $e) {}
+    }
+}
 
 $messages = [];
 try {
@@ -167,6 +258,14 @@ include __DIR__ . '/_header.php';
 .wai-table th{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .wai-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:#93c5fd;word-break:break-all}
 .wai-msg{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.wai-review{border:1px solid var(--border);background:rgba(255,255,255,.025);border-radius:8px;padding:12px;margin-bottom:12px}
+.wai-review-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.wai-review-title{font-size:13px;font-weight:800;color:var(--text)}
+.wai-review-meta{font-size:11px;color:var(--muted);margin-top:3px}
+.wai-message-list{background:rgba(0,0,0,.16);border:1px solid var(--border);border-radius:8px;padding:8px;margin:10px 0}
+.wai-message-line{font-size:11px;color:var(--muted);line-height:1.45;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.wai-message-line:last-child{border-bottom:none}
+.wai-actions{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-top:10px}
 @media(max-width:1100px){.wai-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wai-layout{grid-template-columns:1fr}.wai-row{grid-template-columns:1fr}}
 </style>
 
@@ -177,6 +276,7 @@ include __DIR__ . '/_header.php';
     <div class="wai-kpi"><div class="wai-kpi-label">Mensagens pendentes</div><div class="wai-kpi-value"><?= (int)$stats['pending'] ?></div></div>
     <div class="wai-kpi"><div class="wai-kpi-label">Pacotes analisados</div><div class="wai-kpi-value"><?= (int)$stats['batches'] ?></div></div>
     <div class="wai-kpi"><div class="wai-kpi-label">Intervencoes sugeridas</div><div class="wai-kpi-value"><?= (int)$stats['interventions'] ?></div></div>
+    <div class="wai-kpi"><div class="wai-kpi-label">Acoes pendentes</div><div class="wai-kpi-value"><?= (int)$stats['actions_pending'] ?></div></div>
     <div class="wai-kpi"><div class="wai-kpi-label">Contextos salvos</div><div class="wai-kpi-value"><?= (int)$stats['contexts'] ?></div></div>
 </div>
 
@@ -188,7 +288,7 @@ include __DIR__ . '/_header.php';
                 <input type="hidden" name="action" value="save_config">
                 <div class="form-group">
                     <label class="form-label"><input type="checkbox" name="enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>> Ativar analise por IA</label>
-                    <div class="wai-help">Nesta fase a IA apenas analisa, resume e sugere. Ela nao envia mensagens nem dispara automacoes.</div>
+                    <div class="wai-help">A IA analisa e cria sugestoes. Mensagens, tags e webhooks so rodam depois de aprovacao manual na fila de revisao.</div>
                 </div>
 
                 <div class="wai-row">
@@ -268,6 +368,82 @@ include __DIR__ . '/_header.php';
         </div>
 
         <div class="wai-card">
+            <div class="wai-title">Fila de revisao manual</div>
+            <?php if (!$actions): ?>
+                <div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">Nenhuma acao pendente no momento.</div>
+            <?php endif; ?>
+            <?php foreach ($actions as $a): ?>
+                <?php
+                $type = (string)$a['action_type'];
+                $status = (string)$a['status'];
+                $messagesForAction = $actionMessages[(int)$a['batch_id']] ?? [];
+                $messageText = (string)($a['message_text'] ?? '');
+                ?>
+                <div class="wai-review">
+                    <div class="wai-review-head">
+                        <div>
+                            <div class="wai-review-title"><?= wai_h(wai_action_label($type)) ?></div>
+                            <div class="wai-review-meta">
+                                <?= wai_h((string)($a['group_name'] ?: $a['group_id'])) ?> · pacote #<?= (int)$a['batch_id'] ?> · <?= wai_dt((string)$a['batch_created_at']) ?>
+                            </div>
+                        </div>
+                        <div><?= wai_badge($status, $status === 'error' ? 'danger' : 'warn') ?></div>
+                    </div>
+
+                    <div style="font-size:12px;color:var(--text);line-height:1.5">
+                        <strong>Resumo:</strong> <?= wai_h((string)($a['summary'] ?: '-')) ?>
+                    </div>
+                    <div class="wai-help">
+                        Categoria: <?= wai_h((string)($a['category'] ?: '-')) ?> · Nivel: <?= wai_h((string)($a['severity'] ?: '-')) ?>
+                        <?php if (!empty($a['target_name']) || !empty($a['target_phone'])): ?>
+                            · Alvo: <?= wai_h(trim((string)$a['target_name'] . ' ' . (string)$a['target_phone'])) ?>
+                        <?php endif; ?>
+                        <?php if (!empty($a['tag_name'])): ?> · Tag: <?= wai_h((string)$a['tag_name']) ?><?php endif; ?>
+                        <?php if (!empty($a['event_name'])): ?> · Evento: <?= wai_h((string)$a['event_name']) ?><?php endif; ?>
+                    </div>
+
+                    <?php if ($messagesForAction): ?>
+                    <div class="wai-message-list">
+                        <?php foreach ($messagesForAction as $m): ?>
+                            <?php
+                            $author = trim((string)($m['aluno_nome'] ?: $m['sender_name'] ?: $m['sender_phone'] ?: 'Participante'));
+                            ?>
+                            <div class="wai-message-line">
+                                <strong><?= wai_h($author) ?>:</strong> <?= wai_h((string)$m['message_text']) ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (!empty($a['error_message'])): ?>
+                        <div class="alert alert-error" style="margin:8px 0"><?= wai_h((string)$a['error_message']) ?></div>
+                    <?php endif; ?>
+
+                    <div class="wai-actions">
+                        <form method="post" style="flex:1;min-width:260px">
+                            <input type="hidden" name="action" value="approve_action">
+                            <input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>">
+                            <?php if ($type === 'send_group_message'): ?>
+                                <textarea name="message_text" rows="4"><?= wai_h($messageText) ?></textarea>
+                            <?php endif; ?>
+                            <button class="btn btn-primary" type="submit" onclick="return confirm('Aprovar e executar esta acao agora?')">Aprovar</button>
+                        </form>
+                        <form method="post">
+                            <input type="hidden" name="action" value="ignore_action">
+                            <input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>">
+                            <button class="btn btn-ghost" type="submit">Ignorar</button>
+                        </form>
+                        <form method="post">
+                            <input type="hidden" name="action" value="resolve_batch">
+                            <input type="hidden" name="batch_id" value="<?= (int)$a['batch_id'] ?>">
+                            <button class="btn btn-ghost" type="submit">Resolver pacote</button>
+                        </form>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <div class="wai-card">
             <div class="wai-title">Ultimos pacotes analisados</div>
             <div style="overflow-x:auto">
                 <table class="wai-table">
@@ -325,6 +501,42 @@ include __DIR__ . '/_header.php';
                                 <input type="hidden" name="group_id" value="<?= wai_h((string)$g['group_id']) ?>">
                                 <button class="btn btn-ghost btn-xs" type="submit"><?= ((int)$g['is_ignored'] === 1) ? 'Ativar' : 'Ignorar' ?></button>
                             </form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="wai-card">
+            <div class="wai-title">Historico de acoes</div>
+            <div style="overflow-x:auto;max-height:360px">
+                <table class="wai-table">
+                    <thead><tr><th>Acao</th><th>Status</th><th>Auditoria</th></tr></thead>
+                    <tbody>
+                    <?php if (!$recentActions): ?>
+                    <tr><td colspan="3" style="color:var(--muted);text-align:center;padding:18px">Nenhuma acao processada ainda.</td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($recentActions as $ra): ?>
+                    <tr>
+                        <td>
+                            <strong><?= wai_h(wai_action_label((string)$ra['action_type'])) ?></strong>
+                            <div class="wai-help"><?= wai_h((string)($ra['group_name'] ?: $ra['group_id'])) ?></div>
+                            <?php if (!empty($ra['tag_name'])): ?><div class="wai-help">Tag: <?= wai_h((string)$ra['tag_name']) ?></div><?php endif; ?>
+                            <?php if (!empty($ra['event_name'])): ?><div class="wai-help">Evento: <?= wai_h((string)$ra['event_name']) ?></div><?php endif; ?>
+                        </td>
+                        <td>
+                            <?php
+                            $raStatus = (string)$ra['status'];
+                            echo wai_badge($raStatus, $raStatus === 'executed' ? 'success' : ($raStatus === 'error' ? 'danger' : 'neutral'));
+                            ?>
+                            <?php if (!empty($ra['error_message'])): ?><div class="wai-help"><?= wai_h((string)$ra['error_message']) ?></div><?php endif; ?>
+                        </td>
+                        <td>
+                            <div class="wai-help">Aprovado: <?= wai_h((string)($ra['approved_by'] ?: '-')) ?></div>
+                            <div class="wai-help">Ignorado: <?= wai_h((string)($ra['ignored_by'] ?: '-')) ?></div>
+                            <div class="wai-help"><?= wai_dt((string)($ra['executed_at'] ?: $ra['ignored_at'] ?: $ra['approved_at'] ?: $ra['created_at'])) ?></div>
                         </td>
                     </tr>
                     <?php endforeach; ?>
