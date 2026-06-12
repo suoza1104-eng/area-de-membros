@@ -34,6 +34,10 @@ function wh_clean_phone(?string $participant): string {
 function wh_phone_from_payload(?string $rawPayload, ?string $fallbackParticipant = null): string {
     $payload = json_decode((string)$rawPayload, true);
     if (is_array($payload)) {
+        $messageParticipant = $payload['data']['key']['participant'] ?? $payload['data']['participant'] ?? $payload['participant'] ?? '';
+        $phone = wh_clean_phone(is_scalar($messageParticipant) ? (string)$messageParticipant : '');
+        if ($phone !== '') return $phone;
+
         $participants = $payload['data']['participants'] ?? [];
         if (is_array($participants)) {
             $first = reset($participants);
@@ -335,6 +339,11 @@ $activeId = (int)($_GET['qr'] ?? $_GET['created'] ?? $_GET['status'] ?? 0);
 $webhookToken = evolution_get_webhook_token();
 $webhookUrl = rtrim(BASE_URL, '/') . '/whatsapp_webhook.php?t=' . $webhookToken;
 $webhookInstanceKey = (string)get_setting('evolution_webhook_instance_key', 'monitor01');
+$payloadSearch = trim((string)($_GET['payload_search'] ?? ''));
+$payloadBlacklist = trim((string)($_GET['payload_blacklist'] ?? ''));
+$payloadToken = trim((string)($_GET['payload_token'] ?? ''));
+$payloadEvent = trim((string)($_GET['payload_event'] ?? ''));
+$payloadGroup = trim((string)($_GET['payload_group'] ?? ''));
 $blacklistRows = [];
 $groupRows = [];
 try {
@@ -357,7 +366,66 @@ try {
 } catch (Throwable $e) {}
 $rawLogs = [];
 try {
-    $rawLogs = $pdo->query("
+    $rawWhere = [];
+    $rawParams = [];
+
+    if ($payloadSearch !== '') {
+        $rawWhere[] = "(
+            l.participant_phone LIKE :payload_search
+            OR l.participant_number LIKE :payload_search
+            OR l.participant_id LIKE :payload_search
+            OR l.author_id LIKE :payload_search
+            OR l.event_type LIKE :payload_search
+            OR l.interpreted_event LIKE :payload_search
+            OR l.action LIKE :payload_search
+            OR l.group_id LIKE :payload_search
+            OR g.group_name LIKE :payload_search
+            OR u.nome LIKE :payload_search
+            OR u.email LIKE :payload_search
+            OR u.telefone LIKE :payload_search
+            OR bl.phone_number LIKE :payload_search
+            OR bl.reason LIKE :payload_search
+            OR l.payload_raw LIKE :payload_search
+        )";
+        $rawParams[':payload_search'] = '%' . $payloadSearch . '%';
+    }
+
+    if ($payloadBlacklist === 'detected') {
+        $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 1";
+    } elseif ($payloadBlacklist === 'active_number') {
+        $rawWhere[] = "EXISTS (
+            SELECT 1
+              FROM whatsapp_blacklist_numbers bx
+             WHERE bx.is_active = 1
+               AND (
+                    bx.phone_number = l.participant_phone
+                    OR bx.phone_number = l.participant_number
+                    OR l.payload_raw LIKE CONCAT('%', bx.phone_number, '%')
+                    OR bx.phone_number = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(u.telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')
+               )
+        )";
+    } elseif ($payloadBlacklist === 'not_detected') {
+        $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 0";
+    }
+
+    if ($payloadToken === 'ok') {
+        $rawWhere[] = "l.token_ok = 1";
+    } elseif ($payloadToken === 'fail') {
+        $rawWhere[] = "l.token_ok = 0";
+    }
+
+    if ($payloadEvent !== '') {
+        $rawWhere[] = "(l.event_type LIKE :payload_event OR l.interpreted_event LIKE :payload_event OR l.action LIKE :payload_event)";
+        $rawParams[':payload_event'] = '%' . $payloadEvent . '%';
+    }
+
+    if ($payloadGroup !== '') {
+        $rawWhere[] = "(l.group_id LIKE :payload_group OR g.group_name LIKE :payload_group)";
+        $rawParams[':payload_group'] = '%' . $payloadGroup . '%';
+    }
+
+    $rawWhereSql = $rawWhere ? ('WHERE ' . implode(' AND ', $rawWhere)) : '';
+    $rawSql = "
         SELECT l.id, l.token_ok, l.event_type, l.instance_key, l.group_id, l.action,
                l.participant_number, l.participant_phone, l.participant_id, l.author_id,
                l.interpreted_event, l.user_id, l.trigger_status, l.trigger_error,
@@ -372,9 +440,13 @@ try {
         LEFT JOIN whatsapp_blacklist_numbers bl ON bl.id = ge.blacklist_id
         LEFT JOIN whatsapp_groups g ON g.group_id = l.group_id
         LEFT JOIN users u ON u.id = l.user_id
+        $rawWhereSql
         ORDER BY l.id DESC
         LIMIT 80
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    ";
+    $rawSt = $pdo->prepare($rawSql);
+    $rawSt->execute($rawParams);
+    $rawLogs = $rawSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
 include __DIR__ . '/_header.php';
@@ -408,6 +480,10 @@ include __DIR__ . '/_header.php';
 .wm-full { margin-top:16px; }
 .wm-url-row { display:flex; gap:8px; align-items:center; }
 .wm-url-row input { font-family:monospace; font-size:12px; }
+.wm-filter-grid { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr auto; gap:8px; align-items:end; margin:12px 0 14px; }
+.wm-filter-grid .form-group { margin:0; }
+.wm-filter-grid input, .wm-filter-grid select { min-height:34px; font-size:12px; }
+.wm-filter-actions { display:flex; gap:8px; align-items:center; }
 .wm-log-table { width:100%; table-layout:fixed; }
 .wm-log-table th,.wm-log-table td { overflow:hidden; text-overflow:ellipsis; }
 .wm-log-table td { font-size:12px; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }
@@ -431,7 +507,9 @@ include __DIR__ . '/_header.php';
 .wm-log-table.payloads th:nth-child(12), .wm-log-table.payloads td:nth-child(12) { width:118px; }
 .wm-group-avatar { width:34px; height:34px; border-radius:999px; overflow:hidden; flex:0 0 auto; background:rgba(255,255,255,.08); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; font-weight:700; }
 .wm-group-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+@media(max-width:1100px){ .wm-filter-grid{grid-template-columns:1fr 1fr} }
 @media(max-width:1000px){ .wm-grid,.wm-qrbox{grid-template-columns:1fr}.wm-row{grid-template-columns:1fr}.wm-qr{width:100%;max-width:260px} }
+@media(max-width:720px){ .wm-filter-grid{grid-template-columns:1fr} }
 </style>
 
 <div class="wm-wrap">
@@ -727,16 +805,51 @@ include __DIR__ . '/_header.php';
 
     <div class="wm-card wm-full">
         <h2>Payloads recebidos</h2>
-        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>.</div>
+        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>, respeitando os filtros abaixo.</div>
         <form method="post" class="wm-actions" style="margin-bottom:12px">
             <input type="hidden" name="action" value="refresh_group_names">
             <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
             <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
             <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
         </form>
+        <form method="get" class="wm-filter-grid">
+            <div class="form-group">
+                <label class="form-label">Buscar contato, aluno, telefone, grupo ou payload</label>
+                <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Blacklist</label>
+                <select name="payload_blacklist">
+                    <option value="" <?= $payloadBlacklist === '' ? 'selected' : '' ?>>Todos</option>
+                    <option value="detected" <?= $payloadBlacklist === 'detected' ? 'selected' : '' ?>>Detectada no evento</option>
+                    <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Numero na blacklist</option>
+                    <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem blacklist detectada</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Token</label>
+                <select name="payload_token">
+                    <option value="" <?= $payloadToken === '' ? 'selected' : '' ?>>Todos</option>
+                    <option value="ok" <?= $payloadToken === 'ok' ? 'selected' : '' ?>>OK</option>
+                    <option value="fail" <?= $payloadToken === 'fail' ? 'selected' : '' ?>>Falhou</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Evento</label>
+                <input type="text" name="payload_event" value="<?= wh_h($payloadEvent) ?>" placeholder="messages, group...">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Grupo</label>
+                <input type="text" name="payload_group" value="<?= wh_h($payloadGroup) ?>" placeholder="Nome ou ID">
+            </div>
+            <div class="wm-filter-actions">
+                <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+                <a class="btn btn-ghost btn-sm" href="whatsapp_monitor.php">Limpar</a>
+            </div>
+        </form>
 
         <?php if (!$rawLogs): ?>
-            <div class="text-muted text-sm">Nenhum payload recebido ainda. Configure o webhook e faca um teste de entrada/saida em grupo.</div>
+            <div class="text-muted text-sm">Nenhum payload encontrado para os filtros atuais. Ajuste a busca ou limpe os filtros.</div>
         <?php else: ?>
             <div class="table-wrap">
                 <table class="wm-log-table payloads">
