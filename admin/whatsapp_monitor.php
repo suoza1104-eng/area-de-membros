@@ -344,6 +344,14 @@ $payloadBlacklist = trim((string)($_GET['payload_blacklist'] ?? ''));
 $payloadToken = trim((string)($_GET['payload_token'] ?? ''));
 $payloadEvent = trim((string)($_GET['payload_event'] ?? ''));
 $payloadGroup = trim((string)($_GET['payload_group'] ?? ''));
+$payloadScope = trim((string)($_GET['payload_scope'] ?? 'participants'));
+if (!in_array($payloadScope, ['participants', 'messages', 'presence', 'all'], true)) {
+    $payloadScope = 'participants';
+}
+$payloadTrigger = trim((string)($_GET['payload_trigger'] ?? 'operational'));
+if (!in_array($payloadTrigger, ['operational', 'triggered', 'not_found', 'blacklist', 'error', 'ignored', 'all'], true)) {
+    $payloadTrigger = 'operational';
+}
 $blacklistRows = [];
 $groupRows = [];
 try {
@@ -368,6 +376,28 @@ $rawLogs = [];
 try {
     $rawWhere = [];
     $rawParams = [];
+
+    if ($payloadScope === 'participants') {
+        $rawWhere[] = "l.event_type LIKE '%participant%'";
+    } elseif ($payloadScope === 'messages') {
+        $rawWhere[] = "l.event_type LIKE '%message%'";
+    } elseif ($payloadScope === 'presence') {
+        $rawWhere[] = "l.event_type LIKE '%presence%'";
+    }
+
+    if ($payloadTrigger === 'operational') {
+        $rawWhere[] = "COALESCE(l.trigger_status, '') NOT IN ('ignored')";
+    } elseif ($payloadTrigger === 'triggered') {
+        $rawWhere[] = "l.trigger_status IN ('triggered', 'identified_backfill')";
+    } elseif ($payloadTrigger === 'not_found') {
+        $rawWhere[] = "l.trigger_status IN ('user_not_found', 'blacklist_detected_no_user')";
+    } elseif ($payloadTrigger === 'blacklist') {
+        $rawWhere[] = "(l.trigger_status LIKE 'blacklist_detected%' OR COALESCE(ge.is_blacklisted, 0) = 1)";
+    } elseif ($payloadTrigger === 'error') {
+        $rawWhere[] = "l.trigger_status = 'error'";
+    } elseif ($payloadTrigger === 'ignored') {
+        $rawWhere[] = "l.trigger_status IN ('ignored', 'ignored_group')";
+    }
 
     if ($payloadSearch !== '') {
         $rawWhere[] = "(
@@ -805,7 +835,7 @@ include __DIR__ . '/_header.php';
 
     <div class="wm-card wm-full">
         <h2>Payloads recebidos</h2>
-        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>, respeitando os filtros abaixo.</div>
+        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>, mostrando eventos de grupo por padrao. Mensagens da IA continuam capturadas e podem ser vistas em "Todos".</div>
         <form method="post" class="wm-actions" style="margin-bottom:12px">
             <input type="hidden" name="action" value="refresh_group_names">
             <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
@@ -813,6 +843,15 @@ include __DIR__ . '/_header.php';
             <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
         </form>
         <form method="get" action="whatsapp_monitor.php#payloads" class="wm-filter-grid">
+            <div class="form-group">
+                <label class="form-label">Tipo de payload</label>
+                <select name="payload_scope">
+                    <option value="participants" <?= $payloadScope === 'participants' ? 'selected' : '' ?>>Eventos de grupo</option>
+                    <option value="messages" <?= $payloadScope === 'messages' ? 'selected' : '' ?>>Mensagens da IA</option>
+                    <option value="presence" <?= $payloadScope === 'presence' ? 'selected' : '' ?>>Presenca</option>
+                    <option value="all" <?= $payloadScope === 'all' ? 'selected' : '' ?>>Todos</option>
+                </select>
+            </div>
             <div class="form-group">
                 <label class="form-label">Buscar contato, aluno, telefone, grupo ou payload</label>
                 <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
@@ -824,6 +863,18 @@ include __DIR__ . '/_header.php';
                     <option value="detected" <?= $payloadBlacklist === 'detected' ? 'selected' : '' ?>>Detectada no evento</option>
                     <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Numero na blacklist</option>
                     <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem blacklist detectada</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Gatilho</label>
+                <select name="payload_trigger">
+                    <option value="operational" <?= $payloadTrigger === 'operational' ? 'selected' : '' ?>>Operacionais</option>
+                    <option value="triggered" <?= $payloadTrigger === 'triggered' ? 'selected' : '' ?>>Acionados</option>
+                    <option value="not_found" <?= $payloadTrigger === 'not_found' ? 'selected' : '' ?>>Aluno nao encontrado</option>
+                    <option value="blacklist" <?= $payloadTrigger === 'blacklist' ? 'selected' : '' ?>>Blacklist</option>
+                    <option value="error" <?= $payloadTrigger === 'error' ? 'selected' : '' ?>>Erro</option>
+                    <option value="ignored" <?= $payloadTrigger === 'ignored' ? 'selected' : '' ?>>Ignorados</option>
+                    <option value="all" <?= $payloadTrigger === 'all' ? 'selected' : '' ?>>Todos</option>
                 </select>
             </div>
             <div class="form-group">
