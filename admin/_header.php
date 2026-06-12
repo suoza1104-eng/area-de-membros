@@ -32,7 +32,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','whatsapp_monitor','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -56,6 +56,7 @@ $titleMap = [
     'webhooks'         => 'Webhooks',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_monitor' => 'WhatsApp Monitor',
+    'whatsapp_ai'      => 'IA WhatsApp',
     'monitor'          => 'Rastreamento',
     'logs'             => 'Logs',
     'aparencia'        => 'Aparência',
@@ -721,7 +722,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -751,6 +752,18 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M8 9h8M8 13h5"/>
       </svg>
       WhatsApp Monitor
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_ai']): ?>
+    <a href="whatsapp_ai.php" class="sb-item <?= $currentMenu === 'whatsapp_ai' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a7 7 0 017 7c0 4-3 6-7 6s-7-2-7-6a7 7 0 017-7z"/>
+        <path d="M8 21h8"/>
+        <path d="M9 15v3M15 15v3"/>
+        <path d="M9 9h.01M15 9h.01"/>
+      </svg>
+      IA WhatsApp
     </a>
     <?php endif; ?>
 

@@ -2,11 +2,13 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/evolution_api.php';
+require_once __DIR__ . '/../app/whatsapp_ai.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
 $pdo = getPDO();
 evolution_ensure_tables($pdo);
+whatsapp_ai_ensure_tables($pdo);
 
 $expectedToken = evolution_get_webhook_token();
 $receivedToken = preg_replace('/[^a-f0-9]/i', '', (string)($_GET['t'] ?? $_GET['token'] ?? ''));
@@ -66,6 +68,13 @@ if (!$tokenOk) {
     exit;
 }
 
+$aiMessageId = null;
+try {
+    $aiMessageId = whatsapp_ai_record_message($pdo, $id, $payload);
+} catch (Throwable $e) {
+    @error_log('whatsapp_ai_record_message: ' . $e->getMessage());
+}
+
 $process = evolution_process_group_event($pdo, $id, $fields);
 
-echo json_encode(['ok' => true, 'logged' => $id, 'process' => $process]);
+echo json_encode(['ok' => true, 'logged' => $id, 'ai_message' => $aiMessageId, 'process' => $process]);
