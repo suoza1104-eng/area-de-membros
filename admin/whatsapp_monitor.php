@@ -656,7 +656,7 @@ include __DIR__ . '/_header.php';
         </div>
     </div>
 
-    <div class="wm-card wm-full">
+    <div class="wm-card wm-full" id="payloads">
         <h2>Webhook de grupos</h2>
         <div class="wm-card-sub">Recebe eventos <span class="code">GROUP_PARTICIPANTS_UPDATE</span>, interpreta entrada/saida/remocao e dispara gatilhos apenas quando encontra o aluno pelo telefone.</div>
 
@@ -812,7 +812,7 @@ include __DIR__ . '/_header.php';
             <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
             <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
         </form>
-        <form method="get" class="wm-filter-grid">
+        <form method="get" action="whatsapp_monitor.php#payloads" class="wm-filter-grid">
             <div class="form-group">
                 <label class="form-label">Buscar contato, aluno, telefone, grupo ou payload</label>
                 <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
@@ -844,7 +844,7 @@ include __DIR__ . '/_header.php';
             </div>
             <div class="wm-filter-actions">
                 <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
-                <a class="btn btn-ghost btn-sm" href="whatsapp_monitor.php">Limpar</a>
+                <a class="btn btn-ghost btn-sm" href="whatsapp_monitor.php#payloads">Limpar</a>
             </div>
         </form>
 
