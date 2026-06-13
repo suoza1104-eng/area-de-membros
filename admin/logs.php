@@ -110,6 +110,14 @@ function logs_guess_turma(string $evento, string $payload): string {
         }
         if (is_scalar($v) && trim((string)$v) !== '') return trim((string)$v);
     }
+    foreach ((array)($data['actions'] ?? []) as $action) {
+        if (!is_array($action)) continue;
+        $field = strtoupper((string)($action['field_name'] ?? ''));
+        $value = trim((string)($action['value'] ?? ''));
+        if ($value !== '' && (str_contains($field, 'CODIGO_TURMA') || preg_match('/(^|_)TURMA($|_)/', $field))) {
+            return $value;
+        }
+    }
     return '';
 }
 
