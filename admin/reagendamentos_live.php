@@ -43,6 +43,20 @@ function rl_pct(int $parte, int $total): string {
     if ($total <= 0) return '0,0%';
     return number_format(($parte / $total) * 100, 1, ',', '.') . '%';
 }
+function rl_query_url(array $changes = []): string {
+    $query = $_GET;
+    foreach ($changes as $key => $value) {
+        if ($value === null || $value === '') unset($query[$key]);
+        else $query[$key] = $value;
+    }
+    $qs = http_build_query($query);
+    return 'reagendamentos_live.php' . ($qs !== '' ? '?' . $qs : '');
+}
+function rl_sort_th(string $key, string $label, string $currentSort, string $currentDir): string {
+    $nextDir = ($currentSort === $key && $currentDir === 'asc') ? 'desc' : 'asc';
+    $mark = $currentSort === $key ? ($currentDir === 'asc' ? ' asc' : ' desc') : '';
+    return '<a class="rl-sort-link" href="' . h(rl_query_url(['sort' => $key, 'dir' => $nextDir])) . '">' . h($label . $mark) . '</a>';
+}
 function rl_make_token_link(string $token): string {
     $publicBase = rtrim(dirname(BASE_URL_ADMIN, 1), '/');
     return $publicBase . '/public/reagendar_live.php?t=' . urlencode($token);
@@ -134,15 +148,16 @@ function rl_cron_extra_admin(array $r): array {
         ],
     ];
 }
-function rl_available_reagendar_slots_admin(int $windowDays, int $qty, string $liveTime, array $blackoutDates, int $intervalDays): array {
+function rl_available_reagendar_slots_admin(int $windowDays, int $qty, string $liveTime, array $blackoutDates, int $intervalDays, bool $allowSameDay): array {
     $now = new DateTimeImmutable('now');
     $blackouts = array_flip(array_filter(array_map('trim', $blackoutDates)));
     $slots = [];
+    $startOffset = $allowSameDay ? 0 : 1;
     for ($i = 0; $i <= $windowDays && count($slots) < $qty; $i++) {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
-        if ($i < 1 || (($i - 1) % $intervalDays) !== 0) continue;
+        if ($i < $startOffset || (($i - $startOffset) % $intervalDays) !== 0) continue;
         $slot = new DateTimeImmutable($key . ' ' . $liveTime . ':00');
         if ($slot <= $now) continue;
         $slots[$slot->format('Y-m-d H:i:s')] = $slot;
@@ -250,6 +265,7 @@ if ($windowDays > 365) $windowDays = 365;
 $intervalDays = (int)get_setting('reagendar_availability_interval_days', '1');
 if ($intervalDays < 1) $intervalDays = 1;
 if ($intervalDays > 365) $intervalDays = 365;
+$allowSameDay = (int)get_setting('reagendar_allow_same_day', '0') === 1;
 $liveUrl = (string)get_setting('reagendar_live_url', '');
 $liveTime = (string)get_setting('reagendar_live_time', '19:30');
 if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
@@ -282,6 +298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $intervalDays = (int)($_POST['reagendar_availability_interval_days'] ?? $intervalDays);
             if ($intervalDays < 1) $intervalDays = 1;
             if ($intervalDays > 365) $intervalDays = 365;
+            $allowSameDay = isset($_POST['reagendar_allow_same_day']);
 
             $liveUrl = trim((string)($_POST['reagendar_live_url'] ?? ''));
             $liveTime = trim((string)($_POST['reagendar_live_time'] ?? '19:30'));
@@ -302,6 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             set_setting('reagendar_token_ttl_hours', (string)$ttlHours);
             set_setting('reagendar_window_days', (string)$windowDays);
             set_setting('reagendar_availability_interval_days', (string)$intervalDays);
+            set_setting('reagendar_allow_same_day', $allowSameDay ? '1' : '0');
             set_setting('reagendar_live_url', $liveUrl);
             set_setting('reagendar_live_time', $liveTime);
             set_setting('reagendar_blackout_dates', implode(',', $blackoutDates));
@@ -323,7 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oldCodigo = (string)($u['codigo_turma'] ?? ($u['turma_codigo'] ?? ''));
             $oldLive = (string)($u['turma_live_at'] ?? ($u['data_live'] ?? ''));
             $newLive = $dLive->format('Y-m-d H:i:s');
-            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays);
+            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays, $allowSameDay);
             if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $sets = [];
             $params = [':id'=>$userId];
@@ -367,7 +385,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dLive = new DateTimeImmutable(str_replace('T', ' ', $manualDt));
             if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
             $newLive = $dLive->format('Y-m-d H:i:s');
-            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays);
+            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays, $allowSameDay);
             if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
 
@@ -506,17 +524,44 @@ $kpiLivesDisponiveis = rl_count($pdo, "SELECT COUNT(*) FROM turmas WHERE data_li
 
 $fAluno = trim((string)($_GET['aluno'] ?? ''));
 $fStatus = trim((string)($_GET['status'] ?? ''));
+$fLinkStatus = trim((string)($_GET['link_status'] ?? ''));
+$fOrigem = trim((string)($_GET['origem'] ?? ''));
 $fTurmaNova = trim((string)($_GET['turma_nova'] ?? ''));
 $fTurmaAntiga = trim((string)($_GET['turma_antiga'] ?? ''));
+$fLiveAntesFrom = trim((string)($_GET['live_antes_from'] ?? ''));
+$fLiveAntesTo = trim((string)($_GET['live_antes_to'] ?? ''));
+$fLiveDepoisFrom = trim((string)($_GET['live_depois_from'] ?? ''));
+$fLiveDepoisTo = trim((string)($_GET['live_depois_to'] ?? ''));
+$fDisparoFrom = trim((string)($_GET['disparo_from'] ?? ''));
+$fDisparoTo = trim((string)($_GET['disparo_to'] ?? ''));
 $fFrom = trim((string)($_GET['from'] ?? ''));
 $fTo = trim((string)($_GET['to'] ?? ''));
+$sort = trim((string)($_GET['sort'] ?? 'quando'));
+$dir = strtolower(trim((string)($_GET['dir'] ?? 'desc'))) === 'asc' ? 'asc' : 'desc';
 
 $whereHist = [];
 $paramsHist = [];
+$origemExpr = "COALESCE(NULLIF(r.origem, ''), CASE WHEN r.user_agent = 'admin_manual' THEN 'suporte' ELSE 'aluno' END)";
+$statusVisualExpr = "CASE
+    WHEN r.status = 'enviado' OR r.sf_sent_at IS NOT NULL THEN 'enviado'
+    WHEN r.status = 'substituido' THEN 'substituido'
+    WHEN r.status = 'expirou' THEN 'expirado'
+    WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at > NOW() THEN 'aguardando'
+    WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at <= NOW() THEN 'pendente'
+    ELSE 'reagendado'
+END";
 if ($fAluno !== '') {
     $whereHist[] = "(u.nome LIKE :aluno OR u.email LIKE :aluno OR u.telefone LIKE :aluno OR u.id = :aluno_id)";
     $paramsHist[':aluno'] = '%' . $fAluno . '%';
     $paramsHist[':aluno_id'] = ctype_digit($fAluno) ? (int)$fAluno : 0;
+}
+if (in_array($fStatus, ['aguardando', 'pendente', 'enviado', 'expirado', 'substituido', 'reagendado'], true)) {
+    $whereHist[] = "($statusVisualExpr) = :status_hist";
+    $paramsHist[':status_hist'] = $fStatus;
+}
+if (in_array($fOrigem, ['aluno', 'suporte'], true)) {
+    $whereHist[] = "($origemExpr) = :origem";
+    $paramsHist[':origem'] = $fOrigem;
 }
 if ($fTurmaNova !== '') {
     $whereHist[] = "r.new_codigo_turma = :turma_nova";
@@ -525,6 +570,30 @@ if ($fTurmaNova !== '') {
 if ($fTurmaAntiga !== '') {
     $whereHist[] = "r.old_codigo_turma = :turma_antiga";
     $paramsHist[':turma_antiga'] = $fTurmaAntiga;
+}
+if ($fLiveAntesFrom !== '') {
+    $whereHist[] = "r.old_turma_live_at >= :live_antes_from";
+    $paramsHist[':live_antes_from'] = $fLiveAntesFrom . ' 00:00:00';
+}
+if ($fLiveAntesTo !== '') {
+    $whereHist[] = "r.old_turma_live_at <= :live_antes_to";
+    $paramsHist[':live_antes_to'] = $fLiveAntesTo . ' 23:59:59';
+}
+if ($fLiveDepoisFrom !== '') {
+    $whereHist[] = "r.new_turma_live_at >= :live_depois_from";
+    $paramsHist[':live_depois_from'] = $fLiveDepoisFrom . ' 00:00:00';
+}
+if ($fLiveDepoisTo !== '') {
+    $whereHist[] = "r.new_turma_live_at <= :live_depois_to";
+    $paramsHist[':live_depois_to'] = $fLiveDepoisTo . ' 23:59:59';
+}
+if ($fDisparoFrom !== '') {
+    $whereHist[] = "r.sf_disparo_at >= :disparo_from";
+    $paramsHist[':disparo_from'] = $fDisparoFrom . ' 00:00:00';
+}
+if ($fDisparoTo !== '') {
+    $whereHist[] = "r.sf_disparo_at <= :disparo_to";
+    $paramsHist[':disparo_to'] = $fDisparoTo . ' 23:59:59';
 }
 if ($fFrom !== '') {
     $whereHist[] = "r.created_at >= :from";
@@ -535,6 +604,20 @@ if ($fTo !== '') {
     $paramsHist[':to'] = $fTo . ' 23:59:59';
 }
 $whereHistSql = $whereHist ? 'WHERE ' . implode(' AND ', $whereHist) : '';
+
+$sortMap = [
+    'aluno' => 'u.nome',
+    'antes' => 'r.old_turma_live_at',
+    'depois' => 'r.new_turma_live_at',
+    'origem' => 'origem_sort',
+    'status' => 'status_visual_key',
+    'disparo' => 'r.sf_disparo_at',
+    'eventos' => 'eventos_total',
+    'freq' => 'frequencia_aluno',
+    'quando' => 'r.created_at',
+];
+if (!isset($sortMap[$sort])) $sort = 'quando';
+$orderHistSql = $sortMap[$sort] . ' ' . strtoupper($dir) . ', r.id ' . strtoupper($dir);
 
 $liveEventsReady = rl_table_exists($pdo, 'live_event_recebimentos') && rl_table_exists($pdo, 'live_events');
 $eventExpr = function(string $tipo): string {
@@ -551,18 +634,19 @@ $eventExpr = function(string $tipo): string {
 };
 $exprAcessou = $liveEventsReady ? $eventExpr('acessou') : '0';
 $exprOferta = $liveEventsReady ? $eventExpr('oferta') : '0';
+$exprCliqueCompra = $liveEventsReady ? $eventExpr('compra') : '0';
 $hotmartSalesReady = rl_table_exists($pdo, 'hotmart_sales')
     && rl_col_exists($pdo, 'hotmart_sales', 'matched_user_id')
     && rl_col_exists($pdo, 'hotmart_sales', 'status')
     && rl_col_exists($pdo, 'hotmart_sales', 'transaction_date');
-$exprCompra = $hotmartSalesReady
+$exprCompraCurso = $hotmartSalesReady
     ? "EXISTS (
         SELECT 1
         FROM hotmart_sales s
         WHERE s.matched_user_id = r.user_id
-          AND s.status IN ('Aprovado','Completo')
+          AND LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')
           AND s.transaction_date IS NOT NULL
-          AND s.transaction_date >= r.created_at
+          AND s.transaction_date >= COALESCE(r.new_turma_live_at, r.created_at)
         LIMIT 1
     )"
     : '0';
@@ -572,7 +656,8 @@ try {
             COUNT(*) AS total,
             SUM($exprAcessou) AS acessou,
             SUM($exprOferta) AS oferta,
-            SUM($exprCompra) AS compra,
+            SUM($exprCliqueCompra) AS clique_compra,
+            SUM($exprCompraCurso) AS compra_curso,
             COUNT(DISTINCT r.user_id) AS alunos_unicos
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
@@ -585,7 +670,8 @@ try {
 $kpiReagFiltrados = (int)($metricas['total'] ?? 0);
 $kpiEntrada = (int)($metricas['acessou'] ?? 0);
 $kpiOferta = (int)($metricas['oferta'] ?? 0);
-$kpiVenda = (int)($metricas['compra'] ?? 0);
+$kpiCliqueCompra = (int)($metricas['clique_compra'] ?? 0);
+$kpiCompraCurso = (int)($metricas['compra_curso'] ?? 0);
 $kpiAlunosUnicos = (int)($metricas['alunos_unicos'] ?? 0);
 $kpiReagTotal = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live");
 $kpiReag7 = rl_count($pdo, "SELECT COUNT(*) FROM reagendamentos_live WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
@@ -594,7 +680,10 @@ try {
     $st = $pdo->prepare("SELECT r.*, u.nome, u.email, u.telefone,
             ($exprAcessou) AS teve_acesso,
             ($exprOferta) AS teve_oferta,
-            ($exprCompra) AS teve_compra,
+            ($exprCliqueCompra) AS teve_clique_compra,
+            ($exprCompraCurso) AS teve_compra_curso,
+            (($exprAcessou) + ($exprOferta) + ($exprCliqueCompra)) AS eventos_total,
+            ($origemExpr) AS origem_sort,
             CASE
                 WHEN r.status = 'enviado' OR r.sf_sent_at IS NOT NULL THEN 'Enviado'
                 WHEN r.status = 'substituido' THEN 'Substituido'
@@ -603,19 +692,12 @@ try {
                 WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at <= NOW() THEN 'Pendente'
                 ELSE 'Reagendado'
             END AS status_visual,
-            CASE
-                WHEN r.status = 'enviado' OR r.sf_sent_at IS NOT NULL THEN 'enviado'
-                WHEN r.status = 'substituido' THEN 'substituido'
-                WHEN r.status = 'expirou' THEN 'expirado'
-                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at > NOW() THEN 'aguardando'
-                WHEN r.sf_disparo_at IS NOT NULL AND r.sf_disparo_at <= NOW() THEN 'pendente'
-                ELSE 'reagendado'
-            END AS status_visual_key,
+            ($statusVisualExpr) AS status_visual_key,
             (SELECT COUNT(*) FROM reagendamentos_live rr WHERE rr.user_id = r.user_id) AS frequencia_aluno
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
-        ORDER BY r.created_at DESC, r.id DESC
+        ORDER BY $orderHistSql
         LIMIT 200");
     $st->execute($paramsHist);
     $historico = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -642,7 +724,7 @@ foreach ($frequencias as $fr) {
 }
 
 try {
-    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total, SUM($exprCompra) AS vendas
+    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total, SUM($exprCompraCurso) AS vendas
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
@@ -672,11 +754,11 @@ if ($fAluno !== '') {
     $paramsTokens[':aluno'] = '%' . $fAluno . '%';
     $paramsTokens[':aluno_id'] = ctype_digit($fAluno) ? (int)$fAluno : 0;
 }
-if ($fStatus === 'ativo') {
+if ($fLinkStatus === 'ativo') {
     $whereTokens[] = "t.used_at IS NULL AND t.expires_at >= NOW()";
-} elseif ($fStatus === 'usado') {
+} elseif ($fLinkStatus === 'usado') {
     $whereTokens[] = "t.used_at IS NOT NULL";
-} elseif ($fStatus === 'expirado') {
+} elseif ($fLinkStatus === 'expirado') {
     $whereTokens[] = "t.used_at IS NULL AND t.expires_at < NOW()";
 }
 $whereTokensSql = $whereTokens ? 'WHERE ' . implode(' AND ', $whereTokens) : '';
@@ -701,7 +783,7 @@ try {
 }
 
 $lives = [];
-foreach (rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays) as $slot) {
+foreach (rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays, $allowSameDay) as $slot) {
     $lives[] = [
         'codigo' => 'Repescagem',
         'data_live' => $slot->format('Y-m-d H:i:s'),
@@ -814,8 +896,16 @@ require __DIR__ . '/_header.php';
 .rl-chart-card { margin-bottom:16px; }
 .rl-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
 .rl-chart-wrap { height:300px; width:100%; }
+.rl-pie-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.rl-pie-card { border:1px solid var(--border); border-radius:12px; padding:14px; background:rgba(15,23,42,.34); min-width:0; }
+.rl-pie-title { color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0; min-height:28px; }
+.rl-pie-value { color:var(--text); font-size:24px; font-weight:900; line-height:1.1; margin:6px 0 2px; }
+.rl-pie-sub { color:var(--muted); font-size:12px; margin-bottom:10px; }
+.rl-pie-wrap { height:160px; width:100%; }
 .rl-chart-toggle { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:999px; padding:7px 11px; color:var(--muted); font-size:12px; cursor:pointer; background:rgba(15,23,42,.55); }
 .rl-chart-toggle input { accent-color:var(--primary); }
+.rl-sort-link { color:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:4px; }
+.rl-sort-link:hover { color:var(--primary); }
 .rl-calendar { border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(2,6,23,.35); }
 .rl-calendar-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border-bottom:1px solid var(--border); }
 .rl-calendar-title { font-weight:800; color:var(--text); text-transform:capitalize; }
@@ -832,7 +922,8 @@ require __DIR__ . '/_header.php';
 .rl-cal-state { font-size:10px; color:var(--muted); }
 .rl-cal-day.blocked { background:rgba(239,68,68,.08); }
 .rl-cal-day.blocked .rl-cal-state { color:#fca5a5; }
-@media(max-width:720px){ .rl-chart-wrap{height:240px;} .rl-cal-day{min-height:62px;padding:6px;} .rl-cal-dow{font-size:10px;} }
+@media(max-width:1100px){ .rl-pie-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
+@media(max-width:720px){ .rl-chart-wrap{height:240px;} .rl-pie-grid{grid-template-columns:1fr;} .rl-pie-wrap{height:180px;} .rl-cal-day{min-height:62px;padding:6px;} .rl-cal-dow{font-size:10px;} }
 </style>
 
 <?php if ($msg): ?>
@@ -872,6 +963,25 @@ require __DIR__ . '/_header.php';
     <?php endif; ?>
 </div>
 
+<div class="rl-pie-grid">
+    <?php
+        $pieCards = [
+            ['id' => 'pieAcessou', 'titulo' => 'Reagendou e acessou a live', 'ok' => $kpiEntrada, 'total' => $kpiReagFiltrados, 'cor' => '#38bdf8'],
+            ['id' => 'pieOferta', 'titulo' => 'Reagendou e chegou na oferta', 'ok' => $kpiOferta, 'total' => $kpiReagFiltrados, 'cor' => '#f59e0b'],
+            ['id' => 'pieClique', 'titulo' => 'Reagendou e clicou no botao de compra', 'ok' => $kpiCliqueCompra, 'total' => $kpiReagFiltrados, 'cor' => '#a78bfa'],
+            ['id' => 'pieCompraCurso', 'titulo' => 'Reagendou e comprou curso apos a live', 'ok' => $kpiCompraCurso, 'total' => $kpiReagFiltrados, 'cor' => '#22c55e'],
+        ];
+    ?>
+    <?php foreach ($pieCards as $pc): ?>
+        <div class="rl-pie-card">
+            <div class="rl-pie-title"><?= h($pc['titulo']) ?></div>
+            <div class="rl-pie-value"><?= h(rl_pct((int)$pc['ok'], (int)$pc['total'])) ?></div>
+            <div class="rl-pie-sub"><?= number_format((int)$pc['ok'], 0, ',', '.') ?> de <?= number_format((int)$pc['total'], 0, ',', '.') ?> reagendamentos</div>
+            <div class="rl-pie-wrap"><canvas id="<?= h($pc['id']) ?>"></canvas></div>
+        </div>
+    <?php endforeach; ?>
+</div>
+
 <div class="kpi-grid">
     <div class="kpi kpi-g"><div class="kpi-label">Links ativos</div><div class="kpi-value"><?= number_format($kpiTokensAtivos, 0, ',', '.') ?></div></div>
     <div class="kpi kpi-b"><div class="kpi-label">Links usados</div><div class="kpi-value"><?= number_format($kpiTokensUsados, 0, ',', '.') ?></div></div>
@@ -879,7 +989,8 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-y"><div class="kpi-label">Reagendamentos</div><div class="kpi-value"><?= number_format($kpiReagFiltrados, 0, ',', '.') ?></div><div class="kpi-sub"><?= number_format($kpiReagTotal, 0, ',', '.') ?> total · <?= number_format($kpiReag7, 0, ',', '.') ?> em 7 dias</div></div>
     <div class="kpi kpi-b"><div class="kpi-label">Taxa de entrada</div><div class="kpi-value"><?= h(rl_pct($kpiEntrada, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiEntrada, 0, ',', '.') ?> acessaram a live</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Taxa ate oferta</div><div class="kpi-value"><?= h(rl_pct($kpiOferta, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiOferta, 0, ',', '.') ?> ficaram ate a oferta</div></div>
-    <div class="kpi kpi-g"><div class="kpi-label">Conversao venda</div><div class="kpi-value"><?= h(rl_pct($kpiVenda, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiVenda, 0, ',', '.') ?> venda(s) Hotmart</div></div>
+    <div class="kpi kpi-o"><div class="kpi-label">Cliques no botao</div><div class="kpi-value"><?= h(rl_pct($kpiCliqueCompra, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiCliqueCompra, 0, ',', '.') ?> clicaram no CTA</div></div>
+    <div class="kpi kpi-g"><div class="kpi-label">Compras curso</div><div class="kpi-value"><?= h(rl_pct($kpiCompraCurso, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiCompraCurso, 0, ',', '.') ?> venda(s) apos a live</div></div>
     <div class="kpi"><div class="kpi-label">Frequencia</div><div class="kpi-value"><?= number_format($kpiMaiorFreq, 0, ',', '.') ?>x</div><div class="kpi-sub"><?= number_format($kpiAlunosUnicos, 0, ',', '.') ?> aluno(s) no filtro</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Lives disponiveis</div><div class="kpi-value"><?= number_format($kpiLivesDisponiveis, 0, ',', '.') ?></div><div class="kpi-sub">janela de <?= (int)$windowDays ?> dia(s)</div></div>
 </div>
@@ -888,9 +999,18 @@ require __DIR__ . '/_header.php';
     <div class="filter-group" style="min-width:220px"><label>Aluno</label><input name="aluno" value="<?= h($fAluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
     <div class="filter-group"><label>Turma nova</label><select name="turma_nova"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaNova===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
     <div class="filter-group"><label>Turma antiga</label><select name="turma_antiga"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaAntiga===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
-    <div class="filter-group"><label>Status do link</label><select name="status"><option value="">Todos</option><option value="ativo" <?= $fStatus==='ativo'?'selected':'' ?>>Ativos</option><option value="usado" <?= $fStatus==='usado'?'selected':'' ?>>Usados</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirados</option></select></div>
-    <div class="filter-group"><label>De</label><input type="date" name="from" value="<?= h($fFrom) ?>"></div>
-    <div class="filter-group"><label>Ate</label><input type="date" name="to" value="<?= h($fTo) ?>"></div>
+    <div class="filter-group"><label>Origem</label><select name="origem"><option value="">Todas</option><option value="aluno" <?= $fOrigem==='aluno'?'selected':'' ?>>Aluno</option><option value="suporte" <?= $fOrigem==='suporte'?'selected':'' ?>>Suporte</option></select></div>
+    <div class="filter-group"><label>Status</label><select name="status"><option value="">Todos</option><option value="aguardando" <?= $fStatus==='aguardando'?'selected':'' ?>>Aguardando</option><option value="pendente" <?= $fStatus==='pendente'?'selected':'' ?>>Pendente</option><option value="enviado" <?= $fStatus==='enviado'?'selected':'' ?>>Enviado</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirado</option><option value="substituido" <?= $fStatus==='substituido'?'selected':'' ?>>Substituido</option><option value="reagendado" <?= $fStatus==='reagendado'?'selected':'' ?>>Reagendado</option></select></div>
+    <div class="filter-group"><label>Live antes de</label><input type="date" name="live_antes_from" value="<?= h($fLiveAntesFrom) ?>"></div>
+    <div class="filter-group"><label>Live antes ate</label><input type="date" name="live_antes_to" value="<?= h($fLiveAntesTo) ?>"></div>
+    <div class="filter-group"><label>Live depois de</label><input type="date" name="live_depois_from" value="<?= h($fLiveDepoisFrom) ?>"></div>
+    <div class="filter-group"><label>Live depois ate</label><input type="date" name="live_depois_to" value="<?= h($fLiveDepoisTo) ?>"></div>
+    <div class="filter-group"><label>Disparo previsto de</label><input type="date" name="disparo_from" value="<?= h($fDisparoFrom) ?>"></div>
+    <div class="filter-group"><label>Disparo previsto ate</label><input type="date" name="disparo_to" value="<?= h($fDisparoTo) ?>"></div>
+    <div class="filter-group"><label>Reagendou de</label><input type="date" name="from" value="<?= h($fFrom) ?>"></div>
+    <div class="filter-group"><label>Reagendou ate</label><input type="date" name="to" value="<?= h($fTo) ?>"></div>
+    <input type="hidden" name="sort" value="<?= h($sort) ?>">
+    <input type="hidden" name="dir" value="<?= h($dir) ?>">
     <div class="filter-actions"><button class="btn btn-primary btn-sm">Filtrar</button><a class="reset-link" href="reagendamentos_live.php">Limpar</a></div>
 </form>
 
@@ -925,12 +1045,19 @@ require __DIR__ . '/_header.php';
                         <div class="text-xs text-muted mt-2">Use 1 para todo dia a partir de amanha, 2 para dia sim/dia nao.</div>
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Permitir mesmo dia</label>
+                        <label style="display:flex;align-items:center;gap:8px;min-height:38px">
+                            <input type="checkbox" name="reagendar_allow_same_day" value="1" <?= $allowSameDay ? 'checked' : '' ?> onchange="updateDispatchPreview()">
+                            <span class="text-sm">Liberar a live de hoje se o horario ainda nao passou</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
                         <label class="form-label">Prazo para considerar expirado (min)</label>
                         <input type="number" min="0" max="1440" name="reagendar_expire_grace_min" value="<?= (int)$expireGraceMin ?>">
                         <div class="text-xs text-muted mt-2">Ex.: live 19:30 e prazo 10: so aparece expirado se chegar 19:40 sem envio confirmado.</div>
                     </div>
-                </div>
-                <div class="grid-3">
                     <div class="form-group">
                         <label class="form-label">Deslocamento do disparo</label>
                         <input type="text" id="dispatchOffset" name="reagendar_dispatch_offset" value="<?= h($dispatchOffsetText) ?>" placeholder="ex: -2:30" oninput="updateDispatchPreview()">
@@ -987,7 +1114,18 @@ require __DIR__ . '/_header.php';
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
             <div class="table-wrap">
                 <table class="rl-table-small">
-                    <thead><tr><th>Aluno</th><th>Antes</th><th>Depois</th><th>Origem</th><th>Status</th><th>Disparo</th><th>Eventos</th><th>Freq.</th><th>Quando</th><th style="text-align:right">Acoes</th></tr></thead>
+                    <thead><tr>
+                        <th><?= rl_sort_th('aluno', 'Aluno', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('antes', 'Antes', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('depois', 'Depois', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('origem', 'Origem', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('status', 'Status', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('disparo', 'Disparo', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('eventos', 'Eventos', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('freq', 'Freq.', $sort, $dir) ?></th>
+                        <th><?= rl_sort_th('quando', 'Quando', $sort, $dir) ?></th>
+                        <th style="text-align:right">Acoes</th>
+                    </tr></thead>
                     <tbody>
                     <?php if (!$historico): ?>
                         <tr><td colspan="10" class="text-muted" style="text-align:center;padding:24px">Nenhum reagendamento encontrado.</td></tr>
@@ -1026,8 +1164,9 @@ require __DIR__ . '/_header.php';
                                 <div class="rl-event-pills">
                                     <span class="rl-event-pill <?= !empty($r['teve_acesso']) ? 'on acesso' : '' ?>">Entrada</span>
                                     <span class="rl-event-pill <?= !empty($r['teve_oferta']) ? 'on oferta' : '' ?>">Oferta</span>
-                                    <span class="rl-event-pill <?= !empty($r['teve_compra']) ? 'on compra' : '' ?>">Venda</span>
+                                    <span class="rl-event-pill <?= !empty($r['teve_clique_compra']) ? 'on compra' : '' ?>">Compra</span>
                                 </div>
+                                <?php if (!empty($r['teve_compra_curso'])): ?><div class="text-xs text-muted mt-1">Comprou curso</div><?php endif; ?>
                             </td>
                             <td><span class="badge badge-neutral"><?= (int)($r['frequencia_aluno'] ?? 0) ?>x</span></td>
                             <td>
@@ -1310,9 +1449,19 @@ const BLACKOUT_INIT = <?= json_encode($blackoutDates, JSON_UNESCAPED_UNICODE) ?>
 const LIVE_TIME = <?= json_encode($liveTime) ?>;
 const WINDOW_DAYS = <?= (int)$windowDays ?>;
 const INTERVAL_DAYS_INIT = <?= (int)$intervalDays ?>;
+const ALLOW_SAME_DAY_INIT = <?= $allowSameDay ? 'true' : 'false' ?>;
 const REAG_CHART_LABELS = <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_DATA = <?= json_encode($chartReagData, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_VENDAS = <?= json_encode($chartVendaData, JSON_UNESCAPED_UNICODE) ?>;
+const REAG_PIE_CHARTS = <?= json_encode(array_map(static function(array $pc): array {
+    return [
+        'id' => $pc['id'],
+        'label' => $pc['titulo'],
+        'ok' => (int)$pc['ok'],
+        'total' => (int)$pc['total'],
+        'color' => $pc['cor'],
+    ];
+}, $pieCards), JSON_UNESCAPED_UNICODE) ?>;
 let blackoutSelected = new Set(BLACKOUT_INIT);
 let blackoutMonth = new Date();
 blackoutMonth.setDate(1);
@@ -1421,8 +1570,11 @@ function updateDispatchPreview() {
     var intervalInput = document.querySelector('[name="reagendar_availability_interval_days"]');
     var intervalDays = parseInt(intervalInput?.value || INTERVAL_DAYS_INIT || '1', 10);
     if (!Number.isFinite(intervalDays) || intervalDays < 1) intervalDays = 1;
-    for (var i = 1; i < WINDOW_DAYS; i++) {
-        if (((i - 1) % intervalDays) !== 0) continue;
+    var allowSameDayInput = document.querySelector('[name="reagendar_allow_same_day"]');
+    var allowSameDay = allowSameDayInput ? allowSameDayInput.checked : ALLOW_SAME_DAY_INIT;
+    var startOffset = allowSameDay ? 0 : 1;
+    for (var i = 0; i < WINDOW_DAYS; i++) {
+        if (i < startOffset || ((i - startOffset) % intervalDays) !== 0) continue;
         var d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
         var key = isoLocalDate(d);
         if (blackouts.has(key)) continue;
@@ -1489,14 +1641,59 @@ function buildReagLineChart() {
         });
     }
 }
+function buildPieCharts() {
+    if (typeof Chart === 'undefined' || !Array.isArray(REAG_PIE_CHARTS)) return;
+    REAG_PIE_CHARTS.forEach(function(item) {
+        var canvas = document.getElementById(item.id);
+        if (!canvas) return;
+        var ok = Math.max(0, parseInt(item.ok || 0, 10));
+        var total = Math.max(0, parseInt(item.total || 0, 10));
+        var no = Math.max(0, total - ok);
+        new Chart(canvas, {
+            type: 'pie',
+            data: {
+                labels: ['Sim', 'Nao'],
+                datasets: [{
+                    data: total > 0 ? [ok, no] : [0, 1],
+                    backgroundColor: [item.color || '#38bdf8', 'rgba(100,116,139,.28)'],
+                    borderColor: ['rgba(255,255,255,.12)', 'rgba(255,255,255,.08)'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true } },
+                    tooltip: {
+                        backgroundColor: '#0f172a',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(ctx) {
+                                if (total <= 0) return 'Sem reagendamentos';
+                                var value = ctx.parsed || 0;
+                                var pct = total > 0 ? ((value / total) * 100).toFixed(1).replace('.', ',') : '0,0';
+                                return ctx.label + ': ' + value + ' (' + pct + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    });
+}
 document.addEventListener('DOMContentLoaded', function() {
     buildReagLineChart();
+    buildPieCharts();
     buildBlackoutCalendar();
     updateDispatchPreview();
     var time = document.querySelector('[name="reagendar_live_time"]');
     if (time) time.addEventListener('input', updateDispatchPreview);
     var interval = document.querySelector('[name="reagendar_availability_interval_days"]');
     if (interval) interval.addEventListener('input', updateDispatchPreview);
+    var allowSameDay = document.querySelector('[name="reagendar_allow_same_day"]');
+    if (allowSameDay) allowSameDay.addEventListener('change', updateDispatchPreview);
 });
 function copyText(id) {
     var el = document.getElementById(id);
