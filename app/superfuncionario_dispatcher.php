@@ -505,6 +505,11 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
  * ----------------------------------*/
 function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
+        return false;
+    }
+
     $cfg = sf_get_config($pdo);
     if ((int)$cfg['is_enabled'] !== 1) return false;
     if ($cfg['token'] === '') return false;
@@ -682,6 +687,11 @@ function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStat
  * ----------------------------------*/
 function sf_disparar_live_turma(PDO $pdo, array $turmaSf, array $aluno, array $extra): void
 {
+    $userId = isset($aluno['id']) ? (int)$aluno['id'] : 0;
+    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
+        return;
+    }
+
     $cfg = sf_get_config($pdo);
     if ((int)$cfg['is_enabled'] !== 1) return;
     if ($cfg['token'] === '') return;

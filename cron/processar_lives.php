@@ -543,6 +543,11 @@ foreach ($turmas as $turma) {
     // ----------------------------------------------------------------------------------
     foreach ($alunos as $aluno) {
         $uid = (int)($aluno['id'] ?? 0);
+        if (function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
+            $dispatchStats['skipped']['bloqueado'] = (int)($dispatchStats['skipped']['bloqueado'] ?? 0) + 1;
+            continue;
+        }
+
         $prog = calc_andamento($pdo, $uid, (int)$totalObrigatoriasGlobal);
         $aluno['andamento']        = $prog['andamento'];
         $aluno['aulas_concluidas'] = $prog['concluidas'];

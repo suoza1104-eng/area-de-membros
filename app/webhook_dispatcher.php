@@ -413,6 +413,11 @@ $userId    = isset($user['id']) ? (int)$user['id'] : null;
  */
 function disparar_evento_webhooks(PDO $pdo, string $evento, array $user, array $extra = []): void
 {
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
+        return;
+    }
+
     $stmt = $pdo->query("SELECT * FROM webhooks WHERE ativo = 1");
     if (!$stmt) {
         return;

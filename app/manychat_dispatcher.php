@@ -303,6 +303,11 @@ function mc_get_or_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int 
 
 function mc_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
+        return false;
+    }
+
     $cfg = mc_get_config($pdo);
     if ((int)$cfg['is_enabled'] !== 1 || $cfg['token'] === '') return false;
     $rules = mc_get_rules_for_event($pdo, $evento);

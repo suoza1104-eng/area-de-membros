@@ -268,6 +268,11 @@ if ($acao !== '') {
 
     // Helper: envia via SF
     function enviarSF(array $usuario, array $acoes, PDO $pdo): array {
+        $uid = (int)($usuario['id'] ?? 0);
+        if ($uid > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
+            return ['ok' => false, 'msg' => 'Aluno bloqueado para disparos'];
+        }
+
         try {
             $cfg = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { $cfg = null; }

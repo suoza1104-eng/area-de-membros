@@ -52,13 +52,97 @@ function buscar_usuario_por_id(int $id): ?array {
     return $row ?: null;
 }
 
+function user_dispatch_ensure_columns(PDO $pdo): void {
+    static $done = false;
+    if ($done) return;
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN bloquear TINYINT(1) NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN bloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN desbloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+    try {
+        $pdo->exec("
+            UPDATE users u
+            JOIN user_tags ut ON ut.user_id = u.id
+            JOIN tags t ON t.id = ut.tag_id
+               SET u.bloquear = 1,
+                   u.bloqueado_em = COALESCE(u.bloqueado_em, ut.created_at, NOW())
+             WHERE UPPER(t.nome) = 'BLOQUEAR'
+               AND u.bloquear <> 1
+        ");
+    } catch (Throwable $e) {}
+    $done = true;
+}
+
+function normalizar_tag_sistema(string $tag): string {
+    $tag = trim($tag);
+    if ($tag === '') return '';
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tag);
+    if (is_string($ascii) && $ascii !== '') $tag = $ascii;
+    $tag = strtoupper($tag);
+    $tag = preg_replace('/[^A-Z0-9]+/', '_', $tag) ?? $tag;
+    return trim($tag, '_');
+}
+
+function usuario_bloqueado_disparos(PDO $pdo, ?int $userId): bool {
+    $userId = (int)$userId;
+    if ($userId <= 0) return false;
+    try {
+        user_dispatch_ensure_columns($pdo);
+        $st = $pdo->prepare("SELECT bloquear FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        return (int)($st->fetchColumn() ?: 0) === 1;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function aplicar_tag_sistema_disparo(int $userId, string $tagNome): void {
+    if ($userId <= 0) return;
+    $tag = normalizar_tag_sistema($tagNome);
+    if ($tag !== 'BLOQUEAR' && $tag !== 'DESBLOQUEAR') return;
+
+    $pdo = getPDO();
+    user_dispatch_ensure_columns($pdo);
+
+    if ($tag === 'BLOQUEAR') {
+        $desbloquearTagId = obter_ou_criar_tag_id('DESBLOQUEAR');
+        $pdo->prepare("UPDATE users SET bloquear = 1, bloqueado_em = NOW() WHERE id = :id LIMIT 1")
+            ->execute([':id' => $userId]);
+        if ($desbloquearTagId > 0) {
+            $pdo->prepare("DELETE FROM user_tags WHERE user_id = :u AND tag_id = :t")
+                ->execute([':u' => $userId, ':t' => $desbloquearTagId]);
+        }
+        return;
+    }
+
+    $bloquearTagId = obter_ou_criar_tag_id('BLOQUEAR');
+    $pdo->prepare("UPDATE users SET bloquear = 0, desbloqueado_em = NOW() WHERE id = :id LIMIT 1")
+        ->execute([':id' => $userId]);
+    if ($bloquearTagId > 0) {
+        $pdo->prepare("DELETE FROM user_tags WHERE user_id = :u AND tag_id = :t")
+            ->execute([':u' => $userId, ':t' => $bloquearTagId]);
+    }
+}
+
 function adicionar_tag_ao_usuario(int $user_id, int $tag_id, string $origem = 'manual', ?int $referencia_id = null): void {
     $pdo = getPDO();
+    $tagNomeSistema = '';
+    try {
+        $stTag = $pdo->prepare("SELECT nome FROM tags WHERE id = :id LIMIT 1");
+        $stTag->execute([':id' => $tag_id]);
+        $tagNomeSistema = (string)($stTag->fetchColumn() ?: '');
+    } catch (Throwable $e) {}
+
+    if (normalizar_tag_sistema($tagNomeSistema) === 'DESBLOQUEAR') {
+        aplicar_tag_sistema_disparo($user_id, $tagNomeSistema);
+    }
 
     // evita duplicar user_tag
     $stmt = $pdo->prepare("SELECT id FROM user_tags WHERE user_id = :u AND tag_id = :t");
     $stmt->execute([':u' => $user_id, ':t' => $tag_id]);
     if ($stmt->fetch()) {
+        if (normalizar_tag_sistema($tagNomeSistema) === 'BLOQUEAR' || normalizar_tag_sistema($tagNomeSistema) === 'DESBLOQUEAR') {
+            aplicar_tag_sistema_disparo($user_id, $tagNomeSistema);
+        }
         return;
     }
 
@@ -72,6 +156,10 @@ function adicionar_tag_ao_usuario(int $user_id, int $tag_id, string $origem = 'm
         ':o' => $origem,
         ':r' => $referencia_id,
     ]);
+
+    if (normalizar_tag_sistema($tagNomeSistema) === 'BLOQUEAR') {
+        aplicar_tag_sistema_disparo($user_id, $tagNomeSistema);
+    }
 }
 
 
@@ -117,10 +205,20 @@ function adicionar_tag(int $user_id, string $tag_nome, string $origem = 'manual'
     if ($user_id <= 0) return false;
 
     try {
+        $tagSistema = normalizar_tag_sistema($tag_nome);
+        if ($tagSistema === 'DESBLOQUEAR') {
+            aplicar_tag_sistema_disparo($user_id, $tag_nome);
+        }
+
         $tag_id = obter_ou_criar_tag_id($tag_nome);
         if ($tag_id <= 0) return false;
 
         adicionar_tag_ao_usuario($user_id, $tag_id, $origem, $referencia_id);
+
+        if ($tagSistema === 'BLOQUEAR') {
+            aplicar_tag_sistema_disparo($user_id, $tag_nome);
+        }
+
         return true;
     } catch (Throwable $e) {
         return false;
@@ -163,6 +261,9 @@ function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = 
  */
 function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): bool {
     $pdo = getPDO();
+    if (usuario_bloqueado_disparos($pdo, $user_id)) {
+        return false;
+    }
 
     // Monta dados básicos do usuário (se informado)
     $user = [];
