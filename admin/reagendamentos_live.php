@@ -50,7 +50,7 @@ function rl_query_url(array $changes = []): string {
         else $query[$key] = $value;
     }
     $qs = http_build_query($query);
-    return 'reagendamentos_live.php' . ($qs !== '' ? '?' . $qs : '');
+    return 'reagendamentos_live.php' . ($qs !== '' ? '?' . $qs : '') . '#filtros-reagendamentos';
 }
 function rl_sort_th(string $key, string $label, string $currentSort, string $currentDir): string {
     $nextDir = ($currentSort === $key && $currentDir === 'asc') ? 'desc' : 'asc';
@@ -995,25 +995,6 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-o"><div class="kpi-label">Lives disponiveis</div><div class="kpi-value"><?= number_format($kpiLivesDisponiveis, 0, ',', '.') ?></div><div class="kpi-sub">janela de <?= (int)$windowDays ?> dia(s)</div></div>
 </div>
 
-<form method="get" class="filter-bar">
-    <div class="filter-group" style="min-width:220px"><label>Aluno</label><input name="aluno" value="<?= h($fAluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
-    <div class="filter-group"><label>Turma nova</label><select name="turma_nova"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaNova===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
-    <div class="filter-group"><label>Turma antiga</label><select name="turma_antiga"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaAntiga===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
-    <div class="filter-group"><label>Origem</label><select name="origem"><option value="">Todas</option><option value="aluno" <?= $fOrigem==='aluno'?'selected':'' ?>>Aluno</option><option value="suporte" <?= $fOrigem==='suporte'?'selected':'' ?>>Suporte</option></select></div>
-    <div class="filter-group"><label>Status</label><select name="status"><option value="">Todos</option><option value="aguardando" <?= $fStatus==='aguardando'?'selected':'' ?>>Aguardando</option><option value="pendente" <?= $fStatus==='pendente'?'selected':'' ?>>Pendente</option><option value="enviado" <?= $fStatus==='enviado'?'selected':'' ?>>Enviado</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirado</option><option value="substituido" <?= $fStatus==='substituido'?'selected':'' ?>>Substituido</option><option value="reagendado" <?= $fStatus==='reagendado'?'selected':'' ?>>Reagendado</option></select></div>
-    <div class="filter-group"><label>Live antes de</label><input type="date" name="live_antes_from" value="<?= h($fLiveAntesFrom) ?>"></div>
-    <div class="filter-group"><label>Live antes ate</label><input type="date" name="live_antes_to" value="<?= h($fLiveAntesTo) ?>"></div>
-    <div class="filter-group"><label>Live depois de</label><input type="date" name="live_depois_from" value="<?= h($fLiveDepoisFrom) ?>"></div>
-    <div class="filter-group"><label>Live depois ate</label><input type="date" name="live_depois_to" value="<?= h($fLiveDepoisTo) ?>"></div>
-    <div class="filter-group"><label>Disparo previsto de</label><input type="date" name="disparo_from" value="<?= h($fDisparoFrom) ?>"></div>
-    <div class="filter-group"><label>Disparo previsto ate</label><input type="date" name="disparo_to" value="<?= h($fDisparoTo) ?>"></div>
-    <div class="filter-group"><label>Reagendou de</label><input type="date" name="from" value="<?= h($fFrom) ?>"></div>
-    <div class="filter-group"><label>Reagendou ate</label><input type="date" name="to" value="<?= h($fTo) ?>"></div>
-    <input type="hidden" name="sort" value="<?= h($sort) ?>">
-    <input type="hidden" name="dir" value="<?= h($dir) ?>">
-    <div class="filter-actions"><button class="btn btn-primary btn-sm">Filtrar</button><a class="reset-link" href="reagendamentos_live.php">Limpar</a></div>
-</form>
-
 <div class="rl-grid">
     <div>
         <div class="card">
@@ -1110,8 +1091,26 @@ require __DIR__ . '/_header.php';
             </div>
         </div>
 
-        <div class="card" style="padding:0;overflow:hidden">
+        <div class="card" id="filtros-reagendamentos" style="padding:0;overflow:hidden">
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="card-header-title">Historico de reagendamentos</div>
+            <form method="get" action="reagendamentos_live.php#filtros-reagendamentos" class="filter-bar" style="border-bottom:1px solid var(--border);border-radius:0;margin:0">
+                <div class="filter-group" style="min-width:220px"><label>Aluno</label><input name="aluno" value="<?= h($fAluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
+                <div class="filter-group"><label>Turma nova</label><select name="turma_nova"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaNova===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
+                <div class="filter-group"><label>Turma antiga</label><select name="turma_antiga"><option value="">Todas</option><?php foreach ($turmasFiltro as $tc): ?><option value="<?= h($tc) ?>" <?= $fTurmaAntiga===(string)$tc?'selected':'' ?>><?= h($tc) ?></option><?php endforeach; ?></select></div>
+                <div class="filter-group"><label>Origem</label><select name="origem"><option value="">Todas</option><option value="aluno" <?= $fOrigem==='aluno'?'selected':'' ?>>Aluno</option><option value="suporte" <?= $fOrigem==='suporte'?'selected':'' ?>>Suporte</option></select></div>
+                <div class="filter-group"><label>Status</label><select name="status"><option value="">Todos</option><option value="aguardando" <?= $fStatus==='aguardando'?'selected':'' ?>>Aguardando</option><option value="pendente" <?= $fStatus==='pendente'?'selected':'' ?>>Pendente</option><option value="enviado" <?= $fStatus==='enviado'?'selected':'' ?>>Enviado</option><option value="expirado" <?= $fStatus==='expirado'?'selected':'' ?>>Expirado</option><option value="substituido" <?= $fStatus==='substituido'?'selected':'' ?>>Substituido</option><option value="reagendado" <?= $fStatus==='reagendado'?'selected':'' ?>>Reagendado</option></select></div>
+                <div class="filter-group"><label>Live antes de</label><input type="date" name="live_antes_from" value="<?= h($fLiveAntesFrom) ?>"></div>
+                <div class="filter-group"><label>Live antes ate</label><input type="date" name="live_antes_to" value="<?= h($fLiveAntesTo) ?>"></div>
+                <div class="filter-group"><label>Live depois de</label><input type="date" name="live_depois_from" value="<?= h($fLiveDepoisFrom) ?>"></div>
+                <div class="filter-group"><label>Live depois ate</label><input type="date" name="live_depois_to" value="<?= h($fLiveDepoisTo) ?>"></div>
+                <div class="filter-group"><label>Disparo previsto de</label><input type="date" name="disparo_from" value="<?= h($fDisparoFrom) ?>"></div>
+                <div class="filter-group"><label>Disparo previsto ate</label><input type="date" name="disparo_to" value="<?= h($fDisparoTo) ?>"></div>
+                <div class="filter-group"><label>Reagendou de</label><input type="date" name="from" value="<?= h($fFrom) ?>"></div>
+                <div class="filter-group"><label>Reagendou ate</label><input type="date" name="to" value="<?= h($fTo) ?>"></div>
+                <input type="hidden" name="sort" value="<?= h($sort) ?>">
+                <input type="hidden" name="dir" value="<?= h($dir) ?>">
+                <div class="filter-actions"><button class="btn btn-primary btn-sm">Filtrar</button><a class="reset-link" href="reagendamentos_live.php#filtros-reagendamentos">Limpar</a></div>
+            </form>
             <div class="table-wrap">
                 <table class="rl-table-small">
                     <thead><tr>
