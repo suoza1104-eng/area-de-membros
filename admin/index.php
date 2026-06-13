@@ -388,6 +388,56 @@ $totalAulasConta = (int)$pdo->query("
     SELECT COUNT(*) FROM lessons WHERE conta_para_conclusao = 1 AND ativo = 1
 ")->fetchColumn();
 
+$completionLabels = [];
+$completionData = [];
+for ($i = 1; $i < 60; $i++) {
+    $completionLabels[] = (string)$i;
+    $completionData[$i] = 0;
+}
+$completionLabels[] = '60+';
+$completionData['60+'] = 0;
+$completionTotal = 0;
+if ($totalAulasConta > 0) {
+    try {
+        $sqlCompletion = "
+            SELECT
+                CASE
+                    WHEN DATEDIFF(DATE(MAX(COALESCE(lp.completed_at, lp.created_at))), DATE(u.created_at)) + 1 >= 60 THEN '60+'
+                    WHEN DATEDIFF(DATE(MAX(COALESCE(lp.completed_at, lp.created_at))), DATE(u.created_at)) + 1 < 1 THEN '1'
+                    ELSE CAST(DATEDIFF(DATE(MAX(COALESCE(lp.completed_at, lp.created_at))), DATE(u.created_at)) + 1 AS CHAR)
+                END AS bucket_dia,
+                1 AS total
+            FROM users u
+            JOIN lesson_progress lp ON lp.user_id = u.id AND lp.status = 'completed'
+            JOIN lessons l ON l.id = lp.lesson_id AND l.ativo = 1 AND l.conta_para_conclusao = 1
+            $whereUsersSql
+            GROUP BY u.id, u.created_at
+            HAVING COUNT(DISTINCT l.id) >= :total_aulas_completion
+            ORDER BY MIN(u.created_at) ASC
+        ";
+        $completionParams = $paramsUsers;
+        $completionParams['total_aulas_completion'] = $totalAulasConta;
+        $stmt = $pdo->prepare($sqlCompletion);
+        $stmt->execute($completionParams);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            $bucket = (string)($r['bucket_dia'] ?? '');
+            if ($bucket === '') continue;
+            if ($bucket !== '60+') {
+                $n = (int)$bucket;
+                if ($n < 1) $bucket = '1';
+                elseif ($n >= 60) $bucket = '60+';
+                else $bucket = (string)$n;
+            }
+            $completionData[$bucket] = (int)($completionData[$bucket] ?? 0) + (int)($r['total'] ?? 0);
+            $completionTotal += (int)($r['total'] ?? 0);
+        }
+    } catch (Throwable $e) {}
+}
+$completionChartData = [];
+foreach ($completionLabels as $label) {
+    $completionChartData[] = (int)($completionData[$label] ?? 0);
+}
+
 $sqlAlguma = "
     SELECT COUNT(DISTINCT u.id)
     FROM users u
@@ -1111,6 +1161,20 @@ dashTurmaRender();
     </div>
 </div>
 
+<div class="panel mb-4">
+    <div class="panel-title">
+        Tempo ate concluir 100% das aulas
+        <span style="font-size:11px;color:var(--muted);font-weight:400">dias apos inscricao - <?= number_format($completionTotal, 0, ',', '.') ?> aluno(s) concluintes no filtro</span>
+    </div>
+    <?php if ($completionTotal > 0): ?>
+        <div style="height:300px">
+            <canvas id="chartCompletionLag"></canvas>
+        </div>
+    <?php else: ?>
+        <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhum aluno concluiu 100% das aulas no filtro atual.</p>
+    <?php endif; ?>
+</div>
+
 <!-- FUNIL WEDGE SVG -->
 <?php if (!empty($funnelData)):
     $fN    = count($funnelData);
@@ -1452,6 +1516,70 @@ dashTurmaRender();
     }
 
     // ── Gráfico comparativo por turma ────────────────────────────────────
+    // Tempo ate concluir 100% das aulas
+    var completionLabels = <?= json_encode($completionLabels, JSON_UNESCAPED_UNICODE) ?>;
+    var completionData = <?= json_encode($completionChartData) ?>;
+    var cCompletion = document.getElementById('chartCompletionLag');
+    if (cCompletion && completionData.some(function(v) { return v > 0; })) {
+        new Chart(cCompletion, {
+            type: 'bar',
+            data: {
+                labels: completionLabels,
+                datasets: [{
+                    label: 'Alunos que concluiram',
+                    data: completionData,
+                    backgroundColor: 'rgba(34,197,94,.72)',
+                    borderColor: '#22c55e',
+                    borderWidth: 1,
+                    borderRadius: 5,
+                    maxBarThickness: 18
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: function(items) {
+                                var label = items && items[0] ? items[0].label : '';
+                                return label === '60+' ? '60 dias ou mais' : 'Dia ' + label + ' apos inscricao';
+                            },
+                            label: function(ctx) {
+                                return ctx.parsed.y.toLocaleString('pt-BR') + ' aluno(s)';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            autoSkip: false,
+                            maxRotation: 0,
+                            font: { size: 10 },
+                            callback: function(value) {
+                                var label = this.getLabelForValue(value);
+                                if (label === '60+') return label;
+                                var n = parseInt(label, 10);
+                                return n === 1 || n % 5 === 0 ? label : '';
+                            }
+                        },
+                        grid: { display: false },
+                        title: { display: true, text: 'Dias apos inscricao', color: '#64748b', font: { size: 11 } }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { precision: 0, font: { size: 11 } },
+                        grid: { color: 'rgba(26,37,64,.6)' },
+                        title: { display: true, text: 'Alunos', color: '#64748b', font: { size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
+    // Grafico comparativo por turma
     const BAR_TURMA_DATA  = <?= json_encode($barTurmaData, JSON_UNESCAPED_UNICODE) ?>;
     const TURMAS_LABEL    = <?= json_encode($turmasLabel,  JSON_UNESCAPED_UNICODE) ?>;
     const TURMA_FILTRADA  = <?= json_encode((string)($turmasSelecionadasChart[0] ?? $turmaId)) ?>;
