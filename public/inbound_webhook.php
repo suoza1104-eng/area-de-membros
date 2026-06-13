@@ -19,6 +19,9 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
     tag_extra VARCHAR(200) NULL,
     token VARCHAR(64) NOT NULL,
     payload_map_json TEXT NULL,
+    disparar_webhook TINYINT(1) NOT NULL DEFAULT 1,
+    disparar_sf TINYINT(1) NOT NULL DEFAULT 1,
+    disparar_manychat TINYINT(1) NOT NULL DEFAULT 1,
     criar_se_nao_existir TINYINT(1) NOT NULL DEFAULT 1,
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     total_recebidos INT UNSIGNED NOT NULL DEFAULT 0,
@@ -42,6 +45,9 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
 
 // Migrações defensivas
 try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN oferta_codigo VARCHAR(500) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_webhook TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_sf TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_manychat TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
 try { $pdo->exec("ALTER TABLE inbound_webhook_recebimentos MODIFY COLUMN status ENUM('pendente','processado','erro','ignorado') NOT NULL DEFAULT 'pendente'"); } catch (Throwable $e) {}
 
 // Token
@@ -125,6 +131,38 @@ function iw_get_first_mapped(array $payload, array $map, array $keys): string {
         }
     }
     return '';
+}
+
+function iw_disparar_integracoes(PDO $pdo, array $ihw, string $evento, int $userId, array $extra = []): bool {
+    $user = [];
+    try {
+        $st = $pdo->prepare("SELECT id,nome,email,telefone FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            $user = [
+                'id' => $row['id'] ?? $userId,
+                'nome' => $row['nome'] ?? null,
+                'email' => $row['email'] ?? null,
+                'telefone' => $row['telefone'] ?? null,
+            ];
+        }
+    } catch (Throwable $e) {}
+    if (!$user) $user = ['id' => $userId, 'nome' => null, 'email' => null, 'telefone' => null];
+
+    $extra['origem'] = $extra['origem'] ?? 'inbound_webhook';
+    $extra['inbound_id'] = $extra['inbound_id'] ?? (int)($ihw['id'] ?? 0);
+    $ok = false;
+    if ((int)($ihw['disparar_webhook'] ?? 1) === 1 && function_exists('disparar_evento_webhooks')) {
+        try { disparar_evento_webhooks($pdo, $evento, $user, $extra); $ok = true; } catch (Throwable $e) {}
+    }
+    if ((int)($ihw['disparar_sf'] ?? 1) === 1 && function_exists('sf_disparar_evento')) {
+        try { $ok = sf_disparar_evento($pdo, $evento, $user, $extra) || $ok; } catch (Throwable $e) {}
+    }
+    if ((int)($ihw['disparar_manychat'] ?? 1) === 1 && function_exists('mc_disparar_evento')) {
+        try { $ok = mc_disparar_evento($pdo, $evento, $user, $extra) || $ok; } catch (Throwable $e) {}
+    }
+    return $ok;
 }
 
 // ── Processa ──────────────────────────────────────────────────────────────────
@@ -263,20 +301,18 @@ try {
                 $pdo->prepare("INSERT INTO inscricao_logs (user_id, codigo_turma, is_novo) VALUES (:u, :c, 1)")
                     ->execute([':u' => $userId, ':c' => $codigoTurmaCfg ?: null]);
             } catch (Throwable $e) {}
-            if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('INSCRITO', $userId, [
-                    'codigo_turma' => $codigoTurmaCfg,
-                    'origem'       => 'inbound_webhook',
-                    'inbound_id'   => (int)$ihw['id'],
-                    'payload_raw'  => $payload,
-                ]);
-            }
+            iw_disparar_integracoes($pdo, $ihw, 'INSCRITO', $userId, [
+                'codigo_turma' => $codigoTurmaCfg,
+                'origem'       => 'inbound_webhook',
+                'inbound_id'   => (int)$ihw['id'],
+                'payload_raw'  => $payload,
+            ]);
             break;
 
         case 'PRIMEIRO_LOGIN':
             try { $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :i")->execute([':i' => $userId]); } catch (Throwable $e) {}
             if (function_exists('adicionar_tag')) adicionar_tag($userId, 'PRIMEIRO_LOGIN', 'inbound_webhook', (int)$ihw['id']);
-            if (function_exists('disparar_webhooks')) disparar_webhooks('PRIMEIRO_LOGIN', $userId, ['origem' => 'inbound_webhook']);
+            iw_disparar_integracoes($pdo, $ihw, 'PRIMEIRO_LOGIN', $userId, ['origem' => 'inbound_webhook']);
             break;
 
         case 'VIU_AULA':
@@ -290,10 +326,8 @@ try {
             } else {
                 $pdo->prepare("INSERT INTO lesson_progress (user_id, lesson_id, status, created_at) VALUES (:u,:l,'completed',NOW())")->execute([':u'=>$userId,':l'=>$lessonId]);
             }
-            if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('VIU_AULA_' . $lessonId, $userId, ['lesson_id' => $lessonId, 'origem' => 'inbound_webhook']);
-                disparar_webhooks('ASSISTIU_ALGUMA_AULA', $userId, ['lesson_id' => $lessonId, 'origem' => 'inbound_webhook']);
-            }
+            iw_disparar_integracoes($pdo, $ihw, 'VIU_AULA_' . $lessonId, $userId, ['lesson_id' => $lessonId, 'origem' => 'inbound_webhook']);
+            iw_disparar_integracoes($pdo, $ihw, 'ASSISTIU_ALGUMA_AULA', $userId, ['lesson_id' => $lessonId, 'origem' => 'inbound_webhook']);
             break;
 
         case 'CONCLUIU_TRILHA':
@@ -310,17 +344,15 @@ try {
                     }
                 }
             } catch (Throwable $e) {}
-            if (function_exists('disparar_webhooks')) disparar_webhooks('CONCLUIU_TRILHA', $userId, ['origem' => 'inbound_webhook']);
+            iw_disparar_integracoes($pdo, $ihw, 'CONCLUIU_TRILHA', $userId, ['origem' => 'inbound_webhook']);
             break;
 
         case 'CERT_EMITIDO':
-            if (function_exists('disparar_webhooks')) disparar_webhooks('CERT_EMITIDO', $userId, ['origem' => 'inbound_webhook']);
+            iw_disparar_integracoes($pdo, $ihw, 'CERT_EMITIDO', $userId, ['origem' => 'inbound_webhook']);
             break;
 
         case 'REENVIO_CERTIFICADO':
-            if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('REENVIO_CERTIFICADO', $userId, iw_get_certificado_extra($pdo, $userId, 'inbound_webhook'));
-            }
+            iw_disparar_integracoes($pdo, $ihw, 'REENVIO_CERTIFICADO', $userId, iw_get_certificado_extra($pdo, $userId, 'inbound_webhook'));
             break;
 
         case 'AGENDAR_RETORNO':
@@ -339,9 +371,7 @@ try {
         case 'TAG_CUSTOM':
         default:
             // Tag custom já foi aplicada acima. Apenas dispara o evento configurado (raw)
-            if (function_exists('disparar_webhooks')) {
-                disparar_webhooks($evento, $userId, ['origem' => 'inbound_webhook', 'payload_raw' => $payload]);
-            }
+            iw_disparar_integracoes($pdo, $ihw, $evento, $userId, ['origem' => 'inbound_webhook', 'payload_raw' => $payload]);
             break;
     }
 

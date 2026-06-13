@@ -16,6 +16,9 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
     tag_extra VARCHAR(200) NULL,
     token VARCHAR(64) NOT NULL,
     payload_map_json TEXT NULL,
+    disparar_webhook TINYINT(1) NOT NULL DEFAULT 1,
+    disparar_sf TINYINT(1) NOT NULL DEFAULT 1,
+    disparar_manychat TINYINT(1) NOT NULL DEFAULT 1,
     criar_se_nao_existir TINYINT(1) NOT NULL DEFAULT 1,
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     total_recebidos INT UNSIGNED NOT NULL DEFAULT 0,
@@ -24,6 +27,9 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
     UNIQUE KEY uk_iw_token (token)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN oferta_codigo VARCHAR(500) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_webhook TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_sf TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_manychat TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
 $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     webhook_id INT NOT NULL,
@@ -53,6 +59,9 @@ if ($acao !== '') {
         $tagExtra  = trim((string)($_POST['tag_extra'] ?? ''));
         $ofertaCod = trim((string)($_POST['oferta_codigo'] ?? ''));
         $mapJson   = trim((string)($_POST['payload_map_json'] ?? ''));
+        $dispWebhook = isset($_POST['disparar_webhook']) ? 1 : 0;
+        $dispSf = isset($_POST['disparar_sf']) ? 1 : 0;
+        $dispManychat = isset($_POST['disparar_manychat']) ? 1 : 0;
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
         if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_assunto'=>'retorno_assunto','retorno_mensagem'=>'retorno_mensagem']);
@@ -60,12 +69,12 @@ if ($acao !== '') {
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
         if ($id > 0) {
-            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,oferta_codigo=:of,payload_map_json=:m,criar_se_nao_existir=:cr WHERE id=:id")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':m'=>$mapJson,':cr'=>$criar,':id'=>$id]);
+            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,oferta_codigo=:of,payload_map_json=:m,disparar_webhook=:dw,disparar_sf=:dsf,disparar_manychat=:dm,criar_se_nao_existir=:cr WHERE id=:id")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':cr'=>$criar,':id'=>$id]);
         } else {
             $token = bin2hex(random_bytes(32));
-            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:cr)")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':tk'=>$token,':m'=>$mapJson,':cr'=>$criar]);
+            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:cr)")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':tk'=>$token,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':cr'=>$criar]);
             $id = (int)$pdo->lastInsertId();
         }
         echo json_encode(['ok'=>true,'id'=>$id]); exit;
@@ -87,8 +96,8 @@ if ($acao !== '') {
         $row = $r->fetch(PDO::FETCH_ASSOC);
         if (!$row) { echo json_encode(['ok'=>false]); exit; }
         $token = bin2hex(random_bytes(32));
-        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:cr,1)")
-            ->execute([':n'=>'[Cópia] '.$row['nome'], ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':of'=>$row['oferta_codigo']??null, ':tk'=>$token, ':m'=>$row['payload_map_json'], ':cr'=>$row['criar_se_nao_existir']]);
+        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:cr,1)")
+            ->execute([':n'=>'[Copia] '.$row['nome'], ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':of'=>$row['oferta_codigo']??null, ':tk'=>$token, ':m'=>$row['payload_map_json'], ':dw'=>(int)($row['disparar_webhook'] ?? 1), ':dsf'=>(int)($row['disparar_sf'] ?? 1), ':dm'=>(int)($row['disparar_manychat'] ?? 1), ':cr'=>$row['criar_se_nao_existir']]);
         echo json_encode(['ok'=>true,'id'=>(int)$pdo->lastInsertId()]); exit;
     }
 
@@ -106,7 +115,7 @@ if ($acao !== '') {
     }
 
     if ($acao === 'listar') {
-        $rows = $pdo->query("SELECT id,nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,ativo,total_recebidos,criado_em FROM inbound_webhooks ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $pdo->query("SELECT id,nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,disparar_webhook,disparar_sf,disparar_manychat,token,ativo,total_recebidos,criado_em FROM inbound_webhooks ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
         echo json_encode(['ok'=>true,'data'=>$rows]); exit;
     }
 
@@ -195,6 +204,14 @@ require_once __DIR__ . '/_header.php';
 .iw-st-erro { color: #f87171; }
 .iw-st-pendente { color: #fbbf24; }
 .iw-st-ignorado { color: #94a3b8; }
+.iw-integrations { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.iw-integration-check { display:flex; align-items:center; gap:8px; padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.03); font-size:12px; cursor:pointer; }
+.iw-integration-check input { width:auto; accent-color:var(--primary); }
+.iw-int-badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:700; border:1px solid var(--border); background:rgba(255,255,255,.05); color:var(--text-muted); }
+.iw-int-badge.on.webhook { color:#7dd3fc; border-color:rgba(56,189,248,.3); background:rgba(56,189,248,.1); }
+.iw-int-badge.on.sf { color:#c4b5fd; border-color:rgba(167,139,250,.3); background:rgba(167,139,250,.1); }
+.iw-int-badge.on.manychat { color:#f9a8d4; border-color:rgba(236,72,153,.3); background:rgba(236,72,153,.1); }
+@media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
 </style>
 
 <div class="main-content">
@@ -241,6 +258,27 @@ require_once __DIR__ . '/_header.php';
           <option value="AGENDAR_RETORNO">AGENDAR_RETORNO — cria retorno agendado por payload</option>
           <option value="TAG_CUSTOM">TAG_CUSTOM — apenas aplica tag e dispara evento custom</option>
         </select>
+      </div>
+
+      <div class="form-row">
+        <label>Redirecionar para integracoes</label>
+        <div class="iw-integrations">
+          <label class="iw-integration-check">
+            <input type="checkbox" id="iwDispararWebhook" checked>
+            <span>Webhook</span>
+          </label>
+          <label class="iw-integration-check">
+            <input type="checkbox" id="iwDispararSf" checked>
+            <span>SuperFuncionario</span>
+          </label>
+          <label class="iw-integration-check">
+            <input type="checkbox" id="iwDispararManychat" checked>
+            <span>Manychat</span>
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+          O evento acima sera encaminhado somente para os canais marcados. As regras de cada canal continuam nas telas Webhooks, SuperFuncionario e Manychat.
+        </div>
       </div>
 
       <div class="form-row" id="iwLessonWrap" style="display:none">
@@ -355,6 +393,9 @@ async function iwCarregar() {
                         ${w.codigo_turma?`<span>turma: <strong>${esc(w.codigo_turma)}</strong></span>`:''}
                         ${w.tag_extra?`<span>tag: <strong>${esc(w.tag_extra)}</strong></span>`:''}
                         ${w.oferta_codigo?`<span style="color:#fbbf24">oferta: <strong>${esc(w.oferta_codigo)}</strong></span>`:''}
+                        <span class="iw-int-badge ${parseInt(w.disparar_webhook||0)===1?'on webhook':''}">webhook</span>
+                        <span class="iw-int-badge ${parseInt(w.disparar_sf||0)===1?'on sf':''}">sf</span>
+                        <span class="iw-int-badge ${parseInt(w.disparar_manychat||0)===1?'on manychat':''}">manychat</span>
                         <span>📥 ${w.total_recebidos||0} recebimentos</span>
                     </div>
                 </div>
@@ -380,6 +421,9 @@ function iwNovo() {
     document.getElementById('iwNome').value = '';
     document.getElementById('iwDescricao').value = '';
     document.getElementById('iwEvento').value = 'INSCRITO';
+    document.getElementById('iwDispararWebhook').checked = true;
+    document.getElementById('iwDispararSf').checked = true;
+    document.getElementById('iwDispararManychat').checked = true;
     document.getElementById('iwLessonId').value = 0;
     document.getElementById('iwCodigoTurma').value = '';
     document.getElementById('iwTagExtra').value = '';
@@ -401,6 +445,9 @@ async function iwEditar(id) {
     document.getElementById('iwNome').value = d.nome || '';
     document.getElementById('iwDescricao').value = d.descricao || '';
     document.getElementById('iwEvento').value = d.evento;
+    document.getElementById('iwDispararWebhook').checked = parseInt(d.disparar_webhook ?? 1) === 1;
+    document.getElementById('iwDispararSf').checked = parseInt(d.disparar_sf ?? 1) === 1;
+    document.getElementById('iwDispararManychat').checked = parseInt(d.disparar_manychat ?? 1) === 1;
     document.getElementById('iwLessonId').value = d.lesson_id || 0;
     document.getElementById('iwCodigoTurma').value = d.codigo_turma || '';
     document.getElementById('iwTagExtra').value = d.tag_extra || '';
@@ -457,6 +504,9 @@ async function iwSalvar() {
     fd.append('nome', nome);
     fd.append('descricao', document.getElementById('iwDescricao').value);
     fd.append('evento', document.getElementById('iwEvento').value);
+    if (document.getElementById('iwDispararWebhook').checked) fd.append('disparar_webhook','1');
+    if (document.getElementById('iwDispararSf').checked) fd.append('disparar_sf','1');
+    if (document.getElementById('iwDispararManychat').checked) fd.append('disparar_manychat','1');
     fd.append('lesson_id', document.getElementById('iwLessonId').value);
     fd.append('codigo_turma', document.getElementById('iwCodigoTurma').value);
     fd.append('tag_extra', document.getElementById('iwTagExtra').value);
