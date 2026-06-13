@@ -8,7 +8,7 @@ $pdo = getPDO();
 
 $menu = 'logs';
 $page_title = 'Logs';
-$page_subtitle = 'Auditoria de eventos, webhooks, SuperFuncionario e cron';
+$page_subtitle = 'Auditoria de eventos, webhooks, SuperFuncionario, Manychat e cron';
 
 function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -43,6 +43,8 @@ function logs_ensure_live_dispatch_table(PDO $pdo): void {
                 elegiveis INT NOT NULL DEFAULT 0,
                 sf_ok INT NOT NULL DEFAULT 0,
                 sf_fail INT NOT NULL DEFAULT 0,
+                manychat_ok INT NOT NULL DEFAULT 0,
+                manychat_fail INT NOT NULL DEFAULT 0,
                 webhook_ok INT NOT NULL DEFAULT 0,
                 webhook_fail INT NOT NULL DEFAULT 0,
                 skipped_json LONGTEXT NULL,
@@ -55,12 +57,23 @@ function logs_ensure_live_dispatch_table(PDO $pdo): void {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     } catch (Throwable $e) {}
+    foreach ([
+        'manychat_ok' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_ok INT NOT NULL DEFAULT 0 AFTER sf_fail",
+        'manychat_fail' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_fail INT NOT NULL DEFAULT 0 AFTER manychat_ok",
+    ] as $col => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM live_turma_dispatch_logs LIKE :c");
+            $st->execute([':c' => $col]);
+            if (!$st->fetchColumn()) $pdo->exec($sql);
+        } catch (Throwable $e) {}
+    }
 }
 
 function logs_cleanup_old(PDO $pdo): void {
     $cuts = [
         ['webhook_logs', 'created_at'],
         ['superfuncionario_logs', 'created_at'],
+        ['manychat_logs', 'created_at'],
         ['live_turma_dispatch_logs', 'started_at'],
     ];
     foreach ($cuts as [$table, $col]) {
@@ -99,9 +112,12 @@ function logs_guess_turma(string $evento, string $payload): string {
     foreach ([
         ['extra', 'codigo_turma'],
         ['extra', 'turma', 'codigo'],
+        ['_context', 'extra', 'codigo_turma'],
+        ['_context', 'extra', 'turma', 'codigo'],
         ['turma', 'codigo'],
         ['aluno', 'codigo_turma'],
         ['user', 'codigo_turma'],
+        ['_context', 'user', 'codigo_turma'],
     ] as $path) {
         $v = $data;
         foreach ($path as $p) {
@@ -125,7 +141,7 @@ function logs_guess_contact(string $payload): array {
     $out = ['nome' => '', 'email' => '', 'telefone' => '', 'user_id' => 0];
     $data = json_decode($payload, true);
     if (!is_array($data)) return $out;
-    $candidates = [$data, (array)($data['user'] ?? []), (array)($data['aluno'] ?? [])];
+    $candidates = [$data, (array)($data['user'] ?? []), (array)($data['aluno'] ?? []), (array)($data['_context']['user'] ?? [])];
     foreach ($candidates as $c) {
         if ($out['nome'] === '' && !empty($c['nome'])) $out['nome'] = (string)$c['nome'];
         if ($out['nome'] === '' && !empty($c['first_name'])) $out['nome'] = trim((string)$c['first_name'] . ' ' . (string)($c['last_name'] ?? ''));
@@ -203,6 +219,11 @@ try {
     }
     if (logs_table_exists($pdo, 'superfuncionario_logs')) {
         foreach ($pdo->query("SELECT DISTINCT evento FROM superfuncionario_logs WHERE evento IS NOT NULL AND evento <> '' ORDER BY evento ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
+            $eventoOptions[(string)$v] = true;
+        }
+    }
+    if (logs_table_exists($pdo, 'manychat_logs')) {
+        foreach ($pdo->query("SELECT DISTINCT evento FROM manychat_logs WHERE evento IS NOT NULL AND evento <> '' ORDER BY evento ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
             $eventoOptions[(string)$v] = true;
         }
     }
@@ -351,6 +372,65 @@ if (($source === '' || $source === 'sf') && logs_table_exists($pdo, 'superfuncio
     } catch (Throwable $e) {}
 }
 
+if (($source === '' || $source === 'manychat') && logs_table_exists($pdo, 'manychat_logs')) {
+    $where = [];
+    $params = [];
+    logs_add_like_any($where, $params, 'ml.evento', 'evento', $eventos);
+    if ($turmas) {
+        $ors = [];
+        foreach ($turmas as $i => $value) {
+            $evtKey = ':mc_turma_evt' . $i;
+            $payloadKey = ':mc_turma_payload' . $i;
+            $ors[] = "ml.evento LIKE $evtKey OR ml.request_json LIKE $payloadKey";
+            $params[$evtKey] = '%_' . $value . '%';
+            $params[$payloadKey] = '%' . $value . '%';
+        }
+        $where[] = '(' . implode(' OR ', $ors) . ')';
+    }
+    if ($aluno !== '') { $where[] = '(ml.request_json LIKE :mc_aluno OR ml.subscriber_id = :mc_subscriber)'; $params[':mc_aluno'] = '%' . $aluno . '%'; $params[':mc_subscriber'] = $aluno; }
+    if ($de !== '') { $where[] = 'ml.created_at >= :mc_de'; $params[':mc_de'] = $de . ' 00:00:00'; }
+    if ($ate !== '') { $where[] = 'ml.created_at <= :mc_ate'; $params[':mc_ate'] = $ate . ' 23:59:59'; }
+    if ($status === 'ok') $where[] = 'ml.ok = 1';
+    elseif ($status === 'erro') $where[] = 'ml.ok = 0';
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    try {
+        $st = $pdo->prepare("
+            SELECT ml.*, mr.nome AS rule_nome
+              FROM manychat_logs ml
+              LEFT JOIN manychat_rules mr ON mr.id = ml.rule_id
+              $whereSql
+          ORDER BY ml.created_at DESC, ml.id DESC
+             LIMIT :lim
+        ");
+        foreach ($params as $k => $v) $st->bindValue($k, $v);
+        $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            $payload = (string)($r['request_json'] ?? '');
+            $event = (string)($r['evento'] ?? '');
+            $contact = logs_guess_contact($payload);
+            $allRows[] = [
+                'source' => 'manychat',
+                'id' => (int)$r['id'],
+                'created_at' => (string)$r['created_at'],
+                'evento' => $event,
+                'grupo' => logs_event_group($event, 'manychat'),
+                'turma' => logs_guess_turma($event, $payload),
+                'aluno_nome' => $contact['nome'],
+                'aluno_email' => $contact['email'],
+                'aluno_tel' => $contact['telefone'],
+                'user_id' => $contact['user_id'],
+                'ok' => (int)($r['ok'] ?? 0) === 1,
+                'status_label' => (string)($r['http_status'] ?? '-'),
+                'destino' => trim((string)($r['rule_nome'] ?? 'Manychat')) . ' / ' . trim((string)($r['action'] ?? '')),
+                'summary' => trim((string)($r['error_text'] ?? '')) ?: substr(trim((string)($r['response_text'] ?? '')), 0, 160),
+                'payload' => $payload,
+                'response' => (string)($r['response_text'] ?? ''),
+            ];
+        }
+    } catch (Throwable $e) {}
+}
+
 if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live_turma_dispatch_logs')) {
     $where = [];
     $params = [];
@@ -378,6 +458,8 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
                 'elegiveis' => (int)($r['elegiveis'] ?? 0),
                 'sf_ok' => (int)($r['sf_ok'] ?? 0),
                 'sf_fail' => (int)($r['sf_fail'] ?? 0),
+                'manychat_ok' => (int)($r['manychat_ok'] ?? 0),
+                'manychat_fail' => (int)($r['manychat_fail'] ?? 0),
                 'webhook_ok' => (int)($r['webhook_ok'] ?? 0),
                 'webhook_fail' => (int)($r['webhook_fail'] ?? 0),
                 'skipped' => json_decode((string)($r['skipped_json'] ?? ''), true),
@@ -396,7 +478,7 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
                 'ok' => (string)($r['status'] ?? '') === 'concluido',
                 'status_label' => (string)($r['status'] ?? ''),
                 'destino' => 'Cron processar_lives',
-                'summary' => 'Total: ' . (int)($r['total_alunos'] ?? 0) . ' | Elegiveis: ' . (int)($r['elegiveis'] ?? 0) . ' | SF OK: ' . (int)($r['sf_ok'] ?? 0) . ' | Excluidos: ' . logs_skipped_summary($r['skipped_json'] ?? null),
+                'summary' => 'Total: ' . (int)($r['total_alunos'] ?? 0) . ' | Elegiveis: ' . (int)($r['elegiveis'] ?? 0) . ' | SF OK: ' . (int)($r['sf_ok'] ?? 0) . ' | Manychat OK: ' . (int)($r['manychat_ok'] ?? 0) . ' | Excluidos: ' . logs_skipped_summary($r['skipped_json'] ?? null),
                 'payload' => $payload ?: '',
                 'response' => (string)($r['message'] ?? ''),
             ];
@@ -444,6 +526,7 @@ include __DIR__ . '/_header.php';
 .log-source{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:900;border:1px solid var(--border);}
 .log-source.webhook{color:#7dd3fc;background:rgba(56,189,248,.10);border-color:rgba(56,189,248,.25);}
 .log-source.sf{color:#c4b5fd;background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.25);}
+.log-source.manychat{color:#f9a8d4;background:rgba(236,72,153,.10);border-color:rgba(236,72,153,.25);}
 .log-source.cron_live{color:#fcd34d;background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.25);}
 .log-status{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:900;border:1px solid var(--border);}
 .log-status.ok{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.25);}
@@ -462,7 +545,7 @@ include __DIR__ . '/_header.php';
     <div class="logs-head">
         <div>
             <div class="topbar-title">Logs</div>
-            <div class="text-muted text-sm">Auditoria unificada de eventos, webhooks, SuperFuncionario e cron de live. Logs com mais de 1 ano sao limpos automaticamente.</div>
+            <div class="text-muted text-sm">Auditoria unificada de eventos, webhooks, SuperFuncionario, Manychat e cron de live. Logs com mais de 1 ano sao limpos automaticamente.</div>
         </div>
         <button class="logs-help-btn" type="button" onclick="document.getElementById('logsHelp').classList.toggle('open')" title="Descricao dos eventos">?</button>
     </div>
@@ -489,6 +572,7 @@ include __DIR__ . '/_header.php';
                 <option value="" <?= $source===''?'selected':'' ?>>Todos</option>
                 <option value="webhook" <?= $source==='webhook'?'selected':'' ?>>Webhook</option>
                 <option value="sf" <?= $source==='sf'?'selected':'' ?>>SuperFuncionario</option>
+                <option value="manychat" <?= $source==='manychat'?'selected':'' ?>>Manychat</option>
                 <option value="cron_live" <?= $source==='cron_live'?'selected':'' ?>>Cron live</option>
             </select>
         </div>

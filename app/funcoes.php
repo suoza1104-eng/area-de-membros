@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/webhook_dispatcher.php';
 require_once __DIR__ . '/superfuncionario_dispatcher.php';
+require_once __DIR__ . '/manychat_dispatcher.php';
 
 function proteger_aluno(): void {
     if (empty($_SESSION['aluno_id'])) {
@@ -181,7 +182,9 @@ function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $ex
     disparar_evento_webhooks($pdo, $evento, $user, $extra);
 
     // Disparo opcional para SuperFuncionário (se houver regras ativas)
-    return sf_disparar_evento($pdo, $evento, $user, $extra);
+    $sfOk = sf_disparar_evento($pdo, $evento, $user, $extra);
+    $mcOk = mc_disparar_evento($pdo, $evento, $user, $extra);
+    return $sfOk || $mcOk;
 }
 
 function reagendamento_live_ensure_logs(PDO $pdo): void {

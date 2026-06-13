@@ -32,7 +32,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -54,6 +54,7 @@ $titleMap = [
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
+    'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
@@ -722,7 +723,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -742,6 +743,16 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M2 12h2M20 12h2M12 2v2M12 20v2"/>
       </svg>
       SuperFuncionário
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['manychat']): ?>
+    <a href="manychat.php" class="sb-item <?= $currentMenu === 'manychat' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/>
+        <path d="M8 9h8M8 13h5"/>
+      </svg>
+      Manychat
     </a>
     <?php endif; ?>
 

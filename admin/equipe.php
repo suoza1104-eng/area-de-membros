@@ -36,6 +36,7 @@ $PAGINAS = [
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
+    'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
     'monitor'          => 'Rastreamento',
     'logs'             => 'Logs',

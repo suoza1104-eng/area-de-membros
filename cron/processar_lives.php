@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
+require_once __DIR__ . '/../app/manychat_dispatcher.php';
 require_once __DIR__ . '/../app/webhook_dispatcher.php';
 
 $pdo = getPDO();
@@ -170,6 +171,8 @@ function ensure_live_dispatch_log_table(PDO $pdo): void {
                 elegiveis INT NOT NULL DEFAULT 0,
                 sf_ok INT NOT NULL DEFAULT 0,
                 sf_fail INT NOT NULL DEFAULT 0,
+                manychat_ok INT NOT NULL DEFAULT 0,
+                manychat_fail INT NOT NULL DEFAULT 0,
                 webhook_ok INT NOT NULL DEFAULT 0,
                 webhook_fail INT NOT NULL DEFAULT 0,
                 skipped_json LONGTEXT NULL,
@@ -182,6 +185,15 @@ function ensure_live_dispatch_log_table(PDO $pdo): void {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     } catch (Throwable $e) {}
+
+    foreach ([
+        'manychat_ok' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_ok INT NOT NULL DEFAULT 0 AFTER sf_fail",
+        'manychat_fail' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_fail INT NOT NULL DEFAULT 0 AFTER manychat_ok",
+    ] as $col => $sql) {
+        try {
+            if (!column_exists($pdo, 'live_turma_dispatch_logs', $col)) $pdo->exec($sql);
+        } catch (Throwable $e) {}
+    }
 }
 
 function start_live_dispatch_log(PDO $pdo, array $turma): int {
@@ -214,6 +226,8 @@ function finish_live_dispatch_log(PDO $pdo, int $logId, array $stats, string $st
                    elegiveis = :elegiveis,
                    sf_ok = :sf_ok,
                    sf_fail = :sf_fail,
+                   manychat_ok = :manychat_ok,
+                   manychat_fail = :manychat_fail,
                    webhook_ok = :webhook_ok,
                    webhook_fail = :webhook_fail,
                    skipped_json = :skipped,
@@ -227,6 +241,8 @@ function finish_live_dispatch_log(PDO $pdo, int $logId, array $stats, string $st
             ':elegiveis' => (int)($stats['elegiveis'] ?? 0),
             ':sf_ok' => (int)($stats['sf_ok'] ?? 0),
             ':sf_fail' => (int)($stats['sf_fail'] ?? 0),
+            ':manychat_ok' => (int)($stats['manychat_ok'] ?? 0),
+            ':manychat_fail' => (int)($stats['manychat_fail'] ?? 0),
             ':webhook_ok' => (int)($stats['webhook_ok'] ?? 0),
             ':webhook_fail' => (int)($stats['webhook_fail'] ?? 0),
             ':skipped' => json_encode((array)($stats['skipped'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -400,11 +416,21 @@ try {
     $hasSfCol = true;
 } catch (Throwable $e) {}
 
+$hasManychatLiveRules = false;
+try {
+    $mcCfg = mc_get_config($pdo);
+    if ((int)$mcCfg['is_enabled'] === 1 && trim((string)$mcCfg['token']) !== '') {
+        $stMc = $pdo->query("SELECT 1 FROM manychat_rules WHERE is_active = 1 AND (evento = 'LIVE_TURMA' OR evento LIKE 'LIVE_TURMA\\_%') LIMIT 1");
+        $hasManychatLiveRules = (bool)($stMc ? $stMc->fetchColumn() : false);
+    }
+} catch (Throwable $e) {}
+
 // ----------------------------------------------------------------------------------
 // 2) Pega turmas aptas: não disparadas, com data de disparo <= agora, e
 //    que tenham PELO MENOS webhook habilitado OU SF habilitado.
 // ----------------------------------------------------------------------------------
 $sfOrClause = $hasSfCol ? "OR (sf_enabled = 1)" : "";
+$manychatOrClause = $hasManychatLiveRules ? "OR 1=1" : "";
 
 $stmt = $pdo->prepare("
     SELECT *
@@ -415,6 +441,7 @@ $stmt = $pdo->prepare("
        AND (
            (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
            $sfOrClause
+           $manychatOrClause
        )
   ORDER BY live_disparo_data ASC, id ASC
 ");
@@ -450,6 +477,8 @@ foreach ($turmas as $turma) {
         'elegiveis' => 0,
         'sf_ok' => 0,
         'sf_fail' => 0,
+        'manychat_ok' => 0,
+        'manychat_fail' => 0,
         'webhook_ok' => 0,
         'webhook_fail' => 0,
         'skipped' => [
@@ -587,6 +616,17 @@ foreach ($turmas as $turma) {
             }
         }
 
+        if ($hasManychatLiveRules) {
+            try {
+                $mcOkGlobal = mc_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
+                $mcOkTurma = mc_disparar_evento($pdo, 'LIVE_TURMA_' . $codigo, $userStd, $extra);
+                if ($mcOkGlobal || $mcOkTurma) $dispatchStats['manychat_ok']++;
+                else $dispatchStats['manychat_fail']++;
+            } catch (Throwable $e) {
+                $dispatchStats['manychat_fail']++;
+            }
+        }
+
         if ($delay > 0) {
             usleep($delay * 1000);
         }
@@ -597,7 +637,7 @@ foreach ($turmas as $turma) {
     // ----------------------------------------------------------------------------------
     $upd = $pdo->prepare("UPDATE turmas SET live_disparada = 1 WHERE id = :id");
     $upd->execute([':id' => $turma['id']]);
-    $finalStatus = ($dispatchStats['sf_fail'] > 0 || $dispatchStats['webhook_fail'] > 0) ? 'concluido_com_falhas' : 'concluido';
+    $finalStatus = ($dispatchStats['sf_fail'] > 0 || $dispatchStats['manychat_fail'] > 0 || $dispatchStats['webhook_fail'] > 0) ? 'concluido_com_falhas' : 'concluido';
     $message = 'Turma marcada como disparada.';
     if ($dispatchStats['elegiveis'] <= 0) $message = 'Turma marcada como disparada, mas nenhum aluno ficou elegivel apos os filtros.';
     finish_live_dispatch_log($pdo, $dispatchLogId, $dispatchStats, $finalStatus, $message);
