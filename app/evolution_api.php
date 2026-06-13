@@ -102,6 +102,7 @@ function evolution_ensure_tables(PDO $pdo): void {
             group_id VARCHAR(160) NOT NULL,
             instance_key VARCHAR(120) NULL,
             group_name VARCHAR(180) NULL,
+            codigo_turma VARCHAR(100) NULL,
             picture_url TEXT NULL,
             is_ignored TINYINT(1) NOT NULL DEFAULT 0,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
@@ -115,6 +116,7 @@ function evolution_ensure_tables(PDO $pdo): void {
     ");
 
     foreach ([
+        'codigo_turma' => "ALTER TABLE whatsapp_groups ADD COLUMN codigo_turma VARCHAR(100) NULL AFTER group_name",
         'picture_url' => "ALTER TABLE whatsapp_groups ADD COLUMN picture_url TEXT NULL AFTER group_name",
         'is_ignored' => "ALTER TABLE whatsapp_groups ADD COLUMN is_ignored TINYINT(1) NOT NULL DEFAULT 0 AFTER picture_url",
     ] as $column => $sql) {
@@ -174,6 +176,38 @@ function evolution_ensure_tables(PDO $pdo): void {
             KEY idx_wge_event (interpreted_event)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_group_members (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            group_id VARCHAR(160) NOT NULL,
+            instance_key VARCHAR(120) NULL,
+            participant_phone VARCHAR(30) NULL,
+            participant_id VARCHAR(120) NULL,
+            user_id INT NULL,
+            is_current TINYINT(1) NOT NULL DEFAULT 1,
+            first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_wgm_group_participant (group_id, participant_id),
+            KEY idx_wgm_group (group_id),
+            KEY idx_wgm_phone (participant_phone),
+            KEY idx_wgm_user (user_id),
+            KEY idx_wgm_current (is_current),
+            KEY idx_wgm_synced (synced_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+}
+
+function evolution_guess_turma_code_from_group_name(?string $name): ?string {
+    $name = trim((string)$name);
+    if ($name === '') return null;
+    if (preg_match('/\b(\d{2})[\/\-.](\d{2})[\/\-.](\d{2,4})\b/', $name, $m)) {
+        $yy = (string)$m[3];
+        if (strlen($yy) === 4) $yy = substr($yy, -2);
+        return $m[1] . $m[2] . $yy;
+    }
+    return null;
 }
 
 function evolution_get_config(): array {
@@ -358,7 +392,7 @@ function evolution_find_group_info(string $instanceKey, string $groupId): array 
     );
 }
 
-function evolution_fetch_all_groups(string $instanceKey): array {
+function evolution_fetch_all_groups(string $instanceKey, bool $getParticipants = false): array {
     $instanceKey = trim($instanceKey);
     if ($instanceKey === '') {
         return [
@@ -372,7 +406,7 @@ function evolution_fetch_all_groups(string $instanceKey): array {
 
     return evolution_http(
         'GET',
-        '/group/fetchAllGroups/' . rawurlencode($instanceKey) . '?getParticipants=false'
+        '/group/fetchAllGroups/' . rawurlencode($instanceKey) . '?getParticipants=' . ($getParticipants ? 'true' : 'false')
     );
 }
 
@@ -452,6 +486,73 @@ function evolution_extract_group_rows($data): array {
     }
 
     return $rows;
+}
+
+function evolution_extract_group_participants_from_node($node): array {
+    if (!is_array($node)) return [];
+
+    $lists = [];
+    foreach (['participants', 'participantsData', 'members', 'groupParticipants'] as $key) {
+        if (isset($node[$key]) && is_array($node[$key])) {
+            $lists[] = $node[$key];
+        }
+    }
+
+    $participants = [];
+    foreach ($lists as $list) {
+        foreach ($list as $item) {
+            $phone = '';
+            $participantId = '';
+            if (is_scalar($item)) {
+                $participantId = (string)$item;
+                $phone = evolution_clean_whatsapp_phone((string)$item);
+            } elseif (is_array($item)) {
+                $jid = $item['jid'] ?? $item['id'] ?? null;
+                if (is_array($jid)) {
+                    $phone = (string)($jid['phoneNumber'] ?? $jid['user'] ?? '');
+                    $participantId = (string)($jid['id'] ?? $jid['_serialized'] ?? '');
+                } else {
+                    $participantId = (string)($item['id'] ?? $item['jid'] ?? $item['participant'] ?? $item['user'] ?? '');
+                }
+                if ($phone === '') {
+                    $phone = (string)($item['phoneNumber'] ?? $item['number'] ?? $item['phone'] ?? $item['participant'] ?? $participantId);
+                }
+            }
+
+            $cleanPhone = evolution_clean_whatsapp_phone($phone);
+            $cleanId = evolution_clean_whatsapp_id($participantId);
+            if ($cleanId === '' && $cleanPhone !== '') {
+                $cleanId = $cleanPhone . '@s.whatsapp.net';
+            }
+            if ($cleanId === '' && $cleanPhone === '') continue;
+            $participants[$cleanId !== '' ? $cleanId : $cleanPhone] = [
+                'participant_phone' => $cleanPhone !== '' ? $cleanPhone : null,
+                'participant_id' => $cleanId !== '' ? $cleanId : null,
+            ];
+        }
+    }
+
+    return array_values($participants);
+}
+
+function evolution_extract_group_participants($data, string $targetGroupId = ''): array {
+    if (!is_array($data)) return [];
+    $targetGroupId = trim($targetGroupId);
+
+    $direct = evolution_extract_group_participants_from_node($data);
+    if ($direct) return $direct;
+
+    foreach ($data as $item) {
+        if (!is_array($item)) continue;
+        $itemGroupId = trim((string)($item['id'] ?? $item['jid'] ?? $item['groupJid'] ?? $item['group_id'] ?? ''));
+        if ($targetGroupId !== '' && $itemGroupId !== '' && $itemGroupId !== $targetGroupId) {
+            continue;
+        }
+        $found = evolution_extract_group_participants($item, $targetGroupId);
+        if ($found) return $found;
+    }
+
+    return [];
 }
 
 function evolution_extract_raw_event_fields(array $payload): array {
@@ -676,19 +777,23 @@ function evolution_sync_groups_for_instance(PDO $pdo, string $instanceKey): int 
     $updated = 0;
     foreach ($groups as $groupId => $group) {
         try {
+            $groupName = substr((string)($group['subject'] ?? ''), 0, 180);
+            $turmaCode = evolution_guess_turma_code_from_group_name($groupName);
             $st = $pdo->prepare("
-                INSERT INTO whatsapp_groups (group_id, instance_key, group_name, picture_url, first_seen_at, last_seen_at)
-                VALUES (:gid, :inst, :name, :picture_url, NOW(), NOW())
+                INSERT INTO whatsapp_groups (group_id, instance_key, group_name, codigo_turma, picture_url, first_seen_at, last_seen_at)
+                VALUES (:gid, :inst, :name, :codigo_turma, :picture_url, NOW(), NOW())
                 ON DUPLICATE KEY UPDATE
                     instance_key = COALESCE(VALUES(instance_key), instance_key),
                     group_name = VALUES(group_name),
+                    codigo_turma = COALESCE(whatsapp_groups.codigo_turma, VALUES(codigo_turma)),
                     picture_url = COALESCE(VALUES(picture_url), picture_url),
                     last_seen_at = NOW()
             ");
             $st->execute([
                 ':gid' => $groupId,
                 ':inst' => $instanceKey,
-                ':name' => substr((string)($group['subject'] ?? ''), 0, 180),
+                ':name' => $groupName,
+                ':codigo_turma' => $turmaCode,
                 ':picture_url' => $group['picture_url'] ?? null,
             ]);
             $updated++;
@@ -698,18 +803,120 @@ function evolution_sync_groups_for_instance(PDO $pdo, string $instanceKey): int 
     return $updated;
 }
 
+function evolution_sync_group_members(PDO $pdo, string $instanceKey, string $groupId): array {
+    evolution_ensure_tables($pdo);
+    $instanceKey = trim($instanceKey);
+    $groupId = trim($groupId);
+    if ($instanceKey === '' || $groupId === '') {
+        return ['ok' => false, 'group_id' => $groupId, 'members' => 0, 'matched' => 0, 'error' => 'Instancia ou grupo vazio.'];
+    }
+
+    $res = evolution_find_group_info($instanceKey, $groupId);
+    $participants = $res['ok'] ? evolution_extract_group_participants($res['data'], $groupId) : [];
+
+    if (!$participants) {
+        $all = evolution_fetch_all_groups($instanceKey, true);
+        if ($all['ok']) {
+            $participants = evolution_extract_group_participants($all['data'], $groupId);
+        }
+        if (!$participants && !$res['ok'] && !$all['ok']) {
+            return ['ok' => false, 'group_id' => $groupId, 'members' => 0, 'matched' => 0, 'error' => (string)($res['error'] ?: $all['error'] ?: 'Falha ao consultar grupo.')];
+        }
+    }
+
+    $syncAt = date('Y-m-d H:i:s');
+    $seen = [];
+    $matched = 0;
+
+    foreach ($participants as $participant) {
+        $phone = evolution_clean_whatsapp_phone((string)($participant['participant_phone'] ?? ''));
+        $participantId = evolution_clean_whatsapp_id((string)($participant['participant_id'] ?? ''));
+        if ($participantId === '' && $phone !== '') $participantId = $phone . '@s.whatsapp.net';
+        if ($participantId === '' && $phone === '') continue;
+
+        $seen[] = $participantId;
+        $user = evolution_find_user_by_phone($pdo, $phone);
+        $userId = $user ? (int)($user['id'] ?? 0) : 0;
+        if ($userId > 0) {
+            $matched++;
+            try { adicionar_tag($userId, 'WHATSAPP_GRUPO_ENTROU', 'whatsapp_group_sync', null); } catch (Throwable $e) {}
+        }
+
+        $pdo->prepare("
+            INSERT INTO whatsapp_group_members
+                (group_id, instance_key, participant_phone, participant_id, user_id, is_current, first_seen_at, last_seen_at, synced_at)
+            VALUES
+                (:group_id, :instance_key, :participant_phone, :participant_id, :user_id, 1, NOW(), NOW(), :synced_at)
+            ON DUPLICATE KEY UPDATE
+                instance_key = VALUES(instance_key),
+                participant_phone = COALESCE(VALUES(participant_phone), participant_phone),
+                user_id = VALUES(user_id),
+                is_current = 1,
+                last_seen_at = NOW(),
+                synced_at = VALUES(synced_at)
+        ")->execute([
+            ':group_id' => $groupId,
+            ':instance_key' => $instanceKey,
+            ':participant_phone' => $phone !== '' ? $phone : null,
+            ':participant_id' => $participantId,
+            ':user_id' => $userId > 0 ? $userId : null,
+            ':synced_at' => $syncAt,
+        ]);
+    }
+
+    $pdo->prepare("UPDATE whatsapp_group_members SET is_current = 0, synced_at = :sync_at WHERE group_id = :gid AND synced_at <> :sync_at")
+        ->execute([':sync_at' => $syncAt, ':gid' => $groupId]);
+
+    return ['ok' => true, 'group_id' => $groupId, 'members' => count($seen), 'matched' => $matched, 'error' => ''];
+}
+
+function evolution_sync_all_group_members(PDO $pdo, int $limit = 80): array {
+    evolution_ensure_tables($pdo);
+    $limit = max(1, min(300, $limit));
+
+    $rows = $pdo->query("
+        SELECT group_id, instance_key
+          FROM whatsapp_groups
+         WHERE COALESCE(is_ignored, 0) = 0
+           AND group_id IS NOT NULL
+           AND group_id <> ''
+           AND instance_key IS NOT NULL
+           AND instance_key <> ''
+         ORDER BY last_seen_at DESC
+         LIMIT {$limit}
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $processed = 0;
+    $members = 0;
+    $matched = 0;
+    $failed = 0;
+    foreach ($rows as $row) {
+        $res = evolution_sync_group_members($pdo, (string)($row['instance_key'] ?? ''), (string)($row['group_id'] ?? ''));
+        $processed++;
+        if (!empty($res['ok'])) {
+            $members += (int)($res['members'] ?? 0);
+            $matched += (int)($res['matched'] ?? 0);
+        } else {
+            $failed++;
+        }
+    }
+
+    return ['processed' => $processed, 'members' => $members, 'matched' => $matched, 'failed' => $failed];
+}
+
 function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
     $groupId = trim((string)($fields['group_id'] ?? ''));
     $instanceKey = trim((string)($fields['instance_key'] ?? ''));
     if ($groupId === '' || $instanceKey === '') return;
 
     try {
-        $st = $pdo->prepare("SELECT group_name, picture_url FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st = $pdo->prepare("SELECT group_name, codigo_turma, picture_url FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
         $st->execute([':gid' => $groupId]);
         $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $currentName = trim((string)($row['group_name'] ?? ''));
+        $currentTurma = trim((string)($row['codigo_turma'] ?? ''));
         $currentPicture = trim((string)($row['picture_url'] ?? ''));
-        if ($currentName !== '' && $currentPicture !== '') return;
+        if ($currentName !== '' && $currentTurma !== '' && $currentPicture !== '') return;
     } catch (Throwable $e) {
         return;
     }
@@ -719,12 +926,14 @@ function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
 
     $subject = evolution_extract_group_subject($res['data']);
     $pictureUrl = evolution_extract_group_picture_url($res['data']);
+    $turmaCode = evolution_guess_turma_code_from_group_name($subject);
     if (($subject === null || $subject === '') && ($pictureUrl === null || $pictureUrl === '')) return;
 
     try {
         $st = $pdo->prepare("
             UPDATE whatsapp_groups
                SET group_name = COALESCE(:name, group_name),
+                   codigo_turma = COALESCE(codigo_turma, :codigo_turma),
                    picture_url = COALESCE(:picture_url, picture_url),
                    instance_key = COALESCE(:inst, instance_key),
                    last_seen_at = NOW()
@@ -733,6 +942,7 @@ function evolution_refresh_group_name_if_needed(PDO $pdo, array $fields): void {
         ");
         $st->execute([
             ':name' => $subject !== null && $subject !== '' ? substr($subject, 0, 180) : null,
+            ':codigo_turma' => $turmaCode,
             ':picture_url' => $pictureUrl !== null && $pictureUrl !== '' ? $pictureUrl : null,
             ':inst' => $instanceKey !== '' ? $instanceKey : null,
             ':gid' => $groupId,

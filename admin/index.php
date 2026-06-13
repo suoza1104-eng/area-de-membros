@@ -596,17 +596,37 @@ if ($turmaCol) {
         }
     } catch (Throwable $e) {}
 
-    // WhatsApp: alunos que entraram em pelo menos um grupo monitorado nao ignorado
+    // WhatsApp: alunos presentes em pelo menos um grupo monitorado nao ignorado.
+    // Prioriza snapshot de membros atuais; se ainda nao houver sync, usa eventos antigos como fallback.
     try {
-        $sqlWg = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT ge.user_id) AS n
-                  FROM whatsapp_group_events ge
-                  JOIN users u ON u.id = ge.user_id
-                  LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
-                  WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
-                    AND ge.user_id IS NOT NULL
-                    AND ge.user_id > 0
-                    AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
-                  GROUP BY u.`$turmaCol`";
+        $hasMemberSnapshot = false;
+        try {
+            $hasMemberSnapshot = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_group_members WHERE is_current = 1 AND user_id IS NOT NULL AND user_id > 0")->fetchColumn() > 0;
+        } catch (Throwable $e) {
+            $hasMemberSnapshot = false;
+        }
+
+        if ($hasMemberSnapshot) {
+            $sqlWg = "SELECT COALESCE(NULLIF(wg.codigo_turma, ''), u.`$turmaCol`) AS tid, COUNT(DISTINCT wgm.user_id) AS n
+                      FROM whatsapp_group_members wgm
+                      JOIN users u ON u.id = wgm.user_id
+                      LEFT JOIN whatsapp_groups wg ON wg.group_id = wgm.group_id
+                      WHERE wgm.is_current = 1
+                        AND wgm.user_id IS NOT NULL
+                        AND wgm.user_id > 0
+                        AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
+                      GROUP BY tid";
+        } else {
+            $sqlWg = "SELECT COALESCE(NULLIF(wg.codigo_turma, ''), u.`$turmaCol`) AS tid, COUNT(DISTINCT ge.user_id) AS n
+                      FROM whatsapp_group_events ge
+                      JOIN users u ON u.id = ge.user_id
+                      LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+                      WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
+                        AND ge.user_id IS NOT NULL
+                        AND ge.user_id > 0
+                        AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
+                      GROUP BY tid";
+        }
         $st = $pdo->prepare($sqlWg); $st->execute($paramsSemTurma);
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
@@ -1675,6 +1695,8 @@ dashTurmaRender();
             const d = BAR_TURMA_DATA[tid] || {};
             return (d.inscritos || 0) > 0 ? Math.round((d.grupo_entrou || 0) / d.inscritos * 1000) / 10 : 0;
         });
+        const maxTaxa = Math.max(100, ...taxas);
+        const axisMax = Math.ceil(maxTaxa / 10) * 10;
         if (wgChart) wgChart.destroy();
         wgChart = new Chart(canvas, {
             type: 'bar',
@@ -1693,7 +1715,7 @@ dashTurmaRender();
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { beginAtZero:true, max:100, ticks:{ callback:v => v + '%', color:'#94a3b8' }, grid:{ color:'rgba(26,37,64,.4)' } },
+                    x: { beginAtZero:true, max:axisMax, ticks:{ callback:v => v + '%', color:'#94a3b8' }, grid:{ color:'rgba(26,37,64,.4)' } },
                     y: { ticks:{ color:'#cbd5e1', font:{size:11} }, grid:{ display:false } }
                 },
                 plugins: {

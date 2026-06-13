@@ -271,6 +271,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+        if ($action === 'sync_group_members') {
+            $res = evolution_sync_all_group_members($pdo, 30);
+            header(
+                'Location: whatsapp_monitor.php?members_synced=1'
+                . '&processed=' . (int)($res['processed'] ?? 0)
+                . '&members=' . (int)($res['members'] ?? 0)
+                . '&matched=' . (int)($res['matched'] ?? 0)
+                . '&failed=' . (int)($res['failed'] ?? 0)
+            );
+            exit;
+        }
+
+        if ($action === 'sync_group_members_one') {
+            $groupId = trim((string)($_POST['group_id'] ?? ''));
+            $instanceKey = trim((string)($_POST['instance_key'] ?? ''));
+            if ($groupId === '' || $instanceKey === '') throw new RuntimeException('Grupo ou instancia invalida.');
+            $res = evolution_sync_group_members($pdo, $instanceKey, $groupId);
+            header(
+                'Location: whatsapp_monitor.php?members_synced=1'
+                . '&processed=1'
+                . '&members=' . (int)($res['members'] ?? 0)
+                . '&matched=' . (int)($res['matched'] ?? 0)
+                . '&failed=' . (!empty($res['ok']) ? 0 : 1)
+            );
+            exit;
+        }
+
         if ($action === 'toggle_group_ignored') {
             $groupId = trim((string)($_POST['group_id'] ?? ''));
             if ($groupId === '') throw new RuntimeException('Grupo invalido.');
@@ -281,6 +308,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  WHERE group_id = :gid
                  LIMIT 1
             ")->execute([':gid' => $groupId]);
+            header('Location: whatsapp_monitor.php?group_scope_saved=1');
+            exit;
+        }
+
+        if ($action === 'update_group_turma') {
+            $groupId = trim((string)($_POST['group_id'] ?? ''));
+            $codigoTurma = preg_replace('/[^0-9A-Za-z_-]+/', '', (string)($_POST['codigo_turma'] ?? ''));
+            if ($groupId === '') throw new RuntimeException('Grupo invalido.');
+            $pdo->prepare("
+                UPDATE whatsapp_groups
+                   SET codigo_turma = :codigo_turma,
+                       last_seen_at = NOW()
+                 WHERE group_id = :gid
+                 LIMIT 1
+            ")->execute([
+                ':codigo_turma' => $codigoTurma !== '' ? $codigoTurma : null,
+                ':gid' => $groupId,
+            ]);
             header('Location: whatsapp_monitor.php?group_scope_saved=1');
             exit;
         }
@@ -319,6 +364,13 @@ if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel loca
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
 if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
+if (isset($_GET['members_synced'])) {
+    $notice = 'Participantes atuais sincronizados: '
+        . (int)($_GET['processed'] ?? 0) . ' grupo(s), '
+        . (int)($_GET['members'] ?? 0) . ' participante(s), '
+        . (int)($_GET['matched'] ?? 0) . ' aluno(s) identificado(s), '
+        . (int)($_GET['failed'] ?? 0) . ' falha(s).';
+}
 if (isset($_GET['group_scope_saved'])) $notice = 'Configuracao do grupo atualizada.';
 if (isset($_GET['backfill_done'])) {
     $notice = 'Reprocessamento concluido: '
@@ -780,6 +832,7 @@ include __DIR__ . '/_header.php';
                         <thead>
                             <tr>
                                 <th>Grupo</th>
+                                <th>Turma</th>
                                 <th>Instância</th>
                                 <th>Escopo</th>
                                 <th>Eventos</th>
@@ -810,6 +863,14 @@ include __DIR__ . '/_header.php';
                                         </div>
                                     </div>
                                 </td>
+                                <td>
+                                    <form method="post" style="display:flex;gap:6px;align-items:center">
+                                        <input type="hidden" name="action" value="update_group_turma">
+                                        <input type="hidden" name="group_id" value="<?= wh_h((string)$g['group_id']) ?>">
+                                        <input type="text" name="codigo_turma" value="<?= wh_h((string)($g['codigo_turma'] ?? '')) ?>" placeholder="110626" style="width:86px;padding:6px 8px;font-size:12px">
+                                        <button class="btn btn-ghost btn-sm" type="submit">Salvar</button>
+                                    </form>
+                                </td>
                                 <td><?= wh_h((string)($g['instance_key'] ?? '-')) ?></td>
                                 <td>
                                     <form method="post">
@@ -823,7 +884,15 @@ include __DIR__ . '/_header.php';
                                 </td>
                                 <td><?= (int)($g['total_events'] ?? 0) ?></td>
                                 <td><?= (int)($g['total_blacklist'] ?? 0) ?></td>
-                                <td style="white-space:nowrap"><?= wh_h((string)($g['last_seen_at'] ?? '-')) ?></td>
+                                <td style="white-space:nowrap">
+                                    <form method="post" style="display:flex;gap:6px;align-items:center">
+                                        <input type="hidden" name="action" value="sync_group_members_one">
+                                        <input type="hidden" name="group_id" value="<?= wh_h((string)$g['group_id']) ?>">
+                                        <input type="hidden" name="instance_key" value="<?= wh_h((string)($g['instance_key'] ?? '')) ?>">
+                                        <span><?= wh_h((string)($g['last_seen_at'] ?? '-')) ?></span>
+                                        <button class="btn btn-ghost btn-sm" type="submit">Sync</button>
+                                    </form>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -839,6 +908,7 @@ include __DIR__ . '/_header.php';
         <form method="post" class="wm-actions" style="margin-bottom:12px">
             <input type="hidden" name="action" value="refresh_group_names">
             <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
+            <button class="btn btn-primary btn-sm" name="action" value="sync_group_members" type="submit">Sincronizar participantes atuais</button>
             <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
             <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
         </form>
