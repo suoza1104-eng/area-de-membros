@@ -148,13 +148,35 @@ function logs_skipped_summary(?string $json): string {
     return $parts ? implode(' | ', $parts) : '-';
 }
 
+function logs_multi_param(string $key): array {
+    $raw = $_GET[$key] ?? [];
+    if (!is_array($raw)) $raw = [$raw];
+    $out = [];
+    foreach ($raw as $v) {
+        $v = trim((string)$v);
+        if ($v !== '') $out[$v] = true;
+    }
+    return array_keys($out);
+}
+
+function logs_add_like_any(array &$where, array &$params, string $expr, string $prefix, array $values): void {
+    if (!$values) return;
+    $ors = [];
+    foreach ($values as $i => $value) {
+        $key = ':' . $prefix . $i;
+        $ors[] = "$expr LIKE $key";
+        $params[$key] = '%' . $value . '%';
+    }
+    $where[] = '(' . implode(' OR ', $ors) . ')';
+}
+
 logs_ensure_live_dispatch_table($pdo);
 logs_cleanup_old($pdo);
 
 $source = trim((string)($_GET['source'] ?? ''));
-$evento = trim((string)($_GET['evento'] ?? ''));
+$eventos = logs_multi_param('evento');
 $grupo  = trim((string)($_GET['grupo'] ?? ''));
-$turma  = trim((string)($_GET['turma'] ?? ''));
+$turmas = logs_multi_param('turma');
 $aluno  = trim((string)($_GET['aluno'] ?? ''));
 $status = trim((string)($_GET['status'] ?? ''));
 $de     = trim((string)($_GET['de'] ?? ''));
@@ -163,13 +185,55 @@ $limit  = (int)($_GET['limit'] ?? 300);
 if ($limit < 50) $limit = 50;
 if ($limit > 2000) $limit = 2000;
 
+$eventoOptions = [];
+$turmaOptions = [];
+try {
+    if (logs_table_exists($pdo, 'webhook_logs')) {
+        foreach ($pdo->query("SELECT DISTINCT evento FROM webhook_logs WHERE evento IS NOT NULL AND evento <> '' ORDER BY evento ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
+            $eventoOptions[(string)$v] = true;
+        }
+    }
+    if (logs_table_exists($pdo, 'superfuncionario_logs')) {
+        foreach ($pdo->query("SELECT DISTINCT evento FROM superfuncionario_logs WHERE evento IS NOT NULL AND evento <> '' ORDER BY evento ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
+            $eventoOptions[(string)$v] = true;
+        }
+    }
+    $eventoOptions['CRON_LIVE_TURMA'] = true;
+} catch (Throwable $e) {}
+try {
+    if (logs_table_exists($pdo, 'turmas')) {
+        foreach ($pdo->query("SELECT DISTINCT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo <> '' ORDER BY codigo DESC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
+            $turmaOptions[(string)$v] = true;
+        }
+    }
+    if (logs_table_exists($pdo, 'live_turma_dispatch_logs')) {
+        foreach ($pdo->query("SELECT DISTINCT turma_codigo FROM live_turma_dispatch_logs WHERE turma_codigo IS NOT NULL AND turma_codigo <> '' ORDER BY turma_codigo DESC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
+            $turmaOptions[(string)$v] = true;
+        }
+    }
+} catch (Throwable $e) {}
+$eventoOptions = array_keys($eventoOptions);
+$turmaOptions = array_keys($turmaOptions);
+sort($eventoOptions);
+rsort($turmaOptions);
+
 $allRows = [];
 
 if (($source === '' || $source === 'webhook') && logs_table_exists($pdo, 'webhook_logs')) {
     $where = [];
     $params = [];
-    if ($evento !== '') { $where[] = 'wl.evento LIKE :evento'; $params[':evento'] = '%' . $evento . '%'; }
-    if ($turma !== '') { $where[] = '(wl.evento LIKE :turma_evt OR wl.payload_json LIKE :turma_payload)'; $params[':turma_evt'] = '%_' . $turma . '%'; $params[':turma_payload'] = '%' . $turma . '%'; }
+    logs_add_like_any($where, $params, 'wl.evento', 'evento', $eventos);
+    if ($turmas) {
+        $ors = [];
+        foreach ($turmas as $i => $value) {
+            $evtKey = ':turma_evt' . $i;
+            $payloadKey = ':turma_payload' . $i;
+            $ors[] = "wl.evento LIKE $evtKey OR wl.payload_json LIKE $payloadKey";
+            $params[$evtKey] = '%_' . $value . '%';
+            $params[$payloadKey] = '%' . $value . '%';
+        }
+        $where[] = '(' . implode(' OR ', $ors) . ')';
+    }
     if ($aluno !== '') {
         $where[] = '(u.nome LIKE :aluno OR u.email LIKE :aluno OR u.telefone LIKE :aluno OR wl.user_id = :aluno_id OR wl.payload_json LIKE :aluno_payload)';
         $params[':aluno'] = '%' . $aluno . '%';
@@ -223,8 +287,18 @@ if (($source === '' || $source === 'webhook') && logs_table_exists($pdo, 'webhoo
 if (($source === '' || $source === 'sf') && logs_table_exists($pdo, 'superfuncionario_logs')) {
     $where = [];
     $params = [];
-    if ($evento !== '') { $where[] = 'sl.evento LIKE :evento'; $params[':evento'] = '%' . $evento . '%'; }
-    if ($turma !== '') { $where[] = '(sl.evento LIKE :turma_evt OR sl.request_json LIKE :turma_payload)'; $params[':turma_evt'] = '%_' . $turma . '%'; $params[':turma_payload'] = '%' . $turma . '%'; }
+    logs_add_like_any($where, $params, 'sl.evento', 'evento', $eventos);
+    if ($turmas) {
+        $ors = [];
+        foreach ($turmas as $i => $value) {
+            $evtKey = ':turma_evt' . $i;
+            $payloadKey = ':turma_payload' . $i;
+            $ors[] = "sl.evento LIKE $evtKey OR sl.request_json LIKE $payloadKey";
+            $params[$evtKey] = '%_' . $value . '%';
+            $params[$payloadKey] = '%' . $value . '%';
+        }
+        $where[] = '(' . implode(' OR ', $ors) . ')';
+    }
     if ($aluno !== '') { $where[] = 'sl.request_json LIKE :aluno'; $params[':aluno'] = '%' . $aluno . '%'; }
     if ($de !== '') { $where[] = 'sl.created_at >= :de'; $params[':de'] = $de . ' 00:00:00'; }
     if ($ate !== '') { $where[] = 'sl.created_at <= :ate'; $params[':ate'] = $ate . ' 23:59:59'; }
@@ -272,8 +346,8 @@ if (($source === '' || $source === 'sf') && logs_table_exists($pdo, 'superfuncio
 if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live_turma_dispatch_logs')) {
     $where = [];
     $params = [];
-    if ($evento !== '') { $where[] = "'CRON_LIVE_TURMA' LIKE :evento"; $params[':evento'] = '%' . $evento . '%'; }
-    if ($turma !== '') { $where[] = 'turma_codigo LIKE :turma'; $params[':turma'] = '%' . $turma . '%'; }
+    logs_add_like_any($where, $params, "'CRON_LIVE_TURMA'", 'evento', $eventos);
+    logs_add_like_any($where, $params, 'turma_codigo', 'turma', $turmas);
     if ($aluno !== '') { $where[] = '1=0'; }
     if ($de !== '') { $where[] = 'started_at >= :de'; $params[':de'] = $de . ' 00:00:00'; }
     if ($ate !== '') { $where[] = 'started_at <= :ate'; $params[':ate'] = $ate . ' 23:59:59'; }
@@ -343,6 +417,18 @@ include __DIR__ . '/_header.php';
 .logs-filters .field.wide{min-width:220px;}
 .logs-filters label{font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase;}
 .logs-filters input, .logs-filters select{ padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
+.logs-multi{position:relative;min-width:220px;}
+.logs-multi summary{list-style:none;cursor:pointer;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-height:38px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.logs-multi summary::-webkit-details-marker{display:none;}
+.logs-multi summary:after{content:'v';font-size:10px;color:var(--muted);}
+.logs-multi[open] summary{border-color:var(--primary);}
+.logs-multi-menu{position:absolute;z-index:50;top:calc(100% + 6px);left:0;width:min(360px,90vw);max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--bg-card);box-shadow:var(--shadow);padding:8px;}
+.logs-multi-actions{display:flex;gap:8px;justify-content:space-between;position:sticky;top:-8px;background:var(--bg-card);padding:4px 0 8px;margin-bottom:4px;border-bottom:1px solid var(--border);}
+.logs-multi-actions button{border:1px solid var(--border);background:rgba(15,23,42,.65);color:var(--text);border-radius:999px;padding:5px 8px;font-size:11px;cursor:pointer;}
+.logs-multi-option{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:8px;font-size:12px;}
+.logs-multi-option:hover{background:rgba(148,163,184,.08);}
+.logs-multi-option input{width:auto;padding:0;accent-color:var(--primary);}
+.logs-multi-empty{padding:8px;color:var(--muted);font-size:12px;}
 .logs-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px;}
 .logs-kpi{border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(15,23,42,.35);}
 .logs-kpi span{display:block;color:var(--muted);font-size:11px;font-weight:800;text-transform:uppercase;}
@@ -407,8 +493,48 @@ include __DIR__ . '/_header.php';
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="field wide"><label>Evento</label><input name="evento" value="<?= h($evento) ?>" placeholder="LIVE_TURMA, CERT_EMITIDO..."></div>
-        <div class="field"><label>Turma</label><input name="turma" value="<?= h($turma) ?>" placeholder="300526"></div>
+        <div class="field wide">
+            <label>Evento</label>
+            <details class="logs-multi" data-multi-filter>
+                <summary data-empty="Todos os eventos"><?= $eventos ? h(count($eventos) . ' selecionado(s)') : 'Todos os eventos' ?></summary>
+                <div class="logs-multi-menu">
+                    <div class="logs-multi-actions">
+                        <button type="button" data-multi-select-all>Selecionar todos</button>
+                        <button type="button" data-multi-clear>Limpar</button>
+                    </div>
+                    <?php if (!$eventoOptions): ?>
+                        <div class="logs-multi-empty">Nenhum evento encontrado.</div>
+                    <?php endif; ?>
+                    <?php foreach ($eventoOptions as $opt): ?>
+                        <label class="logs-multi-option">
+                            <input type="checkbox" name="evento[]" value="<?= h($opt) ?>" <?= in_array($opt, $eventos, true) ? 'checked' : '' ?>>
+                            <span><?= h($opt) ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </details>
+        </div>
+        <div class="field">
+            <label>Turma</label>
+            <details class="logs-multi" data-multi-filter>
+                <summary data-empty="Todas as turmas"><?= $turmas ? h(count($turmas) . ' selecionada(s)') : 'Todas as turmas' ?></summary>
+                <div class="logs-multi-menu">
+                    <div class="logs-multi-actions">
+                        <button type="button" data-multi-select-all>Selecionar todas</button>
+                        <button type="button" data-multi-clear>Limpar</button>
+                    </div>
+                    <?php if (!$turmaOptions): ?>
+                        <div class="logs-multi-empty">Nenhuma turma encontrada.</div>
+                    <?php endif; ?>
+                    <?php foreach ($turmaOptions as $opt): ?>
+                        <label class="logs-multi-option">
+                            <input type="checkbox" name="turma[]" value="<?= h($opt) ?>" <?= in_array($opt, $turmas, true) ? 'checked' : '' ?>>
+                            <span><?= h($opt) ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </details>
+        </div>
         <div class="field wide"><label>Aluno</label><input name="aluno" value="<?= h($aluno) ?>" placeholder="Nome, email, telefone ou ID"></div>
         <div class="field">
             <label>Status</label>
@@ -484,5 +610,42 @@ include __DIR__ . '/_header.php';
         </table>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[data-multi-filter]').forEach(function(box) {
+        var summary = box.querySelector('summary');
+        var empty = summary ? (summary.getAttribute('data-empty') || 'Todos') : 'Todos';
+        function updateLabel() {
+            if (!summary) return;
+            var checked = Array.from(box.querySelectorAll('input[type="checkbox"]:checked')).map(function(input) {
+                return input.value;
+            });
+            if (checked.length === 0) summary.textContent = empty;
+            else if (checked.length === 1) summary.textContent = checked[0];
+            else summary.textContent = checked.length + ' selecionados';
+        }
+        box.querySelectorAll('input[type="checkbox"]').forEach(function(input) {
+            input.addEventListener('change', updateLabel);
+        });
+        var allBtn = box.querySelector('[data-multi-select-all]');
+        if (allBtn) allBtn.addEventListener('click', function() {
+            box.querySelectorAll('input[type="checkbox"]').forEach(function(input) { input.checked = true; });
+            updateLabel();
+        });
+        var clearBtn = box.querySelector('[data-multi-clear]');
+        if (clearBtn) clearBtn.addEventListener('click', function() {
+            box.querySelectorAll('input[type="checkbox"]').forEach(function(input) { input.checked = false; });
+            updateLabel();
+        });
+        updateLabel();
+    });
+    document.addEventListener('click', function(ev) {
+        document.querySelectorAll('[data-multi-filter][open]').forEach(function(box) {
+            if (!box.contains(ev.target)) box.removeAttribute('open');
+        });
+    });
+});
+</script>
 
 <?php require __DIR__ . '/_footer.php'; ?>
