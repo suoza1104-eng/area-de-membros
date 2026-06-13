@@ -156,6 +156,87 @@ function user_has_active_live_reschedule(PDO $pdo, int $userId, ?string $turmaLi
     }
 }
 
+function ensure_live_dispatch_log_table(PDO $pdo): void {
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS live_turma_dispatch_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                turma_id INT NULL,
+                turma_codigo VARCHAR(80) NULL,
+                planned_at DATETIME NULL,
+                started_at DATETIME NOT NULL,
+                finished_at DATETIME NULL,
+                total_alunos INT NOT NULL DEFAULT 0,
+                elegiveis INT NOT NULL DEFAULT 0,
+                sf_ok INT NOT NULL DEFAULT 0,
+                sf_fail INT NOT NULL DEFAULT 0,
+                webhook_ok INT NOT NULL DEFAULT 0,
+                webhook_fail INT NOT NULL DEFAULT 0,
+                skipped_json LONGTEXT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'iniciado',
+                message TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_live_dispatch_turma (turma_codigo),
+                KEY idx_live_dispatch_started (started_at),
+                KEY idx_live_dispatch_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (Throwable $e) {}
+}
+
+function start_live_dispatch_log(PDO $pdo, array $turma): int {
+    ensure_live_dispatch_log_table($pdo);
+    try {
+        $st = $pdo->prepare("
+            INSERT INTO live_turma_dispatch_logs
+                (turma_id, turma_codigo, planned_at, started_at, status, message)
+            VALUES
+                (:tid, :codigo, :planned, NOW(), 'iniciado', 'Cron iniciou processamento da turma.')
+        ");
+        $st->execute([
+            ':tid' => (int)($turma['id'] ?? 0) ?: null,
+            ':codigo' => (string)($turma['codigo'] ?? ''),
+            ':planned' => $turma['live_disparo_data'] ?? null,
+        ]);
+        return (int)$pdo->lastInsertId();
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+function finish_live_dispatch_log(PDO $pdo, int $logId, array $stats, string $status, string $message): void {
+    if ($logId <= 0) return;
+    try {
+        $st = $pdo->prepare("
+            UPDATE live_turma_dispatch_logs
+               SET finished_at = NOW(),
+                   total_alunos = :total,
+                   elegiveis = :elegiveis,
+                   sf_ok = :sf_ok,
+                   sf_fail = :sf_fail,
+                   webhook_ok = :webhook_ok,
+                   webhook_fail = :webhook_fail,
+                   skipped_json = :skipped,
+                   status = :status,
+                   message = :message
+             WHERE id = :id
+             LIMIT 1
+        ");
+        $st->execute([
+            ':total' => (int)($stats['total_alunos'] ?? 0),
+            ':elegiveis' => (int)($stats['elegiveis'] ?? 0),
+            ':sf_ok' => (int)($stats['sf_ok'] ?? 0),
+            ':sf_fail' => (int)($stats['sf_fail'] ?? 0),
+            ':webhook_ok' => (int)($stats['webhook_ok'] ?? 0),
+            ':webhook_fail' => (int)($stats['webhook_fail'] ?? 0),
+            ':skipped' => json_encode((array)($stats['skipped'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':status' => $status,
+            ':message' => $message,
+            ':id' => $logId,
+        ]);
+    } catch (Throwable $e) {}
+}
+
 /**
  * Formata uma data/hora para BR: dd/mm/aaaa HH:MM:SS
  * Aceita strings 'Y-m-d H:i:s' ou ISO. Se falhar, retorna o valor original.
@@ -363,6 +444,23 @@ $tagRelTable = first_existing_table($pdo, [
 foreach ($turmas as $turma) {
     $codigo = (string)($turma['codigo'] ?? '');
     if ($codigo === '') continue;
+    $dispatchLogId = start_live_dispatch_log($pdo, $turma);
+    $dispatchStats = [
+        'total_alunos' => 0,
+        'elegiveis' => 0,
+        'sf_ok' => 0,
+        'sf_fail' => 0,
+        'webhook_ok' => 0,
+        'webhook_fail' => 0,
+        'skipped' => [
+            'include_tag_table_missing' => 0,
+            'andamento_zero' => 0,
+            'tag_excluida' => 0,
+            'certificado' => 0,
+            'compra' => 0,
+            'live_reagendada' => 0,
+        ],
+    ];
 
     $url       = trim((string)($turma['webhook_live_url'] ?? ''));
     $whEnabled = (int)($turma['live_webhook_enabled'] ?? 1) === 1 && $url !== '';
@@ -409,6 +507,7 @@ foreach ($turmas as $turma) {
         $stU->execute([':c' => $codigo]);
         $alunos = $stU->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
+    $dispatchStats['total_alunos'] = count($alunos);
 
     // ----------------------------------------------------------------------------------
     // 4) Dispara para cada aluno — webhook e/ou SuperFuncionário
@@ -419,12 +518,13 @@ foreach ($turmas as $turma) {
         $aluno['andamento']        = $prog['andamento'];
         $aluno['aulas_concluidas'] = $prog['concluidas'];
         $aluno['aulas_totais']     = $prog['total'];
-        if ($includeTagIds && !$tagRelTable) continue;
-        if ($excludeZero && (int)$aluno['andamento'] <= 0) continue;
-        if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) continue;
-        if ($excludeCert && user_has_certificate($pdo, $uid)) continue;
-        if ($excludePurchase && user_has_purchase($pdo, $uid)) continue;
-        if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) continue;
+        if ($includeTagIds && !$tagRelTable) { $dispatchStats['skipped']['include_tag_table_missing']++; continue; }
+        if ($excludeZero && (int)$aluno['andamento'] <= 0) { $dispatchStats['skipped']['andamento_zero']++; continue; }
+        if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) { $dispatchStats['skipped']['tag_excluida']++; continue; }
+        if ($excludeCert && user_has_certificate($pdo, $uid)) { $dispatchStats['skipped']['certificado']++; continue; }
+        if ($excludePurchase && user_has_purchase($pdo, $uid)) { $dispatchStats['skipped']['compra']++; continue; }
+        if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $dispatchStats['skipped']['live_reagendada']++; continue; }
+        $dispatchStats['elegiveis']++;
 
         // Extra disponível para resolução de campos SF e payload do webhook
         $extra = [
@@ -446,6 +546,8 @@ foreach ($turmas as $turma) {
             $json    = json_encode($payload, JSON_UNESCAPED_UNICODE);
 
             [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
+            if ($status >= 200 && $status < 300 && !$err) $dispatchStats['webhook_ok']++;
+            else $dispatchStats['webhook_fail']++;
 
             try {
                 if (table_exists($pdo, 'webhook_logs')) {
@@ -475,9 +577,15 @@ foreach ($turmas as $turma) {
         try {
             disparar_evento_webhooks($pdo, 'LIVE_TURMA', $userStd, $extra);
         } catch (Throwable $e) {}
-        try {
-            sf_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
-        } catch (Throwable $e) {}
+        if ($sfEnabled) {
+            try {
+                $sfOk = sf_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
+                if ($sfOk) $dispatchStats['sf_ok']++;
+                else $dispatchStats['sf_fail']++;
+            } catch (Throwable $e) {
+                $dispatchStats['sf_fail']++;
+            }
+        }
 
         if ($delay > 0) {
             usleep($delay * 1000);
@@ -489,4 +597,8 @@ foreach ($turmas as $turma) {
     // ----------------------------------------------------------------------------------
     $upd = $pdo->prepare("UPDATE turmas SET live_disparada = 1 WHERE id = :id");
     $upd->execute([':id' => $turma['id']]);
+    $finalStatus = ($dispatchStats['sf_fail'] > 0 || $dispatchStats['webhook_fail'] > 0) ? 'concluido_com_falhas' : 'concluido';
+    $message = 'Turma marcada como disparada.';
+    if ($dispatchStats['elegiveis'] <= 0) $message = 'Turma marcada como disparada, mas nenhum aluno ficou elegivel apos os filtros.';
+    finish_live_dispatch_log($pdo, $dispatchLogId, $dispatchStats, $finalStatus, $message);
 }

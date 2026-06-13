@@ -211,8 +211,56 @@ function sf_admin_log_summary(PDO $pdo, string $codigo, ?string $plannedAt): arr
     return $out;
 }
 
+function sf_admin_ensure_live_dispatch_logs(PDO $pdo): void {
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS live_turma_dispatch_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                turma_id INT NULL,
+                turma_codigo VARCHAR(80) NULL,
+                planned_at DATETIME NULL,
+                started_at DATETIME NOT NULL,
+                finished_at DATETIME NULL,
+                total_alunos INT NOT NULL DEFAULT 0,
+                elegiveis INT NOT NULL DEFAULT 0,
+                sf_ok INT NOT NULL DEFAULT 0,
+                sf_fail INT NOT NULL DEFAULT 0,
+                webhook_ok INT NOT NULL DEFAULT 0,
+                webhook_fail INT NOT NULL DEFAULT 0,
+                skipped_json LONGTEXT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'iniciado',
+                message TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_live_dispatch_turma (turma_codigo),
+                KEY idx_live_dispatch_started (started_at),
+                KEY idx_live_dispatch_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (Throwable $e) {}
+}
+
+function sf_admin_skipped_summary(?string $json): string {
+    $data = json_decode((string)$json, true);
+    if (!is_array($data)) return '-';
+    $labels = [
+        'include_tag_table_missing' => 'sem tabela de tags',
+        'andamento_zero' => 'andamento zero',
+        'tag_excluida' => 'tag excluida',
+        'certificado' => 'certificado',
+        'compra' => 'compra',
+        'live_reagendada' => 'live reagendada',
+    ];
+    $parts = [];
+    foreach ($labels as $key => $label) {
+        $n = (int)($data[$key] ?? 0);
+        if ($n > 0) $parts[] = $label . ': ' . $n;
+    }
+    return $parts ? implode(' | ', $parts) : '-';
+}
+
 // garante tabelas
 sf_ensure_tables($pdo);
+sf_admin_ensure_live_dispatch_logs($pdo);
 
 // ===== eventos (mesmos do Webhooks) =====
 $eventOptions = [
@@ -1500,6 +1548,78 @@ include __DIR__ . '/_header.php';
                 <?php endif; ?>
             </div>
         </div>
+    </div>
+
+    <?php
+    $liveDispatchLogs = [];
+    try {
+        $liveDispatchLogs = $pdo->query("
+            SELECT *
+              FROM live_turma_dispatch_logs
+          ORDER BY id DESC
+             LIMIT 30
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+    ?>
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon blue">&#128202;</div>
+            <div class="card-header-text">
+                <h2>Execucoes do cron de live</h2>
+                <p>Resumo por turma: quantos alunos foram encontrados, filtrados, enviados e quais motivos impediram disparos.</p>
+            </div>
+        </div>
+        <?php if (!$liveDispatchLogs): ?>
+            <div class="empty-state">Ainda nao ha resumo de execucao. Ele sera gravado automaticamente nos proximos disparos de turma.</div>
+        <?php else: ?>
+        <div style="overflow-x:auto;">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Turma</th>
+                        <th>Planejado</th>
+                        <th>Executado</th>
+                        <th>Alunos</th>
+                        <th>SF</th>
+                        <th>Webhook</th>
+                        <th>Status</th>
+                        <th>Excluidos</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($liveDispatchLogs as $dl): ?>
+                    <tr>
+                        <td style="color:var(--muted)"><?= (int)$dl['id'] ?></td>
+                        <td style="font-weight:700"><?= h((string)($dl['turma_codigo'] ?? '')) ?></td>
+                        <td style="white-space:nowrap;font-size:11px;"><?= h(sf_format_datetime_local((string)($dl['planned_at'] ?? ''))) ?></td>
+                        <td style="white-space:nowrap;font-size:11px;">
+                            <?= h(sf_format_datetime_local((string)($dl['started_at'] ?? ''))) ?>
+                            <?php if (!empty($dl['finished_at'])): ?><div class="note"><?= h(sf_format_datetime_local((string)$dl['finished_at'])) ?></div><?php endif; ?>
+                        </td>
+                        <td style="font-size:11px;">
+                            Total: <?= (int)($dl['total_alunos'] ?? 0) ?><br>
+                            Elegiveis: <?= (int)($dl['elegiveis'] ?? 0) ?>
+                        </td>
+                        <td style="font-size:11px;">
+                            OK: <?= (int)($dl['sf_ok'] ?? 0) ?><br>
+                            Falha: <?= (int)($dl['sf_fail'] ?? 0) ?>
+                        </td>
+                        <td style="font-size:11px;">
+                            OK: <?= (int)($dl['webhook_ok'] ?? 0) ?><br>
+                            Falha: <?= (int)($dl['webhook_fail'] ?? 0) ?>
+                        </td>
+                        <td>
+                            <span class="badge <?= (string)($dl['status'] ?? '') === 'concluido' ? 'badge-on' : 'badge-off' ?>"><?= h((string)($dl['status'] ?? '')) ?></span>
+                            <div class="note"><?= h((string)($dl['message'] ?? '')) ?></div>
+                        </td>
+                        <td style="font-size:11px;white-space:normal;"><?= h(sf_admin_skipped_summary($dl['skipped_json'] ?? null)) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
     </div>
 
     <!-- ===== LOGS ===== -->
