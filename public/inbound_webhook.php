@@ -165,6 +165,22 @@ function iw_disparar_integracoes(PDO $pdo, array $ihw, string $evento, int $user
     return $ok;
 }
 
+
+function iw_disparar_eventos_diretos(PDO $pdo, array $ihw, int $userId, array $extra = []): void {
+    $id = (int)($ihw['id'] ?? 0);
+    if ($id <= 0) return;
+
+    if ((int)($ihw['disparar_webhook'] ?? 1) === 1) {
+        iw_disparar_integracoes($pdo, ['id'=>$id, 'disparar_webhook'=>1, 'disparar_sf'=>0, 'disparar_manychat'=>0], 'INBOUND_WEBHOOK_' . $id, $userId, $extra);
+    }
+    if ((int)($ihw['disparar_sf'] ?? 1) === 1) {
+        iw_disparar_integracoes($pdo, ['id'=>$id, 'disparar_webhook'=>0, 'disparar_sf'=>1, 'disparar_manychat'=>0], 'INBOUND_SF_' . $id, $userId, $extra);
+    }
+    if ((int)($ihw['disparar_manychat'] ?? 1) === 1) {
+        iw_disparar_integracoes($pdo, ['id'=>$id, 'disparar_webhook'=>0, 'disparar_sf'=>0, 'disparar_manychat'=>1], 'INBOUND_MANYCHAT_' . $id, $userId, $extra);
+    }
+}
+
 // ── Processa ──────────────────────────────────────────────────────────────────
 try {
     $map = [];
@@ -374,6 +390,14 @@ try {
             iw_disparar_integracoes($pdo, $ihw, $evento, $userId, ['origem' => 'inbound_webhook', 'payload_raw' => $payload]);
             break;
     }
+
+    iw_disparar_eventos_diretos($pdo, $ihw, $userId, [
+        'origem' => 'inbound_webhook',
+        'inbound_id' => (int)$ihw['id'],
+        'evento_base' => $evento,
+        'codigo_turma' => $codigoTurmaCfg,
+        'payload_raw' => $payload,
+    ]);
 
     $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='processado', user_id=:u, processado_em=NOW() WHERE id=:i")
         ->execute([':u' => $userId, ':i' => $recId]);

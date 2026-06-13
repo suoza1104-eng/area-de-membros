@@ -19,6 +19,16 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
     disparar_webhook TINYINT(1) NOT NULL DEFAULT 1,
     disparar_sf TINYINT(1) NOT NULL DEFAULT 1,
     disparar_manychat TINYINT(1) NOT NULL DEFAULT 1,
+    direct_webhook_url VARCHAR(1000) NULL,
+    direct_webhook_method VARCHAR(10) NOT NULL DEFAULT 'POST',
+    direct_webhook_headers_json TEXT NULL,
+    direct_webhook_payload_format VARCHAR(20) NOT NULL DEFAULT 'json',
+    direct_sf_tags_text TEXT NULL,
+    direct_sf_flows_text TEXT NULL,
+    direct_sf_fields_json TEXT NULL,
+    direct_manychat_tags_text TEXT NULL,
+    direct_manychat_flows_text TEXT NULL,
+    direct_manychat_fields_json TEXT NULL,
     criar_se_nao_existir TINYINT(1) NOT NULL DEFAULT 1,
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     total_recebidos INT UNSIGNED NOT NULL DEFAULT 0,
@@ -30,6 +40,18 @@ try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN oferta_codigo VARCHAR(
 try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_webhook TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
 try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_sf TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
 try { $pdo->exec("ALTER TABLE inbound_webhooks ADD COLUMN disparar_manychat TINYINT(1) NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
+foreach ([
+    'direct_webhook_url' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_webhook_url VARCHAR(1000) NULL",
+    'direct_webhook_method' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_webhook_method VARCHAR(10) NOT NULL DEFAULT 'POST'",
+    'direct_webhook_headers_json' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_webhook_headers_json TEXT NULL",
+    'direct_webhook_payload_format' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_webhook_payload_format VARCHAR(20) NOT NULL DEFAULT 'json'",
+    'direct_sf_tags_text' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_sf_tags_text TEXT NULL",
+    'direct_sf_flows_text' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_sf_flows_text TEXT NULL",
+    'direct_sf_fields_json' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_sf_fields_json TEXT NULL",
+    'direct_manychat_tags_text' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_manychat_tags_text TEXT NULL",
+    'direct_manychat_flows_text' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_manychat_flows_text TEXT NULL",
+    'direct_manychat_fields_json' => "ALTER TABLE inbound_webhooks ADD COLUMN direct_manychat_fields_json TEXT NULL",
+] as $sql) { try { $pdo->exec($sql); } catch (Throwable $e) {} }
 $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     webhook_id INT NOT NULL,
@@ -44,6 +66,107 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhook_recebimentos (
     INDEX idx_iwr_recebido (recebido_em)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 try { $pdo->exec("ALTER TABLE inbound_webhook_recebimentos MODIFY COLUMN status ENUM('pendente','processado','erro','ignorado') NOT NULL DEFAULT 'pendente'"); } catch (Throwable $e) {}
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS webhooks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(150) NOT NULL,
+    evento VARCHAR(80) NOT NULL,
+    url VARCHAR(1000) NOT NULL,
+    metodo VARCHAR(10) NOT NULL DEFAULT 'POST',
+    headers_json TEXT NULL,
+    payload_format VARCHAR(20) NOT NULL DEFAULT 'json',
+    ativo TINYINT(1) NOT NULL DEFAULT 1,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_webhooks_evento (evento),
+    KEY idx_webhooks_ativo (ativo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+function iw_direct_event(string $tipo, int $id): string {
+    return 'INBOUND_' . strtoupper($tipo) . '_' . $id;
+}
+
+function iw_clean_json_or_null(string $raw): ?string {
+    $raw = trim($raw);
+    if ($raw === '') return null;
+    $tmp = json_decode($raw, true);
+    return is_array($tmp) ? json_encode($tmp, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+}
+
+function iw_sync_direct_rules(PDO $pdo, int $id, array $cfg): void {
+    if ($id <= 0) return;
+    $nome = trim((string)($cfg['nome'] ?? 'Entrada #' . $id));
+
+    $whEvent = iw_direct_event('WEBHOOK', $id);
+    $whUrl = trim((string)($cfg['direct_webhook_url'] ?? ''));
+    if ((int)($cfg['disparar_webhook'] ?? 0) === 1 && $whUrl !== '') {
+        $method = strtoupper(trim((string)($cfg['direct_webhook_method'] ?? 'POST')));
+        if (!in_array($method, ['POST','GET','PUT','PATCH'], true)) $method = 'POST';
+        $format = strtolower(trim((string)($cfg['direct_webhook_payload_format'] ?? 'json')));
+        if (!in_array($format, ['json','form'], true)) $format = 'json';
+        $headers = iw_clean_json_or_null((string)($cfg['direct_webhook_headers_json'] ?? ''));
+        $st = $pdo->prepare("SELECT id FROM webhooks WHERE evento = :e ORDER BY id DESC LIMIT 1");
+        $st->execute([':e' => $whEvent]);
+        $whId = (int)($st->fetchColumn() ?: 0);
+        if ($whId > 0) {
+            $pdo->prepare("UPDATE webhooks SET nome=:n,url=:u,metodo=:m,headers_json=:h,payload_format=:pf,ativo=1 WHERE id=:id")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':u'=>$whUrl, ':m'=>$method, ':h'=>$headers, ':pf'=>$format, ':id'=>$whId]);
+        } else {
+            $pdo->prepare("INSERT INTO webhooks (nome,evento,url,metodo,headers_json,payload_format,ativo) VALUES (:n,:e,:u,:m,:h,:pf,1)")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':e'=>$whEvent, ':u'=>$whUrl, ':m'=>$method, ':h'=>$headers, ':pf'=>$format]);
+        }
+    } else {
+        try {
+            $pdo->prepare("UPDATE webhooks SET ativo=0 WHERE evento=:e")->execute([':e' => $whEvent]);
+        } catch (Throwable $e) {}
+    }
+
+    if (function_exists('sf_ensure_tables')) sf_ensure_tables($pdo);
+    $sfEvent = iw_direct_event('SF', $id);
+    $sfTags = trim((string)($cfg['direct_sf_tags_text'] ?? ''));
+    $sfFlows = trim((string)($cfg['direct_sf_flows_text'] ?? ''));
+    $sfFields = iw_clean_json_or_null((string)($cfg['direct_sf_fields_json'] ?? '')) ?? '[]';
+    $sfHas = ($sfTags !== '' || $sfFlows !== '' || $sfFields !== '[]');
+    if ((int)($cfg['disparar_sf'] ?? 0) === 1 && $sfHas) {
+        $st = $pdo->prepare("SELECT id FROM superfuncionario_rules WHERE evento = :e ORDER BY id DESC LIMIT 1");
+        $st->execute([':e' => $sfEvent]);
+        $rid = (int)($st->fetchColumn() ?: 0);
+        if ($rid > 0) {
+            $pdo->prepare("UPDATE superfuncionario_rules SET nome=:n,is_active=1,tags_text=:t,flows_text=:f,fields_json=:fj WHERE id=:id")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':t'=>$sfTags, ':f'=>$sfFlows, ':fj'=>$sfFields, ':id'=>$rid]);
+        } else {
+            $pdo->prepare("INSERT INTO superfuncionario_rules (nome,evento,is_active,tags_text,flows_text,fields_json) VALUES (:n,:e,1,:t,:f,:fj)")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':e'=>$sfEvent, ':t'=>$sfTags, ':f'=>$sfFlows, ':fj'=>$sfFields]);
+        }
+    } else {
+        try {
+            $pdo->prepare("UPDATE superfuncionario_rules SET is_active=0 WHERE evento=:e")->execute([':e' => $sfEvent]);
+        } catch (Throwable $e) {}
+    }
+
+    if (function_exists('mc_ensure_tables')) mc_ensure_tables($pdo);
+    $mcEvent = iw_direct_event('MANYCHAT', $id);
+    $mcTags = trim((string)($cfg['direct_manychat_tags_text'] ?? ''));
+    $mcFlows = trim((string)($cfg['direct_manychat_flows_text'] ?? ''));
+    $mcFields = iw_clean_json_or_null((string)($cfg['direct_manychat_fields_json'] ?? '')) ?? '[]';
+    $mcHas = ($mcTags !== '' || $mcFlows !== '' || $mcFields !== '[]');
+    if ((int)($cfg['disparar_manychat'] ?? 0) === 1 && $mcHas) {
+        $st = $pdo->prepare("SELECT id FROM manychat_rules WHERE evento = :e ORDER BY id DESC LIMIT 1");
+        $st->execute([':e' => $mcEvent]);
+        $rid = (int)($st->fetchColumn() ?: 0);
+        if ($rid > 0) {
+            $pdo->prepare("UPDATE manychat_rules SET nome=:n,is_active=1,tags_text=:t,flows_text=:f,fields_json=:fj WHERE id=:id")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':t'=>$mcTags, ':f'=>$mcFlows, ':fj'=>$mcFields, ':id'=>$rid]);
+        } else {
+            $pdo->prepare("INSERT INTO manychat_rules (nome,evento,is_active,tags_text,flows_text,fields_json) VALUES (:n,:e,1,:t,:f,:fj)")
+                ->execute([':n'=>'[Entrada #' . $id . '] ' . $nome, ':e'=>$mcEvent, ':t'=>$mcTags, ':f'=>$mcFlows, ':fj'=>$mcFields]);
+        }
+    } else {
+        try {
+            $pdo->prepare("UPDATE manychat_rules SET is_active=0 WHERE evento=:e")->execute([':e' => $mcEvent]);
+        } catch (Throwable $e) {}
+    }
+}
 
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 if ($acao !== '') {
@@ -62,6 +185,16 @@ if ($acao !== '') {
         $dispWebhook = isset($_POST['disparar_webhook']) ? 1 : 0;
         $dispSf = isset($_POST['disparar_sf']) ? 1 : 0;
         $dispManychat = isset($_POST['disparar_manychat']) ? 1 : 0;
+        $directWebhookUrl = trim((string)($_POST['direct_webhook_url'] ?? ''));
+        $directWebhookMethod = strtoupper(trim((string)($_POST['direct_webhook_method'] ?? 'POST')));
+        $directWebhookHeaders = trim((string)($_POST['direct_webhook_headers_json'] ?? ''));
+        $directWebhookFormat = strtolower(trim((string)($_POST['direct_webhook_payload_format'] ?? 'json')));
+        $directSfTags = trim((string)($_POST['direct_sf_tags_text'] ?? ''));
+        $directSfFlows = trim((string)($_POST['direct_sf_flows_text'] ?? ''));
+        $directSfFields = trim((string)($_POST['direct_sf_fields_json'] ?? ''));
+        $directManychatTags = trim((string)($_POST['direct_manychat_tags_text'] ?? ''));
+        $directManychatFlows = trim((string)($_POST['direct_manychat_flows_text'] ?? ''));
+        $directManychatFields = trim((string)($_POST['direct_manychat_fields_json'] ?? ''));
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
         if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_assunto'=>'retorno_assunto','retorno_mensagem'=>'retorno_mensagem']);
@@ -69,20 +202,39 @@ if ($acao !== '') {
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
         if ($id > 0) {
-            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,oferta_codigo=:of,payload_map_json=:m,disparar_webhook=:dw,disparar_sf=:dsf,disparar_manychat=:dm,criar_se_nao_existir=:cr WHERE id=:id")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':cr'=>$criar,':id'=>$id]);
+            $pdo->prepare("UPDATE inbound_webhooks SET nome=:n,descricao=:d,evento=:ev,lesson_id=:l,codigo_turma=:ct,tag_extra=:tg,oferta_codigo=:of,payload_map_json=:m,disparar_webhook=:dw,disparar_sf=:dsf,disparar_manychat=:dm,direct_webhook_url=:whu,direct_webhook_method=:whm,direct_webhook_headers_json=:whh,direct_webhook_payload_format=:whf,direct_sf_tags_text=:sft,direct_sf_flows_text=:sff,direct_sf_fields_json=:sfj,direct_manychat_tags_text=:mct,direct_manychat_flows_text=:mcf,direct_manychat_fields_json=:mcj,criar_se_nao_existir=:cr WHERE id=:id")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':whu'=>$directWebhookUrl?:null,':whm'=>$directWebhookMethod?:'POST',':whh'=>$directWebhookHeaders?:null,':whf'=>$directWebhookFormat?:'json',':sft'=>$directSfTags?:null,':sff'=>$directSfFlows?:null,':sfj'=>$directSfFields?:null,':mct'=>$directManychatTags?:null,':mcf'=>$directManychatFlows?:null,':mcj'=>$directManychatFields?:null,':cr'=>$criar,':id'=>$id]);
         } else {
             $token = bin2hex(random_bytes(32));
-            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:cr)")
-                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':tk'=>$token,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':cr'=>$criar]);
+            $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,direct_webhook_url,direct_webhook_method,direct_webhook_headers_json,direct_webhook_payload_format,direct_sf_tags_text,direct_sf_flows_text,direct_sf_fields_json,direct_manychat_tags_text,direct_manychat_flows_text,direct_manychat_fields_json,criar_se_nao_existir) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:whu,:whm,:whh,:whf,:sft,:sff,:sfj,:mct,:mcf,:mcj,:cr)")
+                ->execute([':n'=>$nome,':d'=>$descricao,':ev'=>$evento,':l'=>$lessonId?:null,':ct'=>$codTurma?:null,':tg'=>$tagExtra?:null,':of'=>$ofertaCod?:null,':tk'=>$token,':m'=>$mapJson,':dw'=>$dispWebhook,':dsf'=>$dispSf,':dm'=>$dispManychat,':whu'=>$directWebhookUrl?:null,':whm'=>$directWebhookMethod?:'POST',':whh'=>$directWebhookHeaders?:null,':whf'=>$directWebhookFormat?:'json',':sft'=>$directSfTags?:null,':sff'=>$directSfFlows?:null,':sfj'=>$directSfFields?:null,':mct'=>$directManychatTags?:null,':mcf'=>$directManychatFlows?:null,':mcj'=>$directManychatFields?:null,':cr'=>$criar]);
             $id = (int)$pdo->lastInsertId();
         }
+        iw_sync_direct_rules($pdo, $id, [
+            'nome'=>$nome,
+            'disparar_webhook'=>$dispWebhook,
+            'disparar_sf'=>$dispSf,
+            'disparar_manychat'=>$dispManychat,
+            'direct_webhook_url'=>$directWebhookUrl,
+            'direct_webhook_method'=>$directWebhookMethod,
+            'direct_webhook_headers_json'=>$directWebhookHeaders,
+            'direct_webhook_payload_format'=>$directWebhookFormat,
+            'direct_sf_tags_text'=>$directSfTags,
+            'direct_sf_flows_text'=>$directSfFlows,
+            'direct_sf_fields_json'=>$directSfFields,
+            'direct_manychat_tags_text'=>$directManychatTags,
+            'direct_manychat_flows_text'=>$directManychatFlows,
+            'direct_manychat_fields_json'=>$directManychatFields,
+        ]);
         echo json_encode(['ok'=>true,'id'=>$id]); exit;
     }
 
     if ($acao === 'deletar') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
+            try { $pdo->prepare("UPDATE webhooks SET ativo=0 WHERE evento IN (:w,:s,:m)")->execute([':w'=>iw_direct_event('WEBHOOK', $id), ':s'=>iw_direct_event('SF', $id), ':m'=>iw_direct_event('MANYCHAT', $id)]); } catch (Throwable $e) {}
+            try { $pdo->prepare("UPDATE superfuncionario_rules SET is_active=0 WHERE evento=:e")->execute([':e'=>iw_direct_event('SF', $id)]); } catch (Throwable $e) {}
+            try { $pdo->prepare("UPDATE manychat_rules SET is_active=0 WHERE evento=:e")->execute([':e'=>iw_direct_event('MANYCHAT', $id)]); } catch (Throwable $e) {}
             $pdo->prepare("DELETE FROM inbound_webhook_recebimentos WHERE webhook_id = :id")->execute([':id'=>$id]);
             $pdo->prepare("DELETE FROM inbound_webhooks WHERE id = :id")->execute([':id'=>$id]);
         }
@@ -96,9 +248,27 @@ if ($acao !== '') {
         $row = $r->fetch(PDO::FETCH_ASSOC);
         if (!$row) { echo json_encode(['ok'=>false]); exit; }
         $token = bin2hex(random_bytes(32));
-        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:cr,1)")
-            ->execute([':n'=>'[Copia] '.$row['nome'], ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':of'=>$row['oferta_codigo']??null, ':tk'=>$token, ':m'=>$row['payload_map_json'], ':dw'=>(int)($row['disparar_webhook'] ?? 1), ':dsf'=>(int)($row['disparar_sf'] ?? 1), ':dm'=>(int)($row['disparar_manychat'] ?? 1), ':cr'=>$row['criar_se_nao_existir']]);
-        echo json_encode(['ok'=>true,'id'=>(int)$pdo->lastInsertId()]); exit;
+        $cloneName = '[Copia] '.$row['nome'];
+        $pdo->prepare("INSERT INTO inbound_webhooks (nome,descricao,evento,lesson_id,codigo_turma,tag_extra,oferta_codigo,token,payload_map_json,disparar_webhook,disparar_sf,disparar_manychat,direct_webhook_url,direct_webhook_method,direct_webhook_headers_json,direct_webhook_payload_format,direct_sf_tags_text,direct_sf_flows_text,direct_sf_fields_json,direct_manychat_tags_text,direct_manychat_flows_text,direct_manychat_fields_json,criar_se_nao_existir,ativo) VALUES (:n,:d,:ev,:l,:ct,:tg,:of,:tk,:m,:dw,:dsf,:dm,:whu,:whm,:whh,:whf,:sft,:sff,:sfj,:mct,:mcf,:mcj,:cr,1)")
+            ->execute([':n'=>$cloneName, ':d'=>$row['descricao'], ':ev'=>$row['evento'], ':l'=>$row['lesson_id'], ':ct'=>$row['codigo_turma'], ':tg'=>$row['tag_extra'], ':of'=>$row['oferta_codigo']??null, ':tk'=>$token, ':m'=>$row['payload_map_json'], ':dw'=>(int)($row['disparar_webhook'] ?? 1), ':dsf'=>(int)($row['disparar_sf'] ?? 1), ':dm'=>(int)($row['disparar_manychat'] ?? 1), ':whu'=>$row['direct_webhook_url'] ?? null, ':whm'=>$row['direct_webhook_method'] ?? 'POST', ':whh'=>$row['direct_webhook_headers_json'] ?? null, ':whf'=>$row['direct_webhook_payload_format'] ?? 'json', ':sft'=>$row['direct_sf_tags_text'] ?? null, ':sff'=>$row['direct_sf_flows_text'] ?? null, ':sfj'=>$row['direct_sf_fields_json'] ?? null, ':mct'=>$row['direct_manychat_tags_text'] ?? null, ':mcf'=>$row['direct_manychat_flows_text'] ?? null, ':mcj'=>$row['direct_manychat_fields_json'] ?? null, ':cr'=>$row['criar_se_nao_existir']]);
+        $newId = (int)$pdo->lastInsertId();
+        iw_sync_direct_rules($pdo, $newId, [
+            'nome'=>$cloneName,
+            'disparar_webhook'=>(int)($row['disparar_webhook'] ?? 1),
+            'disparar_sf'=>(int)($row['disparar_sf'] ?? 1),
+            'disparar_manychat'=>(int)($row['disparar_manychat'] ?? 1),
+            'direct_webhook_url'=>$row['direct_webhook_url'] ?? '',
+            'direct_webhook_method'=>$row['direct_webhook_method'] ?? 'POST',
+            'direct_webhook_headers_json'=>$row['direct_webhook_headers_json'] ?? '',
+            'direct_webhook_payload_format'=>$row['direct_webhook_payload_format'] ?? 'json',
+            'direct_sf_tags_text'=>$row['direct_sf_tags_text'] ?? '',
+            'direct_sf_flows_text'=>$row['direct_sf_flows_text'] ?? '',
+            'direct_sf_fields_json'=>$row['direct_sf_fields_json'] ?? '',
+            'direct_manychat_tags_text'=>$row['direct_manychat_tags_text'] ?? '',
+            'direct_manychat_flows_text'=>$row['direct_manychat_flows_text'] ?? '',
+            'direct_manychat_fields_json'=>$row['direct_manychat_fields_json'] ?? '',
+        ]);
+        echo json_encode(['ok'=>true,'id'=>$newId]); exit;
     }
 
     if ($acao === 'toggle') {
@@ -211,7 +381,13 @@ require_once __DIR__ . '/_header.php';
 .iw-int-badge.on.webhook { color:#7dd3fc; border-color:rgba(56,189,248,.3); background:rgba(56,189,248,.1); }
 .iw-int-badge.on.sf { color:#c4b5fd; border-color:rgba(167,139,250,.3); background:rgba(167,139,250,.1); }
 .iw-int-badge.on.manychat { color:#f9a8d4; border-color:rgba(236,72,153,.3); background:rgba(236,72,153,.1); }
+.iw-direct-box { border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:10px; background:rgba(255,255,255,.025); }
+.iw-direct-title { font-size:12px; font-weight:800; margin-bottom:8px; display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.iw-direct-title code { color:#60a5fa; font-size:10px; background:rgba(96,165,250,.08); padding:2px 6px; border-radius:999px; }
+.iw-direct-grid { display:grid; grid-template-columns:1fr 110px 110px; gap:8px; }
+.iw-direct-box textarea { min-height:54px; font-size:12px; }
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
+@media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
 </style>
 
 <div class="main-content">
@@ -278,6 +454,47 @@ require_once __DIR__ . '/_header.php';
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
           O evento acima sera encaminhado somente para os canais marcados. As regras de cada canal continuam nas telas Webhooks, SuperFuncionario e Manychat.
+        </div>
+
+        <div class="iw-direct-box">
+          <div class="iw-direct-title">
+            <span>Gatilho direto Webhook</span>
+            <code id="iwDirectWebhookEvent">INBOUND_WEBHOOK_novo</code>
+          </div>
+          <div class="iw-direct-grid">
+            <input type="text" id="iwDirectWebhookUrl" placeholder="https://...">
+            <select id="iwDirectWebhookMethod">
+              <option value="POST">POST</option>
+              <option value="GET">GET</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+            <select id="iwDirectWebhookFormat">
+              <option value="json">JSON</option>
+              <option value="form">Form</option>
+            </select>
+          </div>
+          <textarea id="iwDirectWebhookHeaders" style="margin-top:8px" placeholder='Headers JSON opcionais. Ex.: {"Authorization":"Bearer TOKEN"}'></textarea>
+        </div>
+
+        <div class="iw-direct-box">
+          <div class="iw-direct-title">
+            <span>Gatilho direto SuperFuncionario</span>
+            <code id="iwDirectSfEvent">INBOUND_SF_novo</code>
+          </div>
+          <textarea id="iwDirectSfTags" placeholder="Tags, uma por linha"></textarea>
+          <textarea id="iwDirectSfFlows" style="margin-top:8px" placeholder="Flows IDs separados por virgula"></textarea>
+          <textarea id="iwDirectSfFields" style="margin-top:8px" placeholder='Campos JSON. Ex.: [{"source":"user.email","dest":"EMAIL"}]'></textarea>
+        </div>
+
+        <div class="iw-direct-box">
+          <div class="iw-direct-title">
+            <span>Gatilho direto Manychat</span>
+            <code id="iwDirectManychatEvent">INBOUND_MANYCHAT_novo</code>
+          </div>
+          <textarea id="iwDirectManychatTags" placeholder="Tags, uma por linha"></textarea>
+          <textarea id="iwDirectManychatFlows" style="margin-top:8px" placeholder="flow_ns separados por linha, espaco ou virgula"></textarea>
+          <textarea id="iwDirectManychatFields" style="margin-top:8px" placeholder='Campos JSON. Ex.: [{"source":"user.email","dest":"email_area"}]'></textarea>
         </div>
       </div>
 
@@ -396,6 +613,7 @@ async function iwCarregar() {
                         <span class="iw-int-badge ${parseInt(w.disparar_webhook||0)===1?'on webhook':''}">webhook</span>
                         <span class="iw-int-badge ${parseInt(w.disparar_sf||0)===1?'on sf':''}">sf</span>
                         <span class="iw-int-badge ${parseInt(w.disparar_manychat||0)===1?'on manychat':''}">manychat</span>
+                        <span style="color:#60a5fa">eventos: INBOUND_*_${w.id}</span>
                         <span>📥 ${w.total_recebidos||0} recebimentos</span>
                     </div>
                 </div>
@@ -424,6 +642,17 @@ function iwNovo() {
     document.getElementById('iwDispararWebhook').checked = true;
     document.getElementById('iwDispararSf').checked = true;
     document.getElementById('iwDispararManychat').checked = true;
+    document.getElementById('iwDirectWebhookUrl').value = '';
+    document.getElementById('iwDirectWebhookMethod').value = 'POST';
+    document.getElementById('iwDirectWebhookFormat').value = 'json';
+    document.getElementById('iwDirectWebhookHeaders').value = '';
+    document.getElementById('iwDirectSfTags').value = '';
+    document.getElementById('iwDirectSfFlows').value = '';
+    document.getElementById('iwDirectSfFields').value = '';
+    document.getElementById('iwDirectManychatTags').value = '';
+    document.getElementById('iwDirectManychatFlows').value = '';
+    document.getElementById('iwDirectManychatFields').value = '';
+    iwAtualizaEventosDiretos(0);
     document.getElementById('iwLessonId').value = 0;
     document.getElementById('iwCodigoTurma').value = '';
     document.getElementById('iwTagExtra').value = '';
@@ -448,6 +677,17 @@ async function iwEditar(id) {
     document.getElementById('iwDispararWebhook').checked = parseInt(d.disparar_webhook ?? 1) === 1;
     document.getElementById('iwDispararSf').checked = parseInt(d.disparar_sf ?? 1) === 1;
     document.getElementById('iwDispararManychat').checked = parseInt(d.disparar_manychat ?? 1) === 1;
+    document.getElementById('iwDirectWebhookUrl').value = d.direct_webhook_url || '';
+    document.getElementById('iwDirectWebhookMethod').value = d.direct_webhook_method || 'POST';
+    document.getElementById('iwDirectWebhookFormat').value = d.direct_webhook_payload_format || 'json';
+    document.getElementById('iwDirectWebhookHeaders').value = d.direct_webhook_headers_json || '';
+    document.getElementById('iwDirectSfTags').value = d.direct_sf_tags_text || '';
+    document.getElementById('iwDirectSfFlows').value = d.direct_sf_flows_text || '';
+    document.getElementById('iwDirectSfFields').value = d.direct_sf_fields_json || '';
+    document.getElementById('iwDirectManychatTags').value = d.direct_manychat_tags_text || '';
+    document.getElementById('iwDirectManychatFlows').value = d.direct_manychat_flows_text || '';
+    document.getElementById('iwDirectManychatFields').value = d.direct_manychat_fields_json || '';
+    iwAtualizaEventosDiretos(parseInt(d.id || 0));
     document.getElementById('iwLessonId').value = d.lesson_id || 0;
     document.getElementById('iwCodigoTurma').value = d.codigo_turma || '';
     document.getElementById('iwTagExtra').value = d.tag_extra || '';
@@ -471,6 +711,13 @@ function iwAtualizaCamposCondicionais() {
     const ev = document.getElementById('iwEvento').value;
     document.getElementById('iwLessonWrap').style.display = (ev === 'VIU_AULA') ? '' : 'none';
     document.getElementById('iwTurmaWrap').style.display  = (ev === 'INSCRITO') ? '' : 'none';
+}
+
+function iwAtualizaEventosDiretos(id) {
+    const suffix = parseInt(id || 0) > 0 ? String(id) : 'novo';
+    document.getElementById('iwDirectWebhookEvent').textContent = 'INBOUND_WEBHOOK_' + suffix;
+    document.getElementById('iwDirectSfEvent').textContent = 'INBOUND_SF_' + suffix;
+    document.getElementById('iwDirectManychatEvent').textContent = 'INBOUND_MANYCHAT_' + suffix;
 }
 
 function iwAddMap(from, to) {
@@ -507,6 +754,16 @@ async function iwSalvar() {
     if (document.getElementById('iwDispararWebhook').checked) fd.append('disparar_webhook','1');
     if (document.getElementById('iwDispararSf').checked) fd.append('disparar_sf','1');
     if (document.getElementById('iwDispararManychat').checked) fd.append('disparar_manychat','1');
+    fd.append('direct_webhook_url', document.getElementById('iwDirectWebhookUrl').value);
+    fd.append('direct_webhook_method', document.getElementById('iwDirectWebhookMethod').value);
+    fd.append('direct_webhook_payload_format', document.getElementById('iwDirectWebhookFormat').value);
+    fd.append('direct_webhook_headers_json', document.getElementById('iwDirectWebhookHeaders').value);
+    fd.append('direct_sf_tags_text', document.getElementById('iwDirectSfTags').value);
+    fd.append('direct_sf_flows_text', document.getElementById('iwDirectSfFlows').value);
+    fd.append('direct_sf_fields_json', document.getElementById('iwDirectSfFields').value);
+    fd.append('direct_manychat_tags_text', document.getElementById('iwDirectManychatTags').value);
+    fd.append('direct_manychat_flows_text', document.getElementById('iwDirectManychatFlows').value);
+    fd.append('direct_manychat_fields_json', document.getElementById('iwDirectManychatFields').value);
     fd.append('lesson_id', document.getElementById('iwLessonId').value);
     fd.append('codigo_turma', document.getElementById('iwCodigoTurma').value);
     fd.append('tag_extra', document.getElementById('iwTagExtra').value);
