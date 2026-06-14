@@ -747,6 +747,74 @@ foreach ($reagPorDia as $rp) {
     $chartVendaData[] = (int)($rp['vendas'] ?? 0);
 }
 
+$forecastStart = (new DateTimeImmutable('today'))->modify('-30 days');
+$forecastEnd = $forecastStart->modify('+59 days');
+$forecastMap = [];
+for ($i = 0; $i < 60; $i++) {
+    $key = $forecastStart->modify('+' . $i . ' days')->format('Y-m-d');
+    $forecastMap[$key] = ['total' => 0, 'acessos' => 0];
+}
+$whereForecast = [
+    'r.new_turma_live_at >= :forecast_from',
+    'r.new_turma_live_at <= :forecast_to',
+];
+$paramsForecast = [
+    ':forecast_from' => $forecastStart->format('Y-m-d 00:00:00'),
+    ':forecast_to' => $forecastEnd->format('Y-m-d 23:59:59'),
+];
+if ($fAluno !== '') {
+    $whereForecast[] = "(u.nome LIKE :forecast_aluno OR u.email LIKE :forecast_aluno OR u.telefone LIKE :forecast_aluno OR u.id = :forecast_aluno_id)";
+    $paramsForecast[':forecast_aluno'] = '%' . $fAluno . '%';
+    $paramsForecast[':forecast_aluno_id'] = ctype_digit($fAluno) ? (int)$fAluno : 0;
+}
+if (in_array($fStatus, ['aguardando', 'pendente', 'enviado', 'expirado', 'substituido', 'reagendado'], true)) {
+    $whereForecast[] = "($statusVisualExpr) = :forecast_status";
+    $paramsForecast[':forecast_status'] = $fStatus;
+}
+if (in_array($fOrigem, ['aluno', 'suporte'], true)) {
+    $whereForecast[] = "($origemExpr) = :forecast_origem";
+    $paramsForecast[':forecast_origem'] = $fOrigem;
+}
+if ($fTurmaNova !== '') {
+    $whereForecast[] = "r.new_codigo_turma = :forecast_turma_nova";
+    $paramsForecast[':forecast_turma_nova'] = $fTurmaNova;
+}
+if ($fTurmaAntiga !== '') {
+    $whereForecast[] = "r.old_codigo_turma = :forecast_turma_antiga";
+    $paramsForecast[':forecast_turma_antiga'] = $fTurmaAntiga;
+}
+$whereForecastSql = 'WHERE ' . implode(' AND ', $whereForecast);
+try {
+    $st = $pdo->prepare("SELECT DATE(r.new_turma_live_at) AS dia,
+            COUNT(*) AS total,
+            SUM($exprAcessou) AS acessos
+        FROM reagendamentos_live r
+        LEFT JOIN users u ON u.id = r.user_id
+        $whereForecastSql
+        GROUP BY DATE(r.new_turma_live_at)
+        ORDER BY dia ASC");
+    $st->execute($paramsForecast);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $key = (string)($row['dia'] ?? '');
+        if (!isset($forecastMap[$key])) continue;
+        $forecastMap[$key]['total'] = (int)($row['total'] ?? 0);
+        $forecastMap[$key]['acessos'] = (int)($row['acessos'] ?? 0);
+    }
+} catch (Throwable $e) {}
+$liveForecastLabels = [];
+$liveForecastTotals = [];
+$liveForecastAccess = [];
+$liveForecastPct = [];
+foreach ($forecastMap as $dia => $vals) {
+    $total = (int)($vals['total'] ?? 0);
+    $acessos = (int)($vals['acessos'] ?? 0);
+    $liveForecastLabels[] = date('d/m', strtotime($dia));
+    $liveForecastTotals[] = $total;
+    $liveForecastAccess[] = $acessos;
+    $liveForecastPct[] = $total > 0 ? round(($acessos / $total) * 100, 1) : null;
+}
+$liveForecastTotal = array_sum($liveForecastTotals);
+
 $whereTokens = [];
 $paramsTokens = [];
 if ($fAluno !== '') {
@@ -897,6 +965,8 @@ require __DIR__ . '/_header.php';
 .rl-chart-card { margin-bottom:16px; }
 .rl-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
 .rl-chart-wrap { height:300px; width:100%; }
+.rl-chart-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.rl-chart-wide { height:330px; min-width:1320px; }
 .rl-pie-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
 .rl-pie-card { border:1px solid var(--border); border-radius:12px; padding:14px; background:rgba(15,23,42,.34); min-width:0; }
 .rl-pie-title { color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0; min-height:28px; }
@@ -924,7 +994,7 @@ require __DIR__ . '/_header.php';
 .rl-cal-day.blocked { background:rgba(239,68,68,.08); }
 .rl-cal-day.blocked .rl-cal-state { color:#fca5a5; }
 @media(max-width:1100px){ .rl-pie-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
-@media(max-width:720px){ .rl-chart-wrap{height:240px;} .rl-pie-grid{grid-template-columns:1fr;} .rl-pie-wrap{height:180px;} .rl-cal-day{min-height:62px;padding:6px;} .rl-cal-dow{font-size:10px;} }
+@media(max-width:720px){ .rl-chart-wrap{height:240px;} .rl-chart-wide{height:300px;min-width:1120px;} .rl-pie-grid{grid-template-columns:1fr;} .rl-pie-wrap{height:180px;} .rl-cal-day{min-height:62px;padding:6px;} .rl-cal-dow{font-size:10px;} }
 </style>
 
 <?php if ($msg): ?>
@@ -961,6 +1031,23 @@ require __DIR__ . '/_header.php';
         <div class="text-muted text-sm" style="padding:48px;text-align:center">Sem dados para o filtro atual.</div>
     <?php else: ?>
         <div class="rl-chart-wrap"><canvas id="reagLineChart"></canvas></div>
+    <?php endif; ?>
+</div>
+
+<div class="card rl-chart-card">
+    <div class="rl-chart-head">
+        <div>
+            <div class="card-header-title">Previsao de alunos por data da live reagendada</div>
+            <div class="text-xs text-muted mt-1">Janela fixa: <?= h($forecastStart->format('d/m/Y')) ?> a <?= h($forecastEnd->format('d/m/Y')) ?>. O percentual acima da barra indica quantos reagendados daquele dia acessaram a live.</div>
+        </div>
+        <div class="text-xs text-muted"><?= number_format((int)$liveForecastTotal, 0, ',', '.') ?> aluno(s) reagendado(s) na janela</div>
+    </div>
+    <?php if ($liveForecastTotal <= 0): ?>
+        <div class="text-muted text-sm" style="padding:48px;text-align:center">Sem lives reagendadas nesta janela.</div>
+    <?php else: ?>
+        <div class="rl-chart-scroll">
+            <div class="rl-chart-wide"><canvas id="liveForecastChart"></canvas></div>
+        </div>
     <?php endif; ?>
 </div>
 
@@ -1453,6 +1540,10 @@ const ALLOW_SAME_DAY_INIT = <?= $allowSameDay ? 'true' : 'false' ?>;
 const REAG_CHART_LABELS = <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_DATA = <?= json_encode($chartReagData, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_CHART_VENDAS = <?= json_encode($chartVendaData, JSON_UNESCAPED_UNICODE) ?>;
+const LIVE_FORECAST_LABELS = <?= json_encode($liveForecastLabels, JSON_UNESCAPED_UNICODE) ?>;
+const LIVE_FORECAST_TOTALS = <?= json_encode($liveForecastTotals, JSON_UNESCAPED_UNICODE) ?>;
+const LIVE_FORECAST_ACCESS = <?= json_encode($liveForecastAccess, JSON_UNESCAPED_UNICODE) ?>;
+const LIVE_FORECAST_PCT = <?= json_encode($liveForecastPct, JSON_UNESCAPED_UNICODE) ?>;
 const REAG_PIE_CHARTS = <?= json_encode(array_map(static function(array $pc): array {
     return [
         'id' => $pc['id'],
@@ -1586,6 +1677,85 @@ function updateDispatchPreview() {
     live = new Date(live.getTime() + parseOffsetMinutes(document.getElementById('dispatchOffset')?.value || '0:00') * 60000);
     out.value = fmtBrDate(live);
 }
+function buildLiveForecastChart() {
+    var canvas = document.getElementById('liveForecastChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    var pctLabelsPlugin = {
+        id: 'liveForecastPctLabels',
+        afterDatasetsDraw: function(chart) {
+            var meta = chart.getDatasetMeta(0);
+            if (!meta || !meta.data) return;
+            var ctx = chart.ctx;
+            ctx.save();
+            ctx.font = '700 10px Inter, system-ui, sans-serif';
+            ctx.fillStyle = '#dbeafe';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            meta.data.forEach(function(bar, index) {
+                var total = parseInt((LIVE_FORECAST_TOTALS || [])[index] || 0, 10);
+                if (!total) return;
+                var pct = (LIVE_FORECAST_PCT || [])[index];
+                if (pct === null || typeof pct === 'undefined') return;
+                var label = String(pct).replace('.', ',') + '%';
+                ctx.fillText(label, bar.x, bar.y - 5);
+            });
+            ctx.restore();
+        }
+    };
+    new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: LIVE_FORECAST_LABELS,
+            datasets: [{
+                label: 'Alunos com live reagendada',
+                data: LIVE_FORECAST_TOTALS,
+                backgroundColor: 'rgba(56,189,248,.42)',
+                borderColor: 'rgba(56,189,248,.9)',
+                borderWidth: 1,
+                borderRadius: 4,
+                maxBarThickness: 22
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 24 } },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true } },
+                tooltip: {
+                    backgroundColor: '#0f172a',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(ctx) {
+                            var i = ctx.dataIndex;
+                            var total = parseInt((LIVE_FORECAST_TOTALS || [])[i] || 0, 10);
+                            var acessos = parseInt((LIVE_FORECAST_ACCESS || [])[i] || 0, 10);
+                            var pct = (LIVE_FORECAST_PCT || [])[i];
+                            var pctText = pct === null || typeof pct === 'undefined' ? '0%' : String(pct).replace('.', ',') + '%';
+                            return total + ' aluno(s), ' + acessos + ' acesso(s), ' + pctText + ' acessaram';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Data da live reagendada', color: '#94a3b8' },
+                    ticks: { color: '#94a3b8', maxRotation: 60, minRotation: 60 },
+                    grid: { color: 'rgba(148,163,184,.10)' }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Alunos', color: '#94a3b8' },
+                    ticks: { color: '#94a3b8', precision: 0 },
+                    grid: { color: 'rgba(148,163,184,.12)' }
+                }
+            }
+        },
+        plugins: [pctLabelsPlugin]
+    });
+}
 function buildReagLineChart() {
     var canvas = document.getElementById('reagLineChart');
     if (!canvas || typeof Chart === 'undefined') return;
@@ -1685,6 +1855,7 @@ function buildPieCharts() {
 }
 document.addEventListener('DOMContentLoaded', function() {
     buildReagLineChart();
+    buildLiveForecastChart();
     buildPieCharts();
     buildBlackoutCalendar();
     updateDispatchPreview();
