@@ -8,7 +8,7 @@ $pdo = getPDO();
 
 $menu = 'logs';
 $page_title = 'Logs';
-$page_subtitle = 'Auditoria de eventos, webhooks, SuperFuncionario, Manychat e cron';
+$page_subtitle = 'Auditoria de eventos, webhooks, SuperFuncionario, Manychat, disparos e cron';
 
 function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -74,6 +74,7 @@ function logs_cleanup_old(PDO $pdo): void {
         ['webhook_logs', 'created_at'],
         ['superfuncionario_logs', 'created_at'],
         ['manychat_logs', 'created_at'],
+        ['disparo_execucoes', 'executado_em'],
         ['live_turma_dispatch_logs', 'started_at'],
     ];
     foreach ($cuts as [$table, $col]) {
@@ -95,6 +96,7 @@ function logs_pretty_json(?string $raw): string {
 function logs_event_group(string $evento, string $source): string {
     $e = strtoupper($evento);
     if ($source === 'cron_live') return 'Cron live';
+    if ($source === 'disparo') return 'Disparos';
     if (str_starts_with($e, 'LIVE_TURMA')) return 'Live turma';
     if (str_starts_with($e, 'LIVE_REAGEND')) return 'Live reagendada';
     if (str_starts_with($e, 'LIVE_')) return 'Live evento';
@@ -226,6 +228,9 @@ try {
         foreach ($pdo->query("SELECT DISTINCT evento FROM manychat_logs WHERE evento IS NOT NULL AND evento <> '' ORDER BY evento ASC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $v) {
             $eventoOptions[(string)$v] = true;
         }
+    }
+    if (logs_table_exists($pdo, 'disparo_execucoes')) {
+        $eventoOptions['DISPARO'] = true;
     }
     $eventoOptions['CRON_LIVE_TURMA'] = true;
 } catch (Throwable $e) {}
@@ -431,6 +436,92 @@ if (($source === '' || $source === 'manychat') && logs_table_exists($pdo, 'manyc
     } catch (Throwable $e) {}
 }
 
+if (($source === '' || $source === 'disparo') && logs_table_exists($pdo, 'disparo_execucoes')) {
+    $where = [];
+    $params = [];
+    logs_add_like_any($where, $params, "CONCAT('DISPARO_', de.disparo_id, ' ', COALESCE(d.nome,''))", 'disparo_evento', $eventos);
+    if ($turmas) {
+        $ors = [];
+        foreach ($turmas as $i => $value) {
+            $turmaUserKey = ':disparo_turma_user' . $i;
+            $turmaUltKey = ':disparo_turma_ult' . $i;
+            $ors[] = "u.codigo_turma LIKE $turmaUserKey OR (
+                SELECT il.codigo_turma
+                  FROM inscricao_logs il
+                 WHERE il.user_id = de.user_id
+                 ORDER BY il.created_at DESC
+                 LIMIT 1
+            ) LIKE $turmaUltKey";
+            $params[$turmaUserKey] = '%' . $value . '%';
+            $params[$turmaUltKey] = '%' . $value . '%';
+        }
+        $where[] = '(' . implode(' OR ', $ors) . ')';
+    }
+    if ($aluno !== '') {
+        $where[] = '(u.nome LIKE :disparo_aluno OR u.email LIKE :disparo_aluno OR u.telefone LIKE :disparo_aluno OR de.user_id = :disparo_aluno_id OR de.resposta LIKE :disparo_aluno_resp)';
+        $params[':disparo_aluno'] = '%' . $aluno . '%';
+        $params[':disparo_aluno_id'] = ctype_digit($aluno) ? (int)$aluno : 0;
+        $params[':disparo_aluno_resp'] = '%' . $aluno . '%';
+    }
+    if ($de !== '') { $where[] = 'de.executado_em >= :disparo_de'; $params[':disparo_de'] = $de . ' 00:00:00'; }
+    if ($ate !== '') { $where[] = 'de.executado_em <= :disparo_ate'; $params[':disparo_ate'] = $ate . ' 23:59:59'; }
+    if ($status === 'ok') $where[] = "de.status = 'ok'";
+    elseif ($status === 'erro') $where[] = "de.status <> 'ok'";
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    try {
+        $st = $pdo->prepare("
+            SELECT de.*, d.nome AS disparo_nome, d.tipo AS disparo_tipo,
+                   u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone, u.codigo_turma AS user_turma,
+                   (SELECT il.codigo_turma FROM inscricao_logs il WHERE il.user_id = de.user_id ORDER BY il.created_at DESC LIMIT 1) AS ultima_turma
+              FROM disparo_execucoes de
+              LEFT JOIN disparos d ON d.id = de.disparo_id
+              LEFT JOIN users u ON u.id = de.user_id
+              $whereSql
+          ORDER BY de.executado_em DESC, de.id DESC
+             LIMIT :lim
+        ");
+        foreach ($params as $k => $v) $st->bindValue($k, $v);
+        $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            $event = 'DISPARO_' . (int)($r['disparo_id'] ?? 0);
+            $payload = json_encode([
+                'disparo_id' => (int)($r['disparo_id'] ?? 0),
+                'disparo_nome' => (string)($r['disparo_nome'] ?? ''),
+                'disparo_tipo' => (string)($r['disparo_tipo'] ?? ''),
+                'user_id' => (int)($r['user_id'] ?? 0),
+                'aluno' => [
+                    'nome' => (string)($r['user_nome'] ?? ''),
+                    'email' => (string)($r['user_email'] ?? ''),
+                    'telefone' => (string)($r['user_telefone'] ?? ''),
+                    'codigo_turma' => (string)(($r['ultima_turma'] ?? '') ?: ($r['user_turma'] ?? '')),
+                ],
+                'status' => (string)($r['status'] ?? ''),
+                'executado_em' => (string)($r['executado_em'] ?? ''),
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $ok = (string)($r['status'] ?? '') === 'ok';
+            $allRows[] = [
+                'source' => 'disparo',
+                'id' => (int)$r['id'],
+                'created_at' => (string)$r['executado_em'],
+                'evento' => $event,
+                'grupo' => 'Disparos',
+                'turma' => (string)(($r['ultima_turma'] ?? '') ?: ($r['user_turma'] ?? '')),
+                'aluno_nome' => (string)($r['user_nome'] ?? ''),
+                'aluno_email' => (string)($r['user_email'] ?? ''),
+                'aluno_tel' => (string)($r['user_telefone'] ?? ''),
+                'user_id' => (int)($r['user_id'] ?? 0),
+                'ok' => $ok,
+                'status_label' => $ok ? 'OK' : 'ERRO',
+                'destino' => trim((string)($r['disparo_nome'] ?? 'Disparo')) ?: 'Disparo',
+                'summary' => substr(trim((string)($r['resposta'] ?? '')), 0, 160),
+                'payload' => $payload ?: '',
+                'response' => (string)($r['resposta'] ?? ''),
+            ];
+        }
+    } catch (Throwable $e) {}
+}
+
 if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live_turma_dispatch_logs')) {
     $where = [];
     $params = [];
@@ -527,6 +618,7 @@ include __DIR__ . '/_header.php';
 .log-source.webhook{color:#7dd3fc;background:rgba(56,189,248,.10);border-color:rgba(56,189,248,.25);}
 .log-source.sf{color:#c4b5fd;background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.25);}
 .log-source.manychat{color:#f9a8d4;background:rgba(236,72,153,.10);border-color:rgba(236,72,153,.25);}
+.log-source.disparo{color:#93c5fd;background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.25);}
 .log-source.cron_live{color:#fcd34d;background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.25);}
 .log-status{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:900;border:1px solid var(--border);}
 .log-status.ok{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.25);}
@@ -545,7 +637,7 @@ include __DIR__ . '/_header.php';
     <div class="logs-head">
         <div>
             <div class="topbar-title">Logs</div>
-            <div class="text-muted text-sm">Auditoria unificada de eventos, webhooks, SuperFuncionario, Manychat e cron de live. Logs com mais de 1 ano sao limpos automaticamente.</div>
+            <div class="text-muted text-sm">Auditoria unificada de eventos, webhooks, SuperFuncionario, Manychat, disparos e cron de live. Logs com mais de 1 ano sao limpos automaticamente.</div>
         </div>
         <button class="logs-help-btn" type="button" onclick="document.getElementById('logsHelp').classList.toggle('open')" title="Descricao dos eventos">?</button>
     </div>
@@ -553,6 +645,7 @@ include __DIR__ . '/_header.php';
         <div class="log-help-grid">
             <div class="log-help-item"><b>Live turma</b>Disparos coletivos da live da turma. Ex.: LIVE_TURMA ou LIVE_TURMA_300526.</div>
             <div class="log-help-item"><b>Live reagendada</b>Eventos ligados ao reagendamento e lembretes individuais. Ex.: LIVE_REAGENDADA.</div>
+            <div class="log-help-item"><b>Disparos</b>Execucoes dos disparos criados na tela Disparos, com sucesso/erro por aluno.</div>
             <div class="log-help-item"><b>Inscricao/Login/Certificado</b>Eventos da jornada do aluno dentro da area de membros.</div>
             <div class="log-help-item"><b>Cron live</b>Resumo da execucao da fila: alunos encontrados, elegiveis, enviados, falhas e excluidos por filtro.</div>
         </div>
@@ -573,6 +666,7 @@ include __DIR__ . '/_header.php';
                 <option value="webhook" <?= $source==='webhook'?'selected':'' ?>>Webhook</option>
                 <option value="sf" <?= $source==='sf'?'selected':'' ?>>SuperFuncionario</option>
                 <option value="manychat" <?= $source==='manychat'?'selected':'' ?>>Manychat</option>
+                <option value="disparo" <?= $source==='disparo'?'selected':'' ?>>Disparos</option>
                 <option value="cron_live" <?= $source==='cron_live'?'selected':'' ?>>Cron live</option>
             </select>
         </div>
@@ -580,7 +674,7 @@ include __DIR__ . '/_header.php';
             <label>Grupo</label>
             <select name="grupo">
                 <option value="" <?= $grupo===''?'selected':'' ?>>Todos</option>
-                <?php foreach (['Cron live','Live turma','Live reagendada','Live evento','Inscricao','Login','Certificado','WhatsApp','Geral'] as $g): ?>
+                <?php foreach (['Cron live','Disparos','Live turma','Live reagendada','Live evento','Inscricao','Login','Certificado','WhatsApp','Geral'] as $g): ?>
                     <option value="<?= h($g) ?>" <?= $grupo===$g?'selected':'' ?>><?= h($g) ?></option>
                 <?php endforeach; ?>
             </select>

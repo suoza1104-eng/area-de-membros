@@ -359,6 +359,153 @@ if ($acao !== '') {
         }
     }
 
+    function dpDisparoDentroDoHorario(array $disparo): bool {
+        if ((int)($disparo['horario_ativo'] ?? 0) !== 1) return true;
+
+        $dow = (int)date('w'); // 0=domingo
+        $dias = array_filter(array_map('trim', explode(',', (string)($disparo['dias_semana'] ?? '0,1,2,3,4,5,6'))), 'strlen');
+        $diasInt = array_map('intval', $dias);
+        if (!in_array($dow, $diasInt, true) && !($dow === 0 && in_array(7, $diasInt, true))) return false;
+
+        $hmAtual = ((int)date('H')) * 60 + (int)date('i');
+        $toMin = static function (?string $hm, int $fallback): int {
+            if (!$hm || !preg_match('/^(\d{1,2}):(\d{2})/', $hm, $m)) return $fallback;
+            return ((int)$m[1]) * 60 + (int)$m[2];
+        };
+        $ini = $toMin($disparo['horario_inicio'] ?? null, 0);
+        $fim = $toMin($disparo['horario_fim'] ?? null, 1439);
+
+        return $hmAtual >= $ini && $hmAtual <= $fim;
+    }
+
+    function dpExecutarDisparoBatch(PDO $pdo, int $id, int $offset, bool $reset): array {
+        $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+        $row->execute([':id'=>$id]);
+        $row = $row->fetch(PDO::FETCH_ASSOC);
+        if (!$row) return ['ok'=>false,'msg'=>'Disparo nao encontrado'];
+
+        $limit   = max(1, min(500, (int)($row['batch_size'] ?? 1)));
+        $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
+        $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
+
+        if ($reset) {
+            $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
+            $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+            $offset = 0;
+        } else {
+            $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
+        }
+
+        $aw = buildAudienceWhere($filtros, $pdo);
+        $totalGeral = null;
+        if ($offset === 0) {
+            $stCnt = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
+            $stCnt->execute($aw['params']);
+            $totalGeral = (int)$stCnt->fetchColumn();
+        }
+
+        $stUsers = $pdo->prepare(
+            "SELECT u.id, u.nome, u.email, u.telefone,
+                    u.codigo_turma,
+                    u.data_live AS user_data_live,
+                    u.turma_live_at,
+                    (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
+                    (SELECT t.data_live
+                       FROM turmas t
+                      WHERE t.codigo = (SELECT il3.codigo_turma FROM inscricao_logs il3 WHERE il3.user_id = u.id ORDER BY il3.created_at DESC LIMIT 1)
+                      LIMIT 1) AS data_live
+             FROM users u
+             WHERE {$aw['where']}
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM disparo_execucoes de_done
+                    WHERE de_done.disparo_id = :dp_disparo_id
+                      AND de_done.user_id = u.id
+               )
+             ORDER BY u.id ASC
+             LIMIT $limit"
+        );
+        $stUserParams = $aw['params'];
+        $stUserParams[':dp_disparo_id'] = $id;
+        $stUsers->execute($stUserParams);
+        $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
+
+        $enviados = 0;
+        $erros    = 0;
+        foreach ($userList as $usr) {
+            $r = enviarSF($usr, $acoes, $pdo);
+            aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
+            $status = $r['ok'] ? 'ok' : 'erro';
+            $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
+                ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,5000)]);
+            if ($r['ok']) $enviados++; else $erros++;
+        }
+
+        $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
+            ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
+
+        $done = count($userList) < $limit;
+        if ($done) {
+            $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
+        }
+
+        return [
+            'ok'          => true,
+            'processados' => count($userList),
+            'enviados'    => $enviados,
+            'erros'       => $erros,
+            'done'        => $done,
+            'next_offset' => $offset + count($userList),
+            'total'       => $totalGeral,
+        ];
+    }
+
+    function dpFinalizarRespostaBackground(array $payload): void {
+        $body = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        if (!headers_sent()) {
+            header('Content-Length: ' . strlen($body));
+            header('Connection: close');
+        }
+        echo $body;
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+            return;
+        }
+        while (ob_get_level() > 0) @ob_end_flush();
+        @flush();
+    }
+
+    function dpProcessarDisparoBackground(PDO $pdo, int $id, bool $reset): void {
+        ignore_user_abort(true);
+        @set_time_limit(0);
+
+        $offset = 0;
+        $primeiroLote = true;
+
+        while (true) {
+            $st = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $st->execute([':id'=>$id]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row || ($row['status'] ?? '') !== 'executando') break;
+
+            if (!dpDisparoDentroDoHorario($row)) {
+                $pdo->prepare("UPDATE disparos SET status='aguardando' WHERE id=:id AND status='executando'")->execute([':id'=>$id]);
+                break;
+            }
+
+            if (!$primeiroLote) {
+                $offset = (int)($row['total_enviados'] ?? 0) + (int)($row['total_erros'] ?? 0);
+            }
+
+            $res = dpExecutarDisparoBatch($pdo, $id, $offset, $reset && $primeiroLote);
+            if (empty($res['ok']) || !empty($res['done'])) break;
+
+            $primeiroLote = false;
+            $intervaloMs = max(0, min(60000, (int)($row['intervalo_ms'] ?? 0)));
+            if ($intervaloMs > 0) usleep($intervaloMs * 1000);
+        }
+    }
+
     switch ($acao) {
 
         // Diagnóstico (temporário)
@@ -543,7 +690,36 @@ if ($acao !== '') {
             }
             exit;
 
-        // Executar lote de um disparo (chamado progressivamente via JS)
+        // Inicia execucao no servidor e deixa rodando mesmo se a tela fechar.
+        case 'executar_background':
+            ignore_user_abort(true);
+            @set_time_limit(0);
+
+            $id = (int)($_POST['id'] ?? 0);
+            $resume = (int)($_POST['resume'] ?? 0) === 1;
+
+            $st = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $st->execute([':id'=>$id]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo nao encontrado']); exit; }
+
+            if (($row['status'] ?? '') === 'executando') {
+                echo json_encode(['ok'=>true,'started'=>true,'already_running'=>true]);
+                exit;
+            }
+
+            if (!$resume) {
+                $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
+                $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
+            } else {
+                $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
+            }
+
+            dpFinalizarRespostaBackground(['ok'=>true,'started'=>true,'background'=>true]);
+            dpProcessarDisparoBackground($pdo, $id, false);
+            exit;
+
+        // Executar lote de um disparo (compatibilidade com chamadas antigas)
         case 'executar_batch':
             try {
                 $id     = (int)($_POST['id'] ?? 0);
@@ -1081,6 +1257,7 @@ let dpPreviewTimer = null;
 let dpPreviewContatosOpen = false;
 let dpExecutando = false; // flag global para parar loop
 let dpExecState = null;
+let dpMonitorTimer = null;
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -1663,8 +1840,109 @@ async function dpIniciarDisparo(id, opts) {
     }
 }
 
+async function dpIniciarDisparo(id, opts) {
+    opts = opts || {};
+    let disparo = {};
+    try {
+        const r = await fetch(`disparos.php?acao=get&id=${id}`);
+        const j = await r.json();
+        if (j.ok) disparo = j.data;
+    } catch(e) {}
+
+    const resume = !!(opts.resume || disparo.status === 'pausado');
+    const ok = resume ? parseInt(disparo.total_enviados || 0) : 0;
+    const er = resume ? parseInt(disparo.total_erros || 0) : 0;
+
+    dpFecharForm();
+    dpExecutando = true;
+    dpExecState = {id, offset:ok + er, totalEnv:ok, totalErr:er, totalGeral:null, status:'executando'};
+    document.getElementById('dpProgressTitle').textContent = 'Executando em segundo plano';
+    document.getElementById('dpProgressSub').textContent   = 'Iniciando no servidor...';
+    document.getElementById('dpProgressBar').style.width   = '0%';
+    document.getElementById('dpStatEnv').textContent = ok;
+    document.getElementById('dpStatErr').textContent = er;
+    document.getElementById('dpStatTot').textContent = '-';
+    document.getElementById('dpProgressPause').style.display = '';
+    document.getElementById('dpProgressAbort').style.display = '';
+    document.getElementById('dpProgressClose').style.display = 'none';
+    document.getElementById('dpProgressModal').classList.add('visible');
+
+    if (dpMonitorTimer) clearInterval(dpMonitorTimer);
+
+    const fd = new FormData();
+    fd.append('acao', 'executar_background');
+    fd.append('id', id);
+    fd.append('resume', resume ? '1' : '0');
+
+    try {
+        const r = await fetch('disparos.php', {method:'POST', body:fd});
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.msg || 'Erro ao iniciar disparo');
+    } catch(e) {
+        dpExecutando = false;
+        document.getElementById('dpProgressTitle').textContent = 'Erro';
+        document.getElementById('dpProgressSub').textContent = e.message;
+        document.getElementById('dpProgressPause').style.display = 'none';
+        document.getElementById('dpProgressAbort').style.display = 'none';
+        document.getElementById('dpProgressClose').style.display = '';
+        return;
+    }
+
+    await dpAtualizarProgressoDisparo(id);
+    dpMonitorTimer = setInterval(() => dpAtualizarProgressoDisparo(id), 2500);
+}
+
+async function dpAtualizarProgressoDisparo(id) {
+    if (!id) return;
+    let d = null;
+    try {
+        const r = await fetch(`disparos.php?acao=get&id=${id}`);
+        const j = await r.json();
+        if (j.ok) d = j.data;
+    } catch(e) {}
+    if (!d) return;
+
+    const ok = parseInt(d.total_enviados || 0);
+    const er = parseInt(d.total_erros || 0);
+    const processed = ok + er;
+    const st = d.status || 'executando';
+    dpExecState = {id, offset:processed, totalEnv:ok, totalErr:er, totalGeral:null, status:st};
+
+    document.getElementById('dpStatEnv').textContent = ok;
+    document.getElementById('dpStatErr').textContent = er;
+    document.getElementById('dpStatTot').textContent = processed || '-';
+    document.getElementById('dpProgressSub').textContent = `${processed} processados`;
+    document.getElementById('dpProgressBar').style.width = st === 'concluido' ? '100%' : '35%';
+    document.getElementById('dpProgressPause').style.display = st === 'executando' ? '' : 'none';
+    document.getElementById('dpProgressAbort').style.display = st === 'executando' ? '' : 'none';
+    document.getElementById('dpProgressClose').style.display = st === 'executando' ? 'none' : '';
+
+    if (st === 'executando') {
+        document.getElementById('dpProgressTitle').textContent = 'Executando em segundo plano';
+    } else if (st === 'concluido') {
+        dpExecutando = false;
+        document.getElementById('dpProgressTitle').textContent = 'Concluido!';
+        document.getElementById('dpProgressSub').textContent = `${ok} enviados, ${er} erros`;
+    } else if (st === 'aguardando') {
+        document.getElementById('dpProgressTitle').textContent = 'Aguardando horario';
+        document.getElementById('dpProgressSub').textContent = `${processed} processados. O disparo continuara quando for retomado.`;
+    } else if (st === 'pausado') {
+        document.getElementById('dpProgressTitle').textContent = 'Pausado';
+    } else if (st === 'erro') {
+        document.getElementById('dpProgressTitle').textContent = 'Interrompido';
+    }
+
+    if (st !== 'executando') {
+        if (dpMonitorTimer) clearInterval(dpMonitorTimer);
+        dpMonitorTimer = null;
+        dpCarregarLista();
+    }
+}
+
 async function dpPausarDisparo(id) {
     dpExecutando = false;
+    if (dpMonitorTimer) clearInterval(dpMonitorTimer);
+    dpMonitorTimer = null;
     id = id || (dpExecState ? dpExecState.id : 0);
     if (id) await dpSetStatus(id, 'pausado');
     document.getElementById('dpProgressTitle').textContent = 'Pausado';
@@ -1678,6 +1956,8 @@ async function dpPausarDisparo(id) {
 async function dpAbortarDisparo(id) {
     if (!confirm('Abortar este disparo agora?')) return;
     dpExecutando = false;
+    if (dpMonitorTimer) clearInterval(dpMonitorTimer);
+    dpMonitorTimer = null;
     id = id || (dpExecState ? dpExecState.id : 0);
     if (id) await dpSetStatus(id, 'erro');
     document.getElementById('dpProgressTitle').textContent = 'Abortado';
