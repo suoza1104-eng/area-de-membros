@@ -212,6 +212,9 @@ try {
         unset($_SESSION['reagendar_token_id']);
     }
     $pdo->commit();
+    if (function_exists('definir_tag_estado_reagendamento')) {
+        definir_tag_estado_reagendamento($alunoId, 'ativo', 'reagendamento_live', $histId);
+    }
 
     $extra = [
         'reagendamento_id' => $histId,

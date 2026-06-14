@@ -361,6 +361,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'origem' => 'admin_reagendamentos_live',
             ]);
             $pdo->commit();
+            if (function_exists('definir_tag_estado_reagendamento')) {
+                definir_tag_estado_reagendamento($userId, 'ativo', 'admin_reagendamentos_live', $histId);
+            }
             disparar_webhooks('LIVE_REAGENDADA', $userId, [
                 'reagendamento_id'=>$histId,
                 'codigo_turma'=>$oldCodigo,
@@ -446,6 +449,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'origem' => 'admin_reagendamentos_live',
             ]);
             $pdo->commit();
+            if (function_exists('definir_tag_estado_reagendamento')) {
+                definir_tag_estado_reagendamento($userId, 'ativo', 'admin_reagendamentos_live', $reagId);
+            }
             rl_dispatch_reagendada($pdo, $userId, $reagId, $oldCodigo, $oldLive, $dLive, $newLive, $liveUrl, 'admin_reagendamentos_live');
             $immediateSent = false;
             if (new DateTimeImmutable($dispatchAt) <= (new DateTimeImmutable('now'))->modify('+120 seconds')) {

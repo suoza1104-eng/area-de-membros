@@ -225,6 +225,43 @@ function adicionar_tag(int $user_id, string $tag_nome, string $origem = 'manual'
     }
 }
 
+function remover_tag_usuario(int $user_id, string $tag_nome): bool {
+    if ($user_id <= 0) return false;
+    $tag_nome = trim($tag_nome);
+    if ($tag_nome === '') return false;
+
+    try {
+        $pdo = getPDO();
+        $st = $pdo->prepare("SELECT id FROM tags WHERE nome = :n LIMIT 1");
+        $st->execute([':n' => $tag_nome]);
+        $tagId = (int)($st->fetchColumn() ?: 0);
+        if ($tagId <= 0) return true;
+
+        $pdo->prepare("DELETE FROM user_tags WHERE user_id = :u AND tag_id = :t")
+            ->execute([':u' => $user_id, ':t' => $tagId]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function definir_tag_estado_reagendamento(int $user_id, string $estado, string $origem = 'reagendamento_live', ?int $referencia_id = null): bool {
+    if ($user_id <= 0) return false;
+
+    $tags = [
+        'ativo' => 'REAGENDAMENTO_ATIVO',
+        'expirado' => 'REAGENDAMENTO_EXPIRADO',
+        'concluido' => 'REAGENDAMENTO_CONCLUIDO',
+    ];
+    if (!isset($tags[$estado])) return false;
+
+    foreach ($tags as $tag) {
+        remover_tag_usuario($user_id, $tag);
+    }
+
+    return adicionar_tag($user_id, $tags[$estado], $origem, $referencia_id);
+}
+
 
 /**
  * Dispara webhooks para um determinado evento.

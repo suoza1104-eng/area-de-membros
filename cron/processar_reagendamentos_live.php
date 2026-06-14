@@ -46,6 +46,31 @@ function rl_cron_extra(array $r): array {
     ];
 }
 
+function rl_cron_reagendamento_acessou(PDO $pdo, array $r): bool {
+    if (!rl_cron_table_exists($pdo, 'live_event_recebimentos') || !rl_cron_table_exists($pdo, 'live_events')) {
+        return false;
+    }
+    try {
+        $st = $pdo->prepare("
+            SELECT 1
+              FROM live_event_recebimentos ler
+              JOIN live_events le ON le.id = ler.event_id
+             WHERE ler.user_id = :user_id
+               AND ler.status = 'processado'
+               AND le.tipo = 'acessou'
+               AND COALESCE(ler.processado_em, ler.recebido_em) >= :reag_created_at
+             LIMIT 1
+        ");
+        $st->execute([
+            ':user_id' => (int)($r['user_id'] ?? 0),
+            ':reag_created_at' => (string)($r['created_at'] ?? '1970-01-01 00:00:00'),
+        ]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 if (!rl_cron_table_exists($pdo, 'reagendamentos_live')) {
     echo "Tabela reagendamentos_live nao existe.\n";
     exit;
@@ -102,32 +127,36 @@ try {
 
 try {
     $rows = $pdo->query("SELECT r.* FROM reagendamentos_live r
-        WHERE r.status = 'reagendado'
+        WHERE r.status IN ('reagendado', 'enviado')
           AND r.new_turma_live_at <= DATE_SUB(NOW(), INTERVAL {$expireGraceMin} MINUTE)
           AND r.expired_checked_at IS NULL
-          AND r.sf_sent_at IS NULL
-          AND NOT EXISTS (
-              SELECT 1
-              FROM live_event_recebimentos ler
-              JOIN live_events le ON le.id = ler.event_id
-              WHERE ler.user_id = r.user_id
-                AND ler.status = 'processado'
-                AND le.tipo = 'acessou'
-                AND COALESCE(ler.processado_em, ler.recebido_em) >= r.created_at
-              LIMIT 1
-          )
         ORDER BY r.new_turma_live_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
-        $pdo->prepare("UPDATE reagendamentos_live SET status='expirou', expired_checked_at=NOW() WHERE id=:id")->execute([':id' => (int)$r['id']]);
-        $r['status'] = 'expirou';
-        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'expirado_sem_envio', 'falha', 'Passou do prazo de tolerancia sem confirmacao de envio.', [
-            'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
-            'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
-            'expire_grace_min' => $expireGraceMin,
-        ]);
-        disparar_webhooks('LIVE_REAGENDAMENTO_EXPIRADO', (int)$r['user_id'], rl_cron_extra($r));
-        $expired++;
+        $acessou = rl_cron_reagendamento_acessou($pdo, $r);
+        if ($acessou) {
+            $pdo->prepare("UPDATE reagendamentos_live SET expired_checked_at=NOW() WHERE id=:id")->execute([':id' => (int)$r['id']]);
+            if (function_exists('definir_tag_estado_reagendamento')) {
+                definir_tag_estado_reagendamento((int)$r['user_id'], 'concluido', 'reagendamento_live_cron', (int)$r['id']);
+            }
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'reagendamento_concluido', 'sucesso', 'Live reagendada passou e o aluno acessou a live.', [
+                'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+                'expire_grace_min' => $expireGraceMin,
+            ]);
+        } else {
+            $pdo->prepare("UPDATE reagendamentos_live SET status='expirou', expired_checked_at=NOW() WHERE id=:id")->execute([':id' => (int)$r['id']]);
+            $r['status'] = 'expirou';
+            if (function_exists('definir_tag_estado_reagendamento')) {
+                definir_tag_estado_reagendamento((int)$r['user_id'], 'expirado', 'reagendamento_live_cron', (int)$r['id']);
+            }
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'reagendamento_expirado', 'falha', 'Live reagendada passou e o aluno nao acessou a live.', [
+                'new_turma_live_at' => (string)($r['new_turma_live_at'] ?? ''),
+                'sf_disparo_at' => (string)($r['sf_disparo_at'] ?? ''),
+                'expire_grace_min' => $expireGraceMin,
+            ]);
+            disparar_webhooks('LIVE_REAGENDAMENTO_EXPIRADO', (int)$r['user_id'], rl_cron_extra($r));
+            $expired++;
+        }
     }
 } catch (Throwable $e) {
     echo "Erro expirados: " . $e->getMessage() . "\n";
