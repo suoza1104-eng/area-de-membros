@@ -234,6 +234,14 @@ function mc_response_data(array $res): array
     return is_array($json) ? $json : [];
 }
 
+function mc_normalize_phone(string $phone): string
+{
+    $digits = preg_replace('/\D+/', '', $phone) ?? '';
+    if ($digits === '') return '';
+    if (strpos($digits, '55') !== 0) $digits = '55' . $digits;
+    return '+' . $digits;
+}
+
 function mc_extract_subscriber_id(array $data): string
 {
     foreach ([
@@ -255,6 +263,8 @@ function mc_extract_subscriber_id(array $data): string
 function mc_find_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, string $field, string $value): string
 {
     $field = $field === 'phone' ? 'phone' : 'email';
+    if ($field === 'phone') $value = mc_normalize_phone($value);
+    if ($value === '') return '';
     $path = '/fb/subscriber/findBySystemField?' . $field . '=' . rawurlencode($value);
     $res = mc_api($pdo, $cfg, $evento, $ruleId, 'find_' . $field, 'GET', $path, []);
     if (!(bool)$res['ok']) return '';
@@ -264,6 +274,8 @@ function mc_find_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, 
 function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, array $userRow): string
 {
     $name = trim((string)($userRow['nome'] ?? ''));
+    $email = trim((string)($userRow['email'] ?? ''));
+    $phone = mc_normalize_phone((string)($userRow['telefone'] ?? ''));
     $first = $name;
     $last = '';
     if (strpos($name, ' ') !== false) {
@@ -274,14 +286,28 @@ function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId
     $body = array_filter([
         'first_name' => $first !== '' ? $first : null,
         'last_name' => $last !== '' ? $last : null,
-        'email' => trim((string)($userRow['email'] ?? '')) ?: null,
-        'phone' => trim((string)($userRow['telefone'] ?? '')) ?: null,
+        'phone' => $phone !== '' ? $phone : null,
+        'whatsapp_phone' => $phone !== '' ? $phone : null,
+        'gender' => 'not_specified',
+        'has_opt_in_sms' => $phone !== '' ? true : null,
+        'consent_phrase' => $phone !== '' ? 'Eu aceito receber mensagens' : null,
     ], static fn($v) => $v !== null && $v !== '');
-    if (!empty($body['email'])) $body['has_opt_in_email'] = false;
-    if (!empty($body['phone'])) $body['has_opt_in_sms'] = false;
-    if (empty($body['email']) && empty($body['phone'])) return '';
+    if (empty($body['phone'])) {
+        if ($email === '') return '';
+        $body['email'] = $email;
+        $body['has_opt_in_email'] = true;
+        $body['consent_phrase'] = 'Eu aceito receber mensagens';
+    }
     $res = mc_api($pdo, $cfg, $evento, $ruleId, 'create_subscriber', 'POST', '/fb/subscriber/createSubscriber', $body);
-    return mc_extract_subscriber_id(mc_response_data($res));
+    $subscriberId = mc_extract_subscriber_id(mc_response_data($res));
+    if ($subscriberId !== '' && $email !== '') {
+        mc_api($pdo, $cfg, $evento, $ruleId, 'set_email_custom_field', 'POST', '/fb/subscriber/setCustomFieldByName', [
+            'subscriber_id' => $subscriberId,
+            'field_name' => 'E-mail',
+            'field_value' => $email,
+        ], $subscriberId);
+    }
+    return $subscriberId;
 }
 
 function mc_get_or_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, array $userRow): string
