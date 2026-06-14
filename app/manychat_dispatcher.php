@@ -404,14 +404,27 @@ function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId
         $body['has_opt_in_email'] = true;
         $body['consent_phrase'] = 'Eu aceito receber mensagens';
     }
-    $res = mc_api($pdo, $cfg, $evento, $ruleId, 'create_subscriber', 'POST', '/fb/subscriber/createSubscriber', $body);
+    $base = rtrim((string)$cfg['base_url'], '/');
+    $res = mc_http_json('POST', $base . '/fb/subscriber/createSubscriber', (string)$cfg['token'], $body, (int)$cfg['timeout_seconds']);
     $subscriberId = mc_extract_subscriber_id(mc_response_data($res));
+    $alreadyExists = false;
     if ($subscriberId === '' && !(bool)$res['ok']) {
         $data = mc_response_data($res);
         $responseText = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (stripos($responseText, 'already exists') !== false) {
+            $alreadyExists = true;
             $subscriberId = mc_find_local_subscriber($pdo, $userRow, $email, $phone);
         }
+    }
+    if ((bool)$res['ok']) {
+        mc_log($pdo, $evento, $ruleId, 'create_subscriber', true, (int)$res['http_status'], $subscriberId, '', $body, (string)$res['response']);
+    } elseif ($alreadyExists && $subscriberId !== '') {
+        mc_log($pdo, $evento, $ruleId, 'resolve_existing_subscriber', true, (int)$res['http_status'], $subscriberId, '', [
+            'message' => 'Contato WhatsApp ja existia no Manychat; subscriber resolvido localmente.',
+            'create_payload' => $body,
+        ], (string)$res['response']);
+    } else {
+        mc_log($pdo, $evento, $ruleId, 'create_subscriber', false, (int)$res['http_status'], '', (string)$res['error'], $body, (string)$res['response']);
     }
     if ($subscriberId !== '') {
         mc_remember_subscriber($pdo, $userRow, $subscriberId, $email, $phone);
