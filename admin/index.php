@@ -390,27 +390,83 @@ $bloqueiosMesLabels = [];
 $bloqueiosMesData = [];
 $totalBloqueiosPeriodo = 0;
 try {
-    $whereBloqueiosSql = $whereUsers
-        ? ($whereUsersSql . " AND u.bloqueado_em IS NOT NULL")
-        : "WHERE u.bloqueado_em IS NOT NULL";
+    $bloqueiosPorMes = [];
+    $whereBloqueiosUser = ['u.bloquear = 1'];
+    $whereBloqueiosData = ['b.bloqueio_em IS NOT NULL'];
+    $paramsBloqueios = [];
+    if ($dataDe !== '') {
+        $whereBloqueiosData[] = 'b.bloqueio_em >= :bloq_data_de';
+        $paramsBloqueios['bloq_data_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $whereBloqueiosData[] = 'b.bloqueio_em <= :bloq_data_ate';
+        $paramsBloqueios['bloq_data_ate'] = $dataAte . ' 23:59:59';
+    }
+    if ($turmaIds && $turmaColTop) {
+        if ($turmaColTop === 'codigo_turma') {
+            $codigosBloq = [];
+            try {
+                $ph = [];
+                $pr = [];
+                foreach ($turmaIds as $i => $id) {
+                    $k = ':bloq_tid_lookup_' . $i;
+                    $ph[] = $k;
+                    $pr[$k] = $id;
+                }
+                $stT = $pdo->prepare("SELECT codigo FROM turmas WHERE id IN (" . implode(',', $ph) . ")");
+                $stT->execute($pr);
+                $codigosBloq = array_values(array_filter(array_map('strval', $stT->fetchAll(PDO::FETCH_COLUMN) ?: []), fn($v) => $v !== ''));
+            } catch (Throwable $e) {}
+            if ($codigosBloq) {
+                $ph = [];
+                foreach ($codigosBloq as $i => $codigo) {
+                    $k = 'bloq_turma_codigo_' . $i;
+                    $ph[] = ':' . $k;
+                    $paramsBloqueios[$k] = $codigo;
+                }
+                $whereBloqueiosUser[] = "u.`codigo_turma` IN (" . implode(',', $ph) . ")";
+            }
+        } else {
+            $ph = [];
+            foreach ($turmaIds as $i => $id) {
+                $k = 'bloq_turma_id_' . $i;
+                $ph[] = ':' . $k;
+                $paramsBloqueios[$k] = $id;
+            }
+            $whereBloqueiosUser[] = "u.`$turmaColTop` IN (" . implode(',', $ph) . ")";
+        }
+    }
     $sqlBloqueiosMes = "
-        SELECT DATE_FORMAT(u.bloqueado_em, '%Y-%m') AS ano_mes,
+        SELECT DATE_FORMAT(b.bloqueio_em, '%Y-%m') AS ano_mes,
                COUNT(*) AS total
-        FROM users u
-        $whereBloqueiosSql
-        GROUP BY DATE_FORMAT(u.bloqueado_em, '%Y-%m')
+        FROM (
+            SELECT u.id,
+                   COALESCE(u.bloqueado_em, MIN(CASE WHEN t.id IS NOT NULL THEN ut.created_at END)) AS bloqueio_em
+            FROM users u
+            LEFT JOIN user_tags ut ON ut.user_id = u.id
+            LEFT JOIN tags t ON t.id = ut.tag_id
+                AND UPPER(REPLACE(REPLACE(t.nome, ' ', '_'), '-', '_')) IN ('BLOQUEAR', 'BLOQUEADO')
+            WHERE " . implode(' AND ', $whereBloqueiosUser) . "
+            GROUP BY u.id, u.bloqueado_em
+        ) b
+        WHERE " . implode(' AND ', $whereBloqueiosData) . "
+        GROUP BY DATE_FORMAT(b.bloqueio_em, '%Y-%m')
         ORDER BY ano_mes ASC
     ";
     $stmt = $pdo->prepare($sqlBloqueiosMes);
-    $stmt->execute($paramsUsers);
+    $stmt->execute($paramsBloqueios);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
         $anoMes = (string)($r['ano_mes'] ?? '');
         if ($anoMes === '') continue;
-        [$ano, $mes] = array_pad(explode('-', $anoMes, 2), 2, '');
-        $bloqueiosMesLabels[] = ($mes !== '' && $ano !== '') ? ($mes . '/' . $ano) : $anoMes;
-        $qtdBloqueios = (int)($r['total'] ?? 0);
-        $bloqueiosMesData[] = $qtdBloqueios;
-        $totalBloqueiosPeriodo += $qtdBloqueios;
+        $bloqueiosPorMes[$anoMes] = ($bloqueiosPorMes[$anoMes] ?? 0) + (int)($r['total'] ?? 0);
+    }
+
+    ksort($bloqueiosPorMes);
+    foreach ($bloqueiosPorMes as $anoMes => $qtdBloqueios) {
+        [$ano, $mes] = array_pad(explode('-', (string)$anoMes, 2), 2, '');
+        $bloqueiosMesLabels[] = ($mes !== '' && $ano !== '') ? ($mes . '/' . $ano) : (string)$anoMes;
+        $bloqueiosMesData[] = (int)$qtdBloqueios;
+        $totalBloqueiosPeriodo += (int)$qtdBloqueios;
     }
 } catch (Throwable $e) {}
 
