@@ -869,6 +869,7 @@ require __DIR__ . '/_header.php';
 .rl-event-pill.on.acesso { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-event-pill.on.oferta { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
 .rl-event-pill.on.compra { background:var(--success-dim); color:#86efac; border-color:rgba(34,197,94,.25); }
+.rl-event-pill.on.venda { background:#052e1a; color:#bbf7d0; border-color:rgba(34,197,94,.45); box-shadow:0 0 0 1px rgba(34,197,94,.10) inset; }
 .rl-history-status { display:inline-flex; align-items:center; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:800; border:1px solid var(--border); }
 .rl-history-status.aguardando { background:var(--info-dim); color:#7dd3fc; border-color:rgba(56,189,248,.25); }
 .rl-history-status.pendente { background:var(--warning-dim); color:#fcd34d; border-color:rgba(245,158,11,.25); }
@@ -1164,8 +1165,8 @@ require __DIR__ . '/_header.php';
                                     <span class="rl-event-pill <?= !empty($r['teve_acesso']) ? 'on acesso' : '' ?>">Entrada</span>
                                     <span class="rl-event-pill <?= !empty($r['teve_oferta']) ? 'on oferta' : '' ?>">Oferta</span>
                                     <span class="rl-event-pill <?= !empty($r['teve_clique_compra']) ? 'on compra' : '' ?>">Compra</span>
+                                    <span class="rl-event-pill <?= !empty($r['teve_compra_curso']) ? 'on venda' : '' ?>">Comprou curso</span>
                                 </div>
-                                <?php if (!empty($r['teve_compra_curso'])): ?><div class="text-xs text-muted mt-1">Comprou curso</div><?php endif; ?>
                             </td>
                             <td><span class="badge badge-neutral"><?= (int)($r['frequencia_aluno'] ?? 0) ?>x</span></td>
                             <td>
