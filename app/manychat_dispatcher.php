@@ -18,11 +18,13 @@ function mc_ensure_tables(PDO $pdo): void
             is_enabled TINYINT(1) NOT NULL DEFAULT 0,
             base_url VARCHAR(255) NOT NULL DEFAULT 'https://api.manychat.com',
             token VARCHAR(500) NOT NULL DEFAULT '',
+            lookup_custom_field_id INT NULL,
             timeout_seconds INT NOT NULL DEFAULT 10,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+    try { $pdo->exec("ALTER TABLE manychat_config ADD COLUMN lookup_custom_field_id INT NULL AFTER token"); } catch (Throwable $e) {}
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS manychat_rules (
@@ -59,6 +61,22 @@ function mc_ensure_tables(PDO $pdo): void
             KEY idx_mc_logs_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS manychat_subscribers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NULL,
+            subscriber_id VARCHAR(80) NOT NULL,
+            email VARCHAR(190) NULL,
+            phone VARCHAR(40) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_mc_subscriber (subscriber_id),
+            KEY idx_mc_sub_user (user_id),
+            KEY idx_mc_sub_email (email),
+            KEY idx_mc_sub_phone (phone)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
 function mc_get_config(PDO $pdo): array
@@ -74,6 +92,7 @@ function mc_get_config(PDO $pdo): array
         'is_enabled' => (int)($row['is_enabled'] ?? 0),
         'base_url' => trim((string)($row['base_url'] ?? 'https://api.manychat.com')),
         'token' => trim((string)($row['token'] ?? '')),
+        'lookup_custom_field_id' => (int)($row['lookup_custom_field_id'] ?? 0),
         'timeout_seconds' => (int)($row['timeout_seconds'] ?? 10),
     ];
     if ($cfg['base_url'] === '') $cfg['base_url'] = 'https://api.manychat.com';
@@ -247,6 +266,8 @@ function mc_extract_subscriber_id(array $data): string
     foreach ([
         ['data', 'id'],
         ['data', 'subscriber_id'],
+        ['data', 0, 'id'],
+        ['data', 0, 'subscriber_id'],
         ['id'],
         ['subscriber_id'],
     ] as $path) {
@@ -260,6 +281,17 @@ function mc_extract_subscriber_id(array $data): string
     return '';
 }
 
+function mc_find_subscriber_by_custom_field(PDO $pdo, array $cfg, string $evento, ?int $ruleId, string $value): string
+{
+    $fieldId = (int)($cfg['lookup_custom_field_id'] ?? 0);
+    $value = trim($value);
+    if ($fieldId <= 0 || $value === '') return '';
+    $path = '/fb/subscriber/findByCustomField?field_id=' . $fieldId . '&field_value=' . rawurlencode($value);
+    $res = mc_api($pdo, $cfg, $evento, $ruleId, 'find_custom_field', 'GET', $path, []);
+    if (!(bool)$res['ok']) return '';
+    return mc_extract_subscriber_id(mc_response_data($res));
+}
+
 function mc_find_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, string $field, string $value): string
 {
     $field = $field === 'phone' ? 'phone' : 'email';
@@ -269,6 +301,80 @@ function mc_find_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, 
     $res = mc_api($pdo, $cfg, $evento, $ruleId, 'find_' . $field, 'GET', $path, []);
     if (!(bool)$res['ok']) return '';
     return mc_extract_subscriber_id(mc_response_data($res));
+}
+
+function mc_remember_subscriber(PDO $pdo, array $userRow, string $subscriberId, string $email = '', string $phone = ''): void
+{
+    $subscriberId = trim($subscriberId);
+    if ($subscriberId === '') return;
+    $userId = (int)($userRow['id'] ?? 0);
+    $email = trim($email !== '' ? $email : (string)($userRow['email'] ?? ''));
+    $phone = mc_normalize_phone($phone !== '' ? $phone : (string)($userRow['telefone'] ?? ''));
+    try {
+        mc_ensure_tables($pdo);
+        $st = $pdo->prepare("
+            INSERT INTO manychat_subscribers (user_id, subscriber_id, email, phone)
+            VALUES (:uid, :sid, :email, :phone)
+            ON DUPLICATE KEY UPDATE
+                user_id = COALESCE(VALUES(user_id), user_id),
+                email = COALESCE(VALUES(email), email),
+                phone = COALESCE(VALUES(phone), phone),
+                updated_at = NOW()
+        ");
+        $st->execute([
+            ':uid' => $userId > 0 ? $userId : null,
+            ':sid' => $subscriberId,
+            ':email' => $email !== '' ? $email : null,
+            ':phone' => $phone !== '' ? $phone : null,
+        ]);
+    } catch (Throwable $e) {}
+}
+
+function mc_find_local_subscriber(PDO $pdo, array $userRow, string $email = '', string $phone = ''): string
+{
+    $userId = (int)($userRow['id'] ?? 0);
+    $email = trim($email !== '' ? $email : (string)($userRow['email'] ?? ''));
+    $phone = mc_normalize_phone($phone !== '' ? $phone : (string)($userRow['telefone'] ?? ''));
+
+    try {
+        mc_ensure_tables($pdo);
+        $where = [];
+        $params = [];
+        if ($userId > 0) { $where[] = 'user_id = :uid'; $params[':uid'] = $userId; }
+        if ($email !== '') { $where[] = 'email = :email'; $params[':email'] = $email; }
+        if ($phone !== '') { $where[] = 'phone = :phone'; $params[':phone'] = $phone; }
+        if ($where) {
+            $st = $pdo->prepare("SELECT subscriber_id FROM manychat_subscribers WHERE " . implode(' OR ', $where) . " ORDER BY id DESC LIMIT 1");
+            $st->execute($params);
+            $sid = trim((string)($st->fetchColumn() ?: ''));
+            if ($sid !== '') return $sid;
+        }
+
+        $st = $pdo->prepare("
+            SELECT request_json, response_text
+              FROM manychat_logs
+             WHERE action = 'create_subscriber'
+               AND ok = 1
+             ORDER BY id DESC
+             LIMIT 500
+        ");
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $req = json_decode((string)($row['request_json'] ?? ''), true);
+            $res = json_decode((string)($row['response_text'] ?? ''), true);
+            if (!is_array($req) || !is_array($res)) continue;
+            $reqPhone = mc_normalize_phone((string)($req['phone'] ?? $req['whatsapp_phone'] ?? ''));
+            $reqEmail = trim((string)($req['email'] ?? ''));
+            if (($phone !== '' && $reqPhone === $phone) || ($email !== '' && $reqEmail === $email)) {
+                $sid = mc_extract_subscriber_id($res);
+                if ($sid !== '') {
+                    mc_remember_subscriber($pdo, $userRow, $sid, $email, $phone);
+                    return $sid;
+                }
+            }
+        }
+    } catch (Throwable $e) {}
+    return '';
 }
 
 function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId, array $userRow): string
@@ -300,6 +406,23 @@ function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId
     }
     $res = mc_api($pdo, $cfg, $evento, $ruleId, 'create_subscriber', 'POST', '/fb/subscriber/createSubscriber', $body);
     $subscriberId = mc_extract_subscriber_id(mc_response_data($res));
+    if ($subscriberId === '' && !(bool)$res['ok']) {
+        $data = mc_response_data($res);
+        $responseText = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (stripos($responseText, 'already exists') !== false) {
+            $subscriberId = mc_find_local_subscriber($pdo, $userRow, $email, $phone);
+        }
+    }
+    if ($subscriberId !== '') {
+        mc_remember_subscriber($pdo, $userRow, $subscriberId, $email, $phone);
+        if ((int)($cfg['lookup_custom_field_id'] ?? 0) > 0 && $phone !== '') {
+            mc_api($pdo, $cfg, $evento, $ruleId, 'set_lookup_custom_field', 'POST', '/fb/subscriber/setCustomField', [
+                'subscriber_id' => $subscriberId,
+                'field_id' => (int)$cfg['lookup_custom_field_id'],
+                'field_value' => $phone,
+            ], $subscriberId);
+        }
+    }
     if ($subscriberId !== '' && $email !== '') {
         mc_api($pdo, $cfg, $evento, $ruleId, 'set_email_custom_field', 'POST', '/fb/subscriber/setCustomFieldByName', [
             'subscriber_id' => $subscriberId,
@@ -321,6 +444,13 @@ function mc_get_or_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int 
     if ($phone !== '') {
         $id = mc_find_subscriber($pdo, $cfg, $evento, $ruleId, 'phone', $phone);
         if ($id !== '') return $id;
+        foreach (array_unique([$phone, preg_replace('/\D+/', '', $phone) ?: '']) as $phoneLookup) {
+            $id = mc_find_subscriber_by_custom_field($pdo, $cfg, $evento, $ruleId, $phoneLookup);
+            if ($id !== '') {
+                mc_remember_subscriber($pdo, $userRow, $id, $email, $phone);
+                return $id;
+            }
+        }
     }
     $id = mc_create_subscriber($pdo, $cfg, $evento, $ruleId, $userRow);
     if ($id !== '') return $id;

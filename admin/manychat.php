@@ -62,15 +62,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $enabled = isset($_POST['is_enabled']) ? 1 : 0;
     $baseUrl = post_str('base_url') ?: 'https://api.manychat.com';
     $token = post_str('token');
+    $lookupCustomFieldId = post_int('lookup_custom_field_id');
     $timeout = max(1, post_int('timeout_seconds'));
 
     $existing = $pdo->query("SELECT id FROM manychat_config ORDER BY id DESC LIMIT 1")->fetchColumn();
     if ($existing) {
-        $st = $pdo->prepare("UPDATE manychat_config SET is_enabled=:en, base_url=:bu, token=:tk, timeout_seconds=:to WHERE id=:id LIMIT 1");
-        $st->execute([':en'=>$enabled, ':bu'=>$baseUrl, ':tk'=>$token, ':to'=>$timeout, ':id'=>$existing]);
+        $st = $pdo->prepare("UPDATE manychat_config SET is_enabled=:en, base_url=:bu, token=:tk, lookup_custom_field_id=:lf, timeout_seconds=:to WHERE id=:id LIMIT 1");
+        $st->execute([':en'=>$enabled, ':bu'=>$baseUrl, ':tk'=>$token, ':lf'=>$lookupCustomFieldId > 0 ? $lookupCustomFieldId : null, ':to'=>$timeout, ':id'=>$existing]);
     } else {
-        $st = $pdo->prepare("INSERT INTO manychat_config (is_enabled, base_url, token, timeout_seconds) VALUES (:en,:bu,:tk,:to)");
-        $st->execute([':en'=>$enabled, ':bu'=>$baseUrl, ':tk'=>$token, ':to'=>$timeout]);
+        $st = $pdo->prepare("INSERT INTO manychat_config (is_enabled, base_url, token, lookup_custom_field_id, timeout_seconds) VALUES (:en,:bu,:tk,:lf,:to)");
+        $st->execute([':en'=>$enabled, ':bu'=>$baseUrl, ':tk'=>$token, ':lf'=>$lookupCustomFieldId > 0 ? $lookupCustomFieldId : null, ':to'=>$timeout]);
     }
     header('Location: manychat.php?saved=1');
     exit;
@@ -307,6 +308,11 @@ include __DIR__ . '/_header.php';
                     <label class="lbl">Token</label>
                     <input type="password" name="token" value="<?= h($cfg['token']) ?>" placeholder="Bearer token do Manychat">
                     <div class="note">No Manychat, gere o token em Settings > API. Os flows, tags e campos precisam existir no Manychat.</div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label class="lbl">Campo espelho WhatsApp (field_id)</label>
+                    <input type="number" name="lookup_custom_field_id" min="0" value="<?= (int)($cfg['lookup_custom_field_id'] ?? 0) ?>" placeholder="Ex.: 123456">
+                    <div class="note">Opcional. Use o ID de um campo customizado do Manychat que guarda o WhatsApp do contato. Isso permite localizar contatos WhatsApp ja existentes e aplicar tags.</div>
                 </div>
                 <div style="margin-bottom:16px;">
                     <label class="lbl">Timeout (segundos)</label>
