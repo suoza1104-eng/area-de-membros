@@ -747,10 +747,12 @@ foreach ($reagPorDia as $rp) {
     $chartVendaData[] = (int)($rp['vendas'] ?? 0);
 }
 
-$forecastStart = (new DateTimeImmutable('today'))->modify('-30 days');
-$forecastEnd = $forecastStart->modify('+59 days');
+$forecastDaysBefore = 30;
+$forecastDaysAfter = 10;
+$forecastStart = (new DateTimeImmutable('today'))->modify('-' . $forecastDaysBefore . ' days');
+$forecastEnd = (new DateTimeImmutable('today'))->modify('+' . ($forecastDaysAfter - 1) . ' days');
 $forecastMap = [];
-for ($i = 0; $i < 60; $i++) {
+for ($i = 0; $i < ($forecastDaysBefore + $forecastDaysAfter); $i++) {
     $key = $forecastStart->modify('+' . $i . ' days')->format('Y-m-d');
     $forecastMap[$key] = ['total' => 0, 'acessos' => 0];
 }
@@ -1038,7 +1040,7 @@ require __DIR__ . '/_header.php';
     <div class="rl-chart-head">
         <div>
             <div class="card-header-title">Previsao de alunos por data da live reagendada</div>
-            <div class="text-xs text-muted mt-1">Janela fixa: <?= h($forecastStart->format('d/m/Y')) ?> a <?= h($forecastEnd->format('d/m/Y')) ?>. O percentual acima da barra indica quantos reagendados daquele dia acessaram a live.</div>
+            <div class="text-xs text-muted mt-1">Janela fixa: <?= h($forecastStart->format('d/m/Y')) ?> a <?= h($forecastEnd->format('d/m/Y')) ?>. Barras mostram alunos por dia; a linha verde mostra o percentual que acessou a live.</div>
         </div>
         <div class="text-xs text-muted"><?= number_format((int)$liveForecastTotal, 0, ',', '.') ?> aluno(s) reagendado(s) na janela</div>
     </div>
@@ -1680,24 +1682,24 @@ function updateDispatchPreview() {
 function buildLiveForecastChart() {
     var canvas = document.getElementById('liveForecastChart');
     if (!canvas || typeof Chart === 'undefined') return;
-    var pctLabelsPlugin = {
-        id: 'liveForecastPctLabels',
+    var barLabelsPlugin = {
+        id: 'liveForecastBarLabels',
         afterDatasetsDraw: function(chart) {
             var meta = chart.getDatasetMeta(0);
             if (!meta || !meta.data) return;
             var ctx = chart.ctx;
             ctx.save();
-            ctx.font = '700 10px Inter, system-ui, sans-serif';
-            ctx.fillStyle = '#dbeafe';
+            ctx.font = '800 10px Inter, system-ui, sans-serif';
+            ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
+            ctx.textBaseline = 'top';
             meta.data.forEach(function(bar, index) {
                 var total = parseInt((LIVE_FORECAST_TOTALS || [])[index] || 0, 10);
                 if (!total) return;
-                var pct = (LIVE_FORECAST_PCT || [])[index];
-                if (pct === null || typeof pct === 'undefined') return;
-                var label = String(pct).replace('.', ',') + '%';
-                ctx.fillText(label, bar.x, bar.y - 5);
+                var props = bar.getProps(['x', 'y', 'base'], true);
+                var barHeight = Math.abs(props.base - props.y);
+                var y = props.y + Math.min(8, Math.max(3, barHeight - 12));
+                ctx.fillText(String(total), props.x, y);
             });
             ctx.restore();
         }
@@ -1706,23 +1708,44 @@ function buildLiveForecastChart() {
         type: 'bar',
         data: {
             labels: LIVE_FORECAST_LABELS,
-            datasets: [{
-                label: 'Alunos com live reagendada',
-                data: LIVE_FORECAST_TOTALS,
-                backgroundColor: 'rgba(56,189,248,.42)',
-                borderColor: 'rgba(56,189,248,.9)',
-                borderWidth: 1,
-                borderRadius: 4,
-                maxBarThickness: 22
-            }]
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Alunos com live reagendada',
+                    data: LIVE_FORECAST_TOTALS,
+                    yAxisID: 'y',
+                    backgroundColor: 'rgba(56,189,248,.42)',
+                    borderColor: 'rgba(56,189,248,.9)',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    maxBarThickness: 22,
+                    order: 2
+                },
+                {
+                    type: 'line',
+                    label: '% acessou a live',
+                    data: LIVE_FORECAST_PCT.map(function(v) { return v === null || typeof v === 'undefined' ? null : v; }),
+                    yAxisID: 'yPct',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34,197,94,.18)',
+                    pointBackgroundColor: '#22c55e',
+                    pointBorderColor: '#bbf7d0',
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    borderWidth: 2,
+                    tension: .28,
+                    spanGaps: true,
+                    order: 1
+                }
+            ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            layout: { padding: { top: 24 } },
+            layout: { padding: { top: 8 } },
             interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true } },
+                legend: { position: 'bottom', labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true, padding: 14 } },
                 tooltip: {
                     backgroundColor: '#0f172a',
                     borderColor: '#334155',
@@ -1734,7 +1757,8 @@ function buildLiveForecastChart() {
                             var acessos = parseInt((LIVE_FORECAST_ACCESS || [])[i] || 0, 10);
                             var pct = (LIVE_FORECAST_PCT || [])[i];
                             var pctText = pct === null || typeof pct === 'undefined' ? '0%' : String(pct).replace('.', ',') + '%';
-                            return total + ' aluno(s), ' + acessos + ' acesso(s), ' + pctText + ' acessaram';
+                            if (ctx.datasetIndex === 1) return pctText + ' acessaram';
+                            return total + ' aluno(s), ' + acessos + ' acesso(s)';
                         }
                     }
                 }
@@ -1750,10 +1774,22 @@ function buildLiveForecastChart() {
                     title: { display: true, text: 'Alunos', color: '#94a3b8' },
                     ticks: { color: '#94a3b8', precision: 0 },
                     grid: { color: 'rgba(148,163,184,.12)' }
+                },
+                yPct: {
+                    position: 'right',
+                    beginAtZero: true,
+                    min: 0,
+                    max: 100,
+                    title: { display: true, text: '% acessou', color: '#86efac' },
+                    ticks: {
+                        color: '#86efac',
+                        callback: function(value) { return value + '%'; }
+                    },
+                    grid: { drawOnChartArea: false }
                 }
             }
         },
-        plugins: [pctLabelsPlugin]
+        plugins: [barLabelsPlugin]
     });
 }
 function buildReagLineChart() {
