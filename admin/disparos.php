@@ -692,31 +692,10 @@ if ($acao !== '') {
 
         // Inicia execucao no servidor e deixa rodando mesmo se a tela fechar.
         case 'executar_background':
-            ignore_user_abort(true);
-            @set_time_limit(0);
-
-            $id = (int)($_POST['id'] ?? 0);
-            $resume = (int)($_POST['resume'] ?? 0) === 1;
-
-            $st = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
-            $st->execute([':id'=>$id]);
-            $row = $st->fetch(PDO::FETCH_ASSOC);
-            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo nao encontrado']); exit; }
-
-            if (($row['status'] ?? '') === 'executando') {
-                echo json_encode(['ok'=>true,'started'=>true,'already_running'=>true]);
-                exit;
-            }
-
-            if (!$resume) {
-                $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
-                $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
-            } else {
-                $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
-            }
-
-            dpFinalizarRespostaBackground(['ok'=>true,'started'=>true,'background'=>true]);
-            dpProcessarDisparoBackground($pdo, $id, false);
+            echo json_encode([
+                'ok' => false,
+                'msg' => 'Execucao em segundo plano desativada nesta hospedagem. Use o disparo progressivo da tela.',
+            ], JSON_UNESCAPED_UNICODE);
             exit;
 
         // Executar lote de um disparo (compatibilidade com chamadas antigas)
@@ -1840,7 +1819,7 @@ async function dpIniciarDisparo(id, opts) {
     }
 }
 
-async function dpIniciarDisparo(id, opts) {
+async function dpIniciarDisparoBackgroundDesativado(id, opts) {
     opts = opts || {};
     let disparo = {};
     try {
