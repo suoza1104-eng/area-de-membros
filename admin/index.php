@@ -384,6 +384,36 @@ foreach ($inscRows as $r) {
     $dataDia[]   = (int)$r['total'];
 }
 
+try { $pdo->exec("ALTER TABLE users ADD COLUMN bloquear TINYINT(1) NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE users ADD COLUMN bloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+$bloqueiosMesLabels = [];
+$bloqueiosMesData = [];
+$totalBloqueiosPeriodo = 0;
+try {
+    $whereBloqueiosSql = $whereUsers
+        ? ($whereUsersSql . " AND u.bloqueado_em IS NOT NULL")
+        : "WHERE u.bloqueado_em IS NOT NULL";
+    $sqlBloqueiosMes = "
+        SELECT DATE_FORMAT(u.bloqueado_em, '%Y-%m') AS ano_mes,
+               COUNT(*) AS total
+        FROM users u
+        $whereBloqueiosSql
+        GROUP BY DATE_FORMAT(u.bloqueado_em, '%Y-%m')
+        ORDER BY ano_mes ASC
+    ";
+    $stmt = $pdo->prepare($sqlBloqueiosMes);
+    $stmt->execute($paramsUsers);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+        $anoMes = (string)($r['ano_mes'] ?? '');
+        if ($anoMes === '') continue;
+        [$ano, $mes] = array_pad(explode('-', $anoMes, 2), 2, '');
+        $bloqueiosMesLabels[] = ($mes !== '' && $ano !== '') ? ($mes . '/' . $ano) : $anoMes;
+        $qtdBloqueios = (int)($r['total'] ?? 0);
+        $bloqueiosMesData[] = $qtdBloqueios;
+        $totalBloqueiosPeriodo += $qtdBloqueios;
+    }
+} catch (Throwable $e) {}
+
 $totalAulasConta = (int)$pdo->query("
     SELECT COUNT(*) FROM lessons WHERE conta_para_conclusao = 1 AND ativo = 1
 ")->fetchColumn();
@@ -596,37 +626,28 @@ if ($turmaCol) {
         }
     } catch (Throwable $e) {}
 
-    // WhatsApp: alunos presentes em pelo menos um grupo monitorado nao ignorado.
-    // Prioriza snapshot de membros atuais; se ainda nao houver sync, usa eventos antigos como fallback.
+    // WhatsApp: alunos identificados pelo monitor/tag, agrupados pela turma do aluno.
     try {
-        $hasMemberSnapshot = false;
-        try {
-            $hasMemberSnapshot = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_group_members WHERE is_current = 1 AND user_id IS NOT NULL AND user_id > 0")->fetchColumn() > 0;
-        } catch (Throwable $e) {
-            $hasMemberSnapshot = false;
-        }
-
-        if ($hasMemberSnapshot) {
-            $sqlWg = "SELECT COALESCE(NULLIF(wg.codigo_turma, ''), u.`$turmaCol`) AS tid, COUNT(DISTINCT wgm.user_id) AS n
-                      FROM whatsapp_group_members wgm
-                      JOIN users u ON u.id = wgm.user_id
-                      LEFT JOIN whatsapp_groups wg ON wg.group_id = wgm.group_id
-                      WHERE wgm.is_current = 1
-                        AND wgm.user_id IS NOT NULL
-                        AND wgm.user_id > 0
-                        AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
-                      GROUP BY tid";
-        } else {
-            $sqlWg = "SELECT COALESCE(NULLIF(wg.codigo_turma, ''), u.`$turmaCol`) AS tid, COUNT(DISTINCT ge.user_id) AS n
-                      FROM whatsapp_group_events ge
-                      JOIN users u ON u.id = ge.user_id
-                      LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
-                      WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
-                        AND ge.user_id IS NOT NULL
-                        AND ge.user_id > 0
-                        AND COALESCE(wg.is_ignored, 0) = 0$extraWhere
-                      GROUP BY tid";
-        }
+        $sqlWg = "SELECT u.`$turmaCol` AS tid, COUNT(DISTINCT x.user_id) AS n
+                  FROM (
+                        SELECT ge.user_id
+                          FROM whatsapp_group_events ge
+                          LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+                         WHERE ge.interpreted_event = 'WHATSAPP_GRUPO_ENTROU'
+                           AND ge.user_id IS NOT NULL
+                           AND ge.user_id > 0
+                           AND COALESCE(wg.is_ignored, 0) = 0
+                        UNION
+                        SELECT ut.user_id
+                          FROM user_tags ut
+                          JOIN tags t ON t.id = ut.tag_id
+                         WHERE t.nome = 'WHATSAPP_GRUPO_ENTROU'
+                           AND ut.user_id IS NOT NULL
+                           AND ut.user_id > 0
+                  ) x
+                  JOIN users u ON u.id = x.user_id
+                  WHERE 1=1$extraWhere
+                  GROUP BY u.`$turmaCol`";
         $st = $pdo->prepare($sqlWg); $st->execute($paramsSemTurma);
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $tid = (string)($r['tid'] ?? ''); if (!isset($barTurmaData[$tid])) $barTurmaData[$tid] = [];
@@ -1370,6 +1391,20 @@ dashTurmaRender();
 </div>
 
 <div class="panel mb-4">
+    <div class="panel-title">
+        Bloqueios por mes
+        <span style="font-size:11px;color:var(--muted);font-weight:400"><?= number_format($totalBloqueiosPeriodo, 0, ',', '.') ?> bloqueio(s) ativado(s) no filtro</span>
+    </div>
+    <?php if ($bloqueiosMesLabels): ?>
+        <div style="height:280px">
+            <canvas id="chartBloqueiosMes"></canvas>
+        </div>
+    <?php else: ?>
+        <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhum bloqueio ativado no filtro atual.</p>
+    <?php endif; ?>
+</div>
+
+<div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span>Comparativo por turma<?= empty($barTurmaData) ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — verifique se há turmas com inscritos no período)</span>' : '' ?></span>
         <span style="font-size:11px;color:var(--muted);font-weight:400">selecione turmas e modo (qtd ou %)</span>
@@ -1477,6 +1512,46 @@ dashTurmaRender();
     }
 
     // Distribuição estágios
+    // Bloqueios por mes
+    var bloqueiosMesLabels = <?= json_encode($bloqueiosMesLabels, JSON_UNESCAPED_UNICODE) ?>;
+    var bloqueiosMesData = <?= json_encode($bloqueiosMesData) ?>;
+    var cBloqueios = document.getElementById('chartBloqueiosMes');
+    if (cBloqueios && bloqueiosMesLabels.length) {
+        new Chart(cBloqueios, {
+            type: 'bar',
+            data: {
+                labels: bloqueiosMesLabels,
+                datasets: [{
+                    label: 'Bloqueios ativados',
+                    data: bloqueiosMesData,
+                    backgroundColor: 'rgba(248,113,113,.72)',
+                    borderColor: '#f87171',
+                    borderWidth: 1.5,
+                    borderRadius: 6,
+                    maxBarThickness: 42
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ctx.parsed.y.toLocaleString('pt-BR') + ' bloqueio(s)';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color:'#94a3b8', font:{size:11} }, grid: { display:false } },
+                    y: { beginAtZero:true, ticks: { precision:0, color:'#94a3b8', font:{size:11} }, grid: { color:'rgba(26,37,64,.6)' } }
+                }
+            }
+        });
+    }
+
     var cStage = document.getElementById('chartStage');
     if (cStage) {
         new Chart(cStage, {
