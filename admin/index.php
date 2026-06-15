@@ -370,6 +370,7 @@ function dash_bucket_expr(string $dateExpr, string $period): string {
 }
 
 function dash_bucket_label(string $bucket, string $period): string {
+    if ($period === 'daily' && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $bucket, $m)) return $m[3] . '/' . $m[2] . '/' . $m[1];
     if ($period === 'monthly' && preg_match('/^(\d{4})-(\d{2})$/', $bucket, $m)) return $m[2] . '/' . $m[1];
     return $bucket;
 }
@@ -536,7 +537,7 @@ $inscRows = $stmt->fetchAll();
 $labelsDia = [];
 $dataDia   = [];
 foreach ($inscRows as $r) {
-    $labelsDia[] = $r['dia'];
+    $labelsDia[] = dash_bucket_label((string)$r['dia'], 'daily');
     $dataDia[]   = (int)$r['total'];
 }
 
@@ -710,6 +711,54 @@ foreach ([
             );
         } catch (Throwable $e) {
             $dashLineCharts[$chartKey]['series'][$periodLive] = ['labels' => [], 'data' => []];
+        }
+    }
+}
+
+foreach ([
+    'group_joined' => [
+        'events' => ['WHATSAPP_GRUPO_ENTROU'],
+        'title' => 'Entraram no grupo',
+        'color' => '#06b6d4',
+    ],
+    'group_left' => [
+        'events' => ['WHATSAPP_GRUPO_SAIU', 'WHATSAPP_GRUPO_REMOVIDO_ADMIN'],
+        'title' => 'Sairam do grupo',
+        'color' => '#f97316',
+    ],
+] as $chartKey => $cfgGroup) {
+    $dashLineCharts[$chartKey] = [
+        'title' => $cfgGroup['title'],
+        'suffix' => ' aluno(s)',
+        'color' => $cfgGroup['color'],
+        'series' => ['daily' => ['labels' => [], 'data' => []], 'monthly' => ['labels' => [], 'data' => []], 'yearly' => ['labels' => [], 'data' => []]],
+    ];
+    foreach (['daily', 'monthly', 'yearly'] as $periodGroup) {
+        $paramsGroup = [];
+        $dateExprGroup = 'ge.created_at';
+        $whereGroup = dash_event_base_where($dateExprGroup, $chartKey . '_' . $periodGroup, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsGroup);
+        $whereGroup[] = 'ge.user_id IS NOT NULL';
+        $whereGroup[] = 'ge.user_id > 0';
+        $whereGroup[] = 'COALESCE(wg.is_ignored, 0) = 0';
+        $eventPh = [];
+        foreach ($cfgGroup['events'] as $i => $eventName) {
+            $k = 'group_event_' . $periodGroup . '_' . $chartKey . '_' . $i;
+            $eventPh[] = ':' . $k;
+            $paramsGroup[$k] = $eventName;
+        }
+        $whereGroup[] = 'ge.interpreted_event IN (' . implode(',', $eventPh) . ')';
+        try {
+            $dashLineCharts[$chartKey]['series'][$periodGroup] = dash_fetch_series(
+                $pdo,
+                $periodGroup,
+                'whatsapp_group_events ge LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id JOIN users u ON u.id = ge.user_id',
+                $dateExprGroup,
+                'COUNT(DISTINCT ge.user_id)',
+                $whereGroup,
+                $paramsGroup
+            );
+        } catch (Throwable $e) {
+            $dashLineCharts[$chartKey]['series'][$periodGroup] = ['labels' => [], 'data' => []];
         }
     }
 }
@@ -1454,12 +1503,60 @@ dashTurmaRender();
     background: var(--primary);
     color: #111827;
 }
+.dash-line-panel {
+    position: relative;
+}
+.dash-line-chart-wrap {
+    height: 240px;
+    cursor: zoom-in;
+}
+.dash-line-close {
+    display: none;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 10001;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+.dash-line-panel.is-fullscreen {
+    position: fixed;
+    inset: 14px;
+    z-index: 10000;
+    margin: 0 !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 90px rgba(0,0,0,.65);
+}
+.dash-line-panel.is-fullscreen .dash-line-chart-wrap {
+    flex: 1;
+    height: auto !important;
+    min-height: 0;
+    cursor: zoom-out;
+}
+.dash-line-panel.is-fullscreen .dash-line-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+body.dash-chart-fullscreen {
+    overflow: hidden;
+}
 </style>
 
 <!-- CHARTS: Atividade diaria/mensal/anual -->
 <div class="grid-2 mb-4">
     <?php foreach ($dashLineCharts as $chartKey => $chartCfg): ?>
-        <div class="panel dash-line-panel">
+        <div class="panel dash-line-panel" data-chart-panel="<?= htmlspecialchars($chartKey) ?>">
+            <button type="button" class="dash-line-close" aria-label="Fechar grafico em tela cheia">X</button>
             <div class="panel-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
                 <span><?= htmlspecialchars((string)$chartCfg['title']) ?></span>
                 <div class="dash-period-switch" data-chart="<?= htmlspecialchars($chartKey) ?>">
@@ -1468,7 +1565,7 @@ dashTurmaRender();
                     <button type="button" data-period="yearly">Anual</button>
                 </div>
             </div>
-            <div style="height:240px">
+            <div class="dash-line-chart-wrap">
                 <canvas id="dashLine_<?= htmlspecialchars($chartKey) ?>"></canvas>
             </div>
         </div>
@@ -1883,6 +1980,46 @@ dashTurmaRender();
             });
         });
         dashRenderLine(chartKey, 'daily');
+    });
+
+    function dashResizeLine(chartKey) {
+        setTimeout(function() {
+            if (dashLineInstances[chartKey]) dashLineInstances[chartKey].resize();
+        }, 60);
+    }
+
+    function dashCloseFullscreen() {
+        const current = document.querySelector('.dash-line-panel.is-fullscreen');
+        if (!current) return;
+        const chartKey = current.getAttribute('data-chart-panel');
+        current.classList.remove('is-fullscreen');
+        document.body.classList.remove('dash-chart-fullscreen');
+        dashResizeLine(chartKey);
+    }
+
+    document.querySelectorAll('.dash-line-panel[data-chart-panel]').forEach(function(panel) {
+        const chartKey = panel.getAttribute('data-chart-panel');
+        const wrap = panel.querySelector('.dash-line-chart-wrap');
+        const closeBtn = panel.querySelector('.dash-line-close');
+        if (wrap) {
+            wrap.addEventListener('click', function() {
+                if (panel.classList.contains('is-fullscreen')) return;
+                dashCloseFullscreen();
+                panel.classList.add('is-fullscreen');
+                document.body.classList.add('dash-chart-fullscreen');
+                dashResizeLine(chartKey);
+            });
+        }
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                dashCloseFullscreen();
+            });
+        }
+    });
+
+    document.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Escape') dashCloseFullscreen();
     });
 
     var labelsDia = <?= json_encode($labelsDia, JSON_UNESCAPED_UNICODE) ?>;
