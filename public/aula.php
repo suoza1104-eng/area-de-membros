@@ -74,6 +74,33 @@ $videoType   = $lesson['video_type'] ?? 'youtube';
 $videoUrl    = trim((string)($lesson['video_url'] ?? ''));
 $htmlExtra   = $lesson['html_extra'] ?? '';
 
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS lesson_view_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            lesson_id INT NOT NULL,
+            viewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            ip VARCHAR(64) NULL,
+            user_agent VARCHAR(250) NULL,
+            INDEX idx_lve_user (user_id),
+            INDEX idx_lve_lesson (lesson_id),
+            INDEX idx_lve_viewed (viewed_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $pdo->prepare("
+        INSERT INTO lesson_view_events (user_id, lesson_id, viewed_at, ip, user_agent)
+        VALUES (:uid, :lid, NOW(), :ip, :ua)
+    ")->execute([
+        ':uid' => $userId,
+        ':lid' => $lessonId,
+        ':ip' => substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64) ?: null,
+        ':ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250) ?: null,
+    ]);
+} catch (Throwable $e) {
+    error_log('aula.php lesson_view_events: ' . $e->getMessage());
+}
+
 if ($videoType === 'html') $videoType = 'embed';
 
 $hasEmbedTags = false;

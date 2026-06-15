@@ -82,6 +82,30 @@ if (!empty($_GET['dbg_login'])) {
 function am_touch_login(PDO $pdo, int $userId): void {
     if ($userId <= 0) { login_dbg('touch_login uid=0, skip'); return; }
     try {
+        try {
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS login_events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    ip VARCHAR(64) NULL,
+                    user_agent VARCHAR(250) NULL,
+                    INDEX idx_login_events_user (user_id),
+                    INDEX idx_login_events_logged (logged_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $pdo->prepare("
+                INSERT INTO login_events (user_id, logged_at, ip, user_agent)
+                VALUES (:uid, NOW(), :ip, :ua)
+            ")->execute([
+                ':uid' => $userId,
+                ':ip' => substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64) ?: null,
+                ':ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250) ?: null,
+            ]);
+        } catch (Throwable $e) {
+            login_dbg('login_events fail: ' . $e->getMessage());
+        }
+
         $st = $pdo->prepare("SELECT last_login_at FROM users WHERE id = :id LIMIT 1");
         $st->execute([':id' => $userId]);
         $row = $st->fetch();

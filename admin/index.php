@@ -332,7 +332,163 @@ try {
 $pctReinsc = $totalInscEvts > 0 ? round($reinscritos / $totalInscEvts * 100, 1) : 0;
 
 // ========================
-// 4) DADOS DO DASHBOARD
+// 4) SERIES TEMPORAIS (graficos de linha)
+// ========================
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS login_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            ip VARCHAR(64) NULL,
+            user_agent VARCHAR(250) NULL,
+            INDEX idx_login_events_user (user_id),
+            INDEX idx_login_events_logged (logged_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+} catch (Throwable $e) {}
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS lesson_view_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            lesson_id INT NOT NULL,
+            viewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            ip VARCHAR(64) NULL,
+            user_agent VARCHAR(250) NULL,
+            INDEX idx_lve_user (user_id),
+            INDEX idx_lve_lesson (lesson_id),
+            INDEX idx_lve_viewed (viewed_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+} catch (Throwable $e) {}
+
+function dash_bucket_expr(string $dateExpr, string $period): string {
+    if ($period === 'monthly') return "DATE_FORMAT($dateExpr, '%Y-%m')";
+    if ($period === 'yearly') return "DATE_FORMAT($dateExpr, '%Y')";
+    return "DATE($dateExpr)";
+}
+
+function dash_bucket_label(string $bucket, string $period): string {
+    if ($period === 'monthly' && preg_match('/^(\d{4})-(\d{2})$/', $bucket, $m)) return $m[2] . '/' . $m[1];
+    return $bucket;
+}
+
+function dash_turma_where(string $userAlias, ?string $turmaCol, array $turmaIds, array $codigosTurma, array &$params, string $prefix): array {
+    if (!$turmaIds || !$turmaCol) return [];
+    $where = [];
+    if ($turmaCol === 'codigo_turma') {
+        if (!$codigosTurma) return [];
+        $ph = [];
+        foreach ($codigosTurma as $i => $codigo) {
+            $k = $prefix . '_tc_' . $i;
+            $ph[] = ':' . $k;
+            $params[$k] = $codigo;
+        }
+        $where[] = "$userAlias.`codigo_turma` IN (" . implode(',', $ph) . ")";
+    } else {
+        $ph = [];
+        foreach ($turmaIds as $i => $id) {
+            $k = $prefix . '_tid_' . $i;
+            $ph[] = ':' . $k;
+            $params[$k] = $id;
+        }
+        $where[] = "$userAlias.`$turmaCol` IN (" . implode(',', $ph) . ")";
+    }
+    return $where;
+}
+
+function dash_fetch_series(PDO $pdo, string $period, string $fromSql, string $dateExpr, string $valueExpr, array $baseWhere, array $baseParams): array {
+    $bucketExpr = dash_bucket_expr($dateExpr, $period);
+    $whereSql = $baseWhere ? ('WHERE ' . implode(' AND ', $baseWhere)) : '';
+    $sql = "
+        SELECT $bucketExpr AS bucket, $valueExpr AS total
+        FROM $fromSql
+        $whereSql
+        GROUP BY bucket
+        ORDER BY bucket ASC
+    ";
+    $st = $pdo->prepare($sql);
+    $st->execute($baseParams);
+    $labels = [];
+    $data = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $bucket = (string)($row['bucket'] ?? '');
+        if ($bucket === '') continue;
+        $labels[] = dash_bucket_label($bucket, $period);
+        $data[] = round((float)($row['total'] ?? 0), 2);
+    }
+    return ['labels' => $labels, 'data' => $data];
+}
+
+function dash_event_base_where(string $dateExpr, string $prefix, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma, array &$params): array {
+    $where = ["$dateExpr IS NOT NULL"];
+    if ($dataDe !== '') {
+        $where[] = "$dateExpr >= :" . $prefix . "_de";
+        $params[$prefix . '_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $where[] = "$dateExpr <= :" . $prefix . "_ate";
+        $params[$prefix . '_ate'] = $dataAte . ' 23:59:59';
+    }
+    return array_merge($where, dash_turma_where('u', $turmaCol, $turmaIds, $codigosTurma, $params, $prefix));
+}
+
+function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, string $valueExpr, string $prefix, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma): array {
+    $out = [];
+    foreach (['daily', 'monthly', 'yearly'] as $period) {
+        $params = [];
+        $where = dash_event_base_where($dateExpr, $prefix . '_' . $period, $dataDe, $dataAte, $turmaCol, $turmaIds, $codigosTurma, $params);
+        try {
+            $out[$period] = dash_fetch_series($pdo, $period, $fromSql, $dateExpr, $valueExpr, $where, $params);
+        } catch (Throwable $e) {
+            $out[$period] = ['labels' => [], 'data' => []];
+        }
+    }
+    return $out;
+}
+
+$dashLineCharts = [];
+$lineTurmaCol = $turmaColTop;
+
+$dashLineCharts['logins'] = [
+    'title' => 'Logaram no sistema',
+    'suffix' => ' aluno(s)',
+    'color' => '#14b8a6',
+    'series' => dash_all_period_series(
+        $pdo,
+        "(SELECT user_id, logged_at AS event_at FROM login_events UNION ALL SELECT id AS user_id, last_login_at AS event_at FROM users WHERE last_login_at IS NOT NULL) ev JOIN users u ON u.id = ev.user_id",
+        'ev.event_at',
+        'COUNT(DISTINCT ev.user_id)',
+        'logins',
+        $dataDe,
+        $dataAte,
+        $lineTurmaCol,
+        $turmaIds,
+        $codigosTurmaFiltro
+    ),
+];
+
+$dashLineCharts['lesson_views'] = [
+    'title' => 'Viram alguma aula',
+    'suffix' => ' aluno(s)',
+    'color' => '#38bdf8',
+    'series' => dash_all_period_series(
+        $pdo,
+        "(SELECT user_id, viewed_at AS event_at FROM lesson_view_events UNION ALL SELECT user_id, COALESCE(completed_at, created_at) AS event_at FROM lesson_progress WHERE status = 'completed') ev JOIN users u ON u.id = ev.user_id",
+        'ev.event_at',
+        'COUNT(DISTINCT ev.user_id)',
+        'lesson_views',
+        $dataDe,
+        $dataAte,
+        $lineTurmaCol,
+        $turmaIds,
+        $codigosTurmaFiltro
+    ),
+];
+
+// ========================
+// 5) DADOS DO DASHBOARD
 // ========================
 
 $sqlTotalAlunos = "SELECT COUNT(*) FROM users u $whereUsersSql";
@@ -473,6 +629,90 @@ try {
 $totalAulasConta = (int)$pdo->query("
     SELECT COUNT(*) FROM lessons WHERE conta_para_conclusao = 1 AND ativo = 1
 ")->fetchColumn();
+
+if ($totalAulasConta > 0) {
+    $completionFrom = "
+        (
+            SELECT
+                u.id AS user_id,
+                MAX(COALESCE(lp.completed_at, lp.created_at)) AS event_at,
+                COUNT(DISTINCT l.id) AS qtd
+            FROM users u
+            JOIN lesson_progress lp ON lp.user_id = u.id AND lp.status = 'completed'
+            JOIN lessons l ON l.id = lp.lesson_id AND l.ativo = 1 AND l.conta_para_conclusao = 1
+            GROUP BY u.id
+            HAVING qtd >= " . (int)$totalAulasConta . "
+        ) done
+        JOIN users u ON u.id = done.user_id
+    ";
+    $dashLineCharts['completed'] = [
+        'title' => 'Concluiram o curso',
+        'suffix' => ' aluno(s)',
+        'color' => '#22c55e',
+        'series' => dash_all_period_series($pdo, $completionFrom, 'done.event_at', 'COUNT(DISTINCT done.user_id)', 'completed', $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro),
+    ];
+    $dashLineCharts['progress_sum'] = [
+        'title' => 'Avanco percentual somado',
+        'suffix' => ' ponto(s) percentuais',
+        'color' => '#f59e0b',
+        'series' => dash_all_period_series(
+            $pdo,
+            "lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id AND l.ativo = 1 AND l.conta_para_conclusao = 1 JOIN users u ON u.id = lp.user_id",
+            'COALESCE(lp.completed_at, lp.created_at)',
+            'SUM(100 / ' . (int)$totalAulasConta . ')',
+            'progress_sum',
+            $dataDe,
+            $dataAte,
+            $lineTurmaCol,
+            $turmaIds,
+            $codigosTurmaFiltro
+        ),
+    ];
+} else {
+    $emptyPeriods = ['daily' => ['labels' => [], 'data' => []], 'monthly' => ['labels' => [], 'data' => []], 'yearly' => ['labels' => [], 'data' => []]];
+    $dashLineCharts['completed'] = ['title' => 'Concluiram o curso', 'suffix' => ' aluno(s)', 'color' => '#22c55e', 'series' => $emptyPeriods];
+    $dashLineCharts['progress_sum'] = ['title' => 'Avanco percentual somado', 'suffix' => ' ponto(s) percentuais', 'color' => '#f59e0b', 'series' => $emptyPeriods];
+}
+
+$dashLineCharts['certificates'] = [
+    'title' => 'Geraram certificado',
+    'suffix' => ' certificado(s)',
+    'color' => '#a855f7',
+    'series' => dash_all_period_series($pdo, "certificates c JOIN users u ON u.id = c.user_id", 'c.emitido_em', 'COUNT(*)', 'certificates', $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro),
+];
+foreach ([
+    'live_access' => ['tipo' => 'acessou', 'title' => 'Acessaram live', 'color' => '#60a5fa'],
+    'live_offer' => ['tipo' => 'oferta', 'title' => 'Chegaram na oferta', 'color' => '#fbbf24'],
+    'live_buy_click' => ['tipo' => 'compra', 'title' => 'Clicaram no botao de compra', 'color' => '#34d399'],
+] as $chartKey => $cfgLive) {
+    $dashLineCharts[$chartKey] = [
+        'title' => $cfgLive['title'],
+        'suffix' => ' aluno(s)',
+        'color' => $cfgLive['color'],
+        'series' => ['daily' => ['labels' => [], 'data' => []], 'monthly' => ['labels' => [], 'data' => []], 'yearly' => ['labels' => [], 'data' => []]],
+    ];
+    foreach (['daily', 'monthly', 'yearly'] as $periodLive) {
+        $paramsLive = ['tipo_live' => $cfgLive['tipo']];
+        $dateExprLive = 'COALESCE(ler.processado_em, ler.recebido_em)';
+        $whereLive = dash_event_base_where($dateExprLive, $chartKey . '_' . $periodLive, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsLive);
+        $whereLive[] = "ler.status = 'processado'";
+        $whereLive[] = "ler.user_id IS NOT NULL";
+        $whereLive[] = "le.tipo = :tipo_live";
+        try {
+            $dashLineCharts[$chartKey]['series'][$periodLive] = dash_fetch_series(
+                $pdo,
+                $periodLive,
+                "live_event_recebimentos ler JOIN live_events le ON le.id = ler.event_id JOIN users u ON u.id = ler.user_id",
+                $dateExprLive,
+                'COUNT(DISTINCT ler.user_id)',
+                $whereLive,
+                $paramsLive
+            );
+        } catch (Throwable $e) {
+            $dashLineCharts[$chartKey]['series'][$periodLive] = ['labels' => [], 'data' => []];
+        }
+    }
+}
 
 $completionLabels = [];
 $completionData = [];
@@ -1193,6 +1433,48 @@ dashTurmaRender();
     </div>
 </div>
 
+<style>
+.dash-period-switch {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    overflow: hidden;
+    background: rgba(255,255,255,.02);
+}
+.dash-period-switch button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 5px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.dash-period-switch button.active {
+    background: var(--primary);
+    color: #111827;
+}
+</style>
+
+<!-- CHARTS: Atividade diaria/mensal/anual -->
+<div class="grid-2 mb-4">
+    <?php foreach ($dashLineCharts as $chartKey => $chartCfg): ?>
+        <div class="panel dash-line-panel">
+            <div class="panel-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
+                <span><?= htmlspecialchars((string)$chartCfg['title']) ?></span>
+                <div class="dash-period-switch" data-chart="<?= htmlspecialchars($chartKey) ?>">
+                    <button type="button" class="active" data-period="daily">Diario</button>
+                    <button type="button" data-period="monthly">Mensal</button>
+                    <button type="button" data-period="yearly">Anual</button>
+                </div>
+            </div>
+            <div style="height:240px">
+                <canvas id="dashLine_<?= htmlspecialchars($chartKey) ?>"></canvas>
+            </div>
+        </div>
+    <?php endforeach; ?>
+</div>
+
 <!-- CHARTS: Novos vs Reinscritos -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -1537,6 +1819,72 @@ dashTurmaRender();
     Chart.defaults.font.family = "'Inter', sans-serif";
 
     // Inscrições por dia
+    const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const dashLineInstances = {};
+
+    function dashLineDataset(chartKey, period) {
+        const cfg = DASH_LINE_CHARTS[chartKey] || {};
+        const series = (cfg.series && cfg.series[period]) ? cfg.series[period] : {labels: [], data: []};
+        return {cfg, labels: series.labels || [], data: series.data || []};
+    }
+
+    function dashRenderLine(chartKey, period) {
+        const canvas = document.getElementById('dashLine_' + chartKey);
+        if (!canvas) return;
+        const payload = dashLineDataset(chartKey, period);
+        const color = payload.cfg.color || '#38bdf8';
+        if (dashLineInstances[chartKey]) dashLineInstances[chartKey].destroy();
+        dashLineInstances[chartKey] = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: payload.labels,
+                datasets: [{
+                    label: payload.cfg.title || '',
+                    data: payload.data,
+                    tension: 0.34,
+                    borderWidth: 2.4,
+                    borderColor: color,
+                    backgroundColor: color + '22',
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: color,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const suffix = payload.cfg.suffix || '';
+                                return Number(ctx.parsed.y || 0).toLocaleString('pt-BR') + suffix;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8, color:'#94a3b8', font:{size:11} }, grid:{ color:'rgba(26,37,64,.45)' } },
+                    y: { beginAtZero:true, ticks:{ color:'#94a3b8', font:{size:11} }, grid:{ color:'rgba(26,37,64,.6)' } }
+                }
+            }
+        });
+    }
+
+    document.querySelectorAll('.dash-period-switch').forEach(function(group) {
+        const chartKey = group.getAttribute('data-chart');
+        group.querySelectorAll('button[data-period]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                dashRenderLine(chartKey, btn.getAttribute('data-period') || 'daily');
+            });
+        });
+        dashRenderLine(chartKey, 'daily');
+    });
+
     var labelsDia = <?= json_encode($labelsDia, JSON_UNESCAPED_UNICODE) ?>;
     var dataDia   = <?= json_encode($dataDia) ?>;
     var cDia = document.getElementById('chartDia');
