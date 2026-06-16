@@ -113,6 +113,7 @@ if ($janelaDias > 365) $janelaDias = 365;
 $intervaloDias = (int)rl_get_setting_db($pdo, 'reagendar_availability_interval_days', '1');
 if ($intervaloDias < 1) $intervaloDias = 1;
 if ($intervaloDias > 365) $intervaloDias = 365;
+$permiteMesmoDia = (int)rl_get_setting_db($pdo, 'reagendar_allow_same_day', '0') === 1;
 $liveTime = trim((string)rl_get_setting_db($pdo, 'reagendar_live_time', '19:30'));
 if (!preg_match('/^\d{2}:\d{2}$/', $liveTime)) $liveTime = '19:30';
 $blackouts = array_flip(array_filter(array_map('trim', explode(',', (string)rl_get_setting_db($pdo, 'reagendar_blackout_dates', '')))));
@@ -120,11 +121,12 @@ $blackouts = array_flip(array_filter(array_map('trim', explode(',', (string)rl_g
 $now = new DateTimeImmutable('now');
 $map = [];
 $slotsCount = 0;
+$startOffset = $permiteMesmoDia ? 0 : 1;
 for ($i = 0; $i < $janelaDias; $i++) {
     $day = $now->modify('+' . $i . ' days');
     $key = $day->format('Y-m-d');
     $blocked = isset($blackouts[$key]);
-    $matchesInterval = $i >= 1 && (($i - 1) % $intervaloDias) === 0;
+    $matchesInterval = $i >= $startOffset && (($i - $startOffset) % $intervaloDias) === 0;
     $slot = new DateTimeImmutable($key . ' ' . $liveTime . ':00');
     $available = !$blocked && $matchesInterval && $slot > $now && $slotsCount < $opcoesN;
     if ($available) {
@@ -142,8 +144,8 @@ for ($i = 0; $i < $janelaDias; $i++) {
     $d = $now->modify('+' . $i . ' days');
     $k = $d->format('Y-m-d');
     $blocked = isset($blackouts[$k]);
-    $matchesInterval = $i >= 1 && (($i - 1) % $intervaloDias) === 0;
-    $status = !empty($map[$k]) ? 'disponivel' : ($i === 0 ? 'esgotado' : (($blocked || !$matchesInterval) ? 'indisponivel' : 'esgotado'));
+    $matchesInterval = $i >= $startOffset && (($i - $startOffset) % $intervaloDias) === 0;
+    $status = !empty($map[$k]) ? 'disponivel' : (($i === 0 && !$permiteMesmoDia) ? 'esgotado' : (($blocked || !$matchesInterval) ? 'indisponivel' : 'esgotado'));
     $days[] = ['key'=>$k, 'd'=>$d, 'blocked'=>$blocked || ($i > 0 && !$matchesInterval), 'has'=>!empty($map[$k]), 'items'=>$map[$k] ?? [], 'status'=>$status];
 }
 

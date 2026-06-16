@@ -15,6 +15,13 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
             sender_name VARCHAR(180) NULL,
             user_id INT NULL,
             message_type VARCHAR(60) NULL,
+            media_kind VARCHAR(30) NULL,
+            media_url TEXT NULL,
+            media_mime VARCHAR(120) NULL,
+            media_base64 LONGTEXT NULL,
+            transcription_text LONGTEXT NULL,
+            transcription_status VARCHAR(30) NULL,
+            transcription_error TEXT NULL,
             message_text LONGTEXT NOT NULL,
             message_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             processed_batch_id INT NULL,
@@ -23,9 +30,42 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
             KEY idx_wam_group_time (group_id, message_at),
             KEY idx_wam_processed (processed_batch_id),
             KEY idx_wam_phone (sender_phone),
-            KEY idx_wam_user (user_id)
+            KEY idx_wam_user (user_id),
+            KEY idx_wam_media (media_kind),
+            KEY idx_wam_transcription (transcription_status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    foreach ([
+        'media_kind' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_kind VARCHAR(30) NULL AFTER message_type",
+        'media_url' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_url TEXT NULL AFTER media_kind",
+        'media_mime' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_mime VARCHAR(120) NULL AFTER media_url",
+        'media_base64' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_base64 LONGTEXT NULL AFTER media_mime",
+        'transcription_text' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN transcription_text LONGTEXT NULL AFTER media_base64",
+        'transcription_status' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN transcription_status VARCHAR(30) NULL AFTER transcription_text",
+        'transcription_error' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN transcription_error TEXT NULL AFTER transcription_status",
+    ] as $column => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM whatsapp_ai_messages LIKE :c");
+            $st->execute([':c' => $column]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                $pdo->exec($sql);
+            }
+        } catch (Throwable $e) {}
+    }
+
+    foreach ([
+        'idx_wam_media' => 'media_kind',
+        'idx_wam_transcription' => 'transcription_status',
+    ] as $idx => $column) {
+        try {
+            $st = $pdo->prepare("SHOW INDEX FROM whatsapp_ai_messages WHERE Key_name = :k");
+            $st->execute([':k' => $idx]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                $pdo->exec("ALTER TABLE whatsapp_ai_messages ADD KEY {$idx} ({$column})");
+            }
+        } catch (Throwable $e) {}
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_ai_batches (
@@ -133,6 +173,7 @@ function whatsapp_ai_get_config(): array {
         'prompt' => (string)get_setting('whatsapp_ai_prompt', whatsapp_ai_default_prompt()),
         'criteria' => (string)get_setting('whatsapp_ai_criteria', ''),
         'temperature' => max(0, min(2, (float)get_setting('whatsapp_ai_temperature', '0.2'))),
+        'transcription_model' => trim((string)get_setting('whatsapp_ai_transcription_model', 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
     ];
 }
 
@@ -150,6 +191,7 @@ function whatsapp_ai_set_config(array $data): void {
         'whatsapp_ai_prompt' => trim((string)($data['prompt'] ?? '')) ?: whatsapp_ai_default_prompt(),
         'whatsapp_ai_criteria' => trim((string)($data['criteria'] ?? '')),
         'whatsapp_ai_temperature' => (string)max(0, min(2, (float)($data['temperature'] ?? 0.2))),
+        'whatsapp_ai_transcription_model' => trim((string)($data['transcription_model'] ?? 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
     ];
     foreach ($pairs as $key => $value) {
         set_setting($key, $value);
@@ -184,6 +226,84 @@ function whatsapp_ai_array_get(array $data, array $paths) {
     return null;
 }
 
+function whatsapp_ai_find_media_node(array $message): array {
+    foreach (['imageMessage', 'audioMessage', 'videoMessage', 'documentMessage', 'stickerMessage'] as $key) {
+        if (isset($message[$key]) && is_array($message[$key])) {
+            return [$key, $message[$key]];
+        }
+    }
+    return ['', []];
+}
+
+function whatsapp_ai_media_kind_from_type(string $messageType): string {
+    if ($messageType === 'imageMessage') return 'image';
+    if ($messageType === 'audioMessage') return 'audio';
+    if ($messageType === 'videoMessage') return 'video';
+    if ($messageType === 'documentMessage') return 'document';
+    if ($messageType === 'stickerMessage') return 'sticker';
+    return '';
+}
+
+function whatsapp_ai_extract_media_base64($value): string {
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    if (strpos($value, 'base64,') !== false) {
+        $value = substr($value, (int)strpos($value, 'base64,') + 7);
+    }
+    $value = preg_replace('/\s+/', '', $value) ?? $value;
+    if ($value === '' || strlen($value) < 32) return '';
+    return preg_match('/^[A-Za-z0-9+\/=_-]+$/', $value) ? $value : '';
+}
+
+function whatsapp_ai_extract_media_fields(array $payload, array $message, string $messageType): array {
+    $mediaKind = whatsapp_ai_media_kind_from_type($messageType);
+    $node = is_array($message[$messageType] ?? null) ? $message[$messageType] : [];
+
+    $mediaUrl = (string)whatsapp_ai_array_get($payload, [
+        'data.mediaUrl',
+        'data.media_url',
+        'data.url',
+        'data.message.' . $messageType . '.url',
+        'data.message.' . $messageType . '.mediaUrl',
+        'data.message.' . $messageType . '.directPath',
+        'mediaUrl',
+        'media_url',
+        'url',
+        'message.' . $messageType . '.url',
+        'message.' . $messageType . '.mediaUrl',
+    ]);
+
+    $mime = (string)whatsapp_ai_array_get($payload, [
+        'data.mimetype',
+        'data.mimeType',
+        'data.message.' . $messageType . '.mimetype',
+        'data.message.' . $messageType . '.mimeType',
+        'mimetype',
+        'mimeType',
+        'message.' . $messageType . '.mimetype',
+        'message.' . $messageType . '.mimeType',
+    ]);
+    if ($mime === '' && isset($node['mimetype'])) $mime = (string)$node['mimetype'];
+
+    $base64 = whatsapp_ai_extract_media_base64(whatsapp_ai_array_get($payload, [
+        'data.base64',
+        'data.mediaBase64',
+        'data.message.base64',
+        'data.message.' . $messageType . '.base64',
+        'base64',
+        'mediaBase64',
+        'message.base64',
+        'message.' . $messageType . '.base64',
+    ]));
+
+    return [
+        'media_kind' => $mediaKind !== '' ? $mediaKind : null,
+        'media_url' => $mediaUrl !== '' && preg_match('/^https?:\/\//i', $mediaUrl) ? $mediaUrl : null,
+        'media_mime' => $mime !== '' ? substr($mime, 0, 120) : null,
+        'media_base64' => $base64 !== '' ? $base64 : null,
+    ];
+}
+
 function whatsapp_ai_extract_message_fields(array $payload): ?array {
     $eventType = (string)whatsapp_ai_array_get($payload, ['event', 'event_type', 'type']);
     $data = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
@@ -199,6 +319,7 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
     if ($fromMe) return null;
 
     $message = is_array($data['message'] ?? null) ? $data['message'] : [];
+    [$mediaMessageType] = whatsapp_ai_find_media_node($message);
     $text = (string)whatsapp_ai_array_get($payload, [
         'data.message.conversation',
         'data.message.extendedTextMessage.text',
@@ -212,7 +333,6 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
         'body',
     ]);
     $text = trim($text);
-    if ($text === '') return null;
 
     $senderId = (string)whatsapp_ai_array_get($payload, [
         'data.key.participant', 'data.participant', 'data.sender', 'data.participantId',
@@ -227,14 +347,28 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
         'data.pushName', 'data.notifyName', 'data.senderName', 'pushName', 'notifyName', 'senderName'
     ]);
 
-    $messageType = '';
+    $messageType = $mediaMessageType;
     foreach (array_keys($message) as $k) {
+        if ($messageType !== '') break;
         if (substr((string)$k, -7) === 'Message' || $k === 'conversation') {
             $messageType = (string)$k;
             break;
         }
     }
     if ($messageType === '') $messageType = $eventType ?: 'message';
+    $media = whatsapp_ai_extract_media_fields($payload, $message, $messageType);
+
+    if ($text === '' && !empty($media['media_kind'])) {
+        $labels = [
+            'image' => 'enviou uma imagem sem legenda',
+            'audio' => 'enviou um audio sem transcricao',
+            'video' => 'enviou um video sem legenda',
+            'document' => 'enviou um documento sem legenda',
+            'sticker' => 'enviou um sticker',
+        ];
+        $text = '[' . ($labels[(string)$media['media_kind']] ?? 'enviou uma midia') . ']';
+    }
+    if ($text === '') return null;
 
     $timestamp = whatsapp_ai_array_get($payload, [
         'data.messageTimestamp', 'data.timestamp', 'messageTimestamp', 'timestamp'
@@ -254,6 +388,10 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
         'sender_id' => $senderId !== '' ? $senderId : null,
         'sender_name' => $senderName !== '' ? substr($senderName, 0, 180) : null,
         'message_type' => substr($messageType, 0, 60),
+        'media_kind' => $media['media_kind'],
+        'media_url' => $media['media_url'],
+        'media_mime' => $media['media_mime'],
+        'media_base64' => $media['media_base64'],
         'message_text' => $text,
         'message_at' => $messageAt,
     ];
@@ -274,9 +412,9 @@ function whatsapp_ai_record_message(PDO $pdo, int $rawLogId, array $payload): ?i
 
     $st = $pdo->prepare("
         INSERT INTO whatsapp_ai_messages
-            (raw_log_id, instance_key, group_id, sender_phone, sender_id, sender_name, user_id, message_type, message_text, message_at, created_at)
+            (raw_log_id, instance_key, group_id, sender_phone, sender_id, sender_name, user_id, message_type, media_kind, media_url, media_mime, media_base64, message_text, message_at, created_at)
         VALUES
-            (:raw_log_id, :instance_key, :group_id, :sender_phone, :sender_id, :sender_name, :user_id, :message_type, :message_text, :message_at, NOW())
+            (:raw_log_id, :instance_key, :group_id, :sender_phone, :sender_id, :sender_name, :user_id, :message_type, :media_kind, :media_url, :media_mime, :media_base64, :message_text, :message_at, NOW())
         ON DUPLICATE KEY UPDATE raw_log_id = raw_log_id
     ");
     $st->execute([
@@ -288,6 +426,10 @@ function whatsapp_ai_record_message(PDO $pdo, int $rawLogId, array $payload): ?i
         ':sender_name' => $fields['sender_name'],
         ':user_id' => $userId > 0 ? $userId : null,
         ':message_type' => $fields['message_type'],
+        ':media_kind' => $fields['media_kind'],
+        ':media_url' => $fields['media_url'],
+        ':media_mime' => $fields['media_mime'],
+        ':media_base64' => $fields['media_base64'],
         ':message_text' => $fields['message_text'],
         ':message_at' => $fields['message_at'],
     ]);
@@ -296,24 +438,57 @@ function whatsapp_ai_record_message(PDO $pdo, int $rawLogId, array $payload): ?i
 
 function whatsapp_ai_build_prompt(array $cfg, string $groupName, array $contexts, array $messages): array {
     $lines = [];
+    $imageInputs = [];
     foreach ($messages as $m) {
         $name = trim((string)($m['aluno_nome'] ?? ''));
         if ($name === '') $name = trim((string)($m['sender_name'] ?? ''));
         if ($name === '') $name = 'Participante';
         $phone = trim((string)($m['sender_phone'] ?? ''));
         $label = $name . ($phone !== '' ? ' (' . $phone . ')' : '');
-        $lines[] = '[' . (string)$m['message_at'] . '] ' . $label . ': ' . trim((string)$m['message_text']);
+        $mediaKind = trim((string)($m['media_kind'] ?? ''));
+        $text = trim((string)$m['message_text']);
+        if ($mediaKind === 'audio') {
+            $transcription = trim((string)($m['transcription_text'] ?? ''));
+            if ($transcription !== '') {
+                $text .= ' Transcricao do audio: ' . $transcription;
+            } else {
+                $status = trim((string)($m['transcription_status'] ?? ''));
+                $text .= ' Audio recebido' . ($status !== '' ? ' (transcricao: ' . $status . ')' : '') . '.';
+            }
+        } elseif ($mediaKind !== '') {
+            $text .= ' Midia recebida: ' . $mediaKind . '.';
+        }
+        $lines[] = '[' . (string)$m['message_at'] . '] ' . $label . ': ' . $text;
+
+        if ($mediaKind === 'image') {
+            $imageUrl = trim((string)($m['media_url'] ?? ''));
+            $base64 = trim((string)($m['media_base64'] ?? ''));
+            $mime = trim((string)($m['media_mime'] ?? 'image/jpeg')) ?: 'image/jpeg';
+            if ($imageUrl !== '') {
+                $imageInputs[] = ['type' => 'input_image', 'image_url' => $imageUrl, 'detail' => 'low'];
+            } elseif ($base64 !== '') {
+                $imageInputs[] = ['type' => 'input_image', 'image_url' => 'data:' . $mime . ';base64,' . $base64, 'detail' => 'low'];
+            }
+        }
     }
 
-    return [
-        ['role' => 'system', 'content' => (string)$cfg['prompt']],
-        ['role' => 'user', 'content' => json_encode([
+    $userContent = [[
+        'type' => 'input_text',
+        'text' => json_encode([
             'grupo' => $groupName,
             'criterios_adicionais' => (string)$cfg['criteria'],
             'contextos_anteriores' => array_values($contexts),
             'mensagens' => $lines,
-            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber.',
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber. Se houver imagem anexada, analise visualmente apenas o necessario para decidir se precisa intervencao.',
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]];
+    foreach (array_slice($imageInputs, 0, 4) as $img) {
+        $userContent[] = $img;
+    }
+
+    return [
+        ['role' => 'system', 'content' => (string)$cfg['prompt']],
+        ['role' => 'user', 'content' => $userContent],
     ];
 }
 
@@ -421,6 +596,129 @@ function whatsapp_ai_call_openai(array $cfg, array $messages): array {
     }
 
     return ['raw' => $decoded, 'analysis' => $analysis, 'request' => $payload];
+}
+
+function whatsapp_ai_extension_from_mime(?string $mime): string {
+    $mime = strtolower(trim((string)$mime));
+    if (strpos($mime, 'mpeg') !== false || strpos($mime, 'mp3') !== false) return 'mp3';
+    if (strpos($mime, 'ogg') !== false || strpos($mime, 'opus') !== false) return 'ogg';
+    if (strpos($mime, 'wav') !== false) return 'wav';
+    if (strpos($mime, 'mp4') !== false || strpos($mime, 'm4a') !== false) return 'm4a';
+    if (strpos($mime, 'webm') !== false) return 'webm';
+    return 'ogg';
+}
+
+function whatsapp_ai_audio_temp_file(array $message): string {
+    $mime = (string)($message['media_mime'] ?? '');
+    $ext = whatsapp_ai_extension_from_mime($mime);
+    $tmp = tempnam(sys_get_temp_dir(), 'wai_audio_');
+    if ($tmp === false) throw new RuntimeException('Nao foi possivel criar arquivo temporario de audio.');
+    $file = $tmp . '.' . $ext;
+    @rename($tmp, $file);
+
+    $base64 = trim((string)($message['media_base64'] ?? ''));
+    if ($base64 !== '') {
+        $data = base64_decode(strtr($base64, '-_', '+/'), true);
+        if ($data === false || $data === '') throw new RuntimeException('Base64 do audio invalido.');
+        file_put_contents($file, $data);
+        return $file;
+    }
+
+    $url = trim((string)($message['media_url'] ?? ''));
+    if ($url === '') throw new RuntimeException('Audio sem URL ou base64 para transcricao.');
+    if (!function_exists('curl_init')) throw new RuntimeException('Extensao cURL do PHP nao disponivel.');
+
+    $fh = fopen($file, 'wb');
+    if (!$fh) throw new RuntimeException('Nao foi possivel abrir arquivo temporario de audio.');
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fh,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_MAXFILESIZE => 15 * 1024 * 1024,
+    ]);
+    $ok = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    fclose($fh);
+    if (!$ok || $code >= 400 || filesize($file) <= 0) {
+        @unlink($file);
+        throw new RuntimeException('Falha ao baixar audio para transcricao: ' . ($err ?: 'HTTP ' . $code));
+    }
+    return $file;
+}
+
+function whatsapp_ai_transcribe_audio(PDO $pdo, array $cfg, array $message): ?string {
+    $apiKey = (string)$cfg['openai_api_key'];
+    if ($apiKey === '') return null;
+    if (!function_exists('curl_init') || !class_exists('CURLFile')) {
+        throw new RuntimeException('cURL/CURLFile nao disponivel para transcricao.');
+    }
+
+    $file = whatsapp_ai_audio_temp_file($message);
+    try {
+        $ch = curl_init('https://api.openai.com/v1/audio/transcriptions');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $apiKey],
+            CURLOPT_POSTFIELDS => [
+                'model' => (string)$cfg['transcription_model'],
+                'file' => new CURLFile($file, (string)($message['media_mime'] ?? 'audio/ogg'), basename($file)),
+                'response_format' => 'json',
+            ],
+            CURLOPT_TIMEOUT => 60,
+        ]);
+        $raw = curl_exec($ch);
+        $err = curl_error($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($raw === false || $raw === '') {
+            throw new RuntimeException('Falha na transcricao: ' . $err);
+        }
+        $decoded = json_decode((string)$raw, true);
+        if ($code < 200 || $code >= 300) {
+            $msg = is_array($decoded) ? (string)($decoded['error']['message'] ?? $raw) : $raw;
+            throw new RuntimeException('Transcricao HTTP ' . $code . ': ' . substr($msg, 0, 1000));
+        }
+        $text = trim((string)($decoded['text'] ?? ''));
+        $pdo->prepare("
+            UPDATE whatsapp_ai_messages
+               SET transcription_text=:text, transcription_status='done', transcription_error=NULL
+             WHERE id=:id
+        ")->execute([':text' => $text, ':id' => (int)$message['id']]);
+        return $text;
+    } finally {
+        @unlink($file);
+    }
+}
+
+function whatsapp_ai_prepare_media_for_messages(PDO $pdo, array $cfg, array $messages): array {
+    foreach ($messages as &$message) {
+        if ((string)($message['media_kind'] ?? '') !== 'audio') continue;
+        if (trim((string)($message['transcription_text'] ?? '')) !== '') continue;
+        if ((string)($message['transcription_status'] ?? '') === 'done') continue;
+        try {
+            $pdo->prepare("UPDATE whatsapp_ai_messages SET transcription_status='processing', transcription_error=NULL WHERE id=:id")
+                ->execute([':id' => (int)$message['id']]);
+            $text = whatsapp_ai_transcribe_audio($pdo, $cfg, $message);
+            if ($text !== null && $text !== '') {
+                $message['transcription_text'] = $text;
+                $message['transcription_status'] = 'done';
+            }
+        } catch (Throwable $e) {
+            $message['transcription_status'] = 'error';
+            $message['transcription_error'] = $e->getMessage();
+            $pdo->prepare("
+                UPDATE whatsapp_ai_messages
+                   SET transcription_status='error', transcription_error=:err
+                 WHERE id=:id
+            ")->execute([':err' => substr($e->getMessage(), 0, 1000), ':id' => (int)$message['id']]);
+        }
+    }
+    unset($message);
+    return $messages;
 }
 
 function whatsapp_ai_prune_contexts(PDO $pdo, string $groupId, int $keep): void {
@@ -704,6 +1002,7 @@ function whatsapp_ai_requeue_batch(PDO $pdo, int $batchId, string $actor): int {
         throw $e;
     }
 }
+
 function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
     whatsapp_ai_ensure_tables($pdo);
     $cfg = whatsapp_ai_get_config();
@@ -750,6 +1049,7 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
             $stMsgs->execute([':gid' => $groupId]);
             $messages = $stMsgs->fetchAll(PDO::FETCH_ASSOC) ?: [];
             if (!$messages) continue;
+            $messages = whatsapp_ai_prepare_media_for_messages($pdo, $cfg, $messages);
 
             $groupName = trim((string)($messages[0]['group_name'] ?? '')) ?: $groupId;
             $ctxSt = $pdo->prepare("SELECT summary FROM whatsapp_ai_contexts WHERE group_id = :gid ORDER BY created_at DESC, id DESC LIMIT " . (int)$cfg['context_keep']);

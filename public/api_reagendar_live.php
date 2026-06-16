@@ -113,16 +113,18 @@ function rl_available_slots(PDO $pdo): array {
     $interval = (int)rl_get_setting_db($pdo, 'reagendar_availability_interval_days', '1');
     if ($interval < 1) $interval = 1;
     if ($interval > 365) $interval = 365;
+    $allowSameDay = (int)rl_get_setting_db($pdo, 'reagendar_allow_same_day', '0') === 1;
     $time = trim((string)rl_get_setting_db($pdo, 'reagendar_live_time', '19:30'));
     if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
     $blackouts = array_flip(array_filter(array_map('trim', explode(',', (string)rl_get_setting_db($pdo, 'reagendar_blackout_dates', '')))));
 
     $slots = [];
+    $startOffset = $allowSameDay ? 0 : 1;
     for ($i = 0; $i <= $days && count($slots) < $qty; $i++) {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
-        if ($i < 1 || (($i - 1) % $interval) !== 0) continue;
+        if ($i < $startOffset || (($i - $startOffset) % $interval) !== 0) continue;
         $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
         if ($slot <= $now) continue;
         $slots[$slot->format('Y-m-d H:i:s')] = $slot;

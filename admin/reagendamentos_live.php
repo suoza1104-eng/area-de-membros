@@ -341,8 +341,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oldCodigo = (string)($u['codigo_turma'] ?? ($u['turma_codigo'] ?? ''));
             $oldLive = (string)($u['turma_live_at'] ?? ($u['data_live'] ?? ''));
             $newLive = $dLive->format('Y-m-d H:i:s');
-            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays, $allowSameDay);
-            if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $sets = [];
             $params = [':id'=>$userId];
             if (rl_col_exists($pdo, 'users', 'turma_live_at')) { $sets[] = 'turma_live_at=:tl'; $params[':tl'] = $newLive; }
@@ -388,8 +386,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dLive = new DateTimeImmutable(str_replace('T', ' ', $manualDt));
             if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
             $newLive = $dLive->format('Y-m-d H:i:s');
-            $availableSlots = rl_available_reagendar_slots_admin($windowDays, $opcoesN, $liveTime, $blackoutDates, $intervalDays, $allowSameDay);
-            if (empty($availableSlots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
             $dispatchAt = $dLive->modify(($dispatchOffsetMin >= 0 ? '+' : '') . $dispatchOffsetMin . ' minutes')->format('Y-m-d H:i:s');
 
             $st = $pdo->prepare("SELECT r.*, u.codigo_turma, u.turma_codigo, u.turma_live_at, u.data_live

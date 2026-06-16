@@ -77,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'max_messages' => $_POST['max_messages'] ?? 80,
                 'context_keep' => $_POST['context_keep'] ?? 6,
                 'temperature' => $_POST['temperature'] ?? 0.2,
+                'transcription_model' => $_POST['transcription_model'] ?? 'gpt-4o-mini-transcribe',
                 'prompt' => $_POST['prompt'] ?? '',
                 'criteria' => $_POST['criteria'] ?? '',
             ]);
@@ -157,12 +158,14 @@ $stats = [
     'interventions' => 0,
     'contexts' => 0,
     'actions_pending' => 0,
+    'media' => 0,
 ];
 try { $stats['pending'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_messages WHERE processed_batch_id IS NULL")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['batches'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_batches")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['interventions'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_batches WHERE needs_intervention = 1")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['contexts'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_contexts")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['actions_pending'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_actions WHERE status = 'pending'")->fetchColumn(); } catch (Throwable $e) {}
+try { $stats['media'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_messages WHERE media_kind IS NOT NULL AND media_kind <> ''")->fetchColumn(); } catch (Throwable $e) {}
 
 $groups = [];
 try {
@@ -285,7 +288,7 @@ include __DIR__ . '/_header.php';
     <div class="wai-kpi"><div class="wai-kpi-label">Pacotes analisados</div><div class="wai-kpi-value"><?= (int)$stats['batches'] ?></div></div>
     <div class="wai-kpi"><div class="wai-kpi-label">Intervencoes sugeridas</div><div class="wai-kpi-value"><?= (int)$stats['interventions'] ?></div></div>
     <div class="wai-kpi"><div class="wai-kpi-label">Acoes pendentes</div><div class="wai-kpi-value"><?= (int)$stats['actions_pending'] ?></div></div>
-    <div class="wai-kpi"><div class="wai-kpi-label">Contextos salvos</div><div class="wai-kpi-value"><?= (int)$stats['contexts'] ?></div></div>
+    <div class="wai-kpi"><div class="wai-kpi-label">Midias capturadas</div><div class="wai-kpi-value"><?= (int)$stats['media'] ?></div></div>
 </div>
 
 <div class="wai-layout">
@@ -349,6 +352,12 @@ include __DIR__ . '/_header.php';
                 <div class="form-group">
                     <label class="form-label">Temperatura</label>
                     <input type="number" min="0" max="2" step="0.1" name="temperature" value="<?= wai_h((string)$cfg['temperature']) ?>">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Modelo de transcricao de audio</label>
+                    <input type="text" name="transcription_model" value="<?= wai_h((string)$cfg['transcription_model']) ?>" placeholder="gpt-4o-mini-transcribe">
+                    <div class="wai-help">Usado apenas quando uma mensagem de audio tiver URL ou base64 acessivel no payload da Evolution.</div>
                 </div>
 
                 <div class="form-group">
@@ -580,6 +589,9 @@ include __DIR__ . '/_header.php';
                         </td>
                         <td>
                             <div class="wai-msg"><?= wai_h((string)$m['message_text']) ?></div>
+                            <?php if (!empty($m['media_kind'])): ?>
+                                <div class="wai-help">Midia: <?= wai_h((string)$m['media_kind']) ?><?= !empty($m['transcription_text']) ? ' · transcrita' : '' ?><?= !empty($m['transcription_status']) && empty($m['transcription_text']) ? ' · ' . wai_h((string)$m['transcription_status']) : '' ?></div>
+                            <?php endif; ?>
                             <div class="wai-help"><?= wai_h((string)($m['group_name'] ?: $m['group_id'])) ?></div>
                         </td>
                     </tr>

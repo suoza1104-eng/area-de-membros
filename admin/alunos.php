@@ -142,17 +142,19 @@ function al_available_reagendar_slots(PDO $pdo): array {
     $interval = (int)al_get_setting('reagendar_availability_interval_days', '1');
     if ($interval < 1) $interval = 1;
     if ($interval > 365) $interval = 365;
+    $allowSameDay = (int)al_get_setting('reagendar_allow_same_day', '0') === 1;
 
     $time = trim(al_get_setting('reagendar_live_time', '19:30'));
     if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
 
     $blackouts = array_flip(array_filter(array_map('trim', explode(',', al_get_setting('reagendar_blackout_dates', '')))));
     $slots = [];
+    $startOffset = $allowSameDay ? 0 : 1;
     for ($i = 0; $i <= $days && count($slots) < $qty; $i++) {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
-        if ($i < 1 || (($i - 1) % $interval) !== 0) continue;
+        if ($i < $startOffset || (($i - $startOffset) % $interval) !== 0) continue;
 
         $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
         if ($slot <= $now) continue;
@@ -200,8 +202,6 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     $dLive = new DateTimeImmutable(str_replace('T', ' ', $dataLiveRaw));
     if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
     $newLive = $dLive->format('Y-m-d H:i:s');
-    $slots = al_available_reagendar_slots($pdo);
-    if (empty($slots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
 
     $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
     $st->execute([':id' => $userId]);
@@ -1270,20 +1270,15 @@ require __DIR__ . '/_header.php';
             <input type="hidden" name="acao" value="reagendar_live_manual">
             <input type="hidden" name="uid" id="m-reagendar-live-uid">
             <div class="form-group">
-                <label class="form-label">Escolha a live de repescagem</label>
-                <select name="nova_data_live" id="m-reagendar-live-data" required>
-                    <option value="">Selecione uma data disponivel...</option>
-                    <?php foreach ($reagendarLiveSlots as $slot): ?>
-                    <option value="<?= h((string)$slot['value']) ?>"><?= h((string)$slot['label']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label class="form-label">Nova data/hora da live</label>
+                <input type="datetime-local" name="nova_data_live" id="m-reagendar-live-data" required>
                 <div style="font-size:11px;color:var(--muted);margin-top:6px">
-                    As opcoes seguem a configuracao da tela Reagendamento Live: quantidade de lives, horario diario e dias indisponiveis.
+                    O suporte pode informar qualquer data futura, mesmo fora da disponibilidade configurada para o aluno.
                     O aluno permanece na turma atual e o sistema dispara o gatilho LIVE_REAGENDADA.
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="submit" class="btn btn-primary btn-sm" <?= empty($reagendarLiveSlots) ? 'disabled' : '' ?>>Confirmar reagendamento</button>
+                <button type="submit" class="btn btn-primary btn-sm">Confirmar reagendamento</button>
                 <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModal('modal-reagendar-live')">Cancelar</button>
             </div>
         </form>
