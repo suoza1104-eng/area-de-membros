@@ -874,6 +874,46 @@ $comprasReais = dash_count_compras_reais($pdo, $whereUsers, $paramsUsers);
 $taxaConversaoVendas = $totalAlunos > 0 ? round($comprasReais / $totalAlunos * 100, 1) : 0;
 $taxaShowup = $totalAlunos > 0 ? round($liveAcessou / $totalAlunos * 100, 1) : 0;
 
+function dash_certificados_por_compradores(PDO $pdo, array $whereUsers, array $paramsUsers): array {
+    try {
+        $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
+        $pdo->query("SELECT user_id FROM certificates LIMIT 0");
+        $sql = "SELECT
+                    COUNT(DISTINCT s.matched_user_id) AS compradores,
+                    COUNT(DISTINCT CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM certificates c
+                            WHERE c.user_id = s.matched_user_id
+                            LIMIT 1
+                        )
+                        THEN s.matched_user_id
+                    END) AS com_certificado
+                FROM hotmart_sales s
+                JOIN users u ON u.id = s.matched_user_id
+                WHERE s.matched_user_id IS NOT NULL
+                  AND s.status IN ('Aprovado','Completo')";
+        if ($whereUsers) $sql .= ' AND ' . implode(' AND ', $whereUsers);
+        $st = $pdo->prepare($sql);
+        $st->execute($paramsUsers);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        $compradores = (int)($row['compradores'] ?? 0);
+        $comCertificado = (int)($row['com_certificado'] ?? 0);
+        return [
+            'compradores' => $compradores,
+            'com_certificado' => $comCertificado,
+            'sem_certificado' => max(0, $compradores - $comCertificado),
+        ];
+    } catch (Throwable $e) {
+        return ['compradores' => 0, 'com_certificado' => 0, 'sem_certificado' => 0];
+    }
+}
+$certCompradores = dash_certificados_por_compradores($pdo, $whereUsers, $paramsUsers);
+$compradoresComCertificado = (int)$certCompradores['com_certificado'];
+$compradoresSemCertificado = (int)$certCompradores['sem_certificado'];
+$pctCompradoresComCertificado = $comprasReais > 0 ? round($compradoresComCertificado / $comprasReais * 100, 1) : 0;
+$pctCompradoresSemCertificado = $comprasReais > 0 ? round($compradoresSemCertificado / $comprasReais * 100, 1) : 0;
+
 // ── Dados para o gráfico comparativo POR TURMA ──
 // Detecta qual coluna em users referencia a turma
 $turmaCol = null;
@@ -1616,6 +1656,46 @@ body.dash-chart-fullscreen {
     </div>
 </div>
 
+<!-- CHARTS: Compradores x certificados -->
+<div class="grid-2 mb-4">
+    <div class="panel">
+        <div class="panel-title">Compradores e certificado</div>
+        <?php if ($comprasReais > 0): ?>
+            <canvas id="chartCompradoresCertificado" style="max-height:220px"></canvas>
+            <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresComCertificado) ?></strong> compraram e geraram (<?= number_format($pctCompradoresComCertificado, 1, ',', '.') ?>%)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#f97316;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresSemCertificado) ?></strong> compraram sem certificado (<?= number_format($pctCompradoresSemCertificado, 1, ',', '.') ?>%)</span>
+                </div>
+            </div>
+        <?php else: ?>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhuma compra encontrada no periodo</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Resumo de compradores</div>
+        <div style="display:flex;flex-direction:column;gap:14px;padding:8px 4px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Compradores no filtro</span>
+                <strong style="font-size:20px"><?= number_format($comprasReais) ?></strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Compraram e geraram certificado</span>
+                <strong style="font-size:20px;color:#22c55e"><?= number_format($pctCompradoresComCertificado, 1, ',', '.') ?>%</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:13px;color:var(--muted)">Compraram sem gerar certificado</span>
+                <strong style="font-size:20px;color:#f97316"><?= number_format($pctCompradoresSemCertificado, 1, ',', '.') ?>%</strong>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- CHARTS ROW 1: Inscrições + Estágios -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2147,6 +2227,40 @@ body.dash-chart-fullscreen {
                     }
                 },
                 cutout: '65%'
+            }
+        });
+    }
+
+    // Compradores com certificado vs sem certificado
+    var cCompradoresCert = document.getElementById('chartCompradoresCertificado');
+    if (cCompradoresCert) {
+        new Chart(cCompradoresCert, {
+            type: 'pie',
+            data: {
+                labels: ['Compraram e geraram certificado', 'Compraram sem certificado'],
+                datasets: [{
+                    data: [<?= $compradoresComCertificado ?>, <?= $compradoresSemCertificado ?>],
+                    backgroundColor: ['rgba(34,197,94,.82)', 'rgba(249,115,22,.82)'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 12 }, padding: 14 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                                var pct = total > 0 ? Math.round(ctx.parsed / total * 1000) / 10 : 0;
+                                return ctx.label + ': ' + ctx.parsed.toLocaleString('pt-BR') + ' (' + pct.toLocaleString('pt-BR') + '%)';
+                            }
+                        }
+                    }
+                }
             }
         });
     }
