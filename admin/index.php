@@ -874,45 +874,98 @@ $comprasReais = dash_count_compras_reais($pdo, $whereUsers, $paramsUsers);
 $taxaConversaoVendas = $totalAlunos > 0 ? round($comprasReais / $totalAlunos * 100, 1) : 0;
 $taxaShowup = $totalAlunos > 0 ? round($liveAcessou / $totalAlunos * 100, 1) : 0;
 
-function dash_certificados_por_compradores(PDO $pdo, array $whereUsers, array $paramsUsers): array {
+function dash_compras_por_certificados(PDO $pdo, array $whereUsers, array $paramsUsers): array {
     try {
         $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
         $pdo->query("SELECT user_id FROM certificates LIMIT 0");
         $sql = "SELECT
-                    COUNT(DISTINCT s.matched_user_id) AS compradores,
+                    COUNT(DISTINCT c.user_id) AS certificados,
                     COUNT(DISTINCT CASE
                         WHEN EXISTS (
                             SELECT 1
-                            FROM certificates c
-                            WHERE c.user_id = s.matched_user_id
+                            FROM hotmart_sales s
+                            WHERE s.matched_user_id = c.user_id
+                              AND s.status IN ('Aprovado','Completo')
                             LIMIT 1
                         )
-                        THEN s.matched_user_id
-                    END) AS com_certificado
-                FROM hotmart_sales s
-                JOIN users u ON u.id = s.matched_user_id
-                WHERE s.matched_user_id IS NOT NULL
-                  AND s.status IN ('Aprovado','Completo')";
+                        THEN c.user_id
+                    END) AS com_compra
+                FROM certificates c
+                JOIN users u ON u.id = c.user_id
+                WHERE c.user_id IS NOT NULL";
         if ($whereUsers) $sql .= ' AND ' . implode(' AND ', $whereUsers);
         $st = $pdo->prepare($sql);
         $st->execute($paramsUsers);
         $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
-        $compradores = (int)($row['compradores'] ?? 0);
-        $comCertificado = (int)($row['com_certificado'] ?? 0);
+        $certificados = (int)($row['certificados'] ?? 0);
+        $comCompra = (int)($row['com_compra'] ?? 0);
         return [
-            'compradores' => $compradores,
-            'com_certificado' => $comCertificado,
-            'sem_certificado' => max(0, $compradores - $comCertificado),
+            'certificados' => $certificados,
+            'com_compra' => $comCompra,
+            'sem_compra' => max(0, $certificados - $comCompra),
         ];
     } catch (Throwable $e) {
-        return ['compradores' => 0, 'com_certificado' => 0, 'sem_certificado' => 0];
+        return ['certificados' => 0, 'com_compra' => 0, 'sem_compra' => 0];
     }
 }
-$certCompradores = dash_certificados_por_compradores($pdo, $whereUsers, $paramsUsers);
-$compradoresComCertificado = (int)$certCompradores['com_certificado'];
-$compradoresSemCertificado = (int)$certCompradores['sem_certificado'];
-$pctCompradoresComCertificado = $comprasReais > 0 ? round($compradoresComCertificado / $comprasReais * 100, 1) : 0;
-$pctCompradoresSemCertificado = $comprasReais > 0 ? round($compradoresSemCertificado / $comprasReais * 100, 1) : 0;
+$certCompradores = dash_compras_por_certificados($pdo, $whereUsers, $paramsUsers);
+$certificadosUnicos = (int)$certCompradores['certificados'];
+$certificadosComCompra = (int)$certCompradores['com_compra'];
+$certificadosSemCompra = (int)$certCompradores['sem_compra'];
+$pctCertificadosComCompra = $certificadosUnicos > 0 ? round($certificadosComCompra / $certificadosUnicos * 100, 1) : 0;
+$pctCertificadosSemCompra = $certificadosUnicos > 0 ? round($certificadosSemCompra / $certificadosUnicos * 100, 1) : 0;
+
+function dash_compras_por_concluintes(PDO $pdo, int $totalAulasConta, string $whereUsersSql, array $paramsUsers): array {
+    if ($totalAulasConta <= 0) {
+        return ['concluintes' => 0, 'com_compra' => 0, 'sem_compra' => 0];
+    }
+    try {
+        $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
+        $sql = "
+            SELECT
+                COUNT(*) AS concluintes,
+                SUM(CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM hotmart_sales s
+                        WHERE s.matched_user_id = done.user_id
+                          AND s.status IN ('Aprovado','Completo')
+                        LIMIT 1
+                    )
+                    THEN 1 ELSE 0
+                END) AS com_compra
+            FROM (
+                SELECT u.id AS user_id
+                FROM users u
+                JOIN lesson_progress lp ON lp.user_id = u.id AND lp.status = 'completed'
+                JOIN lessons l ON l.id = lp.lesson_id AND l.ativo = 1 AND l.conta_para_conclusao = 1
+                $whereUsersSql
+                GROUP BY u.id
+                HAVING COUNT(DISTINCT l.id) >= :total_aulas_concluintes_compra
+            ) done
+        ";
+        $params = $paramsUsers;
+        $params['total_aulas_concluintes_compra'] = $totalAulasConta;
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        $concluintes = (int)($row['concluintes'] ?? 0);
+        $comCompra = (int)($row['com_compra'] ?? 0);
+        return [
+            'concluintes' => $concluintes,
+            'com_compra' => $comCompra,
+            'sem_compra' => max(0, $concluintes - $comCompra),
+        ];
+    } catch (Throwable $e) {
+        return ['concluintes' => 0, 'com_compra' => 0, 'sem_compra' => 0];
+    }
+}
+$comprasConcluintes = dash_compras_por_concluintes($pdo, $totalAulasConta, $whereUsersSql, $paramsUsers);
+$concluintesUnicos = (int)$comprasConcluintes['concluintes'];
+$concluintesComCompra = (int)$comprasConcluintes['com_compra'];
+$concluintesSemCompra = (int)$comprasConcluintes['sem_compra'];
+$pctConcluintesComCompra = $concluintesUnicos > 0 ? round($concluintesComCompra / $concluintesUnicos * 100, 1) : 0;
+$pctConcluintesSemCompra = $concluintesUnicos > 0 ? round($concluintesSemCompra / $concluintesUnicos * 100, 1) : 0;
 
 // ── Dados para o gráfico comparativo POR TURMA ──
 // Detecta qual coluna em users referencia a turma
@@ -1656,41 +1709,81 @@ body.dash-chart-fullscreen {
     </div>
 </div>
 
-<!-- CHARTS: Compradores x certificados -->
+<!-- CHARTS: Certificados x compras -->
 <div class="grid-2 mb-4">
     <div class="panel">
-        <div class="panel-title">Compradores e certificado</div>
-        <?php if ($comprasReais > 0): ?>
+        <div class="panel-title">Certificados e compras</div>
+        <?php if ($certificadosUnicos > 0): ?>
             <canvas id="chartCompradoresCertificado" style="max-height:220px"></canvas>
             <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px;flex-wrap:wrap">
                 <div style="display:flex;align-items:center;gap:6px">
                     <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block"></span>
-                    <span><strong><?= number_format($compradoresComCertificado) ?></strong> compraram e geraram (<?= number_format($pctCompradoresComCertificado, 1, ',', '.') ?>%)</span>
+                    <span><strong><?= number_format($certificadosComCompra) ?></strong> geraram e compraram (<?= number_format($pctCertificadosComCompra, 1, ',', '.') ?>%)</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px">
                     <span style="width:10px;height:10px;border-radius:50%;background:#f97316;display:inline-block"></span>
-                    <span><strong><?= number_format($compradoresSemCertificado) ?></strong> compraram sem certificado (<?= number_format($pctCompradoresSemCertificado, 1, ',', '.') ?>%)</span>
+                    <span><strong><?= number_format($certificadosSemCompra) ?></strong> geraram sem compra (<?= number_format($pctCertificadosSemCompra, 1, ',', '.') ?>%)</span>
                 </div>
             </div>
         <?php else: ?>
-            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhuma compra encontrada no periodo</p>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhum certificado encontrado no periodo</p>
         <?php endif; ?>
     </div>
 
     <div class="panel">
-        <div class="panel-title">Resumo de compradores</div>
+        <div class="panel-title">Resumo de certificados</div>
         <div style="display:flex;flex-direction:column;gap:14px;padding:8px 4px">
             <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
-                <span style="font-size:13px;color:var(--muted)">Compradores no filtro</span>
-                <strong style="font-size:20px"><?= number_format($comprasReais) ?></strong>
+                <span style="font-size:13px;color:var(--muted)">Alunos com certificado no filtro</span>
+                <strong style="font-size:20px"><?= number_format($certificadosUnicos) ?></strong>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
-                <span style="font-size:13px;color:var(--muted)">Compraram e geraram certificado</span>
-                <strong style="font-size:20px;color:#22c55e"><?= number_format($pctCompradoresComCertificado, 1, ',', '.') ?>%</strong>
+                <span style="font-size:13px;color:var(--muted)">Geraram certificado e compraram</span>
+                <strong style="font-size:20px;color:#22c55e"><?= number_format($pctCertificadosComCompra, 1, ',', '.') ?>%</strong>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:baseline">
-                <span style="font-size:13px;color:var(--muted)">Compraram sem gerar certificado</span>
-                <strong style="font-size:20px;color:#f97316"><?= number_format($pctCompradoresSemCertificado, 1, ',', '.') ?>%</strong>
+                <span style="font-size:13px;color:var(--muted)">Geraram certificado sem compra</span>
+                <strong style="font-size:20px;color:#f97316"><?= number_format($pctCertificadosSemCompra, 1, ',', '.') ?>%</strong>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CHARTS: Concluintes x compras -->
+<div class="grid-2 mb-4">
+    <div class="panel">
+        <div class="panel-title">Concluintes e compras</div>
+        <?php if ($concluintesUnicos > 0): ?>
+            <canvas id="chartConcluintesCompras" style="max-height:220px"></canvas>
+            <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block"></span>
+                    <span><strong><?= number_format($concluintesComCompra) ?></strong> concluíram e compraram (<?= number_format($pctConcluintesComCompra, 1, ',', '.') ?>%)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
+                    <span><strong><?= number_format($concluintesSemCompra) ?></strong> concluíram sem compra (<?= number_format($pctConcluintesSemCompra, 1, ',', '.') ?>%)</span>
+                </div>
+            </div>
+        <?php else: ?>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhum concluinte encontrado no periodo</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Resumo de concluintes</div>
+        <div style="display:flex;flex-direction:column;gap:14px;padding:8px 4px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Alunos concluintes no filtro</span>
+                <strong style="font-size:20px"><?= number_format($concluintesUnicos) ?></strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;color:var(--muted)">Concluíram e compraram</span>
+                <strong style="font-size:20px;color:#10b981"><?= number_format($pctConcluintesComCompra, 1, ',', '.') ?>%</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:13px;color:var(--muted)">Concluíram sem compra</span>
+                <strong style="font-size:20px;color:#f59e0b"><?= number_format($pctConcluintesSemCompra, 1, ',', '.') ?>%</strong>
             </div>
         </div>
     </div>
@@ -2231,16 +2324,50 @@ body.dash-chart-fullscreen {
         });
     }
 
-    // Compradores com certificado vs sem certificado
+    // Certificados com compra vs sem compra
     var cCompradoresCert = document.getElementById('chartCompradoresCertificado');
     if (cCompradoresCert) {
         new Chart(cCompradoresCert, {
             type: 'pie',
             data: {
-                labels: ['Compraram e geraram certificado', 'Compraram sem certificado'],
+                labels: ['Geraram certificado e compraram', 'Geraram certificado sem compra'],
                 datasets: [{
-                    data: [<?= $compradoresComCertificado ?>, <?= $compradoresSemCertificado ?>],
+                    data: [<?= $certificadosComCompra ?>, <?= $certificadosSemCompra ?>],
                     backgroundColor: ['rgba(34,197,94,.82)', 'rgba(249,115,22,.82)'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 12 }, padding: 14 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                                var pct = total > 0 ? Math.round(ctx.parsed / total * 1000) / 10 : 0;
+                                return ctx.label + ': ' + ctx.parsed.toLocaleString('pt-BR') + ' (' + pct.toLocaleString('pt-BR') + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Concluintes com compra vs sem compra
+    var cConcluintesCompras = document.getElementById('chartConcluintesCompras');
+    if (cConcluintesCompras) {
+        new Chart(cConcluintesCompras, {
+            type: 'pie',
+            data: {
+                labels: ['Concluíram e compraram', 'Concluíram sem compra'],
+                datasets: [{
+                    data: [<?= $concluintesComCompra ?>, <?= $concluintesSemCompra ?>],
+                    backgroundColor: ['rgba(16,185,129,.82)', 'rgba(245,158,11,.82)'],
                     borderColor: '#07101f',
                     borderWidth: 3,
                     hoverOffset: 5
