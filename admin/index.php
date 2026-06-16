@@ -967,6 +967,76 @@ $concluintesSemCompra = (int)$comprasConcluintes['sem_compra'];
 $pctConcluintesComCompra = $concluintesUnicos > 0 ? round($concluintesComCompra / $concluintesUnicos * 100, 1) : 0;
 $pctConcluintesSemCompra = $concluintesUnicos > 0 ? round($concluintesSemCompra / $concluintesUnicos * 100, 1) : 0;
 
+function dash_status_por_compradores(PDO $pdo, int $totalAulasConta, array $whereUsers, array $paramsUsers): array {
+    try {
+        $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
+        $pdo->query("SELECT user_id FROM certificates LIMIT 0");
+        $sql = "
+            SELECT
+                COUNT(*) AS compradores,
+                SUM(CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM certificates c
+                        WHERE c.user_id = buyers.user_id
+                        LIMIT 1
+                    )
+                    THEN 1 ELSE 0
+                END) AS com_certificado,
+                " . ($totalAulasConta > 0 ? "
+                SUM(CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM lesson_progress lp
+                        JOIN lessons l ON l.id = lp.lesson_id AND l.ativo = 1 AND l.conta_para_conclusao = 1
+                        WHERE lp.user_id = buyers.user_id
+                          AND lp.status = 'completed'
+                        GROUP BY lp.user_id
+                        HAVING COUNT(DISTINCT l.id) >= :total_aulas_compradores
+                    )
+                    THEN 1 ELSE 0
+                END)" : "0") . " AS concluintes
+            FROM (
+                SELECT DISTINCT s.matched_user_id AS user_id
+                FROM hotmart_sales s
+                JOIN users u ON u.id = s.matched_user_id
+                WHERE s.matched_user_id IS NOT NULL
+                  AND s.status IN ('Aprovado','Completo')
+                  " . ($whereUsers ? ' AND ' . implode(' AND ', $whereUsers) : '') . "
+            ) buyers
+        ";
+        $params = $paramsUsers;
+        if ($totalAulasConta > 0) {
+            $params['total_aulas_compradores'] = $totalAulasConta;
+        }
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        $compradores = (int)($row['compradores'] ?? 0);
+        $concluintes = (int)($row['concluintes'] ?? 0);
+        $comCertificado = (int)($row['com_certificado'] ?? 0);
+        return [
+            'compradores' => $compradores,
+            'concluintes' => $concluintes,
+            'nao_concluintes' => max(0, $compradores - $concluintes),
+            'com_certificado' => $comCertificado,
+            'sem_certificado' => max(0, $compradores - $comCertificado),
+        ];
+    } catch (Throwable $e) {
+        return ['compradores' => 0, 'concluintes' => 0, 'nao_concluintes' => 0, 'com_certificado' => 0, 'sem_certificado' => 0];
+    }
+}
+$statusCompradores = dash_status_por_compradores($pdo, $totalAulasConta, $whereUsers, $paramsUsers);
+$compradoresBase = (int)$statusCompradores['compradores'];
+$compradoresConcluintes = (int)$statusCompradores['concluintes'];
+$compradoresNaoConcluintes = (int)$statusCompradores['nao_concluintes'];
+$compradoresComCertificadoBase = (int)$statusCompradores['com_certificado'];
+$compradoresSemCertificadoBase = (int)$statusCompradores['sem_certificado'];
+$pctCompradoresConcluintes = $compradoresBase > 0 ? round($compradoresConcluintes / $compradoresBase * 100, 1) : 0;
+$pctCompradoresNaoConcluintes = $compradoresBase > 0 ? round($compradoresNaoConcluintes / $compradoresBase * 100, 1) : 0;
+$pctCompradoresComCertificadoBase = $compradoresBase > 0 ? round($compradoresComCertificadoBase / $compradoresBase * 100, 1) : 0;
+$pctCompradoresSemCertificadoBase = $compradoresBase > 0 ? round($compradoresSemCertificadoBase / $compradoresBase * 100, 1) : 0;
+
 // ── Dados para o gráfico comparativo POR TURMA ──
 // Detecta qual coluna em users referencia a turma
 $turmaCol = null;
@@ -1789,6 +1859,47 @@ body.dash-chart-fullscreen {
     </div>
 </div>
 
+<!-- CHARTS: Compradores x conclusao/certificado -->
+<div class="grid-2 mb-4">
+    <div class="panel">
+        <div class="panel-title">Compradores e conclusão</div>
+        <?php if ($compradoresBase > 0): ?>
+            <canvas id="chartCompradoresConclusao" style="max-height:220px"></canvas>
+            <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#06b6d4;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresConcluintes) ?></strong> compraram e concluíram (<?= number_format($pctCompradoresConcluintes, 1, ',', '.') ?>%)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#64748b;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresNaoConcluintes) ?></strong> compraram sem concluir (<?= number_format($pctCompradoresNaoConcluintes, 1, ',', '.') ?>%)</span>
+                </div>
+            </div>
+        <?php else: ?>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhuma compra encontrada no periodo</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">Compradores e certificado</div>
+        <?php if ($compradoresBase > 0): ?>
+            <canvas id="chartCompradoresCertificadoBase" style="max-height:220px"></canvas>
+            <div style="display:flex;gap:18px;justify-content:center;margin-top:14px;font-size:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresComCertificadoBase) ?></strong> compraram e emitiram (<?= number_format($pctCompradoresComCertificadoBase, 1, ',', '.') ?>%)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block"></span>
+                    <span><strong><?= number_format($compradoresSemCertificadoBase) ?></strong> compraram sem certificado (<?= number_format($pctCompradoresSemCertificadoBase, 1, ',', '.') ?>%)</span>
+                </div>
+            </div>
+        <?php else: ?>
+            <p style="font-size:13px;color:var(--muted);text-align:center;padding:60px 0">Nenhuma compra encontrada no periodo</p>
+        <?php endif; ?>
+    </div>
+</div>
+
 <!-- CHARTS ROW 1: Inscrições + Estágios -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2394,6 +2505,74 @@ body.dash-chart-fullscreen {
 
     // ── Gráfico comparativo por turma ────────────────────────────────────
     // Tempo ate concluir 100% das aulas
+    // Compradores que concluiram vs nao concluiram
+    var cCompradoresConclusao = document.getElementById('chartCompradoresConclusao');
+    if (cCompradoresConclusao) {
+        new Chart(cCompradoresConclusao, {
+            type: 'pie',
+            data: {
+                labels: ['Compraram e concluíram', 'Compraram sem concluir'],
+                datasets: [{
+                    data: [<?= $compradoresConcluintes ?>, <?= $compradoresNaoConcluintes ?>],
+                    backgroundColor: ['rgba(6,182,212,.82)', 'rgba(100,116,139,.72)'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 12 }, padding: 14 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                                var pct = total > 0 ? Math.round(ctx.parsed / total * 1000) / 10 : 0;
+                                return ctx.label + ': ' + ctx.parsed.toLocaleString('pt-BR') + ' (' + pct.toLocaleString('pt-BR') + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Compradores com certificado vs sem certificado
+    var cCompradoresCertBase = document.getElementById('chartCompradoresCertificadoBase');
+    if (cCompradoresCertBase) {
+        new Chart(cCompradoresCertBase, {
+            type: 'pie',
+            data: {
+                labels: ['Compraram e emitiram certificado', 'Compraram sem certificado'],
+                datasets: [{
+                    data: [<?= $compradoresComCertificadoBase ?>, <?= $compradoresSemCertificadoBase ?>],
+                    backgroundColor: ['rgba(34,197,94,.82)', 'rgba(239,68,68,.78)'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 12 }, padding: 14 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                                var pct = total > 0 ? Math.round(ctx.parsed / total * 1000) / 10 : 0;
+                                return ctx.label + ': ' + ctx.parsed.toLocaleString('pt-BR') + ' (' + pct.toLocaleString('pt-BR') + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     var completionLabels = <?= json_encode($completionLabels, JSON_UNESCAPED_UNICODE) ?>;
     var completionData = <?= json_encode($completionChartData) ?>;
     var cCompletion = document.getElementById('chartCompletionLag');
