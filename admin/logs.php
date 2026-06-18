@@ -95,6 +95,7 @@ function logs_pretty_json(?string $raw): string {
 
 function logs_event_group(string $evento, string $source): string {
     $e = strtoupper($evento);
+    if ($source === 'formulario') return 'Formulario';
     if ($source === 'cron_live') return 'Cron live';
     if ($source === 'disparo') return 'Disparos';
     if (str_starts_with($e, 'LIVE_TURMA')) return 'Live turma';
@@ -233,6 +234,9 @@ try {
         $eventoOptions['DISPARO'] = true;
     }
     $eventoOptions['CRON_LIVE_TURMA'] = true;
+    if (logs_table_exists($pdo, 'system_logs')) {
+        $eventoOptions['FORMULARIO_LEAD'] = true;
+    }
 } catch (Throwable $e) {}
 try {
     if (logs_table_exists($pdo, 'turmas')) {
@@ -252,6 +256,66 @@ sort($eventoOptions);
 rsort($turmaOptions);
 
 $allRows = [];
+
+if (($source === '' || $source === 'formulario') && logs_table_exists($pdo, 'system_logs')) {
+    $where = ["sl.origem = 'formulario_lead'"];
+    $params = [];
+    if ($eventos && !in_array('FORMULARIO_LEAD', $eventos, true)) $where[] = '1=0';
+    if ($turmas) {
+        $ors = [];
+        foreach ($turmas as $i => $value) {
+            $key = ':form_turma' . $i;
+            $ors[] = "sl.contexto_json LIKE $key";
+            $params[$key] = '%"codigo_turma":"' . $value . '"%';
+        }
+        $where[] = '(' . implode(' OR ', $ors) . ')';
+    }
+    if ($aluno !== '') {
+        $where[] = '(sl.contexto_json LIKE :form_aluno OR sl.mensagem LIKE :form_aluno)';
+        $params[':form_aluno'] = '%' . $aluno . '%';
+    }
+    if ($de !== '') { $where[] = 'sl.created_at >= :form_de'; $params[':form_de'] = $de . ' 00:00:00'; }
+    if ($ate !== '') { $where[] = 'sl.created_at <= :form_ate'; $params[':form_ate'] = $ate . ' 23:59:59'; }
+    if ($status === 'ok') $where[] = "sl.nivel = 'info'";
+    elseif ($status === 'erro') $where[] = "sl.nivel <> 'info'";
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+    try {
+        $st = $pdo->prepare("
+            SELECT sl.*
+              FROM system_logs sl
+              $whereSql
+          ORDER BY sl.created_at DESC, sl.id DESC
+             LIMIT :lim
+        ");
+        foreach ($params as $k => $v) $st->bindValue($k, $v);
+        $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            $payload = (string)($r['contexto_json'] ?? '');
+            $context = json_decode($payload, true);
+            if (!is_array($context)) $context = [];
+            $level = strtolower((string)($r['nivel'] ?? 'error'));
+            $allRows[] = [
+                'source' => 'formulario',
+                'id' => (int)$r['id'],
+                'created_at' => (string)$r['created_at'],
+                'evento' => 'FORMULARIO_LEAD',
+                'grupo' => 'Formulario',
+                'turma' => (string)($context['codigo_turma'] ?? ''),
+                'aluno_nome' => '',
+                'aluno_email' => (string)($context['email'] ?? ''),
+                'aluno_tel' => (string)($context['telefone'] ?? ''),
+                'user_id' => (int)($context['user_id'] ?? 0),
+                'ok' => $level === 'info',
+                'status_label' => strtoupper($level),
+                'destino' => (string)($context['source'] ?? 'formulario_site'),
+                'summary' => (string)($r['mensagem'] ?? ''),
+                'payload' => $payload,
+                'response' => (string)($context['error'] ?? ''),
+            ];
+        }
+    } catch (Throwable $e) {}
+}
 
 if (($source === '' || $source === 'webhook') && logs_table_exists($pdo, 'webhook_logs')) {
     $where = [];
@@ -620,6 +684,7 @@ include __DIR__ . '/_header.php';
 .log-source.manychat{color:#f9a8d4;background:rgba(236,72,153,.10);border-color:rgba(236,72,153,.25);}
 .log-source.disparo{color:#93c5fd;background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.25);}
 .log-source.cron_live{color:#fcd34d;background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.25);}
+.log-source.formulario{color:#67e8f9;background:rgba(6,182,212,.10);border-color:rgba(6,182,212,.25);}
 .log-status{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:900;border:1px solid var(--border);}
 .log-status.ok{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.25);}
 .log-status.err{color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.25);}
@@ -668,13 +733,14 @@ include __DIR__ . '/_header.php';
                 <option value="manychat" <?= $source==='manychat'?'selected':'' ?>>Manychat</option>
                 <option value="disparo" <?= $source==='disparo'?'selected':'' ?>>Disparos</option>
                 <option value="cron_live" <?= $source==='cron_live'?'selected':'' ?>>Cron live</option>
+                <option value="formulario" <?= $source==='formulario'?'selected':'' ?>>Formulario de lead</option>
             </select>
         </div>
         <div class="field">
             <label>Grupo</label>
             <select name="grupo">
                 <option value="" <?= $grupo===''?'selected':'' ?>>Todos</option>
-                <?php foreach (['Cron live','Disparos','Live turma','Live reagendada','Live evento','Inscricao','Login','Certificado','WhatsApp','Geral'] as $g): ?>
+                <?php foreach (['Formulario','Cron live','Disparos','Live turma','Live reagendada','Live evento','Inscricao','Login','Certificado','WhatsApp','Geral'] as $g): ?>
                     <option value="<?= h($g) ?>" <?= $grupo===$g?'selected':'' ?>><?= h($g) ?></option>
                 <?php endforeach; ?>
             </select>
