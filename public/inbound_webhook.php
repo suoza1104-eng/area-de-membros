@@ -162,6 +162,9 @@ function iw_disparar_integracoes(PDO $pdo, array $ihw, string $evento, int $user
     if ((int)($ihw['disparar_manychat'] ?? 1) === 1 && function_exists('mc_disparar_evento')) {
         try { $ok = mc_disparar_evento($pdo, $evento, $user, $extra) || $ok; } catch (Throwable $e) {}
     }
+    if (function_exists('whatsapp_event_notifications_dispatch')) {
+        try { $ok = whatsapp_event_notifications_dispatch($pdo, $evento, $user, $extra) || $ok; } catch (Throwable $e) {}
+    }
     return $ok;
 }
 

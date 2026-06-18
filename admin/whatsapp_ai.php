@@ -7,6 +7,7 @@ proteger_admin();
 $pdo = getPDO();
 evolution_ensure_tables($pdo);
 whatsapp_ai_ensure_tables($pdo);
+whatsapp_event_notifications_ensure_tables($pdo);
 
 $menu = 'whatsapp_ai';
 $page_title = 'IA WhatsApp';
@@ -96,6 +97,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+        if ($action === 'save_event_notification_rule') {
+            $ruleId = (int)($_POST['rule_id'] ?? 0);
+            $name = trim((string)($_POST['rule_name'] ?? ''));
+            $eventCode = strtoupper(trim((string)($_POST['rule_event_code'] ?? '')));
+            $instanceKey = trim((string)($_POST['rule_instance_key'] ?? ''));
+            $messageTemplate = trim((string)($_POST['rule_message_template'] ?? ''));
+            $groupIds = $_POST['rule_group_ids'] ?? [];
+            $teamIds = $_POST['rule_team_ids'] ?? [];
+            if (!is_array($groupIds)) $groupIds = [];
+            if (!is_array($teamIds)) $teamIds = [];
+            $groupIds = array_values(array_unique(array_filter(array_map('trim', $groupIds))));
+            $teamIds = array_values(array_unique(array_filter(array_map('intval', $teamIds))));
+            if ($name === '' || $eventCode === '' || $messageTemplate === '') {
+                throw new RuntimeException('Informe nome, evento e mensagem da regra.');
+            }
+            if (!$groupIds && !$teamIds) {
+                throw new RuntimeException('Selecione pelo menos um grupo ou membro da equipe.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                if ($ruleId > 0) {
+                    $pdo->prepare("
+                        UPDATE whatsapp_event_notification_rules
+                           SET name = :name, event_code = :event_code, instance_key = :instance_key,
+                               message_template = :message_template, is_active = :is_active
+                         WHERE id = :id
+                         LIMIT 1
+                    ")->execute([
+                        ':name' => $name,
+                        ':event_code' => $eventCode,
+                        ':instance_key' => $instanceKey ?: null,
+                        ':message_template' => $messageTemplate,
+                        ':is_active' => !empty($_POST['rule_is_active']) ? 1 : 0,
+                        ':id' => $ruleId,
+                    ]);
+                } else {
+                    $pdo->prepare("
+                        INSERT INTO whatsapp_event_notification_rules
+                            (name, event_code, instance_key, message_template, is_active, created_at, updated_at)
+                        VALUES (:name, :event_code, :instance_key, :message_template, :is_active, NOW(), NOW())
+                    ")->execute([
+                        ':name' => $name,
+                        ':event_code' => $eventCode,
+                        ':instance_key' => $instanceKey ?: null,
+                        ':message_template' => $messageTemplate,
+                        ':is_active' => !empty($_POST['rule_is_active']) ? 1 : 0,
+                    ]);
+                    $ruleId = (int)$pdo->lastInsertId();
+                }
+                $pdo->prepare("DELETE FROM whatsapp_event_notification_rule_groups WHERE rule_id = :id")->execute([':id' => $ruleId]);
+                $pdo->prepare("DELETE FROM whatsapp_event_notification_rule_team WHERE rule_id = :id")->execute([':id' => $ruleId]);
+                $insGroup = $pdo->prepare("INSERT INTO whatsapp_event_notification_rule_groups (rule_id, group_id) VALUES (:rid, :gid)");
+                foreach ($groupIds as $groupId) $insGroup->execute([':rid' => $ruleId, ':gid' => $groupId]);
+                $insTeam = $pdo->prepare("INSERT INTO whatsapp_event_notification_rule_team (rule_id, admin_equipe_id) VALUES (:rid, :tid)");
+                foreach ($teamIds as $teamId) $insTeam->execute([':rid' => $ruleId, ':tid' => $teamId]);
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
+            header('Location: whatsapp_ai.php?event_rule_saved=1');
+            exit;
+        }
+
+        if ($action === 'toggle_event_notification_rule') {
+            $ruleId = (int)($_POST['rule_id'] ?? 0);
+            $pdo->prepare("UPDATE whatsapp_event_notification_rules SET is_active = IF(is_active=1,0,1) WHERE id = :id LIMIT 1")
+                ->execute([':id' => $ruleId]);
+            header('Location: whatsapp_ai.php?event_rule_saved=1');
+            exit;
+        }
+
+        if ($action === 'delete_event_notification_rule') {
+            $ruleId = (int)($_POST['rule_id'] ?? 0);
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("DELETE FROM whatsapp_event_notification_rule_groups WHERE rule_id = :id")->execute([':id' => $ruleId]);
+                $pdo->prepare("DELETE FROM whatsapp_event_notification_rule_team WHERE rule_id = :id")->execute([':id' => $ruleId]);
+                $pdo->prepare("DELETE FROM whatsapp_event_notification_rules WHERE id = :id")->execute([':id' => $ruleId]);
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
+            header('Location: whatsapp_ai.php?event_rule_deleted=1');
+            exit;
+        }
+
         if ($action === 'toggle_group_ignore') {
             $gid = trim((string)($_POST['group_id'] ?? ''));
             if ($gid === '') throw new RuntimeException('Grupo invalido.');
@@ -153,6 +243,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if (isset($_GET['saved'])) $notice = 'Configuracao da IA salva.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Automacao da blacklist salva.';
+if (isset($_GET['event_rule_saved'])) $notice = 'Regra de notificacao por evento salva.';
+if (isset($_GET['event_rule_deleted'])) $notice = 'Regra de notificacao removida.';
 if (isset($_GET['groups'])) $notice = 'Configuracao do grupo atualizada.';
 if (isset($_GET['token'])) $notice = 'Token do cron atualizado.';
 if (isset($_GET['action_done'])) $notice = 'Acao aprovada e executada.';
@@ -212,6 +304,63 @@ try {
           LEFT JOIN users u ON u.id = ba.user_id
          ORDER BY ba.created_at DESC, ba.id DESC
          LIMIT 20
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$notificationInstances = [];
+try {
+    $notificationInstances = $pdo->query("SELECT instance_key, name, status FROM whatsapp_instances ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$notificationGroups = [];
+try {
+    $notificationGroups = $pdo->query("
+        SELECT group_id, group_name, instance_key, is_ignored
+          FROM whatsapp_groups
+         ORDER BY COALESCE(group_name, group_id) ASC
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$eventNotificationRules = [];
+$eventNotificationRuleGroups = [];
+$eventNotificationRuleTeam = [];
+try {
+    $eventNotificationRules = $pdo->query("SELECT * FROM whatsapp_event_notification_rules ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($pdo->query("SELECT rule_id, group_id FROM whatsapp_event_notification_rule_groups")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $eventNotificationRuleGroups[(int)$row['rule_id']][] = (string)$row['group_id'];
+    }
+    foreach ($pdo->query("SELECT rule_id, admin_equipe_id FROM whatsapp_event_notification_rule_team")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $eventNotificationRuleTeam[(int)$row['rule_id']][] = (int)$row['admin_equipe_id'];
+    }
+} catch (Throwable $e) {}
+
+$notificationEventCodes = [
+    'INSCRITO', 'REINSCRITO', 'PRIMEIRO_LOGIN', 'ASSISTIU_ALGUMA_AULA', 'CONCLUIU_TRILHA',
+    'RETORNO_AGENDADO', 'CERT_EMITIDO', 'REENVIO_CERTIFICADO', 'CERT_SENHA_ERRADA',
+    'LIVE_TURMA', 'LIVE_REAGENDADA', 'LIVE_REAGENDAMENTO_LEMBRETE', 'LIVE_REAGENDAMENTO_EXPIRADO',
+    'LIVE_ACESSOU', 'LIVE_OFERTA', 'LIVE_COMPRA', 'LIVE_EVENTO',
+    'WHATSAPP_GRUPO_ENTROU', 'WHATSAPP_GRUPO_SAIU', 'WHATSAPP_GRUPO_REMOVIDO_ADMIN',
+    'WHATSAPP_BLACKLIST_DETECTADO',
+];
+foreach (['webhooks', 'superfuncionario_rules', 'manychat_rules'] as $table) {
+    try {
+        foreach ($pdo->query("SELECT DISTINCT evento FROM {$table} WHERE evento IS NOT NULL AND evento <> ''")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $eventCode) {
+            $notificationEventCodes[] = strtoupper(trim((string)$eventCode));
+        }
+    } catch (Throwable $e) {}
+}
+foreach ($eventNotificationRules as $rule) $notificationEventCodes[] = strtoupper((string)$rule['event_code']);
+$notificationEventCodes = array_values(array_unique(array_filter($notificationEventCodes)));
+sort($notificationEventCodes);
+
+$eventNotificationLogs = [];
+try {
+    $eventNotificationLogs = $pdo->query("
+        SELECT l.*, r.name AS rule_name
+          FROM whatsapp_event_notification_logs l
+          LEFT JOIN whatsapp_event_notification_rules r ON r.id = l.rule_id
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT 30
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
@@ -312,7 +461,12 @@ include __DIR__ . '/_header.php';
 .wai-message-line{font-size:11px;color:var(--muted);line-height:1.45;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .wai-message-line:last-child{border-bottom:none}
 .wai-actions{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-top:10px}
+.wai-destination-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.wai-check-list{display:grid;gap:6px;border:1px solid var(--border);border-radius:8px;padding:9px;max-height:190px;overflow:auto}
+.wai-check-item{display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text)}
+.wai-rule-card{border:1px solid var(--border);border-radius:8px;padding:11px;margin-top:10px;background:rgba(255,255,255,.02)}
 @media(max-width:1100px){.wai-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wai-layout{grid-template-columns:1fr}.wai-row{grid-template-columns:1fr}}
+@media(max-width:700px){.wai-destination-grid{grid-template-columns:1fr}}
 </style>
 
 <?php if ($notice): ?><div class="alert alert-ok mb-3"><?= wai_h($notice) ?></div><?php endif; ?>
@@ -427,6 +581,7 @@ include __DIR__ . '/_header.php';
                         <input type="checkbox" name="blacklist_notify_enabled" value="1" <?= $blacklistCfg['notify_enabled'] ? 'checked' : '' ?>>
                         Notificar a equipe pelo WhatsApp
                     </label>
+                    <div class="wai-help">Este é o alerta direto específico da blacklist. Se criar uma regra geral abaixo para o mesmo evento e os mesmos membros, desative esta opção para evitar mensagens duplicadas.</div>
                 </div>
 
                 <div class="form-group">
@@ -471,6 +626,150 @@ include __DIR__ . '/_header.php';
 
                 <button class="btn btn-primary" type="submit">Salvar automação da blacklist</button>
             </form>
+        </div>
+
+        <div class="wai-card">
+            <div class="wai-title">Notificações WhatsApp por evento</div>
+            <div class="wai-help" style="margin-bottom:12px">
+                Crie regras reutilizáveis para qualquer evento atual ou futuro. Uma regra pode enviar a mesma mensagem para vários grupos e membros da equipe.
+            </div>
+
+            <?php
+            $newEventMessage = "🔔 *AVISO DE EVENTO*\n\n"
+                . "*Evento:* {{evento}}\n"
+                . "*Aluno:* {{user.nome}}\n"
+                . "*E-mail:* {{user.email}}\n"
+                . "*WhatsApp:* {{user.telefone}}\n"
+                . "*Turmas:* {{user.turmas}}\n"
+                . "*Tags:* {{user.tags}}\n"
+                . "*Data:* {{data_evento}}";
+            $renderEventRuleForm = static function (
+                array $rule,
+                array $selectedGroups,
+                array $selectedTeam
+            ) use ($notificationGroups, $teamRecipients, $notificationInstances, $notificationEventCodes, $newEventMessage): void {
+                $ruleId = (int)($rule['id'] ?? 0);
+                $isNew = $ruleId <= 0;
+                $eventCode = (string)($rule['event_code'] ?? '');
+                $instanceKey = (string)($rule['instance_key'] ?? '');
+                $template = (string)($rule['message_template'] ?? $newEventMessage);
+                ?>
+                <form method="post" class="wai-rule-card">
+                    <input type="hidden" name="action" value="save_event_notification_rule">
+                    <input type="hidden" name="rule_id" value="<?= $ruleId ?>">
+                    <div class="wai-row">
+                        <div class="form-group">
+                            <label class="form-label">Nome da regra</label>
+                            <input type="text" name="rule_name" required value="<?= wai_h((string)($rule['name'] ?? '')) ?>" placeholder="Ex: Alerta de blacklist para suporte">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Evento</label>
+                            <input type="text" name="rule_event_code" list="wai-event-codes" required value="<?= wai_h($eventCode) ?>" placeholder="WHATSAPP_BLACKLIST_DETECTADO">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Instância para mensagens diretas à equipe</label>
+                        <select name="rule_instance_key">
+                            <option value="">Primeira instância conectada</option>
+                            <?php foreach ($notificationInstances as $instance): ?>
+                                <option value="<?= wai_h((string)$instance['instance_key']) ?>" <?= $instanceKey === (string)$instance['instance_key'] ? 'selected' : '' ?>>
+                                    <?= wai_h((string)($instance['name'] ?: $instance['instance_key'])) ?> · <?= wai_h((string)$instance['status']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="wai-destination-grid">
+                        <div>
+                            <label class="form-label">Grupos que receberão</label>
+                            <div class="wai-check-list">
+                                <?php if (!$notificationGroups): ?><span class="wai-help">Nenhum grupo sincronizado.</span><?php endif; ?>
+                                <?php foreach ($notificationGroups as $group): ?>
+                                    <?php $gid = (string)$group['group_id']; ?>
+                                    <label class="wai-check-item">
+                                        <input type="checkbox" name="rule_group_ids[]" value="<?= wai_h($gid) ?>" <?= in_array($gid, $selectedGroups, true) ? 'checked' : '' ?>>
+                                        <span>
+                                            <?= wai_h((string)($group['group_name'] ?: $gid)) ?>
+                                            <?= (int)($group['is_ignored'] ?? 0) === 1 ? ' · monitoramento ignorado' : '' ?>
+                                        </span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="form-label">Equipe que receberá</label>
+                            <div class="wai-check-list">
+                                <?php if (!$teamRecipients): ?><span class="wai-help">Nenhum membro ativo.</span><?php endif; ?>
+                                <?php foreach ($teamRecipients as $member): ?>
+                                    <?php $mid = (int)$member['id']; $hasPhone = trim((string)($member['whatsapp_number'] ?? '')) !== ''; ?>
+                                    <label class="wai-check-item">
+                                        <input type="checkbox" name="rule_team_ids[]" value="<?= $mid ?>" <?= in_array($mid, $selectedTeam, true) ? 'checked' : '' ?> <?= !$hasPhone ? 'disabled' : '' ?>>
+                                        <span><?= wai_h((string)$member['nome']) ?><?= !$hasPhone ? ' · sem WhatsApp' : '' ?></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top:12px">
+                        <label class="form-label">Mensagem</label>
+                        <textarea name="rule_message_template" rows="10" required><?= wai_h($template) ?></textarea>
+                        <div class="wai-help">
+                            Variáveis: <code>{{evento}}</code>, <code>{{data_evento}}</code>, qualquer campo <code>{{user.campo}}</code>,
+                            qualquer campo <code>{{extra.campo}}</code> e <code>{{destino.nome}}</code>. Exemplos:
+                            <code>{{user.nome}}</code>, <code>{{user.tags}}</code>, <code>{{extra.blacklist.reason}}</code>.
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                        <label class="form-label" style="margin:0">
+                            <input type="checkbox" name="rule_is_active" value="1" <?= $isNew || (int)($rule['is_active'] ?? 0) === 1 ? 'checked' : '' ?>>
+                            Regra ativa
+                        </label>
+                        <button class="btn btn-primary" type="submit"><?= $isNew ? 'Criar regra' : 'Salvar alterações' ?></button>
+                    </div>
+                </form>
+                <?php
+            };
+            ?>
+
+            <datalist id="wai-event-codes">
+                <?php foreach ($notificationEventCodes as $eventCode): ?><option value="<?= wai_h($eventCode) ?>"></option><?php endforeach; ?>
+            </datalist>
+
+            <details>
+                <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">+ Criar nova regra</summary>
+                <?php $renderEventRuleForm([], [], []); ?>
+            </details>
+
+            <?php if (!$eventNotificationRules): ?>
+                <div class="wai-help" style="padding:14px 0">Nenhuma regra de notificação por evento criada.</div>
+            <?php endif; ?>
+            <?php foreach ($eventNotificationRules as $rule): ?>
+                <?php $rid = (int)$rule['id']; ?>
+                <div class="wai-rule-card">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+                        <div>
+                            <strong style="font-size:12px;color:var(--text)"><?= wai_h((string)$rule['name']) ?></strong>
+                            <div class="wai-help"><?= wai_h((string)$rule['event_code']) ?></div>
+                        </div>
+                        <?= wai_badge((int)$rule['is_active'] === 1 ? 'Ativa' : 'Inativa', (int)$rule['is_active'] === 1 ? 'success' : 'neutral') ?>
+                    </div>
+                    <details style="margin-top:8px">
+                        <summary style="cursor:pointer;font-size:11px;color:var(--muted)">Editar regra</summary>
+                        <?php $renderEventRuleForm($rule, $eventNotificationRuleGroups[$rid] ?? [], $eventNotificationRuleTeam[$rid] ?? []); ?>
+                    </details>
+                    <div style="display:flex;gap:7px;margin-top:8px">
+                        <form method="post">
+                            <input type="hidden" name="action" value="toggle_event_notification_rule">
+                            <input type="hidden" name="rule_id" value="<?= $rid ?>">
+                            <button class="btn btn-ghost btn-xs" type="submit"><?= (int)$rule['is_active'] === 1 ? 'Desativar' : 'Ativar' ?></button>
+                        </form>
+                        <form method="post" onsubmit="return confirm('Excluir esta regra de notificacao?')">
+                            <input type="hidden" name="action" value="delete_event_notification_rule">
+                            <input type="hidden" name="rule_id" value="<?= $rid ?>">
+                            <button class="btn btn-ghost btn-xs" type="submit" style="color:var(--danger)">Excluir</button>
+                        </form>
+                    </div>
+                </div>
+            <?php endforeach; ?>
         </div>
 
         <div class="wai-card">
@@ -602,6 +901,37 @@ include __DIR__ . '/_header.php';
     </div>
 
     <div>
+        <div class="wai-card">
+            <div class="wai-title">Envios por evento</div>
+            <div style="overflow-x:auto;max-height:430px">
+                <table class="wai-table">
+                    <thead><tr><th>Data</th><th>Regra/evento</th><th>Destino</th><th>Status</th></tr></thead>
+                    <tbody>
+                    <?php if (!$eventNotificationLogs): ?>
+                        <tr><td colspan="4" style="color:var(--muted);text-align:center;padding:18px">Nenhuma notificação por evento enviada.</td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($eventNotificationLogs as $log): ?>
+                        <tr>
+                            <td><?= wai_dt((string)$log['created_at']) ?></td>
+                            <td>
+                                <strong><?= wai_h((string)($log['rule_name'] ?: ('Regra #' . $log['rule_id']))) ?></strong>
+                                <div class="wai-help"><?= wai_h((string)$log['event_code']) ?></div>
+                            </td>
+                            <td>
+                                <?= wai_h((string)($log['destination_name'] ?: $log['destination_id'])) ?>
+                                <div class="wai-help"><?= wai_h((string)$log['destination_type']) ?></div>
+                            </td>
+                            <td>
+                                <?= wai_badge((string)$log['status'], (string)$log['status'] === 'sent' ? 'success' : 'danger') ?>
+                                <?php if (!empty($log['error_message'])): ?><div class="wai-help"><?= wai_h((string)$log['error_message']) ?></div><?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="wai-card">
             <div class="wai-title">Últimas ações da blacklist</div>
             <div style="overflow-x:auto;max-height:430px">

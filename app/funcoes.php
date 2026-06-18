@@ -6,6 +6,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/webhook_dispatcher.php';
 require_once __DIR__ . '/superfuncionario_dispatcher.php';
 require_once __DIR__ . '/manychat_dispatcher.php';
+require_once __DIR__ . '/whatsapp_event_notifications.php';
 
 function proteger_aluno(): void {
     if (empty($_SESSION['aluno_id'])) {
@@ -322,7 +323,8 @@ function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $ex
     // Disparo opcional para SuperFuncionário (se houver regras ativas)
     $sfOk = sf_disparar_evento($pdo, $evento, $user, $extra);
     $mcOk = mc_disparar_evento($pdo, $evento, $user, $extra);
-    return $sfOk || $mcOk;
+    $whatsappNotificationOk = whatsapp_event_notifications_dispatch($pdo, $evento, $user, $extra);
+    return $sfOk || $mcOk || $whatsappNotificationOk;
 }
 
 function reagendamento_live_ensure_logs(PDO $pdo): void {

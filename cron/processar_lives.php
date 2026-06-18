@@ -621,6 +621,13 @@ foreach ($turmas as $turma) {
             }
         }
 
+        if (function_exists('whatsapp_event_notifications_dispatch')) {
+            try {
+                whatsapp_event_notifications_dispatch($pdo, 'LIVE_TURMA', $userStd, $extra);
+                whatsapp_event_notifications_dispatch($pdo, 'LIVE_TURMA_' . $codigo, $userStd, $extra);
+            } catch (Throwable $e) {}
+        }
+
         if ($hasManychatLiveRules) {
             try {
                 $mcOkGlobal = mc_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);

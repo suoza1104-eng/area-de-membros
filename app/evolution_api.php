@@ -1474,26 +1474,6 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     }
     $blacklistEffective = $blacklist && empty($blacklistAction['protected_team']);
 
-    if ($userId <= 0) {
-        $status = $blacklistEffective
-            ? 'blacklist_detected_no_user'
-            : ($blacklist ? 'blacklist_protected_team' : 'user_not_found');
-        $pdo->prepare("
-            UPDATE whatsapp_webhook_raw_logs
-               SET trigger_status = :status, trigger_error = NULL
-             WHERE id = :id
-             LIMIT 1
-        ")->execute([':status' => $status, ':id' => $logId]);
-        evolution_record_group_event($pdo, $logId, $fields, null, $blacklist, $status);
-        return [
-            'status' => $status,
-            'user_id' => null,
-            'event' => $event,
-            'blacklisted' => (bool)$blacklist,
-            'blacklist_action' => $blacklistAction,
-        ];
-    }
-
     $extra = [
         'telefone' => $fields['participant_phone'] ?? null,
         'group_id' => $fields['group_id'] ?? null,
@@ -1509,6 +1489,29 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
             'id' => (int)($blacklist['id'] ?? 0),
             'reason' => $blacklist['reason'] ?? null,
             'origem' => $blacklist['origem'] ?? null,
+        ];
+    }
+
+    if ($userId <= 0) {
+        $status = $blacklistEffective
+            ? 'blacklist_detected_no_user'
+            : ($blacklist ? 'blacklist_protected_team' : 'user_not_found');
+        $pdo->prepare("
+            UPDATE whatsapp_webhook_raw_logs
+               SET trigger_status = :status, trigger_error = NULL
+             WHERE id = :id
+             LIMIT 1
+        ")->execute([':status' => $status, ':id' => $logId]);
+        evolution_record_group_event($pdo, $logId, $fields, null, $blacklist, $status);
+        if ($blacklistEffective && function_exists('whatsapp_event_notifications_dispatch')) {
+            whatsapp_event_notifications_dispatch($pdo, 'WHATSAPP_BLACKLIST_DETECTADO', [], $extra);
+        }
+        return [
+            'status' => $status,
+            'user_id' => null,
+            'event' => $event,
+            'blacklisted' => (bool)$blacklist,
+            'blacklist_action' => $blacklistAction,
         ];
     }
 
