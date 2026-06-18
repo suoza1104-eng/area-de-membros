@@ -456,6 +456,7 @@ $dashLineCharts['logins'] = [
     'title' => 'Logaram no sistema',
     'suffix' => ' aluno(s)',
     'color' => '#14b8a6',
+    'first_only_enabled' => true,
     'series' => dash_all_period_series(
         $pdo,
         "(SELECT user_id, logged_at AS event_at FROM login_events UNION ALL SELECT id AS user_id, last_login_at AS event_at FROM users WHERE last_login_at IS NOT NULL) ev JOIN users u ON u.id = ev.user_id",
@@ -468,18 +469,59 @@ $dashLineCharts['logins'] = [
         $turmaIds,
         $codigosTurmaFiltro
     ),
+    'first_series' => dash_all_period_series(
+        $pdo,
+        "(SELECT user_id, MIN(event_at) AS first_event_at
+          FROM (
+              SELECT user_id, logged_at AS event_at FROM login_events
+              UNION ALL
+              SELECT id AS user_id, last_login_at AS event_at FROM users WHERE last_login_at IS NOT NULL
+          ) login_history
+          GROUP BY user_id) first_login
+         JOIN users u ON u.id = first_login.user_id",
+        'first_login.first_event_at',
+        'COUNT(DISTINCT first_login.user_id)',
+        'first_logins',
+        $dataDe,
+        $dataAte,
+        $lineTurmaCol,
+        $turmaIds,
+        $codigosTurmaFiltro
+    ),
 ];
 
 $dashLineCharts['lesson_views'] = [
     'title' => 'Viram alguma aula',
     'suffix' => ' aluno(s)',
     'color' => '#38bdf8',
+    'first_only_enabled' => true,
     'series' => dash_all_period_series(
         $pdo,
         "(SELECT user_id, viewed_at AS event_at FROM lesson_view_events UNION ALL SELECT user_id, COALESCE(completed_at, created_at) AS event_at FROM lesson_progress WHERE status = 'completed') ev JOIN users u ON u.id = ev.user_id",
         'ev.event_at',
         'COUNT(DISTINCT ev.user_id)',
         'lesson_views',
+        $dataDe,
+        $dataAte,
+        $lineTurmaCol,
+        $turmaIds,
+        $codigosTurmaFiltro
+    ),
+    'first_series' => dash_all_period_series(
+        $pdo,
+        "(SELECT user_id, MIN(event_at) AS first_event_at
+          FROM (
+              SELECT user_id, viewed_at AS event_at FROM lesson_view_events
+              UNION ALL
+              SELECT user_id, COALESCE(completed_at, created_at) AS event_at
+              FROM lesson_progress
+              WHERE status = 'completed'
+          ) lesson_history
+          GROUP BY user_id) first_lesson
+         JOIN users u ON u.id = first_lesson.user_id",
+        'first_lesson.first_event_at',
+        'COUNT(DISTINCT first_lesson.user_id)',
+        'first_lesson_views',
         $dataDe,
         $dataAte,
         $lineTurmaCol,
@@ -1666,6 +1708,20 @@ dashTurmaRender();
     background: var(--primary);
     color: #111827;
 }
+.dash-first-only {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+}
+.dash-first-only input {
+    margin: 0;
+    accent-color: var(--primary);
+}
 .dash-line-panel {
     position: relative;
 }
@@ -1722,10 +1778,18 @@ body.dash-chart-fullscreen {
             <button type="button" class="dash-line-close" aria-label="Fechar grafico em tela cheia">X</button>
             <div class="panel-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
                 <span><?= htmlspecialchars((string)$chartCfg['title']) ?></span>
-                <div class="dash-period-switch" data-chart="<?= htmlspecialchars($chartKey) ?>">
-                    <button type="button" class="active" data-period="daily">Diario</button>
-                    <button type="button" data-period="monthly">Mensal</button>
-                    <button type="button" data-period="yearly">Anual</button>
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+                    <?php if (!empty($chartCfg['first_only_enabled'])): ?>
+                        <label class="dash-first-only" title="Conta cada aluno somente na data do primeiro evento registrado">
+                            <input type="checkbox" data-first-only="<?= htmlspecialchars($chartKey) ?>">
+                            Somente primeiro evento
+                        </label>
+                    <?php endif; ?>
+                    <div class="dash-period-switch" data-chart="<?= htmlspecialchars($chartKey) ?>">
+                        <button type="button" class="active" data-period="daily">Diario</button>
+                        <button type="button" data-period="monthly">Mensal</button>
+                        <button type="button" data-period="yearly">Anual</button>
+                    </div>
                 </div>
             </div>
             <div class="dash-line-chart-wrap">
@@ -2203,16 +2267,19 @@ body.dash-chart-fullscreen {
     const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const dashLineInstances = {};
 
-    function dashLineDataset(chartKey, period) {
+    function dashLineDataset(chartKey, period, firstOnly) {
         const cfg = DASH_LINE_CHARTS[chartKey] || {};
-        const series = (cfg.series && cfg.series[period]) ? cfg.series[period] : {labels: [], data: []};
+        const seriesGroup = firstOnly && cfg.first_series ? cfg.first_series : cfg.series;
+        const series = (seriesGroup && seriesGroup[period]) ? seriesGroup[period] : {labels: [], data: []};
         return {cfg, labels: series.labels || [], data: series.data || []};
     }
 
     function dashRenderLine(chartKey, period) {
         const canvas = document.getElementById('dashLine_' + chartKey);
         if (!canvas) return;
-        const payload = dashLineDataset(chartKey, period);
+        const firstOnlyInput = document.querySelector('input[data-first-only="' + chartKey + '"]');
+        const firstOnly = Boolean(firstOnlyInput && firstOnlyInput.checked);
+        const payload = dashLineDataset(chartKey, period, firstOnly);
         const color = payload.cfg.color || '#38bdf8';
         if (dashLineInstances[chartKey]) dashLineInstances[chartKey].destroy();
         dashLineInstances[chartKey] = new Chart(canvas, {
@@ -2264,6 +2331,15 @@ body.dash-chart-fullscreen {
             });
         });
         dashRenderLine(chartKey, 'daily');
+    });
+
+    document.querySelectorAll('input[data-first-only]').forEach(function(input) {
+        input.addEventListener('change', function() {
+            const chartKey = input.getAttribute('data-first-only');
+            const group = document.querySelector('.dash-period-switch[data-chart="' + chartKey + '"]');
+            const active = group ? group.querySelector('button[data-period].active') : null;
+            dashRenderLine(chartKey, active ? active.getAttribute('data-period') : 'daily');
+        });
     });
 
     function dashResizeLine(chartKey) {
