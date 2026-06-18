@@ -388,7 +388,7 @@ $eventHints = [
     'WHATSAPP_GRUPO_ENTROU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_ENTROU e aplicada no aluno.',
     'WHATSAPP_GRUPO_SAIU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_SAIU e aplicada no aluno.',
     'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_REMOVIDO_ADMIN e aplicada no aluno.',
-    'WHATSAPP_BLACKLIST_DETECTADO' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.blacklist.id</code>, <code>extra.blacklist.reason</code>. A tag WHATSAPP_BLACKLIST_DETECTADO e aplicada no aluno. Nao remove participante automaticamente.',
+    'WHATSAPP_BLACKLIST_DETECTADO' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.blacklist.id</code>, <code>extra.blacklist.reason</code>. A tag WHATSAPP_BLACKLIST_DETECTADO e aplicada no aluno. A remocao e as notificacoes seguem a configuracao da tela IA WhatsApp.',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -1078,7 +1078,7 @@ include __DIR__ . '/_header.php';
                                     </div>
                                     <div class="evento-opcao" data-value="WHATSAPP_BLACKLIST_DETECTADO">
                                         <strong>WHATSAPP_BLACKLIST_DETECTADO <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Numero em blacklist entrou no grupo. Nenhuma remocao automatica e executada.</em>
+                                        <em>Numero em blacklist entrou no grupo. A automacao de remocao e alerta e configurada na tela IA WhatsApp.</em>
                                     </div>
                                     <div class="ev-group-label">Certificado</div>
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">

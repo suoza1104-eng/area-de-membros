@@ -83,6 +83,7 @@ function wh_trigger_label(?string $status): string {
         'blacklist_detected' => 'Blacklist detectada',
         'blacklist_detected_no_user' => 'Blacklist sem aluno',
         'blacklist_detected_backfill' => 'Blacklist retroativa',
+        'blacklist_protected_team' => 'Blacklist ignorada - equipe protegida',
         'identified_backfill' => 'Aluno identificado',
         'ignored_group' => 'Grupo ignorado',
         'user_not_found' => 'Aluno nao encontrado',
@@ -598,7 +599,7 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Conecta instancias da Evolution API, recebe eventos de grupos, cruza participantes com alunos e dispara tags/webhooks/SuperFuncionario. Nenhuma remocao automatica e executada.</p>
+            <p>Conecta instancias da Evolution API, recebe eventos de grupos, cruza participantes com alunos e dispara tags/webhooks/SuperFuncionario. A remocao automatica e os alertas da blacklist sao configurados na tela IA WhatsApp.</p>
         </div>
         <a class="btn btn-ghost" href="../README_EVOLUTION_API.md" target="_blank">README</a>
     </div>

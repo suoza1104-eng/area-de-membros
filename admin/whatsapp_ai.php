@@ -85,6 +85,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+        if ($action === 'save_blacklist_config') {
+            evolution_blacklist_set_config([
+                'auto_remove' => !empty($_POST['blacklist_auto_remove']),
+                'notify_enabled' => !empty($_POST['blacklist_notify_enabled']),
+                'recipient_ids' => $_POST['blacklist_recipient_ids'] ?? [],
+                'message_template' => $_POST['blacklist_message_template'] ?? '',
+            ]);
+            header('Location: whatsapp_ai.php?blacklist_saved=1');
+            exit;
+        }
+
         if ($action === 'toggle_group_ignore') {
             $gid = trim((string)($_POST['group_id'] ?? ''));
             if ($gid === '') throw new RuntimeException('Grupo invalido.');
@@ -141,6 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_GET['saved'])) $notice = 'Configuracao da IA salva.';
+if (isset($_GET['blacklist_saved'])) $notice = 'Automacao da blacklist salva.';
 if (isset($_GET['groups'])) $notice = 'Configuracao do grupo atualizada.';
 if (isset($_GET['token'])) $notice = 'Token do cron atualizado.';
 if (isset($_GET['action_done'])) $notice = 'Acao aprovada e executada.';
@@ -149,6 +161,7 @@ if (isset($_GET['batch_resolved'])) $notice = 'Pacote marcado como resolvido.';
 if (isset($_GET['batch_requeued'])) $notice = 'Pacote reaberto: ' . (int)$_GET['batch_requeued'] . ' mensagem(ns) voltaram para a fila. Clique em Processar agora para analisar novamente.';
 
 $cfg = whatsapp_ai_get_config();
+$blacklistCfg = evolution_blacklist_get_config();
 $cronToken = $generatedCronToken !== '' ? $generatedCronToken : trim((string)get_setting('cron_whatsapp_ai_token', ''));
 $cronUrl = rtrim(BASE_URL, '/') . '/cron_whatsapp_ai.php?token=' . $cronToken;
 
@@ -177,6 +190,28 @@ try {
           FROM whatsapp_groups g
          ORDER BY g.is_ignored ASC, COALESCE(g.group_name, g.group_id) ASC
          LIMIT 120
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$teamRecipients = [];
+try {
+    $teamRecipients = $pdo->query("
+        SELECT id, nome, email, whatsapp_number, whatsapp_blacklist_exempt, ativo
+          FROM admin_equipe
+         WHERE ativo = 1
+         ORDER BY nome ASC
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
+$blacklistActions = [];
+try {
+    $blacklistActions = $pdo->query("
+        SELECT ba.*, g.group_name, u.nome AS user_name
+          FROM whatsapp_blacklist_actions ba
+          LEFT JOIN whatsapp_groups g ON g.group_id = ba.group_id
+          LEFT JOIN users u ON u.id = ba.user_id
+         ORDER BY ba.created_at DESC, ba.id DESC
+         LIMIT 20
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
@@ -375,6 +410,70 @@ include __DIR__ . '/_header.php';
         </div>
 
         <div class="wai-card">
+            <div class="wai-title">Automacao da blacklist</div>
+            <form method="post">
+                <input type="hidden" name="action" value="save_blacklist_config">
+
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="blacklist_auto_remove" value="1" <?= $blacklistCfg['auto_remove'] ? 'checked' : '' ?>>
+                        Remover automaticamente números da blacklist
+                    </label>
+                    <div class="wai-help">A instância espiã que recebeu o evento tentará remover o participante imediatamente do grupo. O número conectado precisa ser administrador do grupo.</div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="blacklist_notify_enabled" value="1" <?= $blacklistCfg['notify_enabled'] ? 'checked' : '' ?>>
+                        Notificar a equipe pelo WhatsApp
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Membros que receberão o alerta</label>
+                    <div style="display:grid;gap:8px;border:1px solid var(--border);border-radius:8px;padding:10px">
+                        <?php if (!$teamRecipients): ?>
+                            <div class="wai-help">Nenhum membro ativo cadastrado na tela Equipe.</div>
+                        <?php endif; ?>
+                        <?php foreach ($teamRecipients as $member): ?>
+                            <?php
+                            $memberId = (int)$member['id'];
+                            $memberPhone = trim((string)($member['whatsapp_number'] ?? ''));
+                            $selected = in_array($memberId, $blacklistCfg['recipient_ids'], true);
+                            ?>
+                            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text)">
+                                <input type="checkbox" name="blacklist_recipient_ids[]" value="<?= $memberId ?>"
+                                    <?= $selected ? 'checked' : '' ?> <?= $memberPhone === '' ? 'disabled' : '' ?>>
+                                <span>
+                                    <strong><?= wai_h((string)$member['nome']) ?></strong>
+                                    <span class="wai-help" style="display:block;margin:1px 0 0">
+                                        <?= $memberPhone !== '' ? wai_h($memberPhone) : 'Sem WhatsApp cadastrado' ?>
+                                        <?= (int)($member['whatsapp_blacklist_exempt'] ?? 1) === 1 ? ' · protegido contra banimento' : '' ?>
+                                    </span>
+                                </span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="wai-help">Cadastre ou altere os telefones na tela Equipe.</div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Mensagem padrão do alerta</label>
+                    <textarea name="blacklist_message_template" rows="14"><?= wai_h((string)$blacklistCfg['message_template']) ?></textarea>
+                    <div class="wai-help">
+                        Variáveis: <code>{{numero}}</code>, <code>{{grupo_nome}}</code>, <code>{{grupo_id}}</code>,
+                        <code>{{motivo_blacklist}}</code>, <code>{{origem_blacklist}}</code>,
+                        <code>{{aluno_identificado}}</code>, <code>{{aluno_id}}</code>, <code>{{aluno_nome}}</code>,
+                        <code>{{aluno_email}}</code>, <code>{{turmas}}</code>, <code>{{tags}}</code>,
+                        <code>{{primeira_entrada}}</code>, <code>{{data_ocorrencia}}</code> e <code>{{status_remocao}}</code>.
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" type="submit">Salvar automação da blacklist</button>
+            </form>
+        </div>
+
+        <div class="wai-card">
             <div class="wai-title">Cron</div>
             <div class="wai-help" style="margin-bottom:8px">Configure este endpoint no cron do servidor, idealmente a cada minuto. A propria configuracao da IA decide se ja passou o intervalo de empacotamento.</div>
             <div class="wai-code"><?= wai_h($cronUrl) ?></div>
@@ -503,6 +602,43 @@ include __DIR__ . '/_header.php';
     </div>
 
     <div>
+        <div class="wai-card">
+            <div class="wai-title">Últimas ações da blacklist</div>
+            <div style="overflow-x:auto;max-height:430px">
+                <table class="wai-table">
+                    <thead><tr><th>Data</th><th>Contato</th><th>Remoção</th><th>Alerta</th></tr></thead>
+                    <tbody>
+                    <?php if (!$blacklistActions): ?>
+                        <tr><td colspan="4" style="color:var(--muted);text-align:center;padding:18px">Nenhuma ação automática registrada.</td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($blacklistActions as $ba): ?>
+                        <tr>
+                            <td><?= wai_dt((string)$ba['created_at']) ?></td>
+                            <td>
+                                <strong><?= wai_h((string)($ba['user_name'] ?: $ba['participant_phone'] ?: 'Não identificado')) ?></strong>
+                                <div class="wai-help"><?= wai_h((string)$ba['participant_phone']) ?></div>
+                                <div class="wai-help"><?= wai_h((string)($ba['group_name'] ?: $ba['group_id'])) ?></div>
+                            </td>
+                            <td>
+                                <?php
+                                $removal = (string)$ba['removal_status'];
+                                echo wai_badge(
+                                    $removal,
+                                    $removal === 'removed' ? 'success' : ($removal === 'error' ? 'danger' : ($removal === 'protected_team' ? 'info' : 'neutral'))
+                                );
+                                ?>
+                            </td>
+                            <td>
+                                <?= wai_badge((string)($ba['notification_status'] ?: '-'), (string)$ba['notification_status'] === 'sent' ? 'success' : ((string)$ba['notification_status'] === 'error' ? 'danger' : 'neutral')) ?>
+                                <div class="wai-help"><?= (int)$ba['notification_sent'] ?>/<?= (int)$ba['notification_recipients'] ?> enviado(s)</div>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="wai-card">
             <div class="wai-title">Grupos monitorados</div>
             <div style="overflow-x:auto;max-height:520px">

@@ -32,6 +32,17 @@ function evolution_ensure_tables(PDO $pdo): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    foreach ([
+        'whatsapp_number' => "ALTER TABLE admin_equipe ADD COLUMN whatsapp_number VARCHAR(30) NULL AFTER email",
+        'whatsapp_blacklist_exempt' => "ALTER TABLE admin_equipe ADD COLUMN whatsapp_blacklist_exempt TINYINT(1) NOT NULL DEFAULT 1 AFTER whatsapp_number",
+    ] as $column => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM admin_equipe LIKE :c");
+            $st->execute([':c' => $column]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) $pdo->exec($sql);
+        } catch (Throwable $e) {}
+    }
+
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_webhook_raw_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -147,6 +158,34 @@ function evolution_ensure_tables(PDO $pdo): void {
             updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uk_wbl_phone (phone_number),
             KEY idx_wbl_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_blacklist_actions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            raw_log_id INT NOT NULL,
+            blacklist_id INT NULL,
+            user_id INT NULL,
+            instance_key VARCHAR(120) NULL,
+            group_id VARCHAR(160) NULL,
+            participant_phone VARCHAR(30) NULL,
+            participant_id VARCHAR(120) NULL,
+            is_team_protected TINYINT(1) NOT NULL DEFAULT 0,
+            removal_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            removal_http_status INT NULL,
+            removal_response LONGTEXT NULL,
+            notification_status VARCHAR(30) NULL,
+            notification_recipients INT NOT NULL DEFAULT 0,
+            notification_sent INT NOT NULL DEFAULT 0,
+            notification_errors LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_wba_raw_log (raw_log_id),
+            KEY idx_wba_created (created_at),
+            KEY idx_wba_phone (participant_phone),
+            KEY idx_wba_user (user_id),
+            KEY idx_wba_removal (removal_status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
@@ -625,6 +664,58 @@ function evolution_extract_raw_event_fields(array $payload): array {
     ];
 }
 
+function evolution_extract_raw_event_fields_all(array $payload): array {
+    $data = $payload['data'] ?? [];
+    if (!is_array($data)) $data = [];
+
+    $candidates = [];
+    $participants = $data['participants'] ?? $data['participant'] ?? $payload['participants'] ?? null;
+    if (is_array($participants)) {
+        foreach ($participants as $participant) {
+            if (is_scalar($participant) || is_array($participant)) $candidates[] = $participant;
+        }
+    } elseif (is_scalar($participants) && trim((string)$participants) !== '') {
+        $candidates[] = $participants;
+    }
+
+    if (!$candidates && !empty($data['participantsData']) && is_array($data['participantsData'])) {
+        foreach ($data['participantsData'] as $participant) {
+            if (is_array($participant)) $candidates[] = $participant;
+        }
+    }
+
+    if (!$candidates) return [evolution_extract_raw_event_fields($payload)];
+
+    $all = [];
+    $seen = [];
+    foreach ($candidates as $candidate) {
+        if (is_array($candidate) && isset($candidate['jid']) && is_array($candidate['jid'])) {
+            $candidate = [
+                'phoneNumber' => $candidate['jid']['phoneNumber'] ?? $candidate['phoneNumber'] ?? '',
+                'id' => $candidate['jid']['id'] ?? $candidate['id'] ?? '',
+            ];
+        }
+        $copy = $payload;
+        $copyData = $data;
+        $copyData['participants'] = [$candidate];
+        unset($copyData['participant'], $copyData['participantsData']);
+        $copy['data'] = $copyData;
+        unset($copy['participants'], $copy['participant']);
+
+        $fields = evolution_extract_raw_event_fields($copy);
+        $key = implode('|', [
+            (string)($fields['participant_phone'] ?? ''),
+            (string)($fields['participant_id'] ?? ''),
+            (string)($fields['participant_number'] ?? ''),
+        ]);
+        if ($key === '||' || isset($seen[$key])) continue;
+        $seen[$key] = true;
+        $all[] = $fields;
+    }
+
+    return $all ?: [evolution_extract_raw_event_fields($payload)];
+}
+
 function evolution_clean_whatsapp_phone(?string $value): string {
     $value = trim((string)$value);
     if ($value === '' || $value === '[object Object]') return '';
@@ -743,6 +834,302 @@ function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
     } catch (Throwable $e) {
         return null;
     }
+}
+
+function evolution_blacklist_default_message(): string {
+    return "🚨 *AVISO BLACKLIST*\n\n"
+        . "Um número da blacklist entrou em um grupo monitorado e foi removido.\n\n"
+        . "*Número:* {{numero}}\n"
+        . "*Grupo:* {{grupo_nome}}\n"
+        . "*Motivo:* {{motivo_blacklist}}\n"
+        . "*Aluno identificado:* {{aluno_identificado}}\n"
+        . "*Nome:* {{aluno_nome}}\n"
+        . "*E-mail:* {{aluno_email}}\n"
+        . "*Turmas:* {{turmas}}\n"
+        . "*Tags:* {{tags}}\n"
+        . "*Primeira entrada:* {{primeira_entrada}}\n"
+        . "*Data da ocorrência:* {{data_ocorrencia}}\n"
+        . "*Remoção:* {{status_remocao}}";
+}
+
+function evolution_blacklist_get_config(): array {
+    $recipientIds = json_decode((string)get_setting('whatsapp_blacklist_notify_team_ids', '[]'), true);
+    if (!is_array($recipientIds)) $recipientIds = [];
+    return [
+        'auto_remove' => (int)get_setting('whatsapp_blacklist_auto_remove', '1') === 1,
+        'notify_enabled' => (int)get_setting('whatsapp_blacklist_notify_enabled', '1') === 1,
+        'recipient_ids' => array_values(array_unique(array_filter(array_map('intval', $recipientIds)))),
+        'message_template' => (string)get_setting('whatsapp_blacklist_message_template', evolution_blacklist_default_message()),
+    ];
+}
+
+function evolution_blacklist_set_config(array $data): void {
+    $recipientIds = $data['recipient_ids'] ?? [];
+    if (!is_array($recipientIds)) $recipientIds = [];
+    $recipientIds = array_values(array_unique(array_filter(array_map('intval', $recipientIds))));
+    set_setting('whatsapp_blacklist_auto_remove', !empty($data['auto_remove']) ? '1' : '0');
+    set_setting('whatsapp_blacklist_notify_enabled', !empty($data['notify_enabled']) ? '1' : '0');
+    set_setting('whatsapp_blacklist_notify_team_ids', json_encode($recipientIds));
+    set_setting(
+        'whatsapp_blacklist_message_template',
+        trim((string)($data['message_template'] ?? '')) ?: evolution_blacklist_default_message()
+    );
+}
+
+function evolution_is_team_protected_phone(PDO $pdo, ?string $phone): bool {
+    $variants = evolution_phone_variants($phone);
+    if (!$variants) return false;
+    $where = [];
+    $params = [];
+    $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(whatsapp_number,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
+    foreach ($variants as $i => $variant) {
+        $key = ':tp' . $i;
+        $where[] = "({$cleanExpr} = {$key} OR CONCAT('55', {$cleanExpr}) = {$key})";
+        $params[$key] = $variant;
+    }
+    try {
+        $st = $pdo->prepare("
+            SELECT id
+              FROM admin_equipe
+             WHERE ativo = 1
+               AND COALESCE(whatsapp_blacklist_exempt, 1) = 1
+               AND (" . implode(' OR ', $where) . ")
+             LIMIT 1
+        ");
+        $st->execute($params);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function evolution_remove_group_participant(string $instanceKey, string $groupId, string $participant): array {
+    $instanceKey = trim($instanceKey);
+    $groupId = trim($groupId);
+    $participant = trim($participant);
+    if ($instanceKey === '' || $groupId === '' || $participant === '') {
+        return ['ok' => false, 'status' => 0, 'data' => null, 'raw' => '', 'error' => 'Instancia, grupo ou participante vazio.'];
+    }
+    return evolution_http('POST', '/group/updateParticipant/' . rawurlencode($instanceKey), [
+        'groupJid' => $groupId,
+        'action' => 'remove',
+        'participants' => [$participant],
+    ]);
+}
+
+function evolution_send_text(string $instanceKey, string $number, string $text): array {
+    $instanceKey = trim($instanceKey);
+    $number = evolution_clean_whatsapp_phone($number);
+    $text = trim($text);
+    if ($instanceKey === '' || $number === '' || $text === '') {
+        return ['ok' => false, 'status' => 0, 'data' => null, 'raw' => '', 'error' => 'Instancia, destinatario ou mensagem vazios.'];
+    }
+    return evolution_http('POST', '/message/sendText/' . rawurlencode($instanceKey), [
+        'number' => $number,
+        'text' => $text,
+    ]);
+}
+
+function evolution_blacklist_contact_context(PDO $pdo, array $fields, ?array $user, array $blacklist): array {
+    $userId = (int)($user['id'] ?? 0);
+    $groupId = trim((string)($fields['group_id'] ?? ''));
+    $groupName = '';
+    $firstEntry = '';
+    $tags = [];
+    $turmas = [];
+
+    try {
+        $st = $pdo->prepare("SELECT group_name FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+        $st->execute([':gid' => $groupId]);
+        $groupName = trim((string)($st->fetchColumn() ?: ''));
+    } catch (Throwable $e) {}
+
+    if ($userId > 0) {
+        try {
+            $st = $pdo->prepare("SELECT GROUP_CONCAT(DISTINCT t.nome ORDER BY t.nome SEPARATOR ', ') FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = :uid");
+            $st->execute([':uid' => $userId]);
+            $tagText = trim((string)($st->fetchColumn() ?: ''));
+            if ($tagText !== '') $tags[] = $tagText;
+        } catch (Throwable $e) {}
+        try {
+            $st = $pdo->prepare("SELECT GROUP_CONCAT(DISTINCT codigo_turma ORDER BY codigo_turma SEPARATOR ', ') FROM inscricao_logs WHERE user_id = :uid AND codigo_turma IS NOT NULL AND codigo_turma <> ''");
+            $st->execute([':uid' => $userId]);
+            $turmaText = trim((string)($st->fetchColumn() ?: ''));
+            if ($turmaText !== '') $turmas[] = $turmaText;
+        } catch (Throwable $e) {}
+        $currentTurma = trim((string)($user['codigo_turma'] ?? $user['turma_codigo'] ?? ''));
+        if ($currentTurma !== '') $turmas[] = $currentTurma;
+        try {
+            $st = $pdo->prepare("SELECT MIN(created_at) FROM whatsapp_group_events WHERE user_id = :uid AND interpreted_event = 'WHATSAPP_GRUPO_ENTROU'");
+            $st->execute([':uid' => $userId]);
+            $firstEntry = trim((string)($st->fetchColumn() ?: ''));
+        } catch (Throwable $e) {}
+    }
+
+    if ($firstEntry === '') {
+        $variants = evolution_phone_variants((string)($fields['participant_phone'] ?? ''));
+        if ($variants) {
+            $ph = [];
+            $params = [];
+            foreach ($variants as $i => $variant) {
+                $key = ':fe' . $i;
+                $ph[] = $key;
+                $params[$key] = $variant;
+            }
+            try {
+                $st = $pdo->prepare("SELECT MIN(created_at) FROM whatsapp_group_events WHERE participant_phone IN (" . implode(',', $ph) . ") AND interpreted_event = 'WHATSAPP_GRUPO_ENTROU'");
+                $st->execute($params);
+                $firstEntry = trim((string)($st->fetchColumn() ?: ''));
+            } catch (Throwable $e) {}
+        }
+    }
+    if ($firstEntry === '') $firstEntry = date('Y-m-d H:i:s');
+
+    $formatDate = static function (?string $value): string {
+        if (!$value) return 'Não disponível';
+        try { return (new DateTime($value))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $value; }
+    };
+
+    return [
+        'numero' => (string)($fields['participant_phone'] ?? ''),
+        'grupo_id' => $groupId,
+        'grupo_nome' => $groupName !== '' ? $groupName : $groupId,
+        'motivo_blacklist' => trim((string)($blacklist['reason'] ?? '')) ?: 'Não informado',
+        'origem_blacklist' => trim((string)($blacklist['origem'] ?? '')) ?: 'Não informada',
+        'aluno_identificado' => $userId > 0 ? 'Sim' : 'Não',
+        'aluno_id' => $userId > 0 ? (string)$userId : 'Não identificado',
+        'aluno_nome' => trim((string)($user['nome'] ?? '')) ?: 'Não identificado',
+        'aluno_email' => trim((string)($user['email'] ?? '')) ?: 'Não identificado',
+        'turmas' => $turmas ? implode(', ', array_values(array_unique($turmas))) : 'Nenhuma turma encontrada',
+        'tags' => $tags ? implode(', ', array_values(array_unique($tags))) : 'Nenhuma tag encontrada',
+        'primeira_entrada' => $formatDate($firstEntry),
+        'data_ocorrencia' => date('d/m/Y H:i:s'),
+        'status_remocao' => 'Pendente',
+    ];
+}
+
+function evolution_render_template(string $template, array $context): string {
+    $replace = [];
+    foreach ($context as $key => $value) {
+        $replace['{{' . $key . '}}'] = (string)$value;
+    }
+    return strtr($template, $replace);
+}
+
+function evolution_blacklist_notify_recipients(PDO $pdo, string $instanceKey, string $message, array $recipientIds): array {
+    if (!$recipientIds) return ['recipients' => 0, 'sent' => 0, 'errors' => []];
+    $ph = implode(',', array_fill(0, count($recipientIds), '?'));
+    try {
+        $st = $pdo->prepare("SELECT id, nome, whatsapp_number FROM admin_equipe WHERE ativo = 1 AND id IN ($ph) ORDER BY nome");
+        $st->execute($recipientIds);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return ['recipients' => 0, 'sent' => 0, 'errors' => [$e->getMessage()]];
+    }
+
+    $sent = 0;
+    $errors = [];
+    foreach ($rows as $row) {
+        $phone = evolution_clean_whatsapp_phone((string)($row['whatsapp_number'] ?? ''));
+        if ($phone === '') {
+            $errors[] = (string)($row['nome'] ?? ('Equipe #' . (int)$row['id'])) . ': sem WhatsApp cadastrado';
+            continue;
+        }
+        $res = evolution_send_text($instanceKey, $phone, $message);
+        if (!empty($res['ok'])) {
+            $sent++;
+        } else {
+            $detail = trim((string)($res['raw'] ?? $res['error'] ?? 'Falha desconhecida'));
+            $errors[] = (string)($row['nome'] ?? $phone) . ': ' . substr($detail, 0, 400);
+        }
+    }
+    return ['recipients' => count($rows), 'sent' => $sent, 'errors' => $errors];
+}
+
+function evolution_handle_blacklist_entry(PDO $pdo, int $logId, array $fields, ?array $user, array $blacklist): array {
+    $phone = (string)($fields['participant_phone'] ?? '');
+    $protected = evolution_is_team_protected_phone($pdo, $phone);
+    $instanceKey = trim((string)($fields['instance_key'] ?? ''));
+    $groupId = trim((string)($fields['group_id'] ?? ''));
+    $participant = trim((string)($fields['participant_id'] ?? ''));
+    if ($participant === '' || strpos($participant, '@lid') !== false) $participant = $phone;
+    $cfg = evolution_blacklist_get_config();
+
+    $removalStatus = $protected ? 'protected_team' : (!empty($cfg['auto_remove']) ? 'pending' : 'disabled');
+    $removalResponse = null;
+    $removalHttpStatus = null;
+    if (!$protected && !empty($cfg['auto_remove'])) {
+        $remove = evolution_remove_group_participant($instanceKey, $groupId, $participant);
+        $removalStatus = !empty($remove['ok']) ? 'removed' : 'error';
+        $removalHttpStatus = (int)($remove['status'] ?? 0);
+        $removalResponse = (string)($remove['raw'] ?? $remove['error'] ?? '');
+    }
+
+    $context = evolution_blacklist_contact_context($pdo, $fields, $user, $blacklist);
+    $context['status_remocao'] = [
+        'removed' => 'Removido automaticamente',
+        'error' => 'Falha ao remover',
+        'disabled' => 'Remoção automática desativada',
+        'protected_team' => 'Ignorado: número protegido da equipe',
+    ][$removalStatus] ?? $removalStatus;
+
+    $notify = ['recipients' => 0, 'sent' => 0, 'errors' => []];
+    $notificationStatus = $protected ? 'skipped_protected' : 'disabled';
+    if (!$protected && !empty($cfg['notify_enabled'])) {
+        $message = evolution_render_template((string)$cfg['message_template'], $context);
+        $notify = evolution_blacklist_notify_recipients($pdo, $instanceKey, $message, $cfg['recipient_ids']);
+        $notificationStatus = $notify['recipients'] <= 0
+            ? 'no_recipients'
+            : ($notify['sent'] === $notify['recipients'] ? 'sent' : ($notify['sent'] > 0 ? 'partial' : 'error'));
+    }
+
+    try {
+        $st = $pdo->prepare("
+            INSERT INTO whatsapp_blacklist_actions
+                (raw_log_id, blacklist_id, user_id, instance_key, group_id, participant_phone, participant_id,
+                 is_team_protected, removal_status, removal_http_status, removal_response,
+                 notification_status, notification_recipients, notification_sent, notification_errors, created_at, updated_at)
+            VALUES
+                (:raw_log_id, :blacklist_id, :user_id, :instance_key, :group_id, :participant_phone, :participant_id,
+                 :is_team_protected, :removal_status, :removal_http_status, :removal_response,
+                 :notification_status, :notification_recipients, :notification_sent, :notification_errors, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                user_id = VALUES(user_id),
+                is_team_protected = VALUES(is_team_protected),
+                removal_status = VALUES(removal_status),
+                removal_http_status = VALUES(removal_http_status),
+                removal_response = VALUES(removal_response),
+                notification_status = VALUES(notification_status),
+                notification_recipients = VALUES(notification_recipients),
+                notification_sent = VALUES(notification_sent),
+                notification_errors = VALUES(notification_errors),
+                updated_at = NOW()
+        ");
+        $st->execute([
+            ':raw_log_id' => $logId,
+            ':blacklist_id' => (int)($blacklist['id'] ?? 0) ?: null,
+            ':user_id' => (int)($user['id'] ?? 0) ?: null,
+            ':instance_key' => $instanceKey ?: null,
+            ':group_id' => $groupId ?: null,
+            ':participant_phone' => $phone ?: null,
+            ':participant_id' => (string)($fields['participant_id'] ?? '') ?: null,
+            ':is_team_protected' => $protected ? 1 : 0,
+            ':removal_status' => $removalStatus,
+            ':removal_http_status' => $removalHttpStatus,
+            ':removal_response' => $removalResponse,
+            ':notification_status' => $notificationStatus,
+            ':notification_recipients' => (int)$notify['recipients'],
+            ':notification_sent' => (int)$notify['sent'],
+            ':notification_errors' => $notify['errors'] ? json_encode($notify['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+        ]);
+    } catch (Throwable $e) {}
+
+    return [
+        'protected_team' => $protected,
+        'removal_status' => $removalStatus,
+        'notification_status' => $notificationStatus,
+        'notification_sent' => (int)$notify['sent'],
+    ];
 }
 
 function evolution_upsert_group(PDO $pdo, array $fields): void {
@@ -1022,7 +1409,41 @@ function evolution_find_user_by_phone(PDO $pdo, ?string $phone): ?array {
     }
 }
 
+function evolution_resolve_group_event_phone(PDO $pdo, array $fields): array {
+    if (trim((string)($fields['participant_phone'] ?? '')) !== '') return $fields;
+    $participantId = trim((string)($fields['participant_id'] ?? ''));
+    $groupId = trim((string)($fields['group_id'] ?? ''));
+    if ($participantId === '') return $fields;
+    try {
+        $sql = "
+            SELECT participant_phone
+              FROM whatsapp_group_members
+             WHERE participant_id = :pid
+               AND participant_phone IS NOT NULL
+               AND participant_phone <> ''
+        ";
+        $params = [':pid' => $participantId];
+        if ($groupId !== '') {
+            $sql .= " AND group_id = :gid";
+            $params[':gid'] = $groupId;
+        }
+        $sql .= " ORDER BY is_current DESC, last_seen_at DESC LIMIT 1";
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $phone = evolution_clean_whatsapp_phone((string)($st->fetchColumn() ?: ''));
+        if ($phone !== '') $fields['participant_phone'] = $phone;
+    } catch (Throwable $e) {}
+    return $fields;
+}
+
 function evolution_process_group_event(PDO $pdo, int $logId, array $fields): array {
+    $fields = evolution_resolve_group_event_phone($pdo, $fields);
+    if (!empty($fields['participant_phone'])) {
+        try {
+            $pdo->prepare("UPDATE whatsapp_webhook_raw_logs SET participant_phone = :phone WHERE id = :id LIMIT 1")
+                ->execute([':phone' => $fields['participant_phone'], ':id' => $logId]);
+        } catch (Throwable $e) {}
+    }
     $event = (string)($fields['interpreted_event'] ?? '');
     $tag = evolution_tag_for_interpreted_event($event);
     if ($tag === '') $tag = null;
@@ -1047,16 +1468,30 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     $blacklist = strtolower((string)($fields['action'] ?? '')) === 'add'
         ? evolution_find_active_blacklist($pdo, (string)($fields['participant_phone'] ?? ''))
         : null;
+    $blacklistAction = null;
+    if ($blacklist) {
+        $blacklistAction = evolution_handle_blacklist_entry($pdo, $logId, $fields, $user, $blacklist);
+    }
+    $blacklistEffective = $blacklist && empty($blacklistAction['protected_team']);
 
     if ($userId <= 0) {
+        $status = $blacklistEffective
+            ? 'blacklist_detected_no_user'
+            : ($blacklist ? 'blacklist_protected_team' : 'user_not_found');
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs
-               SET trigger_status = 'user_not_found', trigger_error = NULL
+               SET trigger_status = :status, trigger_error = NULL
              WHERE id = :id
              LIMIT 1
-        ")->execute([':id' => $logId]);
-        evolution_record_group_event($pdo, $logId, $fields, null, $blacklist, $blacklist ? 'blacklist_detected_no_user' : 'user_not_found');
-        return ['status' => $blacklist ? 'blacklist_detected_no_user' : 'user_not_found', 'user_id' => null, 'event' => $event, 'blacklisted' => (bool)$blacklist];
+        ")->execute([':status' => $status, ':id' => $logId]);
+        evolution_record_group_event($pdo, $logId, $fields, null, $blacklist, $status);
+        return [
+            'status' => $status,
+            'user_id' => null,
+            'event' => $event,
+            'blacklisted' => (bool)$blacklist,
+            'blacklist_action' => $blacklistAction,
+        ];
     }
 
     $extra = [
@@ -1080,11 +1515,11 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
     try {
         adicionar_tag($userId, $tag, 'whatsapp_group', $logId);
         disparar_webhooks($event, $userId, $extra);
-        if ($blacklist) {
+        if ($blacklistEffective) {
             adicionar_tag($userId, 'WHATSAPP_BLACKLIST_DETECTADO', 'whatsapp_blacklist', $logId);
             disparar_webhooks('WHATSAPP_BLACKLIST_DETECTADO', $userId, $extra);
         }
-        $status = $blacklist ? 'blacklist_detected' : 'triggered';
+        $status = $blacklistEffective ? 'blacklist_detected' : ($blacklist ? 'blacklist_protected_team' : 'triggered');
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs
                SET user_id = :uid, trigger_status = :status, trigger_error = NULL
@@ -1092,7 +1527,13 @@ function evolution_process_group_event(PDO $pdo, int $logId, array $fields): arr
              LIMIT 1
         ")->execute([':uid' => $userId, ':status' => $status, ':id' => $logId]);
         evolution_record_group_event($pdo, $logId, $fields, $userId, $blacklist, $status);
-        return ['status' => $status, 'user_id' => $userId, 'event' => $event, 'blacklisted' => (bool)$blacklist];
+        return [
+            'status' => $status,
+            'user_id' => $userId,
+            'event' => $event,
+            'blacklisted' => (bool)$blacklist,
+            'blacklist_action' => $blacklistAction,
+        ];
     } catch (Throwable $e) {
         $pdo->prepare("
             UPDATE whatsapp_webhook_raw_logs

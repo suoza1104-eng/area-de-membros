@@ -16,6 +16,8 @@ try {
         id          INT AUTO_INCREMENT PRIMARY KEY,
         nome        VARCHAR(255) NOT NULL,
         email       VARCHAR(255) NOT NULL,
+        whatsapp_number VARCHAR(30) NULL,
+        whatsapp_blacklist_exempt TINYINT(1) NOT NULL DEFAULT 1,
         senha_hash  VARCHAR(255) NOT NULL DEFAULT '',
         permissoes  TEXT NULL,
         ativo       TINYINT(1) NOT NULL DEFAULT 1,
@@ -23,6 +25,16 @@ try {
         UNIQUE KEY uk_equipe_email (email)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 } catch (Throwable $e) {}
+foreach ([
+    'whatsapp_number' => "ALTER TABLE admin_equipe ADD COLUMN whatsapp_number VARCHAR(30) NULL AFTER email",
+    'whatsapp_blacklist_exempt' => "ALTER TABLE admin_equipe ADD COLUMN whatsapp_blacklist_exempt TINYINT(1) NOT NULL DEFAULT 1 AFTER whatsapp_number",
+] as $column => $sql) {
+    try {
+        $st = $pdo->prepare("SHOW COLUMNS FROM admin_equipe LIKE :c");
+        $st->execute([':c' => $column]);
+        if (!$st->fetch(PDO::FETCH_ASSOC)) $pdo->exec($sql);
+    } catch (Throwable $e) {}
+}
 
 // Páginas controladas e suas labels
 $PAGINAS = [
@@ -58,6 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($acao === 'salvar') {
         $nome  = trim((string)($_POST['nome']  ?? ''));
         $email = trim((string)($_POST['email'] ?? ''));
+        $whatsapp = preg_replace('/\D+/', '', (string)($_POST['whatsapp_number'] ?? '')) ?: '';
+        $blacklistExempt = !empty($_POST['whatsapp_blacklist_exempt']) ? 1 : 0;
         $senha = trim((string)($_POST['senha'] ?? ''));
         $pid   = (int)($_POST['edit_id'] ?? 0);
 
@@ -81,17 +95,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($pid > 0) {
                     if ($senha !== '') {
                         $hash = password_hash($senha, PASSWORD_BCRYPT);
-                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, senha_hash=:s, permissoes=:p WHERE id=:id")
-                            ->execute([':n'=>$nome,':e'=>$email,':s'=>$hash,':p'=>$permsJson,':id'=>$pid]);
+                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, whatsapp_blacklist_exempt=:bx, senha_hash=:s, permissoes=:p WHERE id=:id")
+                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':s'=>$hash,':p'=>$permsJson,':id'=>$pid]);
                     } else {
-                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, permissoes=:p WHERE id=:id")
-                            ->execute([':n'=>$nome,':e'=>$email,':p'=>$permsJson,':id'=>$pid]);
+                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, whatsapp_blacklist_exempt=:bx, permissoes=:p WHERE id=:id")
+                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':p'=>$permsJson,':id'=>$pid]);
                     }
                     $msg = 'Membro atualizado com sucesso.';
                 } else {
                     $hash = password_hash($senha, PASSWORD_BCRYPT);
-                    $pdo->prepare("INSERT INTO admin_equipe (nome,email,senha_hash,permissoes) VALUES (:n,:e,:s,:p)")
-                        ->execute([':n'=>$nome,':e'=>$email,':s'=>$hash,':p'=>$permsJson]);
+                    $pdo->prepare("INSERT INTO admin_equipe (nome,email,whatsapp_number,whatsapp_blacklist_exempt,senha_hash,permissoes) VALUES (:n,:e,:w,:bx,:s,:p)")
+                        ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':s'=>$hash,':p'=>$permsJson]);
                     $msg = 'Membro adicionado com sucesso.';
                 }
                 header('Location: equipe.php?ok=' . urlencode($msg)); exit;
@@ -217,6 +231,20 @@ require __DIR__ . '/_header.php';
         </div>
 
         <div class="form-group" style="margin-bottom:18px">
+            <label class="form-label">WhatsApp da equipe</label>
+            <input type="text" name="whatsapp_number" value="<?= h((string)($editRow['whatsapp_number'] ?? '')) ?>" placeholder="Ex: 5522999999999" inputmode="tel">
+            <div style="font-size:11px;color:var(--muted);margin-top:6px">
+                Use DDI + DDD + número. Este telefone poderá receber alertas automáticos da blacklist.
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-size:12px;color:var(--text)">
+                <input type="checkbox" name="whatsapp_blacklist_exempt" value="1"
+                    <?= !$editRow || (int)($editRow['whatsapp_blacklist_exempt'] ?? 1) === 1 ? 'checked' : '' ?>
+                    style="width:16px;height:16px;accent-color:var(--primary)">
+                Proteger este número: nunca remover dos grupos por blacklist
+            </label>
+        </div>
+
+        <div class="form-group" style="margin-bottom:18px">
             <label class="form-label">Senha <?= $modo === 'editar' ? '(deixe em branco para manter)' : '*' ?></label>
             <div class="pw-wrap">
                 <input type="password" id="campo-senha" name="senha" <?= $modo === 'novo' ? 'required' : '' ?> placeholder="Mínimo 6 caracteres" autocomplete="new-password">
@@ -336,6 +364,12 @@ require __DIR__ . '/_header.php';
                 <span class="status-badge <?= $ativo ? 'on' : 'off' ?>"><?= $ativo ? 'Ativo' : 'Inativo' ?></span>
             </div>
             <div class="member-email"><?= h((string)($m['email'] ?? '')) ?></div>
+            <?php if (!empty($m['whatsapp_number'])): ?>
+                <div class="member-email">
+                    WhatsApp: <?= h((string)$m['whatsapp_number']) ?>
+                    <?= (int)($m['whatsapp_blacklist_exempt'] ?? 1) === 1 ? ' · protegido contra blacklist' : '' ?>
+                </div>
+            <?php endif; ?>
             <div class="member-perms">
                 <?php foreach ($pagesOn as $pg => $v): ?>
                     <span class="perm-pill <?= empty($v['escrever']) ? 'ro' : '' ?>">

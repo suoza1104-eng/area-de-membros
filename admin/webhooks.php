@@ -137,7 +137,7 @@ $eventGroups = [
         ],
         'WHATSAPP_BLACKLIST_DETECTADO' => [
             'label' => 'WhatsApp - blacklist detectada',
-            'desc' => 'Disparado quando um numero ativo na blacklist entra em grupo monitorado e cruza com um aluno cadastrado. Nao remove participante automaticamente.',
+            'desc' => 'Disparado quando um numero ativo na blacklist entra em grupo monitorado e cruza com um aluno cadastrado. A remocao e as notificacoes seguem a configuracao da tela IA WhatsApp.',
             'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id, extra.blacklist',
         ],
     ],
