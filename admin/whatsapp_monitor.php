@@ -224,6 +224,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+        if ($action === 'add_trusted_number') {
+            $name = trim((string)($_POST['trusted_name'] ?? ''));
+            $phone = evolution_clean_whatsapp_phone((string)($_POST['trusted_phone'] ?? ''));
+            if ($name === '' || $phone === '') throw new RuntimeException('Informe nome e telefone do número confiável.');
+            $pdo->prepare("
+                INSERT INTO whatsapp_trusted_numbers (name, phone_number, created_at)
+                VALUES (:name, :phone, NOW())
+                ON DUPLICATE KEY UPDATE name=VALUES(name)
+            ")->execute([':name' => $name, ':phone' => $phone]);
+            header('Location: whatsapp_monitor.php?trusted_saved=1');
+            exit;
+        }
+
+        if ($action === 'delete_trusted_number') {
+            $id = (int)($_POST['trusted_id'] ?? 0);
+            if ($id <= 0) throw new RuntimeException('Registro de número confiável inválido.');
+            $pdo->prepare("DELETE FROM whatsapp_trusted_numbers WHERE id=:id LIMIT 1")
+                ->execute([':id' => $id]);
+            header('Location: whatsapp_monitor.php?trusted_saved=1');
+            exit;
+        }
+
         if ($action === 'refresh_group_names') {
             $instanceRows = $pdo->query("
                 SELECT DISTINCT instance_key
@@ -364,6 +386,7 @@ if (isset($_GET['status'])) $notice = 'Status atualizado.';
 if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Lista de fraude atualizada.';
+if (isset($_GET['trusted_saved'])) $notice = 'Lista de números confiáveis atualizada.';
 if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
 if (isset($_GET['members_synced'])) {
     $notice = 'Participantes atuais sincronizados: '
@@ -406,6 +429,7 @@ if (!in_array($payloadTrigger, ['operational', 'triggered', 'not_found', 'blackl
     $payloadTrigger = 'operational';
 }
 $blacklistRows = [];
+$trustedNumbers = [];
 $groupRows = [];
 try {
     $blacklistRows = $pdo->query("
@@ -413,6 +437,13 @@ try {
           FROM whatsapp_blacklist_numbers
          ORDER BY is_active DESC, id DESC
          LIMIT 80
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+try {
+    $trustedNumbers = $pdo->query("
+        SELECT *
+          FROM whatsapp_trusted_numbers
+         ORDER BY name, id
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 try {
@@ -651,7 +682,7 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Visão operacional de grupos, Lista de fraude, conversas diretas e payloads recebidos. Conexões, funções, números confiáveis, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
+            <p>Visão operacional de grupos, Lista de fraude, números confiáveis, conversas diretas e payloads recebidos. Conexões, funções, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
         </div>
         <a class="btn btn-primary" href="whatsapp_config.php">Configurações WhatsApp</a>
     </div>
@@ -822,9 +853,10 @@ include __DIR__ . '/_header.php';
 
     <div class="wm-grid wm-full">
         <div class="wm-card">
-            <h2>Lista de fraude</h2>
-            <div class="wm-card-sub">Cadastro operacional dos números bloqueados. Remoção e alertas são definidos em Configurações WhatsApp.</div>
+            <h2>Lista de fraude e números confiáveis</h2>
+            <div class="wm-card-sub">Cadastre números bloqueados e números protegidos. Um número confiável nunca será banido, mesmo que também conste na Lista de fraude. Remoção e alertas são definidos em Configurações WhatsApp.</div>
 
+            <h3 style="font-size:13px;margin:16px 0 10px">Lista de fraude</h3>
             <form method="post">
                 <input type="hidden" name="action" value="add_blacklist_number">
                 <div class="form-group">
@@ -862,6 +894,53 @@ include __DIR__ . '/_header.php';
                                         <input type="hidden" name="action" value="toggle_blacklist_number">
                                         <input type="hidden" name="blacklist_id" value="<?= (int)$b['id'] ?>">
                                         <button class="btn btn-ghost btn-sm" type="submit"><?= (int)$b['is_active'] === 1 ? 'Desativar' : 'Ativar' ?></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+
+            <hr style="border:0;border-top:1px solid var(--border);margin:22px 0">
+            <h3 style="font-size:13px;margin:0 0 5px">Números confiáveis</h3>
+            <div class="wm-card-sub">Cadastre nome e telefone com DDI. Estes números ficam protegidos contra qualquer banimento automático.</div>
+            <form method="post">
+                <input type="hidden" name="action" value="add_trusted_number">
+                <div class="form-group">
+                    <label class="form-label">Nome</label>
+                    <input type="text" name="trusted_name" required placeholder="Professor, suporte, moderador...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Telefone</label>
+                    <input type="text" name="trusted_phone" required inputmode="tel" placeholder="5522999999999">
+                </div>
+                <button class="btn btn-primary" type="submit">Adicionar número confiável</button>
+            </form>
+
+            <?php if (!$trustedNumbers): ?>
+                <div class="text-muted text-sm mt-3">Nenhum número confiável cadastrado.</div>
+            <?php else: ?>
+                <div class="table-wrap mt-3">
+                    <table class="wm-log-table">
+                        <thead>
+                            <tr>
+                                <th>Nome</th>
+                                <th>Telefone</th>
+                                <th>Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($trustedNumbers as $trusted): ?>
+                            <tr>
+                                <td><?= wh_h((string)$trusted['name']) ?></td>
+                                <td><?= wh_h((string)$trusted['phone_number']) ?></td>
+                                <td>
+                                    <form method="post" onsubmit="return confirm('Remover este número da lista confiável?')">
+                                        <input type="hidden" name="action" value="delete_trusted_number">
+                                        <input type="hidden" name="trusted_id" value="<?= (int)$trusted['id'] ?>">
+                                        <button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger)">Remover</button>
                                     </form>
                                 </td>
                             </tr>

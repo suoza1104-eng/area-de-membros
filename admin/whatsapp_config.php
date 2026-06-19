@@ -146,24 +146,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             wcfg_redirect('saved=blacklist');
         }
 
-        if ($action === 'add_trusted_number') {
-            $name = trim((string)($_POST['trusted_name'] ?? ''));
-            $phone = evolution_clean_whatsapp_phone((string)($_POST['trusted_phone'] ?? ''));
-            if ($name === '' || $phone === '') throw new RuntimeException('Informe nome e telefone do numero confiavel.');
-            $pdo->prepare("
-                INSERT INTO whatsapp_trusted_numbers (name, phone_number, created_at)
-                VALUES (:name, :phone, NOW())
-                ON DUPLICATE KEY UPDATE name=VALUES(name)
-            ")->execute([':name' => $name, ':phone' => $phone]);
-            wcfg_redirect('saved=trusted');
-        }
-
-        if ($action === 'delete_trusted_number') {
-            $pdo->prepare("DELETE FROM whatsapp_trusted_numbers WHERE id=:id LIMIT 1")
-                ->execute([':id' => (int)($_POST['trusted_id'] ?? 0)]);
-            wcfg_redirect('saved=trusted');
-        }
-
         if ($action === 'test_blacklist') {
             @set_time_limit(0);
             $cfgTest = evolution_blacklist_get_config();
@@ -269,8 +251,6 @@ $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY role_priorit
 $groups = $pdo->query("SELECT * FROM whatsapp_groups ORDER BY COALESCE(group_name,group_id)")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $team = [];
 try { $team = $pdo->query("SELECT id,nome,whatsapp_number,ativo FROM admin_equipe WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) {}
-$trustedNumbers = [];
-try { $trustedNumbers = $pdo->query("SELECT * FROM whatsapp_trusted_numbers ORDER BY name, id")->fetchAll(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) {}
 $rules = $pdo->query("SELECT * FROM whatsapp_event_notification_rules ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $ruleGroups = [];
 foreach ($pdo->query("SELECT * FROM whatsapp_event_notification_rule_groups")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $ruleGroups[(int)$row['rule_id']][] = (string)$row['group_id'];
@@ -399,24 +379,8 @@ require __DIR__ . '/_header.php';
     </div>
 
     <div class="wc-card">
-        <div class="wc-title">Lista de fraude e números confiáveis</div>
-        <div class="wc-help">Números na Lista de fraude podem ser removidos automaticamente. Números confiáveis nunca serão banidos, mesmo que também constem na Lista de fraude.</div>
-        <div class="wc-instance" style="margin-bottom:14px">
-            <strong style="font-size:12px">Números confiáveis</strong>
-            <form method="post" class="wc-row" style="margin-top:9px">
-                <input type="hidden" name="action" value="add_trusted_number">
-                <div class="form-group"><label class="form-label">Nome</label><input name="trusted_name" required placeholder="Professor, suporte, moderador..."></div>
-                <div class="form-group"><label class="form-label">Telefone</label><input name="trusted_phone" required inputmode="tel" placeholder="5522999999999"></div>
-                <div><button class="btn btn-primary btn-sm">Adicionar confiável</button></div>
-            </form>
-            <?php if (!$trustedNumbers): ?><div class="wc-help">Nenhum número confiável cadastrado.</div><?php endif; ?>
-            <?php foreach($trustedNumbers as $trusted): ?>
-                <div class="wc-actions" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
-                    <span style="font-size:12px"><strong><?= wcfg_h((string)$trusted['name']) ?></strong> · <?= wcfg_h((string)$trusted['phone_number']) ?></span>
-                    <form method="post" onsubmit="return confirm('Remover este número da lista confiável?')"><input type="hidden" name="action" value="delete_trusted_number"><input type="hidden" name="trusted_id" value="<?= (int)$trusted['id'] ?>"><button class="btn btn-ghost btn-xs" style="color:var(--danger)">Remover</button></form>
-                </div>
-            <?php endforeach; ?>
-        </div>
+        <div class="wc-title">Automação da Lista de fraude</div>
+        <div class="wc-help">O cadastro da Lista de fraude e dos números confiáveis fica na tela WhatsApp Monitor. Aqui são configuradas a remoção automática, as notificações e a mensagem.</div>
         <form method="post">
             <input type="hidden" name="action" value="save_blacklist">
             <label class="form-label"><input type="checkbox" name="blacklist_auto_remove" value="1" <?= $blacklistCfg['auto_remove']?'checked':'' ?>> Remover automaticamente</label>
