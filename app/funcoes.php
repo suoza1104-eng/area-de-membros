@@ -8,8 +8,78 @@ require_once __DIR__ . '/superfuncionario_dispatcher.php';
 require_once __DIR__ . '/manychat_dispatcher.php';
 require_once __DIR__ . '/whatsapp_event_notifications.php';
 
+function aluno_auth_ensure_remember_tokens(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS remember_tokens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            token VARCHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_token (token),
+            INDEX idx_rt_user (user_id)
+        )
+    ");
+}
+
+/**
+ * Restaura a sessão do aluno usando o cookie persistente já emitido no login.
+ * Mantém o mesmo token para não invalidar outras abas abertas.
+ */
+function aluno_restaurar_sessao_por_token(): int {
+    $currentId = (int)($_SESSION['aluno_id'] ?? 0);
+    if ($currentId > 0) return $currentId;
+
+    $token = strtolower(trim((string)($_COOKIE['am_token'] ?? '')));
+    if (!preg_match('/^[a-f0-9]{64}$/', $token)) return 0;
+
+    try {
+        $pdo = getPDO();
+        aluno_auth_ensure_remember_tokens($pdo);
+        $st = $pdo->prepare("
+            SELECT rt.user_id
+              FROM remember_tokens rt
+              JOIN users u ON u.id = rt.user_id
+             WHERE rt.token = :token
+               AND rt.expires_at > NOW()
+               AND COALESCE(u.bloquear, 0) = 0
+             LIMIT 1
+        ");
+        $st->execute([':token' => $token]);
+        $userId = (int)($st->fetchColumn() ?: 0);
+        if ($userId <= 0) return 0;
+
+        if (session_status() !== PHP_SESSION_ACTIVE && !headers_sent()) {
+            session_start();
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION['aluno_id'] = $userId;
+            $_SESSION['aluno_auth_restored_at'] = time();
+        }
+
+        // Renova a validade do mesmo token sem criar corrida entre abas.
+        $days = defined('AM_TOKEN_DAYS') ? max(1, (int)AM_TOKEN_DAYS) : 400;
+        $expiresTs = time() + (86400 * $days);
+        $pdo->prepare("UPDATE remember_tokens SET expires_at=:expires WHERE token=:token")
+            ->execute([':expires' => date('Y-m-d H:i:s', $expiresTs), ':token' => $token]);
+        if (!headers_sent()) {
+            setcookie('am_token', $token, [
+                'expires' => $expiresTs,
+                'path' => '/',
+                'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+        return $userId;
+    } catch (Throwable $e) {
+        @error_log('aluno_restaurar_sessao_por_token: ' . $e->getMessage());
+        return 0;
+    }
+}
+
 function proteger_aluno(): void {
-    if (empty($_SESSION['aluno_id'])) {
+    if (empty($_SESSION['aluno_id']) && aluno_restaurar_sessao_por_token() <= 0) {
         $next = '';
         $reqUri = $_SERVER['REQUEST_URI'] ?? '';
         // só aceita paths relativos dentro do próprio site (evita open redirect)

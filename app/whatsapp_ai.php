@@ -1169,6 +1169,7 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
 
         $minutes = (int)$cfg['interval_minutes'];
         $directMinutes = 10;
+        $maxMessages = (int)$cfg['max_messages'];
         $groups = $pdo->query("
             SELECT m.group_id, m.chat_type, MIN(m.message_at) AS first_at, MAX(m.message_at) AS last_at, COUNT(*) AS total
              FROM whatsapp_ai_messages m
@@ -1176,10 +1177,16 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
              WHERE m.processed_batch_id IS NULL
                AND (m.chat_type = 'direct' OR COALESCE(g.is_ignored, 0) = 0)
              GROUP BY m.group_id, m.chat_type
-            HAVING MAX(m.message_at) <= IF(
-                m.chat_type = 'direct',
-                DATE_SUB(NOW(), INTERVAL {$directMinutes} MINUTE),
-                DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)
+            HAVING (
+                m.chat_type = 'direct'
+                AND MAX(m.message_at) <= DATE_SUB(NOW(), INTERVAL {$directMinutes} MINUTE)
+            ) OR (
+                m.chat_type <> 'direct'
+                AND (
+                    MAX(m.message_at) <= DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)
+                    OR MIN(m.message_at) <= DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)
+                    OR COUNT(*) >= {$maxMessages}
+                )
             )
              ORDER BY last_at ASC
              LIMIT " . max(1, min(50, $limitGroups)) . "
@@ -1187,7 +1194,6 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
 
         foreach ($groups as $g) {
             $groupId = (string)$g['group_id'];
-            $maxMessages = (int)$cfg['max_messages'];
             $stMsgs = $pdo->prepare("
                 SELECT m.*, u.nome AS aluno_nome, u.email AS aluno_email, wg.group_name
                   FROM whatsapp_ai_messages m

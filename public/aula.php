@@ -996,6 +996,21 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
 <?php endif; ?>
 
 <script>
+// Mantém a sessão ativa durante vídeos longos. Se o provedor remover a sessão,
+// o endpoint tenta restaurá-la pelo token persistente do aluno.
+(function(){
+    function heartbeat(){
+        fetch('api_session_heartbeat.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        }).catch(function(){});
+    }
+    window.setTimeout(heartbeat, 60 * 1000);
+    window.setInterval(heartbeat, 5 * 60 * 1000);
+})();
+
 // Botão "Marcar aula como concluída"
 (function(){
     const btn = document.getElementById('btn-concluir-aula');
@@ -1055,11 +1070,14 @@ function unlockNextLessonCard(){
 
         fetch('api_concluir_aula.php', {
             method:'POST',
+            credentials:'same-origin',
+            cache:'no-store',
             headers:{'Content-Type':'application/x-www-form-urlencoded'},
             body:'lesson_id='+encodeURIComponent(id)
         })
-        .then(r => r.json().catch(()=>null))
-        .then(data => {
+        .then(async r => ({status:r.status, data:await r.json().catch(()=>null)}))
+        .then(result => {
+            const data = result.data;
             if (data && data.ok) {
                 btn.classList.remove('pending');
                 btn.classList.add('done');
@@ -1067,7 +1085,13 @@ function unlockNextLessonCard(){
                 btn.disabled = true;
                 try { unlockNextLessonCard(); } catch(e) {}
             } else {
-                alert('Não foi possível marcar a aula como concluída. Tente novamente.');
+                if (result.status === 401 || (data && data.error === 'not_logged')) {
+                    alert('Sua sessão expirou. Entre novamente para marcar a aula como concluída.');
+                    const loginUrl = data && data.login_url ? data.login_url : 'login.php';
+                    window.location.assign(loginUrl);
+                    return;
+                }
+                alert((data && data.message) ? data.message : 'Não foi possível marcar a aula como concluída. Tente novamente.');
                 btn.disabled = false;
                 btn.style.opacity = '1';
             }

@@ -25,11 +25,23 @@ function json_out(array $data, int $code = 200): void {
 }
 
 try {
-    if (empty($_SESSION['aluno_id'])) {
-        json_out(['ok' => false, 'error' => 'not_logged'], 401);
+    $user_id = (int)($_SESSION['aluno_id'] ?? 0);
+    $authRestored = false;
+    if ($user_id <= 0) {
+        $user_id = aluno_restaurar_sessao_por_token();
+        $authRestored = $user_id > 0;
+    }
+    if ($user_id <= 0) {
+        $basePath = trim((string)parse_url(BASE_URL, PHP_URL_PATH), '/');
+        $nextPath = ($basePath !== '' ? $basePath . '/' : '') . 'aula.php?id=' . (int)($_POST['lesson_id'] ?? 0);
+        json_out([
+            'ok' => false,
+            'error' => 'not_logged',
+            'message' => 'Sua sessão expirou. Entre novamente para concluir a aula.',
+            'login_url' => BASE_URL . '/login.php?next=' . urlencode($nextPath),
+        ], 401);
     }
 
-    $user_id   = (int)$_SESSION['aluno_id'];
     // Libera o lock da sessao: nada mais grava em $_SESSION aqui, entao
     // outros cliques/abas do mesmo aluno nao ficam presos na fila enquanto
     // este request faz o trabalho lento (banco + webhooks).
@@ -49,22 +61,20 @@ try {
 
     $alreadyCompleted = false;
 
-    if ($row) {
-        $alreadyCompleted = (string)($row['status'] ?? '') === 'completed';
+    $alreadyCompleted = $row && (string)($row['status'] ?? '') === 'completed';
 
-        // Se já estava completed, não precisa atualizar (mas é sucesso idempotente)
-        if (!$alreadyCompleted) {
-            $upd = $pdo->prepare("UPDATE lesson_progress SET status='completed', completed_at=NOW() WHERE id = :id");
-            $upd->execute([':id' => (int)$row['id']]);
-        }
-    } else {
-        // Insere novo progresso como completed
-        $ins = $pdo->prepare("
-            INSERT INTO lesson_progress (user_id, lesson_id, status, watched_seconds, created_at, completed_at)
-            VALUES (:u, :l, 'completed', NULL, NOW(), NOW())
-        ");
-        $ins->execute([':u' => $user_id, ':l' => $lesson_id]);
-    }
+    // Upsert atômico: dois cliques/abas simultâneos não geram erro de chave
+    // duplicada e a operação continua idempotente.
+    $save = $pdo->prepare("
+        INSERT INTO lesson_progress
+            (user_id, lesson_id, status, watched_seconds, created_at, completed_at)
+        VALUES
+            (:u, :l, 'completed', NULL, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            status = 'completed',
+            completed_at = COALESCE(completed_at, NOW())
+    ");
+    $save->execute([':u' => $user_id, ':l' => $lesson_id]);
 
     // Tag e webhooks (não devem impedir a conclusão)
     $tagNome = 'VIU_AULA_' . $lesson_id;
@@ -92,10 +102,18 @@ try {
     json_out([
         'ok' => true,
         'already_completed' => $alreadyCompleted,
+        'auth_restored' => $authRestored,
         'lesson_id' => $lesson_id
     ], 200);
 
 } catch (Throwable $e) {
+    try {
+        log_sistema('error', 'api_concluir_aula', 'Falha ao concluir aula', [
+            'user_id' => $user_id ?? null,
+            'lesson_id' => $lesson_id ?? (int)($_POST['lesson_id'] ?? 0),
+            'erro' => $e->getMessage(),
+        ], $e->getTraceAsString());
+    } catch (Throwable $logError) {}
     // Nunca deixar HTML/Warning quebrar o JSON
     json_out([
         'ok' => false,

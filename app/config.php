@@ -21,6 +21,18 @@ error_reporting(E_ALL);
 // Sessão: só faz sentido no navegador (CRON não usa sessão)
 if (!$isCli && session_status() === PHP_SESSION_NONE) {
     if (!headers_sent()) {
+        // Aulas podem durar mais que os 24 minutos padrão do PHP. Mantém a
+        // sessão por 8 horas; o token persistente continua sendo a segunda
+        // camada de recuperação caso o provedor limpe a sessão antes disso.
+        $sessionLifetime = 60 * 60 * 8;
+        ini_set('session.gc_maxlifetime', (string)$sessionLifetime);
+        session_set_cookie_params([
+            'lifetime' => $sessionLifetime,
+            'path' => '/',
+            'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
         session_start();
     }
 }
