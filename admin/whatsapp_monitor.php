@@ -80,10 +80,10 @@ function wh_trigger_label(?string $status): string {
     $status = trim((string)$status);
     $labels = [
         'triggered' => 'Gatilhos acionados',
-        'blacklist_detected' => 'Blacklist detectada',
-        'blacklist_detected_no_user' => 'Blacklist sem aluno',
-        'blacklist_detected_backfill' => 'Blacklist retroativa',
-        'blacklist_protected_team' => 'Blacklist ignorada - equipe protegida',
+        'blacklist_detected' => 'Lista de fraude detectada',
+        'blacklist_detected_no_user' => 'Lista de fraude sem aluno',
+        'blacklist_detected_backfill' => 'Lista de fraude retroativa',
+        'blacklist_protected_team' => 'Lista de fraude ignorada - número confiável',
         'identified_backfill' => 'Aluno identificado',
         'ignored_group' => 'Grupo ignorado',
         'user_not_found' => 'Aluno nao encontrado',
@@ -193,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'add_blacklist_number') {
             $phone = evolution_clean_whatsapp_phone((string)($_POST['blacklist_phone'] ?? ''));
             $reason = trim((string)($_POST['blacklist_reason'] ?? ''));
-            if ($phone === '') throw new RuntimeException('Informe um telefone valido para a blacklist.');
+            if ($phone === '') throw new RuntimeException('Informe um telefone válido para a Lista de fraude.');
 
             $st = $pdo->prepare("
                 INSERT INTO whatsapp_blacklist_numbers (phone_number, reason, origem, is_active, created_at)
@@ -213,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'toggle_blacklist_number') {
             $id = (int)($_POST['blacklist_id'] ?? 0);
-            if ($id <= 0) throw new RuntimeException('Registro de blacklist invalido.');
+            if ($id <= 0) throw new RuntimeException('Registro da Lista de fraude inválido.');
             $pdo->prepare("
                 UPDATE whatsapp_blacklist_numbers
                    SET is_active = IF(is_active=1,0,1), updated_at = NOW()
@@ -363,7 +363,7 @@ if (isset($_GET['qr'])) $notice = 'QR Code solicitado. Leia com o WhatsApp do nu
 if (isset($_GET['status'])) $notice = 'Status atualizado.';
 if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
 if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
-if (isset($_GET['blacklist_saved'])) $notice = 'Blacklist atualizada.';
+if (isset($_GET['blacklist_saved'])) $notice = 'Lista de fraude atualizada.';
 if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
 if (isset($_GET['members_synced'])) {
     $notice = 'Participantes atuais sincronizados: '
@@ -651,7 +651,7 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Visão operacional de grupos, blacklist, conversas diretas e payloads recebidos. Conexões, funções, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
+            <p>Visão operacional de grupos, Lista de fraude, conversas diretas e payloads recebidos. Conexões, funções, números confiáveis, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
         </div>
         <a class="btn btn-primary" href="whatsapp_config.php">Configurações WhatsApp</a>
     </div>
@@ -822,7 +822,7 @@ include __DIR__ . '/_header.php';
 
     <div class="wm-grid wm-full">
         <div class="wm-card">
-            <h2>Blacklist</h2>
+            <h2>Lista de fraude</h2>
             <div class="wm-card-sub">Cadastro operacional dos números bloqueados. Remoção e alertas são definidos em Configurações WhatsApp.</div>
 
             <form method="post">
@@ -835,11 +835,11 @@ include __DIR__ . '/_header.php';
                     <label class="form-label">Motivo</label>
                     <input type="text" name="blacklist_reason" placeholder="Spam, teste, bloqueio manual...">
                 </div>
-                <button class="btn btn-primary" type="submit">Adicionar na blacklist</button>
+                <button class="btn btn-primary" type="submit">Adicionar na Lista de fraude</button>
             </form>
 
             <?php if (!$blacklistRows): ?>
-                <div class="text-muted text-sm mt-3">Nenhum número na blacklist ainda.</div>
+                <div class="text-muted text-sm mt-3">Nenhum número na Lista de fraude ainda.</div>
             <?php else: ?>
                 <div class="table-wrap mt-3">
                     <table class="wm-log-table">
@@ -874,7 +874,7 @@ include __DIR__ . '/_header.php';
 
         <div class="wm-card">
             <h2>Grupos detectados</h2>
-            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Todo grupo novo entra como considerado por padrao; marque como ignorado para o sistema nao aplicar tags, blacklist nem gatilhos nele.</div>
+            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Todo grupo novo entra como considerado por padrão; marque como ignorado para o sistema não aplicar tags, Lista de fraude nem gatilhos nele.</div>
             <form method="post" class="wm-actions" style="margin-bottom:12px">
                 <input type="hidden" name="action" value="refresh_group_names">
                 <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
@@ -892,7 +892,7 @@ include __DIR__ . '/_header.php';
                                 <th>Instância</th>
                                 <th>Escopo</th>
                                 <th>Eventos</th>
-                                <th>Blacklist</th>
+                                <th>Lista de fraude</th>
                                 <th>Último evento</th>
                             </tr>
                         </thead>
@@ -1011,12 +1011,12 @@ include __DIR__ . '/_header.php';
                 <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
             </div>
             <div class="form-group">
-                <label class="form-label">Blacklist</label>
+                <label class="form-label">Lista de fraude</label>
                 <select name="payload_blacklist">
                     <option value="" <?= $payloadBlacklist === '' ? 'selected' : '' ?>>Todos</option>
                     <option value="detected" <?= $payloadBlacklist === 'detected' ? 'selected' : '' ?>>Detectada no evento</option>
-                    <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Numero na blacklist</option>
-                    <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem blacklist detectada</option>
+                    <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Número na Lista de fraude</option>
+                    <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem Lista de fraude detectada</option>
                 </select>
             </div>
             <div class="form-group">
@@ -1025,7 +1025,7 @@ include __DIR__ . '/_header.php';
                     <option value="operational" <?= $payloadTrigger === 'operational' ? 'selected' : '' ?>>Operacionais</option>
                     <option value="triggered" <?= $payloadTrigger === 'triggered' ? 'selected' : '' ?>>Acionados</option>
                     <option value="not_found" <?= $payloadTrigger === 'not_found' ? 'selected' : '' ?>>Aluno nao encontrado</option>
-                    <option value="blacklist" <?= $payloadTrigger === 'blacklist' ? 'selected' : '' ?>>Blacklist</option>
+                    <option value="blacklist" <?= $payloadTrigger === 'blacklist' ? 'selected' : '' ?>>Lista de fraude</option>
                     <option value="error" <?= $payloadTrigger === 'error' ? 'selected' : '' ?>>Erro</option>
                     <option value="ignored" <?= $payloadTrigger === 'ignored' ? 'selected' : '' ?>>Ignorados</option>
                     <option value="all" <?= $payloadTrigger === 'all' ? 'selected' : '' ?>>Todos</option>
@@ -1069,7 +1069,7 @@ include __DIR__ . '/_header.php';
                             <th>Evento</th>
                             <th>Telefone</th>
                             <th>Aluno</th>
-                            <th>Blacklist</th>
+                            <th>Lista de fraude</th>
                             <th>Gatilho</th>
                             <th>Payload</th>
                         </tr>

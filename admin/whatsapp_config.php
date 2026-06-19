@@ -21,6 +21,12 @@ function wcfg_redirect(string $query): void {
     exit;
 }
 
+function wcfg_roles($value): array {
+    $roles = is_array($value) ? $value : explode(',', (string)$value);
+    $roles = array_values(array_unique(array_intersect(['spy', 'administrator', 'reserve'], array_map('trim', $roles))));
+    return $roles ?: ['spy'];
+}
+
 $notice = '';
 $error = '';
 
@@ -40,18 +46,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $name = trim((string)($_POST['name'] ?? '')) ?: 'Número WhatsApp';
             $instanceKey = trim((string)($_POST['instance_key'] ?? '')) ?: evolution_slug_instance($name);
             $phone = evolution_clean_whatsapp_phone((string)($_POST['phone_number'] ?? ''));
-            $role = (string)($_POST['operational_role'] ?? 'spy');
-            if (!in_array($role, ['spy', 'administrator', 'reserve'], true)) $role = 'spy';
+            $roles = wcfg_roles($_POST['operational_roles'] ?? []);
+            $role = in_array('administrator', $roles, true) ? 'administrator' : (in_array('reserve', $roles, true) ? 'reserve' : 'spy');
             $pdo->prepare("
                 INSERT INTO whatsapp_instances
-                    (name, instance_key, phone_number, status, instance_token, operational_role, role_priority, is_enabled, created_at, updated_at)
-                VALUES (:name, :instance_key, :phone, 'DISCONNECTED', :token, :role, :priority, 1, NOW(), NOW())
+                    (name, instance_key, phone_number, status, instance_token, operational_role, operational_roles, role_priority, is_enabled, created_at, updated_at)
+                VALUES (:name, :instance_key, :phone, 'DISCONNECTED', :token, :role, :roles, :priority, 1, NOW(), NOW())
             ")->execute([
                 ':name' => $name,
                 ':instance_key' => $instanceKey,
                 ':phone' => $phone ?: null,
                 ':token' => bin2hex(random_bytes(24)),
                 ':role' => $role,
+                ':roles' => implode(',', $roles),
                 ':priority' => max(1, (int)($_POST['role_priority'] ?? 100)),
             ]);
             $instance = evolution_get_instance($pdo, (int)$pdo->lastInsertId());
@@ -61,17 +68,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'update_instance') {
             $id = (int)($_POST['id'] ?? 0);
-            $role = (string)($_POST['operational_role'] ?? 'spy');
-            if (!in_array($role, ['spy', 'administrator', 'reserve'], true)) $role = 'spy';
+            $roles = wcfg_roles($_POST['operational_roles'] ?? []);
+            $role = in_array('administrator', $roles, true) ? 'administrator' : (in_array('reserve', $roles, true) ? 'reserve' : 'spy');
             $pdo->prepare("
                 UPDATE whatsapp_instances
-                   SET name=:name, phone_number=:phone, operational_role=:role,
+                   SET name=:name, phone_number=:phone, operational_role=:role, operational_roles=:roles,
                        role_priority=:priority, is_enabled=:enabled
                  WHERE id=:id LIMIT 1
             ")->execute([
                 ':name' => trim((string)($_POST['name'] ?? '')) ?: 'Número WhatsApp',
                 ':phone' => evolution_clean_whatsapp_phone((string)($_POST['phone_number'] ?? '')) ?: null,
                 ':role' => $role,
+                ':roles' => implode(',', $roles),
                 ':priority' => max(1, (int)($_POST['role_priority'] ?? 100)),
                 ':enabled' => !empty($_POST['is_enabled']) ? 1 : 0,
                 ':id' => $id,
@@ -121,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'prompt' => $_POST['prompt'] ?? '',
                 'criteria' => $_POST['criteria'] ?? '',
                 'direct_auto_reply_enabled' => !empty($_POST['direct_auto_reply_enabled']),
-                'direct_support_number' => $_POST['direct_support_number'] ?? '',
+                'direct_support_link' => $_POST['direct_support_link'] ?? '',
                 'direct_reply_template' => $_POST['direct_reply_template'] ?? '',
             ]);
             wcfg_redirect('saved=ai');
@@ -138,6 +146,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             wcfg_redirect('saved=blacklist');
         }
 
+        if ($action === 'add_trusted_number') {
+            $name = trim((string)($_POST['trusted_name'] ?? ''));
+            $phone = evolution_clean_whatsapp_phone((string)($_POST['trusted_phone'] ?? ''));
+            if ($name === '' || $phone === '') throw new RuntimeException('Informe nome e telefone do numero confiavel.');
+            $pdo->prepare("
+                INSERT INTO whatsapp_trusted_numbers (name, phone_number, created_at)
+                VALUES (:name, :phone, NOW())
+                ON DUPLICATE KEY UPDATE name=VALUES(name)
+            ")->execute([':name' => $name, ':phone' => $phone]);
+            wcfg_redirect('saved=trusted');
+        }
+
+        if ($action === 'delete_trusted_number') {
+            $pdo->prepare("DELETE FROM whatsapp_trusted_numbers WHERE id=:id LIMIT 1")
+                ->execute([':id' => (int)($_POST['trusted_id'] ?? 0)]);
+            wcfg_redirect('saved=trusted');
+        }
+
         if ($action === 'test_blacklist') {
             @set_time_limit(0);
             $cfgTest = evolution_blacklist_get_config();
@@ -145,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'numero' => '5511999999999',
                 'grupo_id' => 'grupo-teste',
                 'grupo_nome' => 'Grupo de teste',
-                'motivo_blacklist' => 'Teste manual da notificação',
+                'motivo_blacklist' => 'Teste manual da notificação da Lista de fraude',
                 'origem_blacklist' => 'painel',
                 'aluno_identificado' => 'Sim',
                 'aluno_id' => '123',
@@ -239,10 +265,12 @@ if (isset($_GET['tested'])) $notice = 'Teste concluído: ' . (int)$_GET['tested'
 $evolutionCfg = evolution_get_config();
 $aiCfg = whatsapp_ai_get_config();
 $blacklistCfg = evolution_blacklist_get_config();
-$instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY FIELD(operational_role,'administrator','reserve','spy'), role_priority, id")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY role_priority, id")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $groups = $pdo->query("SELECT * FROM whatsapp_groups ORDER BY COALESCE(group_name,group_id)")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $team = [];
 try { $team = $pdo->query("SELECT id,nome,whatsapp_number,ativo FROM admin_equipe WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) {}
+$trustedNumbers = [];
+try { $trustedNumbers = $pdo->query("SELECT * FROM whatsapp_trusted_numbers ORDER BY name, id")->fetchAll(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) {}
 $rules = $pdo->query("SELECT * FROM whatsapp_event_notification_rules ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $ruleGroups = [];
 foreach ($pdo->query("SELECT * FROM whatsapp_event_notification_rule_groups")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $ruleGroups[(int)$row['rule_id']][] = (string)$row['group_id'];
@@ -270,6 +298,11 @@ require __DIR__ . '/_header.php';
 .wc-check{display:flex;gap:7px;align-items:flex-start;font-size:11px;color:var(--text)}
 .wc-instance,.wc-rule{border:1px solid var(--border);border-radius:8px;padding:11px;margin-top:10px;background:rgba(255,255,255,.02)}
 .wc-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.wc-role-options{display:flex;gap:12px;flex-wrap:wrap;border:1px solid var(--border);border-radius:8px;padding:10px}
+.wc-status{display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:9px;padding:10px 12px;margin:8px 0 10px;font-size:12px;font-weight:800}
+.wc-status.connected{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.38);color:#86efac}
+.wc-status.disconnected{background:rgba(239,68,68,.13);border:1px solid rgba(239,68,68,.34);color:#fca5a5}
+.wc-model-help{margin-top:6px;padding:8px 10px;border-radius:8px;background:rgba(59,130,246,.08);color:var(--muted);font-size:11px;line-height:1.45}
 @media(max-width:1000px){.wc-grid,.wc-row{grid-template-columns:1fr}}
 </style>
 <?php if ($notice): ?><div class="alert alert-ok mb-3"><?= wcfg_h($notice) ?></div><?php endif; ?>
@@ -295,19 +328,22 @@ require __DIR__ . '/_header.php';
             <form method="post" class="wc-instance">
                 <input type="hidden" name="action" value="create_instance">
                 <div class="wc-row"><div class="form-group"><label class="form-label">Nome</label><input name="name" required></div><div class="form-group"><label class="form-label">Chave</label><input name="instance_key"></div></div>
-                <div class="wc-row"><div class="form-group"><label class="form-label">Telefone</label><input name="phone_number"></div><div class="form-group"><label class="form-label">Função</label><select name="operational_role"><option value="spy">Espião</option><option value="administrator">Administrador</option><option value="reserve">Reserva</option></select></div></div>
+                <div class="form-group"><label class="form-label">Telefone</label><input name="phone_number"></div>
+                <div class="form-group"><label class="form-label">Funções acumuláveis</label><div class="wc-role-options"><?php foreach (['spy'=>'Espião','administrator'=>'Administrador','reserve'=>'Reserva'] as $value=>$label): ?><label class="wc-check"><input type="checkbox" name="operational_roles[]" value="<?= $value ?>" <?= $value==='spy'?'checked':'' ?>> <?= $label ?></label><?php endforeach; ?></div></div>
                 <div class="form-group"><label class="form-label">Prioridade</label><input type="number" name="role_priority" value="100" min="1"></div>
                 <button class="btn btn-primary">Criar instância</button>
             </form>
         </details>
         <?php foreach ($instances as $instance): ?>
+            <?php $instanceRoles = wcfg_roles((string)($instance['operational_roles'] ?? $instance['operational_role'] ?? 'spy')); $isConnected = strtoupper((string)$instance['status']) === 'CONNECTED'; ?>
             <div class="wc-instance">
                 <form method="post">
                     <input type="hidden" name="action" value="update_instance"><input type="hidden" name="id" value="<?= (int)$instance['id'] ?>">
                     <div class="wc-row"><div class="form-group"><label class="form-label">Nome</label><input name="name" value="<?= wcfg_h((string)$instance['name']) ?>"></div><div class="form-group"><label class="form-label">Telefone</label><input name="phone_number" value="<?= wcfg_h((string)$instance['phone_number']) ?>"></div></div>
-                    <div class="wc-row"><div class="form-group"><label class="form-label">Função</label><select name="operational_role"><?php foreach (['spy'=>'Espião','administrator'=>'Administrador','reserve'=>'Reserva'] as $value=>$label): ?><option value="<?= $value ?>" <?= (string)$instance['operational_role']===$value?'selected':'' ?>><?= $label ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Prioridade</label><input type="number" name="role_priority" value="<?= (int)$instance['role_priority'] ?>"></div></div>
+                    <div class="form-group"><label class="form-label">Funções acumuláveis</label><div class="wc-role-options"><?php foreach (['spy'=>'Espião','administrator'=>'Administrador','reserve'=>'Reserva'] as $value=>$label): ?><label class="wc-check"><input type="checkbox" name="operational_roles[]" value="<?= $value ?>" <?= in_array($value,$instanceRoles,true)?'checked':'' ?>> <?= $label ?></label><?php endforeach; ?></div></div>
+                    <div class="form-group"><label class="form-label">Prioridade administrativa</label><input type="number" name="role_priority" value="<?= (int)$instance['role_priority'] ?>"><div class="wc-help">Menor número tem preferência entre administradores e reservas conectados.</div></div>
                     <label class="form-label"><input type="checkbox" name="is_enabled" value="1" <?= (int)$instance['is_enabled']===1?'checked':'' ?>> Ativa</label>
-                    <div class="wc-help"><?= wcfg_h((string)$instance['instance_key']) ?> · <?= wcfg_h((string)$instance['status']) ?></div>
+                    <div class="wc-status <?= $isConnected?'connected':'disconnected' ?>"><span><?= $isConnected?'● CONECTADO':'● DESCONECTADO' ?></span><small><?= wcfg_h((string)$instance['instance_key']) ?></small></div>
                     <button class="btn btn-primary btn-sm">Salvar função</button>
                 </form>
                 <div class="wc-actions" style="margin-top:8px">
@@ -334,23 +370,53 @@ require __DIR__ . '/_header.php';
         <form method="post">
             <input type="hidden" name="action" value="save_ai">
             <label class="form-label"><input type="checkbox" name="enabled" value="1" <?= $aiCfg['enabled']?'checked':'' ?>> Ativar IA</label>
-            <div class="wc-row"><div class="form-group"><label class="form-label">Modelo</label><input name="model" value="<?= wcfg_h((string)$aiCfg['model']) ?>"></div><div class="form-group"><label class="form-label">API key OpenAI</label><input type="password" name="openai_api_key" placeholder="<?= $aiCfg['openai_api_key']!==''?'Configurada — vazio mantém':'sk-...' ?>"></div></div>
+            <?php
+                $aiModels = [
+                    'gpt-5.4-mini' => 'Recomendado: modelo atual forte e eficiente para alto volume, classificação e análise multimodal.',
+                    'gpt-5.4-nano' => 'Menor custo e alta velocidade para classificação, extração e triagem em grande volume.',
+                    'gpt-5.4' => 'Maior capacidade para análises complexas e casos ambíguos, com custo superior.',
+                    'gpt-5.5' => 'Modelo de fronteira para os casos mais complexos; use quando qualidade máxima for prioridade.',
+                    'gpt-4.1-mini' => 'Modelo sem raciocínio, rápido e consistente no seguimento de instruções.',
+                    'gpt-4.1' => 'Modelo sem raciocínio com forte interpretação e grande janela de contexto.',
+                    'gpt-4o-mini' => 'Opção econômica anterior para tarefas focadas e análise de texto ou imagem.',
+                ];
+                if (!isset($aiModels[(string)$aiCfg['model']])) $aiModels[(string)$aiCfg['model']] = 'Modelo personalizado atualmente configurado.';
+            ?>
+            <div class="wc-row"><div class="form-group"><label class="form-label">Modelo</label><select name="model" id="whatsapp-ai-model"><?php foreach($aiModels as $model=>$description): ?><option value="<?= wcfg_h($model) ?>" data-description="<?= wcfg_h($description) ?>" <?= (string)$aiCfg['model']===$model?'selected':'' ?>><?= wcfg_h($model) ?></option><?php endforeach; ?></select><div class="wc-model-help" id="whatsapp-ai-model-help"></div></div><div class="form-group"><label class="form-label">API key OpenAI</label><input type="password" name="openai_api_key" placeholder="<?= $aiCfg['openai_api_key']!==''?'Configurada — vazio mantém':'sk-...' ?>"></div></div>
             <div class="wc-row"><div class="form-group"><label class="form-label">Janela grupos (min)</label><input type="number" name="interval_minutes" value="<?= (int)$aiCfg['interval_minutes'] ?>"></div><div class="form-group"><label class="form-label">Janela direct</label><input value="10 minutos" disabled></div></div>
             <div class="wc-row"><div class="form-group"><label class="form-label">Ativa de</label><input type="time" name="active_from" value="<?= wcfg_h((string)$aiCfg['active_from']) ?>"></div><div class="form-group"><label class="form-label">Até</label><input type="time" name="active_to" value="<?= wcfg_h((string)$aiCfg['active_to']) ?>"></div></div>
+            <div class="wc-help" style="margin-top:-5px;margin-bottom:10px">Deixe um ou ambos os horários vazios para manter a IA ativa 24 horas por dia.</div>
             <div class="wc-row"><div class="form-group"><label class="form-label">Máx. mensagens</label><input type="number" name="max_messages" value="<?= (int)$aiCfg['max_messages'] ?>"></div><div class="form-group"><label class="form-label">Máx. tokens</label><input type="number" name="max_tokens" value="<?= (int)$aiCfg['max_tokens'] ?>"></div></div>
             <input type="hidden" name="context_keep" value="<?= (int)$aiCfg['context_keep'] ?>"><input type="hidden" name="temperature" value="<?= wcfg_h((string)$aiCfg['temperature']) ?>"><input type="hidden" name="transcription_model" value="<?= wcfg_h((string)$aiCfg['transcription_model']) ?>">
             <div class="form-group"><label class="form-label">Prompt</label><textarea name="prompt" rows="7"><?= wcfg_h((string)$aiCfg['prompt']) ?></textarea></div>
-            <div class="form-group"><label class="form-label">Critérios adicionais</label><textarea name="criteria" rows="4"><?= wcfg_h((string)$aiCfg['criteria']) ?></textarea></div>
+            <div class="form-group"><label class="form-label">Regras para tags e alertas leve, médio e crítico</label><textarea name="criteria" rows="8"><?= wcfg_h((string)$aiCfg['criteria']) ?></textarea><div class="wc-help">Defina quando a IA deve aplicar tags e disparar WHATSAPP_IA_ALERTA_LEVE, WHATSAPP_IA_ALERTA_MEDIO ou WHATSAPP_IA_ALERTA_CRITICO.</div></div>
             <hr style="border-color:var(--border);margin:14px 0">
             <label class="form-label"><input type="checkbox" name="direct_auto_reply_enabled" value="1" <?= $aiCfg['direct_auto_reply_enabled']?'checked':'' ?>> Responder automaticamente dúvidas no direct</label>
-            <div class="form-group"><label class="form-label">Número do suporte</label><input name="direct_support_number" value="<?= wcfg_h((string)$aiCfg['direct_support_number']) ?>" placeholder="5511999999999"></div>
-            <div class="form-group"><label class="form-label">Resposta padrão direct</label><textarea name="direct_reply_template" rows="4"><?= wcfg_h((string)$aiCfg['direct_reply_template']) ?></textarea><div class="wc-help">Variáveis: {{support_link}}, {{support_number}}, {{aluno_nome}}</div></div>
+            <div class="form-group"><label class="form-label">Link do suporte</label><input type="url" name="direct_support_link" value="<?= wcfg_h((string)$aiCfg['direct_support_link']) ?>" placeholder="https://wa.me/5511999999999 ou link da central de suporte"></div>
+            <div class="form-group"><label class="form-label">Resposta padrão direct</label><textarea name="direct_reply_template" rows="4"><?= wcfg_h((string)$aiCfg['direct_reply_template']) ?></textarea><div class="wc-help">Variáveis: {{support_link}}, {{aluno_nome}}</div></div>
             <button class="btn btn-primary">Salvar IA e direct</button>
         </form>
     </div>
 
     <div class="wc-card">
-        <div class="wc-title">Automação da blacklist</div>
+        <div class="wc-title">Lista de fraude e números confiáveis</div>
+        <div class="wc-help">Números na Lista de fraude podem ser removidos automaticamente. Números confiáveis nunca serão banidos, mesmo que também constem na Lista de fraude.</div>
+        <div class="wc-instance" style="margin-bottom:14px">
+            <strong style="font-size:12px">Números confiáveis</strong>
+            <form method="post" class="wc-row" style="margin-top:9px">
+                <input type="hidden" name="action" value="add_trusted_number">
+                <div class="form-group"><label class="form-label">Nome</label><input name="trusted_name" required placeholder="Professor, suporte, moderador..."></div>
+                <div class="form-group"><label class="form-label">Telefone</label><input name="trusted_phone" required inputmode="tel" placeholder="5522999999999"></div>
+                <div><button class="btn btn-primary btn-sm">Adicionar confiável</button></div>
+            </form>
+            <?php if (!$trustedNumbers): ?><div class="wc-help">Nenhum número confiável cadastrado.</div><?php endif; ?>
+            <?php foreach($trustedNumbers as $trusted): ?>
+                <div class="wc-actions" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+                    <span style="font-size:12px"><strong><?= wcfg_h((string)$trusted['name']) ?></strong> · <?= wcfg_h((string)$trusted['phone_number']) ?></span>
+                    <form method="post" onsubmit="return confirm('Remover este número da lista confiável?')"><input type="hidden" name="action" value="delete_trusted_number"><input type="hidden" name="trusted_id" value="<?= (int)$trusted['id'] ?>"><button class="btn btn-ghost btn-xs" style="color:var(--danger)">Remover</button></form>
+                </div>
+            <?php endforeach; ?>
+        </div>
         <form method="post">
             <input type="hidden" name="action" value="save_blacklist">
             <label class="form-label"><input type="checkbox" name="blacklist_auto_remove" value="1" <?= $blacklistCfg['auto_remove']?'checked':'' ?>> Remover automaticamente</label>
@@ -360,7 +426,7 @@ require __DIR__ . '/_header.php';
                 <div><label class="form-label">Grupos</label><div class="wc-checks"><?php foreach ($groups as $group): ?><label class="wc-check"><input type="checkbox" name="blacklist_group_ids[]" value="<?= wcfg_h((string)$group['group_id']) ?>" <?= in_array((string)$group['group_id'],$blacklistCfg['group_ids'],true)?'checked':'' ?>><span><?= wcfg_h((string)($group['group_name']?:$group['group_id'])) ?></span></label><?php endforeach; ?></div></div>
             </div>
             <div class="form-group" style="margin-top:10px"><label class="form-label">Mensagem</label><textarea name="blacklist_message_template" rows="10"><?= wcfg_h((string)$blacklistCfg['message_template']) ?></textarea></div>
-            <button class="btn btn-primary">Salvar blacklist</button>
+            <button class="btn btn-primary">Salvar Lista de fraude</button>
         </form>
         <form method="post" style="margin-top:8px" onsubmit="return confirm('O teste enviará para todos os destinos salvos, com intervalo de 10 segundos. Continuar?')">
             <input type="hidden" name="action" value="test_blacklist">
@@ -384,4 +450,12 @@ require __DIR__ . '/_header.php';
     </div>
 </div>
 </div>
+<script>
+(function(){
+    var select=document.getElementById('whatsapp-ai-model');
+    var help=document.getElementById('whatsapp-ai-model-help');
+    function update(){if(!select||!help)return;var option=select.options[select.selectedIndex];help.textContent=option?option.getAttribute('data-description')||'':'';}
+    if(select){select.addEventListener('change',update);update();}
+})();
+</script>
 <?php require __DIR__ . '/_footer.php'; ?>

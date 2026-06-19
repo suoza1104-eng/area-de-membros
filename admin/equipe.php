@@ -74,7 +74,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $nome  = trim((string)($_POST['nome']  ?? ''));
         $email = trim((string)($_POST['email'] ?? ''));
         $whatsapp = preg_replace('/\D+/', '', (string)($_POST['whatsapp_number'] ?? '')) ?: '';
-        $blacklistExempt = !empty($_POST['whatsapp_blacklist_exempt']) ? 1 : 0;
         $senha = trim((string)($_POST['senha'] ?? ''));
         $pid   = (int)($_POST['edit_id'] ?? 0);
 
@@ -98,17 +97,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($pid > 0) {
                     if ($senha !== '') {
                         $hash = password_hash($senha, PASSWORD_BCRYPT);
-                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, whatsapp_blacklist_exempt=:bx, senha_hash=:s, permissoes=:p WHERE id=:id")
-                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':s'=>$hash,':p'=>$permsJson,':id'=>$pid]);
+                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, senha_hash=:s, permissoes=:p WHERE id=:id")
+                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':s'=>$hash,':p'=>$permsJson,':id'=>$pid]);
                     } else {
-                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, whatsapp_blacklist_exempt=:bx, permissoes=:p WHERE id=:id")
-                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':p'=>$permsJson,':id'=>$pid]);
+                        $pdo->prepare("UPDATE admin_equipe SET nome=:n, email=:e, whatsapp_number=:w, permissoes=:p WHERE id=:id")
+                            ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':p'=>$permsJson,':id'=>$pid]);
                     }
                     $msg = 'Membro atualizado com sucesso.';
                 } else {
                     $hash = password_hash($senha, PASSWORD_BCRYPT);
-                    $pdo->prepare("INSERT INTO admin_equipe (nome,email,whatsapp_number,whatsapp_blacklist_exempt,senha_hash,permissoes) VALUES (:n,:e,:w,:bx,:s,:p)")
-                        ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':bx'=>$blacklistExempt,':s'=>$hash,':p'=>$permsJson]);
+                    $pdo->prepare("INSERT INTO admin_equipe (nome,email,whatsapp_number,senha_hash,permissoes) VALUES (:n,:e,:w,:s,:p)")
+                        ->execute([':n'=>$nome,':e'=>$email,':w'=>$whatsapp ?: null,':s'=>$hash,':p'=>$permsJson]);
                     $msg = 'Membro adicionado com sucesso.';
                 }
                 header('Location: equipe.php?ok=' . urlencode($msg)); exit;
@@ -237,14 +236,9 @@ require __DIR__ . '/_header.php';
             <label class="form-label">WhatsApp da equipe</label>
             <input type="text" name="whatsapp_number" value="<?= h((string)($editRow['whatsapp_number'] ?? '')) ?>" placeholder="Ex: 5522999999999" inputmode="tel">
             <div style="font-size:11px;color:var(--muted);margin-top:6px">
-                Use DDI + DDD + número. Este telefone poderá receber alertas automáticos da blacklist.
+                Use DDI + DDD + número. Este telefone poderá receber alertas administrativos do WhatsApp.
             </div>
-            <label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-size:12px;color:var(--text)">
-                <input type="checkbox" name="whatsapp_blacklist_exempt" value="1"
-                    <?= !$editRow || (int)($editRow['whatsapp_blacklist_exempt'] ?? 1) === 1 ? 'checked' : '' ?>
-                    style="width:16px;height:16px;accent-color:var(--primary)">
-                Proteger este número: nunca remover dos grupos por blacklist
-            </label>
+            <div style="font-size:11px;color:var(--muted);margin-top:5px">A proteção contra banimento é cadastrada em Configurações WhatsApp → Lista de fraude e números confiáveis.</div>
         </div>
 
         <div class="form-group" style="margin-bottom:18px">
@@ -370,7 +364,6 @@ require __DIR__ . '/_header.php';
             <?php if (!empty($m['whatsapp_number'])): ?>
                 <div class="member-email">
                     WhatsApp: <?= h((string)$m['whatsapp_number']) ?>
-                    <?= (int)($m['whatsapp_blacklist_exempt'] ?? 1) === 1 ? ' · protegido contra blacklist' : '' ?>
                 </div>
             <?php endif; ?>
             <div class="member-perms">

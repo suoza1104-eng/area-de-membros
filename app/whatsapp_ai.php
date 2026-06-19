@@ -161,24 +161,43 @@ function whatsapp_ai_default_prompt(): string {
     return "Voce e um analista de risco e suporte dos canais WhatsApp de um curso. Analise grupos e conversas diretas. Classifique como leve, medio ou critico. Sempre sinalize pornografia, possivel golpe ou pessoa se passando pela equipe, reclamacoes, xingamentos, baixo calao, ofensas, criticas ao curso ou professor e demonstracoes de insatisfacao. Use categorias objetivas: pornografia, golpe_suspeito, reclamacao, ofensa, insatisfacao, duvida_aluno, suporte, interesse_compra ou conversa_normal. Quando sugerir resposta, seja direto, educado e nao assuma compromissos.";
 }
 
+function whatsapp_ai_default_criteria(): string {
+    return "Atribua nivel LEVE quando houver duvida comum, comentario inadequado isolado, palavreado de baixo impacto ou sinal inicial de insatisfacao sem ataque direto. "
+        . "Atribua nivel MEDIO quando houver reclamacao clara, critica recorrente ao curso ou professor, xingamento, palavra de baixo calao, ofensa, conflito entre alunos, acusacao sem prova ou insatisfacao que exija intervencao da equipe. "
+        . "Atribua nivel CRITICO quando houver pornografia, ameaca, assedio, discriminacao, tentativa de golpe, falsificacao de identidade, pessoa se passando pela equipe ou professor, exposicao de dados, incentivo a fraude, ataque grave ao curso/professor ou risco imediato para alunos. "
+        . "Quando precisar de intervencao, aplique uma tag coerente e dispare exatamente um evento conforme o nivel: WHATSAPP_IA_ALERTA_LEVE, WHATSAPP_IA_ALERTA_MEDIO ou WHATSAPP_IA_ALERTA_CRITICO. "
+        . "Inclua no resumo a mensagem que motivou a classificacao, o autor, o grupo e a acao recomendada. Nao gere alerta para conversa normal.";
+}
+
 function whatsapp_ai_get_config(): array {
+    $criteria = trim((string)get_setting('whatsapp_ai_criteria', ''));
+    if ($criteria === '') {
+        $criteria = whatsapp_ai_default_criteria();
+    } elseif (stripos($criteria, 'WHATSAPP_IA_ALERTA_CRITICO') === false) {
+        $criteria .= "\n\n" . whatsapp_ai_default_criteria();
+    }
+    $supportLink = trim((string)get_setting('whatsapp_direct_support_link', ''));
+    if ($supportLink === '') {
+        $legacySupportNumber = evolution_clean_whatsapp_phone((string)get_setting('whatsapp_direct_support_number', ''));
+        if ($legacySupportNumber !== '') $supportLink = 'https://wa.me/' . $legacySupportNumber;
+    }
     return [
         'enabled' => (int)get_setting('whatsapp_ai_enabled', '0') === 1,
         'openai_api_key' => trim((string)get_setting('whatsapp_ai_openai_api_key', '')),
         'model' => trim((string)get_setting('whatsapp_ai_model', 'gpt-4.1-mini')),
         'interval_minutes' => max(1, min(120, (int)get_setting('whatsapp_ai_interval_minutes', '5'))),
-        'active_from' => trim((string)get_setting('whatsapp_ai_active_from', '08:00')),
-        'active_to' => trim((string)get_setting('whatsapp_ai_active_to', '22:00')),
+        'active_from' => trim((string)get_setting('whatsapp_ai_active_from', '')),
+        'active_to' => trim((string)get_setting('whatsapp_ai_active_to', '')),
         'max_tokens' => max(100, min(4000, (int)get_setting('whatsapp_ai_max_tokens', '800'))),
         'max_messages' => max(1, min(300, (int)get_setting('whatsapp_ai_max_messages', '80'))),
         'context_keep' => max(0, min(50, (int)get_setting('whatsapp_ai_context_keep', '6'))),
         'prompt' => (string)get_setting('whatsapp_ai_prompt', whatsapp_ai_default_prompt()),
-        'criteria' => (string)get_setting('whatsapp_ai_criteria', ''),
+        'criteria' => $criteria,
         'temperature' => max(0, min(2, (float)get_setting('whatsapp_ai_temperature', '0.2'))),
         'transcription_model' => trim((string)get_setting('whatsapp_ai_transcription_model', 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
         'direct_window_minutes' => 10,
         'direct_auto_reply_enabled' => (int)get_setting('whatsapp_direct_auto_reply_enabled', '0') === 1,
-        'direct_support_number' => trim((string)get_setting('whatsapp_direct_support_number', '')),
+        'direct_support_link' => $supportLink,
         'direct_reply_template' => (string)get_setting('whatsapp_direct_reply_template', "Olá! Para receber atendimento da equipe, fale com nosso suporte pelo link:\n{{support_link}}"),
     ];
 }
@@ -189,8 +208,8 @@ function whatsapp_ai_set_config(array $data): void {
         'whatsapp_ai_openai_api_key' => trim((string)($data['openai_api_key'] ?? '')),
         'whatsapp_ai_model' => trim((string)($data['model'] ?? 'gpt-4.1-mini')) ?: 'gpt-4.1-mini',
         'whatsapp_ai_interval_minutes' => (string)max(1, min(120, (int)($data['interval_minutes'] ?? 5))),
-        'whatsapp_ai_active_from' => preg_match('/^\d{2}:\d{2}$/', (string)($data['active_from'] ?? '')) ? (string)$data['active_from'] : '08:00',
-        'whatsapp_ai_active_to' => preg_match('/^\d{2}:\d{2}$/', (string)($data['active_to'] ?? '')) ? (string)$data['active_to'] : '22:00',
+        'whatsapp_ai_active_from' => preg_match('/^\d{2}:\d{2}$/', (string)($data['active_from'] ?? '')) ? (string)$data['active_from'] : '',
+        'whatsapp_ai_active_to' => preg_match('/^\d{2}:\d{2}$/', (string)($data['active_to'] ?? '')) ? (string)$data['active_to'] : '',
         'whatsapp_ai_max_tokens' => (string)max(100, min(4000, (int)($data['max_tokens'] ?? 800))),
         'whatsapp_ai_max_messages' => (string)max(1, min(300, (int)($data['max_messages'] ?? 80))),
         'whatsapp_ai_context_keep' => (string)max(0, min(50, (int)($data['context_keep'] ?? 6))),
@@ -199,7 +218,9 @@ function whatsapp_ai_set_config(array $data): void {
         'whatsapp_ai_temperature' => (string)max(0, min(2, (float)($data['temperature'] ?? 0.2))),
         'whatsapp_ai_transcription_model' => trim((string)($data['transcription_model'] ?? 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
         'whatsapp_direct_auto_reply_enabled' => !empty($data['direct_auto_reply_enabled']) ? '1' : '0',
-        'whatsapp_direct_support_number' => evolution_clean_whatsapp_phone((string)($data['direct_support_number'] ?? '')),
+        'whatsapp_direct_support_link' => filter_var(trim((string)($data['direct_support_link'] ?? '')), FILTER_VALIDATE_URL)
+            ? trim((string)$data['direct_support_link'])
+            : '',
         'whatsapp_direct_reply_template' => trim((string)($data['direct_reply_template'] ?? '')) ?: "Olá! Para receber atendimento da equipe, fale com nosso suporte pelo link:\n{{support_link}}",
     ];
     foreach ($pairs as $key => $value) {
@@ -213,6 +234,7 @@ function whatsapp_ai_is_active_now(array $cfg, ?DateTime $now = null): bool {
     $cur = $now->format('H:i');
     $from = (string)$cfg['active_from'];
     $to = (string)$cfg['active_to'];
+    if ($from === '' || $to === '') return true;
     if ($from === $to) return true;
     if ($from < $to) return $cur >= $from && $cur <= $to;
     return $cur >= $from || $cur <= $to;
@@ -520,7 +542,6 @@ function whatsapp_ai_call_openai(array $cfg, array $messages): array {
         'model' => (string)$cfg['model'],
         'input' => $messages,
         'max_output_tokens' => (int)$cfg['max_tokens'],
-        'temperature' => (float)$cfg['temperature'],
         'text' => [
             'format' => [
                 'type' => 'json_schema',
@@ -564,6 +585,9 @@ function whatsapp_ai_call_openai(array $cfg, array $messages): array {
             ],
         ],
     ];
+    if (strpos((string)$cfg['model'], 'gpt-5') !== 0) {
+        $payload['temperature'] = (float)$cfg['temperature'];
+    }
 
     $ch = curl_init('https://api.openai.com/v1/responses');
     curl_setopt_array($ch, [
@@ -1055,14 +1079,12 @@ function whatsapp_ai_dispatch_analysis_event(PDO $pdo, int $batchId, string $cha
 
 function whatsapp_ai_send_direct_reply(PDO $pdo, array $cfg, array $message): ?array {
     if (empty($cfg['direct_auto_reply_enabled'])) return null;
-    $supportNumber = evolution_clean_whatsapp_phone((string)($cfg['direct_support_number'] ?? ''));
+    $supportLink = trim((string)($cfg['direct_support_link'] ?? ''));
     $targetPhone = evolution_clean_whatsapp_phone((string)($message['sender_phone'] ?? ''));
     $instanceKey = trim((string)($message['instance_key'] ?? ''));
-    if ($supportNumber === '' || $targetPhone === '' || $instanceKey === '') return null;
-    $link = 'https://wa.me/' . $supportNumber;
+    if ($supportLink === '' || $targetPhone === '' || $instanceKey === '') return null;
     $text = strtr((string)$cfg['direct_reply_template'], [
-        '{{support_number}}' => $supportNumber,
-        '{{support_link}}' => $link,
+        '{{support_link}}' => $supportLink,
         '{{aluno_nome}}' => trim((string)($message['aluno_nome'] ?? $message['sender_name'] ?? '')),
     ]);
     return evolution_send_text($instanceKey, $targetPhone, $text);

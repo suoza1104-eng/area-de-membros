@@ -13,6 +13,7 @@ function evolution_ensure_tables(PDO $pdo): void {
             status VARCHAR(40) NOT NULL DEFAULT 'DISCONNECTED',
             instance_token VARCHAR(120) NULL,
             operational_role VARCHAR(30) NOT NULL DEFAULT 'spy',
+            operational_roles VARCHAR(120) NOT NULL DEFAULT 'spy',
             role_priority INT NOT NULL DEFAULT 100,
             is_enabled TINYINT(1) NOT NULL DEFAULT 1,
             pairing_code VARCHAR(80) NULL,
@@ -29,7 +30,8 @@ function evolution_ensure_tables(PDO $pdo): void {
     ");
     foreach ([
         'operational_role' => "ALTER TABLE whatsapp_instances ADD COLUMN operational_role VARCHAR(30) NOT NULL DEFAULT 'spy' AFTER instance_token",
-        'role_priority' => "ALTER TABLE whatsapp_instances ADD COLUMN role_priority INT NOT NULL DEFAULT 100 AFTER operational_role",
+        'operational_roles' => "ALTER TABLE whatsapp_instances ADD COLUMN operational_roles VARCHAR(120) NOT NULL DEFAULT 'spy' AFTER operational_role",
+        'role_priority' => "ALTER TABLE whatsapp_instances ADD COLUMN role_priority INT NOT NULL DEFAULT 100 AFTER operational_roles",
         'is_enabled' => "ALTER TABLE whatsapp_instances ADD COLUMN is_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER role_priority",
     ] as $column => $sql) {
         try {
@@ -38,6 +40,14 @@ function evolution_ensure_tables(PDO $pdo): void {
             if (!$st->fetch(PDO::FETCH_ASSOC)) $pdo->exec($sql);
         } catch (Throwable $e) {}
     }
+    try {
+        $pdo->exec("
+            UPDATE whatsapp_instances
+               SET operational_roles=operational_role
+             WHERE COALESCE(operational_roles,'')=''
+                OR (operational_roles='spy' AND operational_role IN ('administrator','reserve'))
+        ");
+    } catch (Throwable $e) {}
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS settings (
@@ -174,6 +184,29 @@ function evolution_ensure_tables(PDO $pdo): void {
             KEY idx_wbl_active (is_active)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_trusted_numbers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(160) NOT NULL,
+            phone_number VARCHAR(30) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_whatsapp_trusted_phone (phone_number)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+    if ((int)get_setting('whatsapp_trusted_team_migrated', '0') !== 1) {
+        try {
+            $pdo->exec("
+                INSERT IGNORE INTO whatsapp_trusted_numbers (name, phone_number, created_at)
+                SELECT nome, REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(whatsapp_number,' ',''),'-',''),'(',''),')',''),'+',''),'.',''), NOW()
+                  FROM admin_equipe
+                 WHERE ativo=1
+                   AND COALESCE(whatsapp_blacklist_exempt,1)=1
+                   AND COALESCE(whatsapp_number,'')<>''
+            ");
+            set_setting('whatsapp_trusted_team_migrated', '1');
+        } catch (Throwable $e) {}
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_blacklist_actions (
@@ -430,8 +463,13 @@ function evolution_select_action_instance(PDO $pdo, ?string $preferredInstance =
               FROM whatsapp_instances
              WHERE is_enabled = 1
                AND status = 'CONNECTED'
-               AND operational_role IN ('administrator', 'reserve')
-             ORDER BY FIELD(operational_role, 'administrator', 'reserve'), role_priority ASC, id ASC
+               AND (
+                    FIND_IN_SET('administrator', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0
+                    OR FIND_IN_SET('reserve', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0
+               )
+             ORDER BY
+               CASE WHEN FIND_IN_SET('administrator', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0 THEN 0 ELSE 1 END,
+               role_priority ASC, id ASC
              LIMIT 1
         ");
         $selected = trim((string)($st->fetchColumn() ?: ''));
@@ -455,7 +493,13 @@ function evolution_select_messaging_instance(PDO $pdo, ?string $preferredInstanc
             SELECT instance_key
               FROM whatsapp_instances
              WHERE is_enabled=1 AND status='CONNECTED'
-             ORDER BY FIELD(operational_role,'spy','administrator','reserve'), role_priority, id
+             ORDER BY
+               CASE
+                 WHEN FIND_IN_SET('spy', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0 THEN 0
+                 WHEN FIND_IN_SET('administrator', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0 THEN 1
+                 ELSE 2
+               END,
+               role_priority, id
              LIMIT 1
         ")->fetchColumn() ?: ''));
     } catch (Throwable $e) {
@@ -892,8 +936,8 @@ function evolution_find_active_blacklist(PDO $pdo, ?string $phone): ?array {
 }
 
 function evolution_blacklist_default_message(): string {
-    return "🚨 *AVISO BLACKLIST*\n\n"
-        . "Um número da blacklist entrou em um grupo monitorado e foi removido.\n\n"
+    return "🚨 *AVISO - LISTA DE FRAUDE*\n\n"
+        . "Um número da Lista de fraude entrou em um grupo monitorado e foi removido.\n\n"
         . "*Número:* {{numero}}\n"
         . "*Grupo:* {{grupo_nome}}\n"
         . "*Motivo:* {{motivo_blacklist}}\n"
@@ -943,7 +987,7 @@ function evolution_is_team_protected_phone(PDO $pdo, ?string $phone): bool {
     if (!$variants) return false;
     $where = [];
     $params = [];
-    $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(whatsapp_number,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
+    $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone_number,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
     foreach ($variants as $i => $variant) {
         $key = ':tp' . $i;
         $where[] = "({$cleanExpr} = {$key} OR CONCAT('55', {$cleanExpr}) = {$key})";
@@ -952,10 +996,8 @@ function evolution_is_team_protected_phone(PDO $pdo, ?string $phone): bool {
     try {
         $st = $pdo->prepare("
             SELECT id
-              FROM admin_equipe
-             WHERE ativo = 1
-               AND COALESCE(whatsapp_blacklist_exempt, 1) = 1
-               AND (" . implode(' OR ', $where) . ")
+              FROM whatsapp_trusted_numbers
+             WHERE (" . implode(' OR ', $where) . ")
              LIMIT 1
         ");
         $st->execute($params);
@@ -987,8 +1029,13 @@ function evolution_remove_group_participant_with_failover(PDO $pdo, string $grou
               FROM whatsapp_instances
              WHERE is_enabled=1
                AND status='CONNECTED'
-               AND operational_role IN ('administrator','reserve')
-             ORDER BY FIELD(operational_role,'administrator','reserve'), role_priority, id
+               AND (
+                    FIND_IN_SET('administrator', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0
+                    OR FIND_IN_SET('reserve', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0
+               )
+             ORDER BY
+               CASE WHEN FIND_IN_SET('administrator', COALESCE(NULLIF(operational_roles,''), operational_role)) > 0 THEN 0 ELSE 1 END,
+               role_priority, id
         ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
         foreach ($rows as $key) {
             $key = trim((string)$key);
