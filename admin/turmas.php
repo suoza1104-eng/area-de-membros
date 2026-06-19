@@ -34,6 +34,43 @@ function sort_ts(?string $dbValue): int {
     return $ts ? (int)$ts : 0;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'disparar_live_turma_manual') {
+    $turmaId = (int)($_POST['turma_id'] ?? 0);
+    if ($turmaId <= 0) {
+        header('Location: turmas.php?err=' . urlencode('Turma invalida para disparo manual.'));
+        exit;
+    }
+
+    try {
+        $GLOBALS['manual_live_turma_id'] = $turmaId;
+        ob_start();
+        require __DIR__ . '/../cron/processar_lives.php';
+        ob_end_clean();
+        $resultado = $GLOBALS['manual_live_turma_result'] ?? null;
+        if (!is_array($resultado) || empty($resultado['ok'])) {
+            $motivo = is_array($resultado) ? (string)($resultado['message'] ?? '') : '';
+            if ($motivo === '') $motivo = 'O disparo manual nao foi confirmado.';
+            header('Location: turmas.php?err=' . urlencode($motivo));
+            exit;
+        }
+
+        $stats = is_array($resultado['stats'] ?? null) ? $resultado['stats'] : [];
+        $resumo = sprintf(
+            'Disparo manual concluido. Elegiveis: %d; SF: %d; ManyChat: %d; Webhook: %d.',
+            (int)($stats['elegiveis'] ?? 0),
+            (int)($stats['sf_ok'] ?? 0),
+            (int)($stats['manychat_ok'] ?? 0),
+            (int)($stats['webhook_ok'] ?? 0)
+        );
+        header('Location: turmas.php?ok=' . urlencode($resumo));
+        exit;
+    } catch (Throwable $e) {
+        if (ob_get_level() > 0) ob_end_clean();
+        header('Location: turmas.php?err=' . urlencode('Erro no disparo manual: ' . $e->getMessage()));
+        exit;
+    }
+}
+
 // ===================== CLONE (pré-preenche formulário) =====================
 $cloneFill = null;
 if (isset($_GET['clone_fill'])) {
@@ -185,6 +222,11 @@ include __DIR__ . '/_header.php';
         <?= h((string)$_GET['err']) ?>
     </div>
 <?php endif; ?>
+<?php if (isset($_GET['ok']) && $_GET['ok'] !== ''): ?>
+    <div style="margin-bottom:12px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#86efac;font-size:13px;">
+        <?= h((string)$_GET['ok']) ?>
+    </div>
+<?php endif; ?>
 
 <!-- ===== FORM ===== -->
 <div class="card">
@@ -327,6 +369,19 @@ include __DIR__ . '/_header.php';
                     <?php endif; ?>
                 </td>
                 <td style="white-space:nowrap;">
+                    <?php
+                        $liveTs = sort_ts($t['data_live'] ?? null);
+                        $manualLivePermitido = !$disparada && $liveTs > time();
+                    ?>
+                    <?php if ($manualLivePermitido): ?>
+                        <form method="post" style="display:inline" onsubmit="return confirm('Disparar agora os avisos de live desta turma? O cron nao enviara novamente.')">
+                            <input type="hidden" name="acao" value="disparar_live_turma_manual">
+                            <input type="hidden" name="turma_id" value="<?= (int)$t['id'] ?>">
+                            <button type="submit" class="btn-sm">Disparar live</button>
+                        </form>
+                    <?php else: ?>
+                        <button type="button" class="btn-sm" disabled title="<?= $disparada ? 'Avisos ja disparados' : 'Data da live encerrada ou nao definida' ?>">Live indisponivel</button>
+                    <?php endif; ?>
                     <a href="?edit=<?= (int)$t['id'] ?>" class="btn-sm">Editar</a>
                     <a href="?clone_fill=<?= (int)$t['id'] ?>" class="btn-sm">Clonar</a>
                     <a href="webhooks.php?live_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ Webhook</a>

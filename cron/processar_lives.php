@@ -199,16 +199,20 @@ function ensure_live_dispatch_log_table(PDO $pdo): void {
 function start_live_dispatch_log(PDO $pdo, array $turma): int {
     ensure_live_dispatch_log_table($pdo);
     try {
+        $mensagemInicio = !empty($GLOBALS['manual_live_turma_id'])
+            ? 'Administrador iniciou o processamento manual da turma.'
+            : 'Cron iniciou processamento da turma.';
         $st = $pdo->prepare("
             INSERT INTO live_turma_dispatch_logs
                 (turma_id, turma_codigo, planned_at, started_at, status, message)
             VALUES
-                (:tid, :codigo, :planned, NOW(), 'iniciado', 'Cron iniciou processamento da turma.')
+                (:tid, :codigo, :planned, NOW(), 'iniciado', :message)
         ");
         $st->execute([
             ':tid' => (int)($turma['id'] ?? 0) ?: null,
             ':codigo' => (string)($turma['codigo'] ?? ''),
             ':planned' => $turma['live_disparo_data'] ?? null,
+            ':message' => $mensagemInicio,
         ]);
         return (int)$pdo->lastInsertId();
     } catch (Throwable $e) {
@@ -432,26 +436,49 @@ try {
 $sfOrClause = $hasSfCol ? "OR (sf_enabled = 1)" : "";
 $manychatOrClause = $hasManychatLiveRules ? "OR 1=1" : "";
 
-$stmt = $pdo->prepare("
-    SELECT *
-      FROM turmas
-     WHERE live_disparada = 0
-       AND live_disparo_data IS NOT NULL
-       AND live_disparo_data <= :agora
-       AND (
-           (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
-           $sfOrClause
-           $manychatOrClause
-       )
-  ORDER BY live_disparo_data ASC, id ASC
-");
-$stmt->execute([':agora' => $agora]);
+$manualTurmaId = (int)($GLOBALS['manual_live_turma_id'] ?? 0);
+if ($manualTurmaId > 0) {
+    $stmt = $pdo->prepare("
+        SELECT *
+          FROM turmas
+         WHERE id = :id
+           AND live_disparada = 0
+           AND data_live IS NOT NULL
+           AND data_live > :agora
+           AND (
+               (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+               $sfOrClause
+               $manychatOrClause
+           )
+         LIMIT 1
+    ");
+    $stmt->execute([':id' => $manualTurmaId, ':agora' => $agora]);
+} else {
+    $stmt = $pdo->prepare("
+        SELECT *
+          FROM turmas
+         WHERE live_disparada = 0
+           AND live_disparo_data IS NOT NULL
+           AND live_disparo_data <= :agora
+           AND (
+               (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+               $sfOrClause
+               $manychatOrClause
+           )
+      ORDER BY live_disparo_data ASC, id ASC
+    ");
+    $stmt->execute([':agora' => $agora]);
+}
 $turmas = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 
 // Total de aulas obrigatórias para cálculo de andamento
 $totalObrigatoriasGlobal = total_aulas_obrigatorias($pdo);
 if (!$turmas) {
+    if ($manualTurmaId > 0) {
+        $GLOBALS['manual_live_turma_result'] = ['ok' => false, 'message' => 'Turma indisponivel: ja disparada, live vencida ou sem integracao ativa.'];
+        return;
+    }
     exit; // sem nada para disparar
 }
 
@@ -471,6 +498,11 @@ $tagRelTable = first_existing_table($pdo, [
 foreach ($turmas as $turma) {
     $codigo = (string)($turma['codigo'] ?? '');
     if ($codigo === '') continue;
+
+    $claim = $pdo->prepare("UPDATE turmas SET live_disparada=1 WHERE id=:id AND live_disparada=0 LIMIT 1");
+    $claim->execute([':id' => (int)$turma['id']]);
+    if ($claim->rowCount() !== 1) continue;
+
     $dispatchLogId = start_live_dispatch_log($pdo, $turma);
     $dispatchStats = [
         'total_alunos' => 0,
@@ -647,10 +679,15 @@ foreach ($turmas as $turma) {
     // ----------------------------------------------------------------------------------
     // 5) Marca turma como disparada (mesmo sem alunos elegíveis)
     // ----------------------------------------------------------------------------------
-    $upd = $pdo->prepare("UPDATE turmas SET live_disparada = 1 WHERE id = :id");
-    $upd->execute([':id' => $turma['id']]);
     $finalStatus = ($dispatchStats['sf_fail'] > 0 || $dispatchStats['manychat_fail'] > 0 || $dispatchStats['webhook_fail'] > 0) ? 'concluido_com_falhas' : 'concluido';
     $message = 'Turma marcada como disparada.';
     if ($dispatchStats['elegiveis'] <= 0) $message = 'Turma marcada como disparada, mas nenhum aluno ficou elegivel apos os filtros.';
     finish_live_dispatch_log($pdo, $dispatchLogId, $dispatchStats, $finalStatus, $message);
+    if ($manualTurmaId > 0) {
+        $GLOBALS['manual_live_turma_result'] = [
+            'ok' => true,
+            'message' => $message,
+            'stats' => $dispatchStats,
+        ];
+    }
 }

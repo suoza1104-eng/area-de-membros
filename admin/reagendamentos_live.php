@@ -282,7 +282,99 @@ if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
     try {
-        if ($acao === 'salvar_config') {
+        if ($acao === 'disparar_lote_dia') {
+            $diaLive = trim((string)($_POST['dia_live'] ?? ''));
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $diaLive)) {
+                throw new RuntimeException('Data do lote invalida.');
+            }
+
+            $stResumo = $pdo->prepare("
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN sf_sent_at IS NOT NULL OR status = 'enviado' THEN 1 ELSE 0 END) AS enviados,
+                       SUM(CASE WHEN status = 'reagendado' AND sf_sent_at IS NULL AND new_turma_live_at > NOW() THEN 1 ELSE 0 END) AS pendentes,
+                       MAX(new_turma_live_at) AS ultima_live
+                  FROM reagendamentos_live
+                 WHERE DATE(new_turma_live_at) = :dia
+            ");
+            $stResumo->execute([':dia' => $diaLive]);
+            $resumo = $stResumo->fetch(PDO::FETCH_ASSOC) ?: [];
+            if ((int)($resumo['total'] ?? 0) === 0) {
+                throw new RuntimeException('Nenhum reagendamento encontrado para esta data.');
+            }
+            if ((int)($resumo['enviados'] ?? 0) > 0) {
+                throw new RuntimeException('Este lote ja possui disparo registrado e nao pode ser reenviado manualmente.');
+            }
+            if (empty($resumo['ultima_live']) || strtotime((string)$resumo['ultima_live']) <= time()) {
+                throw new RuntimeException('A data da live ja passou. O disparo manual foi bloqueado.');
+            }
+            if ((int)($resumo['pendentes'] ?? 0) === 0) {
+                throw new RuntimeException('Nao existem reagendamentos pendentes e elegiveis neste lote.');
+            }
+
+            $stLote = $pdo->prepare("
+                SELECT *
+                  FROM reagendamentos_live
+                 WHERE DATE(new_turma_live_at) = :dia
+                   AND status = 'reagendado'
+                   AND sf_sent_at IS NULL
+                   AND new_turma_live_at > NOW()
+                 ORDER BY id ASC
+            ");
+            $stLote->execute([':dia' => $diaLive]);
+            $rowsLote = $stLote->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $enviadosManual = 0;
+            $falhasManual = 0;
+
+            foreach ($rowsLote as $r) {
+                $claim = $pdo->prepare("
+                    UPDATE reagendamentos_live
+                       SET status = 'processando_manual'
+                     WHERE id = :id
+                       AND status = 'reagendado'
+                       AND sf_sent_at IS NULL
+                     LIMIT 1
+                ");
+                $claim->execute([':id' => (int)$r['id']]);
+                if ($claim->rowCount() !== 1) continue;
+
+                $extra = rl_cron_extra_admin($r);
+                reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_manual_inicio', 'pendente', 'Disparo manual do lote iniciado pelo administrador.', [
+                    'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                    'dia_lote' => $diaLive,
+                    'extra' => $extra,
+                ]);
+
+                $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+                if ($ok) {
+                    $pdo->prepare("
+                        UPDATE reagendamentos_live
+                           SET status = 'enviado', sf_sent_at = NOW()
+                         WHERE id = :id AND status = 'processando_manual'
+                    ")->execute([':id' => (int)$r['id']]);
+                    reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_manual_resultado', 'sucesso', 'Lembrete enviado manualmente.', [
+                        'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                        'dia_lote' => $diaLive,
+                    ]);
+                    $enviadosManual++;
+                } else {
+                    $pdo->prepare("
+                        UPDATE reagendamentos_live
+                           SET status = 'reagendado'
+                         WHERE id = :id AND status = 'processando_manual'
+                    ")->execute([':id' => (int)$r['id']]);
+                    reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_manual_resultado', 'falha', 'Integracao nao confirmou o disparo manual.', [
+                        'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                        'dia_lote' => $diaLive,
+                    ]);
+                    $falhasManual++;
+                }
+
+                if ($dispatchDelayMs > 0) usleep($dispatchDelayMs * 1000);
+            }
+
+            header('Location: reagendamentos_live.php?manual_lote=1&dia=' . urlencode($diaLive) . '&sent=' . $enviadosManual . '&failed=' . $falhasManual);
+            exit;
+        } elseif ($acao === 'salvar_config') {
             $opcoesN = (int)($_POST['reagendar_opcoes_qtd'] ?? $opcoesN);
             if ($opcoesN < 1) $opcoesN = 1;
             if ($opcoesN > 30) $opcoesN = 30;
@@ -508,6 +600,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $msg = 'Erro: ' . $e->getMessage();
         $msgTipo = 'erro';
+    }
+}
+
+if (isset($_GET['manual_lote'])) {
+    $diaManual = trim((string)($_GET['dia'] ?? ''));
+    $diaManualBr = preg_match('/^\d{4}-\d{2}-\d{2}$/', $diaManual)
+        ? date('d/m/Y', strtotime($diaManual))
+        : $diaManual;
+    $sentManual = max(0, (int)($_GET['sent'] ?? 0));
+    $failedManual = max(0, (int)($_GET['failed'] ?? 0));
+    $msg = "Lote de {$diaManualBr}: {$sentManual} disparo(s) confirmado(s)";
+    if ($failedManual > 0) {
+        $msg .= " e {$failedManual} falha(s).";
+        $msgTipo = 'erro';
+    } else {
+        $msg .= '.';
     }
 }
 
@@ -747,6 +855,24 @@ foreach ($reagPorDia as $rp) {
     $chartLabels[] = date('d/m', strtotime((string)$rp['dia']));
     $chartReagData[] = (int)($rp['total'] ?? 0);
     $chartVendaData[] = (int)($rp['vendas'] ?? 0);
+}
+
+try {
+    $lotesReagendamento = $pdo->query("
+        SELECT DATE(new_turma_live_at) AS dia,
+               COUNT(*) AS total,
+               SUM(CASE WHEN sf_sent_at IS NOT NULL OR status = 'enviado' THEN 1 ELSE 0 END) AS enviados,
+               SUM(CASE WHEN status = 'reagendado' AND sf_sent_at IS NULL AND new_turma_live_at > NOW() THEN 1 ELSE 0 END) AS pendentes,
+               MIN(new_turma_live_at) AS primeira_live,
+               MAX(new_turma_live_at) AS ultima_live
+          FROM reagendamentos_live
+         WHERE new_turma_live_at IS NOT NULL
+         GROUP BY DATE(new_turma_live_at)
+         ORDER BY dia DESC
+         LIMIT 60
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $lotesReagendamento = [];
 }
 
 $forecastDaysBefore = 30;
@@ -1036,6 +1162,58 @@ require __DIR__ . '/_header.php';
     <?php else: ?>
         <div class="rl-chart-wrap"><canvas id="reagLineChart"></canvas></div>
     <?php endif; ?>
+</div>
+
+<div class="card">
+    <div class="card-header-title">Disparo manual por data</div>
+    <div class="text-xs text-muted mt-1 mb-3">Dispara os lembretes pendentes do lote. Depois da confirmacao, o cron ignora esses registros automaticamente.</div>
+    <div class="table-wrap">
+        <table class="rl-table-small">
+            <thead>
+                <tr>
+                    <th>Lote</th>
+                    <th>Registros</th>
+                    <th>Pendentes</th>
+                    <th>Status</th>
+                    <th style="text-align:right">Acao</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if (!$lotesReagendamento): ?>
+                <tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px">Nenhum lote encontrado.</td></tr>
+            <?php endif; ?>
+            <?php foreach ($lotesReagendamento as $lote): ?>
+                <?php
+                    $loteEnviados = (int)($lote['enviados'] ?? 0);
+                    $lotePendentes = (int)($lote['pendentes'] ?? 0);
+                    $loteVencido = empty($lote['ultima_live']) || strtotime((string)$lote['ultima_live']) <= time();
+                    $lotePermitido = $loteEnviados === 0 && $lotePendentes > 0 && !$loteVencido;
+                    $loteStatus = $loteEnviados > 0 ? 'Ja disparado' : ($loteVencido ? 'Data encerrada' : ($lotePendentes > 0 ? 'Disponivel' : 'Sem pendencias'));
+                ?>
+                <tr>
+                    <td>
+                        <div class="fw-700">Reagendamentos de <?= h(date('d/m/Y', strtotime((string)$lote['dia']))) ?></div>
+                        <div class="text-xs text-muted">Live ate <?= h(rl_admin_dt($lote['ultima_live'] ?? null)) ?></div>
+                    </td>
+                    <td><?= (int)($lote['total'] ?? 0) ?></td>
+                    <td><?= $lotePendentes ?></td>
+                    <td><span class="badge <?= $lotePermitido ? 'badge-info' : 'badge-neutral' ?>"><?= h($loteStatus) ?></span></td>
+                    <td style="text-align:right">
+                        <?php if ($lotePermitido): ?>
+                            <form method="post" style="display:inline" onsubmit="return confirm('Disparar manualmente todos os lembretes pendentes deste lote?')">
+                                <input type="hidden" name="acao" value="disparar_lote_dia">
+                                <input type="hidden" name="dia_live" value="<?= h($lote['dia']) ?>">
+                                <button type="submit" class="btn btn-primary btn-sm">Disparar manual</button>
+                            </form>
+                        <?php else: ?>
+                            <button type="button" class="btn btn-ghost btn-sm" disabled>Indisponivel</button>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <div class="card rl-chart-card">

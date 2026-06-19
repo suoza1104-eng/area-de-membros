@@ -95,6 +95,17 @@ try {
         ORDER BY sf_disparo_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($rows as $r) {
+        $claim = $pdo->prepare("
+            UPDATE reagendamentos_live
+               SET status = 'processando_cron'
+             WHERE id = :id
+               AND status = 'reagendado'
+               AND sf_sent_at IS NULL
+             LIMIT 1
+        ");
+        $claim->execute([':id' => (int)$r['id']]);
+        if ($claim->rowCount() !== 1) continue;
+
         $extra = rl_cron_extra($r);
         $dispatchTs = !empty($r['sf_disparo_at']) ? strtotime((string)$r['sf_disparo_at']) : false;
         $atrasoSeg = $dispatchTs ? max(0, time() - $dispatchTs) : 0;
@@ -113,6 +124,8 @@ try {
             ]);
             $sent++;
         } else {
+            $pdo->prepare("UPDATE reagendamentos_live SET status='reagendado' WHERE id=:id AND status='processando_cron'")
+                ->execute([':id' => (int)$r['id']]);
             reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'falha', 'SuperFuncionario nao confirmou o envio; reagendamento permanece pendente.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
                 'extra' => $extra,
