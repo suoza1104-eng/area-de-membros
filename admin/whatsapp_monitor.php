@@ -532,6 +532,58 @@ try {
     $rawLogs = $rawSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
+$directThreads = [];
+$directMessages = [];
+try {
+    $directThreads = $pdo->query("
+        SELECT m.group_id AS chat_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id,
+               u.nome AS aluno_nome, COUNT(*) AS total_messages,
+               MIN(m.message_at) AS first_message_at, MAX(m.message_at) AS last_message_at,
+               MAX(m.processed_batch_id) AS last_batch_id,
+               (SELECT b.category
+                  FROM whatsapp_ai_batches b
+                 WHERE b.id = (
+                    SELECT MAX(m2.processed_batch_id)
+                      FROM whatsapp_ai_messages m2
+                     WHERE m2.group_id = m.group_id
+                       AND m2.chat_type = 'direct'
+                 )
+                 LIMIT 1) AS last_category
+          FROM whatsapp_ai_messages m
+          LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.chat_type = 'direct'
+         GROUP BY m.group_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id, u.nome
+         ORDER BY last_message_at DESC
+         LIMIT 60
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    try {
+        $directThreads = $pdo->query("
+            SELECT m.group_id AS chat_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id,
+                   u.nome AS aluno_nome, COUNT(*) AS total_messages,
+                   MIN(m.message_at) AS first_message_at, MAX(m.message_at) AS last_message_at,
+                   MAX(m.processed_batch_id) AS last_batch_id
+              FROM whatsapp_ai_messages m
+              LEFT JOIN users u ON u.id = m.user_id
+             WHERE m.chat_type = 'direct'
+             GROUP BY m.group_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id, u.nome
+             ORDER BY last_message_at DESC
+             LIMIT 60
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $ignored) {}
+}
+try {
+    $directMessages = $pdo->query("
+        SELECT m.*, u.nome AS aluno_nome, b.category, b.severity, b.summary
+          FROM whatsapp_ai_messages m
+          LEFT JOIN users u ON u.id = m.user_id
+          LEFT JOIN whatsapp_ai_batches b ON b.id = m.processed_batch_id
+         WHERE m.chat_type = 'direct'
+         ORDER BY m.message_at DESC, m.id DESC
+         LIMIT 100
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
 include __DIR__ . '/_header.php';
 ?>
 
@@ -599,14 +651,15 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Conecta instancias da Evolution API, recebe eventos de grupos, cruza participantes com alunos e dispara tags/webhooks/SuperFuncionario. A remocao automatica e os alertas da blacklist sao configurados na tela IA WhatsApp.</p>
+            <p>Visão operacional de grupos, blacklist, conversas diretas e payloads recebidos. Conexões, funções, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
         </div>
-        <a class="btn btn-ghost" href="../README_EVOLUTION_API.md" target="_blank">README</a>
+        <a class="btn btn-primary" href="whatsapp_config.php">Configurações WhatsApp</a>
     </div>
 
     <?php if ($notice): ?><div class="alert alert-ok"><?= wh_h($notice) ?></div><?php endif; ?>
     <?php if ($error): ?><div class="alert alert-error"><?= wh_h($error) ?></div><?php endif; ?>
 
+    <?php if (false): ?>
     <div class="wm-danger-note">
         Use um numero secundario no teste. A conexao via WhatsApp Web/Baileys nao e a API oficial da Meta e pode sofrer desconexoes ou restricoes.
     </div>
@@ -765,10 +818,12 @@ include __DIR__ . '/_header.php';
         </form>
     </div>
 
+    <?php endif; ?>
+
     <div class="wm-grid wm-full">
         <div class="wm-card">
             <h2>Blacklist</h2>
-            <div class="wm-card-sub">Números cadastrados aqui geram alerta quando entram em grupo monitorado. Nenhuma remoção automática é executada.</div>
+            <div class="wm-card-sub">Cadastro operacional dos números bloqueados. Remoção e alertas são definidos em Configurações WhatsApp.</div>
 
             <form method="post">
                 <input type="hidden" name="action" value="add_blacklist_number">
@@ -864,25 +919,9 @@ include __DIR__ . '/_header.php';
                                         </div>
                                     </div>
                                 </td>
-                                <td>
-                                    <form method="post" style="display:flex;gap:6px;align-items:center">
-                                        <input type="hidden" name="action" value="update_group_turma">
-                                        <input type="hidden" name="group_id" value="<?= wh_h((string)$g['group_id']) ?>">
-                                        <input type="text" name="codigo_turma" value="<?= wh_h((string)($g['codigo_turma'] ?? '')) ?>" placeholder="110626" style="width:86px;padding:6px 8px;font-size:12px">
-                                        <button class="btn btn-ghost btn-sm" type="submit">Salvar</button>
-                                    </form>
-                                </td>
+                                <td><?= wh_h((string)($g['codigo_turma'] ?? '-')) ?></td>
                                 <td><?= wh_h((string)($g['instance_key'] ?? '-')) ?></td>
-                                <td>
-                                    <form method="post">
-                                        <input type="hidden" name="action" value="toggle_group_ignored">
-                                        <input type="hidden" name="group_id" value="<?= wh_h((string)$g['group_id']) ?>">
-                                        <label style="display:flex;align-items:center;gap:8px;white-space:nowrap">
-                                            <input type="checkbox" onchange="this.form.submit()" <?= (int)($g['is_ignored'] ?? 0) === 1 ? 'checked' : '' ?>>
-                                            <span><?= (int)($g['is_ignored'] ?? 0) === 1 ? 'Ignorado' : 'Considerado' ?></span>
-                                        </label>
-                                    </form>
-                                </td>
+                                <td><?= (int)($g['is_ignored'] ?? 0) === 1 ? '<span class="badge badge-neutral">Ignorado</span>' : '<span class="badge badge-success">Monitorado</span>' ?></td>
                                 <td><?= (int)($g['total_events'] ?? 0) ?></td>
                                 <td><?= (int)($g['total_blacklist'] ?? 0) ?></td>
                                 <td style="white-space:nowrap">
@@ -901,6 +940,50 @@ include __DIR__ . '/_header.php';
                 </div>
             <?php endif; ?>
         </div>
+    </div>
+
+    <div class="wm-card wm-full">
+        <h2>Conversas diretas recebidas</h2>
+        <div class="wm-card-sub">Mensagens privadas recebidas por cada instância. O sistema aguarda 10 minutos, agrupa o pacote e envia para análise da IA.</div>
+        <?php if (!$directThreads): ?>
+            <div class="text-muted text-sm">Nenhuma mensagem direta capturada ainda. Confirme o evento MESSAGES_UPSERT no webhook das instâncias.</div>
+        <?php else: ?>
+            <div class="table-wrap">
+                <table class="wm-log-table">
+                    <thead><tr><th>Contato</th><th>Instância</th><th>Mensagens</th><th>Primeira</th><th>Última</th><th>Última análise</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($directThreads as $thread): ?>
+                        <tr>
+                            <td><strong><?= wh_h((string)($thread['aluno_nome'] ?: $thread['sender_name'] ?: $thread['sender_phone'])) ?></strong><div class="text-xs text-muted"><?= wh_h((string)$thread['sender_phone']) ?></div></td>
+                            <td><?= wh_h((string)$thread['instance_key']) ?></td>
+                            <td><?= (int)$thread['total_messages'] ?></td>
+                            <td><?= wh_h((string)$thread['first_message_at']) ?></td>
+                            <td><?= wh_h((string)$thread['last_message_at']) ?></td>
+                            <td><?= wh_h((string)($thread['last_category'] ?? ($thread['last_batch_id'] ? 'Processada' : 'Aguardando janela'))) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <details style="margin-top:12px">
+                <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700">Ver últimas mensagens</summary>
+                <div class="table-wrap mt-3">
+                    <table class="wm-log-table">
+                        <thead><tr><th>Data</th><th>Contato</th><th>Mensagem</th><th>IA</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($directMessages as $message): ?>
+                            <tr>
+                                <td><?= wh_h((string)$message['message_at']) ?></td>
+                                <td><?= wh_h((string)($message['aluno_nome'] ?: $message['sender_name'] ?: $message['sender_phone'])) ?><div class="text-xs text-muted"><?= wh_h((string)$message['sender_phone']) ?></div></td>
+                                <td style="max-width:520px"><?= wh_h((string)$message['message_text']) ?></td>
+                                <td><?= wh_h((string)($message['category'] ?: ($message['processed_batch_id'] ? 'Processada' : 'Pendente'))) ?><div class="text-xs text-muted"><?= wh_h((string)($message['severity'] ?? '')) ?></div></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        <?php endif; ?>
     </div>
 
     <div class="wm-card wm-full">

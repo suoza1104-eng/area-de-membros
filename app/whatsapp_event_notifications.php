@@ -282,9 +282,13 @@ function whatsapp_event_notifications_dispatch(PDO $pdo, string $eventCode, arra
                 $memberName = trim((string)($member['nome'] ?? '')) ?: ('Equipe #' . (int)$member['id']);
                 $instanceKey = $fallbackInstance;
                 if ($instanceKey === '') {
-                    try {
-                        $instanceKey = trim((string)($pdo->query("SELECT instance_key FROM whatsapp_instances WHERE status = 'CONNECTED' ORDER BY id ASC LIMIT 1")->fetchColumn() ?: ''));
-                    } catch (Throwable $e) {}
+                    if (function_exists('evolution_select_messaging_instance')) {
+                        $instanceKey = evolution_select_messaging_instance($pdo, '');
+                    } else {
+                        try {
+                            $instanceKey = trim((string)($pdo->query("SELECT instance_key FROM whatsapp_instances WHERE status = 'CONNECTED' ORDER BY id ASC LIMIT 1")->fetchColumn() ?: ''));
+                        } catch (Throwable $e) {}
+                    }
                 }
                 $message = whatsapp_event_notifications_render($template, $context, [
                     'tipo' => 'equipe',

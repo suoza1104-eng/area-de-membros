@@ -1,0 +1,14 @@
+<?php
+$ruleId = (int)($editRule['id'] ?? 0);
+$ruleInstance = (string)($editRule['instance_key'] ?? '');
+$defaultMessage = "🚨 *ALERTA WHATSAPP*\n\n*Evento:* {{evento}}\n*Nível:* {{extra.nivel}}\n*Categoria:* {{extra.categoria}}\n*Resumo:* {{extra.resumo}}\n*Aluno:* {{user.nome}}\n*Telefone:* {{user.telefone}}\n*Data:* {{data_evento}}";
+?>
+<form method="post" class="wc-rule">
+    <input type="hidden" name="action" value="save_event_rule"><input type="hidden" name="rule_id" value="<?= $ruleId ?>">
+    <div class="wc-row"><div class="form-group"><label class="form-label">Nome</label><input name="rule_name" required value="<?= wcfg_h((string)($editRule['name']??'')) ?>"></div><div class="form-group"><label class="form-label">Evento</label><input name="rule_event_code" list="wc-events" required value="<?= wcfg_h((string)($editRule['event_code']??'')) ?>"></div></div>
+    <div class="form-group"><label class="form-label">Instância para equipe</label><select name="rule_instance_key"><option value="">Administrador/reserva disponível</option><?php foreach($instances as $instance): ?><option value="<?= wcfg_h((string)$instance['instance_key']) ?>" <?= $ruleInstance===(string)$instance['instance_key']?'selected':'' ?>><?= wcfg_h((string)$instance['name']) ?></option><?php endforeach; ?></select></div>
+    <div class="wc-row"><div><label class="form-label">Grupos</label><div class="wc-checks"><?php foreach($groups as $group): $gid=(string)$group['group_id']; ?><label class="wc-check"><input type="checkbox" name="rule_group_ids[]" value="<?= wcfg_h($gid) ?>" <?= in_array($gid,$selectedG,true)?'checked':'' ?>><span><?= wcfg_h((string)($group['group_name']?:$gid)) ?></span></label><?php endforeach; ?></div></div><div><label class="form-label">Equipe</label><div class="wc-checks"><?php foreach($team as $member): ?><label class="wc-check"><input type="checkbox" name="rule_team_ids[]" value="<?= (int)$member['id'] ?>" <?= in_array((int)$member['id'],$selectedT,true)?'checked':'' ?> <?= empty($member['whatsapp_number'])?'disabled':'' ?>><span><?= wcfg_h((string)$member['nome']) ?></span></label><?php endforeach; ?></div></div></div>
+    <div class="form-group" style="margin-top:10px"><label class="form-label">Mensagem</label><textarea name="rule_message_template" rows="7" required><?= wcfg_h((string)($editRule['message_template']??$defaultMessage)) ?></textarea></div>
+    <label class="form-label"><input type="checkbox" name="rule_is_active" value="1" <?= $ruleId===0||(int)($editRule['is_active']??0)===1?'checked':'' ?>> Ativa</label>
+    <button class="btn btn-primary btn-sm"><?= $ruleId?'Salvar regra':'Criar regra' ?></button>
+</form>

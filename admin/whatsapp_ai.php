@@ -272,6 +272,35 @@ try { $stats['contexts'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_co
 try { $stats['actions_pending'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_actions WHERE status = 'pending'")->fetchColumn(); } catch (Throwable $e) {}
 try { $stats['media'] = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_ai_messages WHERE media_kind IS NOT NULL AND media_kind <> ''")->fetchColumn(); } catch (Throwable $e) {}
 
+$aiSeverityChart = ['labels' => ['Leve', 'Médio', 'Crítico'], 'data' => [0, 0, 0]];
+$aiCategoryChart = ['labels' => [], 'data' => []];
+try {
+    $severityRows = $pdo->query("
+        SELECT LOWER(COALESCE(severity,'')) AS severity, COUNT(*) AS total
+          FROM whatsapp_ai_batches
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+           AND needs_intervention = 1
+         GROUP BY LOWER(COALESCE(severity,''))
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($severityRows as $row) {
+        $severity = whatsapp_ai_normalize_severity((string)$row['severity']);
+        $index = $severity === 'CRITICO' ? 2 : ($severity === 'MEDIO' ? 1 : 0);
+        $aiSeverityChart['data'][$index] += (int)$row['total'];
+    }
+    $categoryRows = $pdo->query("
+        SELECT COALESCE(NULLIF(category,''),'sem categoria') AS category, COUNT(*) AS total
+          FROM whatsapp_ai_batches
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         GROUP BY COALESCE(NULLIF(category,''),'sem categoria')
+         ORDER BY total DESC
+         LIMIT 8
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($categoryRows as $row) {
+        $aiCategoryChart['labels'][] = (string)$row['category'];
+        $aiCategoryChart['data'][] = (int)$row['total'];
+    }
+} catch (Throwable $e) {}
+
 $groups = [];
 try {
     $groups = $pdo->query("
@@ -480,8 +509,23 @@ include __DIR__ . '/_header.php';
     <div class="wai-kpi"><div class="wai-kpi-label">Midias capturadas</div><div class="wai-kpi-value"><?= (int)$stats['media'] ?></div></div>
 </div>
 
+<div class="wai-row" style="margin-bottom:16px">
+    <div class="wai-card" style="margin:0"><div class="wai-title">Alertas por nível · 30 dias</div><div style="height:220px"><canvas id="waiSeverityChart"></canvas></div></div>
+    <div class="wai-card" style="margin:0"><div class="wai-title">Categorias analisadas · 30 dias</div><div style="height:220px"><canvas id="waiCategoryChart"></canvas></div></div>
+</div>
+
 <div class="wai-layout">
     <div>
+        <div class="wai-card">
+            <div class="wai-title">Operação da IA</div>
+            <div class="wai-help">Configurações, instâncias, grupos ignorados, blacklist, direct e gatilhos foram centralizados em Configurações WhatsApp.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                <a class="btn btn-primary" href="whatsapp_config.php">Abrir Configurações WhatsApp</a>
+                <form method="post"><input type="hidden" name="action" value="run_now"><button class="btn btn-ghost" type="submit">Processar agora</button></form>
+            </div>
+        </div>
+
+        <?php if (false): ?>
         <div class="wai-card">
             <div class="wai-title">Configuracao da IA</div>
             <form method="post">
@@ -781,6 +825,7 @@ include __DIR__ . '/_header.php';
                 <form method="post" onsubmit="return confirm('Gerar novo token do cron? O cron configurado no servidor precisara ser atualizado.')"><input type="hidden" name="action" value="rotate_token"><button class="btn btn-ghost" type="submit">Gerar novo token</button></form>
             </div>
         </div>
+        <?php endif; ?>
 
         <div class="wai-card">
             <div class="wai-title">Fila de revisao manual</div>
@@ -1068,5 +1113,21 @@ include __DIR__ . '/_header.php';
         </div>
     </div>
 </div>
+
+<script>
+(function(){
+    if (typeof Chart === 'undefined') return;
+    new Chart(document.getElementById('waiSeverityChart'), {
+        type:'doughnut',
+        data:{labels:<?= json_encode($aiSeverityChart['labels'], JSON_UNESCAPED_UNICODE) ?>,datasets:[{data:<?= json_encode($aiSeverityChart['data']) ?>,backgroundColor:['#38bdf8','#facc15','#ef4444']}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}
+    });
+    new Chart(document.getElementById('waiCategoryChart'), {
+        type:'bar',
+        data:{labels:<?= json_encode($aiCategoryChart['labels'], JSON_UNESCAPED_UNICODE) ?>,datasets:[{data:<?= json_encode($aiCategoryChart['data']) ?>,backgroundColor:'#8b5cf6'}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}
+    });
+})();
+</script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

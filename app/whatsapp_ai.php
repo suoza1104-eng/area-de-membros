@@ -10,6 +10,7 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
             raw_log_id INT NOT NULL,
             instance_key VARCHAR(120) NULL,
             group_id VARCHAR(160) NOT NULL,
+            chat_type VARCHAR(20) NOT NULL DEFAULT 'group',
             sender_phone VARCHAR(30) NULL,
             sender_id VARCHAR(120) NULL,
             sender_name VARCHAR(180) NULL,
@@ -37,6 +38,7 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
     ");
 
     foreach ([
+        'chat_type' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN chat_type VARCHAR(20) NOT NULL DEFAULT 'group' AFTER group_id",
         'media_kind' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_kind VARCHAR(30) NULL AFTER message_type",
         'media_url' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_url TEXT NULL AFTER media_kind",
         'media_mime' => "ALTER TABLE whatsapp_ai_messages ADD COLUMN media_mime VARCHAR(120) NULL AFTER media_url",
@@ -156,7 +158,7 @@ function whatsapp_ai_ensure_tables(PDO $pdo): void {
 }
 
 function whatsapp_ai_default_prompt(): string {
-    return "Voce e um analista tecnico de suporte em grupos de alunos de eletrica. Leia o pacote de mensagens e decida se a equipe deve intervir. Ignore conversas normais entre membros quando nao houver necessidade. Sinalize duvidas tecnicas, interesse de compra, baixo calao, conflito, suporte urgente, elogios relevantes e oportunidades de relacionamento. Quando sugerir resposta, seja direto, educado e com tom de equipe tecnica online.";
+    return "Voce e um analista de risco e suporte dos canais WhatsApp de um curso. Analise grupos e conversas diretas. Classifique como leve, medio ou critico. Sempre sinalize pornografia, possivel golpe ou pessoa se passando pela equipe, reclamacoes, xingamentos, baixo calao, ofensas, criticas ao curso ou professor e demonstracoes de insatisfacao. Use categorias objetivas: pornografia, golpe_suspeito, reclamacao, ofensa, insatisfacao, duvida_aluno, suporte, interesse_compra ou conversa_normal. Quando sugerir resposta, seja direto, educado e nao assuma compromissos.";
 }
 
 function whatsapp_ai_get_config(): array {
@@ -174,6 +176,10 @@ function whatsapp_ai_get_config(): array {
         'criteria' => (string)get_setting('whatsapp_ai_criteria', ''),
         'temperature' => max(0, min(2, (float)get_setting('whatsapp_ai_temperature', '0.2'))),
         'transcription_model' => trim((string)get_setting('whatsapp_ai_transcription_model', 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
+        'direct_window_minutes' => 10,
+        'direct_auto_reply_enabled' => (int)get_setting('whatsapp_direct_auto_reply_enabled', '0') === 1,
+        'direct_support_number' => trim((string)get_setting('whatsapp_direct_support_number', '')),
+        'direct_reply_template' => (string)get_setting('whatsapp_direct_reply_template', "Olá! Para receber atendimento da equipe, fale com nosso suporte pelo link:\n{{support_link}}"),
     ];
 }
 
@@ -192,6 +198,9 @@ function whatsapp_ai_set_config(array $data): void {
         'whatsapp_ai_criteria' => trim((string)($data['criteria'] ?? '')),
         'whatsapp_ai_temperature' => (string)max(0, min(2, (float)($data['temperature'] ?? 0.2))),
         'whatsapp_ai_transcription_model' => trim((string)($data['transcription_model'] ?? 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
+        'whatsapp_direct_auto_reply_enabled' => !empty($data['direct_auto_reply_enabled']) ? '1' : '0',
+        'whatsapp_direct_support_number' => evolution_clean_whatsapp_phone((string)($data['direct_support_number'] ?? '')),
+        'whatsapp_direct_reply_template' => trim((string)($data['direct_reply_template'] ?? '')) ?: "Olá! Para receber atendimento da equipe, fale com nosso suporte pelo link:\n{{support_link}}",
     ];
     foreach ($pairs as $key => $value) {
         set_setting($key, $value);
@@ -313,7 +322,8 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
         'data.key.remoteJid', 'data.remoteJid', 'data.chatId', 'data.message.key.remoteJid',
         'key.remoteJid', 'remoteJid', 'chatId'
     ]);
-    if ($groupId === '' || strpos($groupId, '@g.us') === false) return null;
+    if ($groupId === '') return null;
+    $chatType = strpos($groupId, '@g.us') !== false ? 'group' : 'direct';
 
     $fromMe = (bool)($key['fromMe'] ?? whatsapp_ai_array_get($payload, ['data.key.fromMe', 'fromMe']) ?? false);
     if ($fromMe) return null;
@@ -341,6 +351,7 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
     if ($senderId === '') {
         $senderId = (string)whatsapp_ai_array_get($payload, ['data.participantPn', 'participantPn']);
     }
+    if ($senderId === '' && $chatType === 'direct') $senderId = $groupId;
     $senderPhone = evolution_clean_whatsapp_phone($senderId);
 
     $senderName = (string)whatsapp_ai_array_get($payload, [
@@ -384,6 +395,7 @@ function whatsapp_ai_extract_message_fields(array $payload): ?array {
         'event_type' => $eventType,
         'instance_key' => (string)whatsapp_ai_array_get($payload, ['instance', 'instanceKey', 'data.instanceId', 'data.instance']),
         'group_id' => $groupId,
+        'chat_type' => $chatType,
         'sender_phone' => $senderPhone !== '' ? $senderPhone : null,
         'sender_id' => $senderId !== '' ? $senderId : null,
         'sender_name' => $senderName !== '' ? substr($senderName, 0, 180) : null,
@@ -403,8 +415,10 @@ function whatsapp_ai_record_message(PDO $pdo, int $rawLogId, array $payload): ?i
     if (!$fields) return null;
 
     try {
-        $groupIgnored = evolution_is_group_ignored($pdo, $fields['group_id']);
-        if ($groupIgnored) return null;
+        if (($fields['chat_type'] ?? 'group') === 'group') {
+            $groupIgnored = evolution_is_group_ignored($pdo, $fields['group_id']);
+            if ($groupIgnored) return null;
+        }
     } catch (Throwable $e) {}
 
     $user = !empty($fields['sender_phone']) ? evolution_find_user_by_phone($pdo, (string)$fields['sender_phone']) : null;
@@ -412,15 +426,16 @@ function whatsapp_ai_record_message(PDO $pdo, int $rawLogId, array $payload): ?i
 
     $st = $pdo->prepare("
         INSERT INTO whatsapp_ai_messages
-            (raw_log_id, instance_key, group_id, sender_phone, sender_id, sender_name, user_id, message_type, media_kind, media_url, media_mime, media_base64, message_text, message_at, created_at)
+            (raw_log_id, instance_key, group_id, chat_type, sender_phone, sender_id, sender_name, user_id, message_type, media_kind, media_url, media_mime, media_base64, message_text, message_at, created_at)
         VALUES
-            (:raw_log_id, :instance_key, :group_id, :sender_phone, :sender_id, :sender_name, :user_id, :message_type, :media_kind, :media_url, :media_mime, :media_base64, :message_text, :message_at, NOW())
+            (:raw_log_id, :instance_key, :group_id, :chat_type, :sender_phone, :sender_id, :sender_name, :user_id, :message_type, :media_kind, :media_url, :media_mime, :media_base64, :message_text, :message_at, NOW())
         ON DUPLICATE KEY UPDATE raw_log_id = raw_log_id
     ");
     $st->execute([
         ':raw_log_id' => $rawLogId,
         ':instance_key' => $fields['instance_key'] ?: null,
         ':group_id' => $fields['group_id'],
+        ':chat_type' => $fields['chat_type'],
         ':sender_phone' => $fields['sender_phone'],
         ':sender_id' => $fields['sender_id'],
         ':sender_name' => $fields['sender_name'],
@@ -479,7 +494,7 @@ function whatsapp_ai_build_prompt(array $cfg, string $groupName, array $contexts
             'criterios_adicionais' => (string)$cfg['criteria'],
             'contextos_anteriores' => array_values($contexts),
             'mensagens' => $lines,
-            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber. Se houver imagem anexada, analise visualmente apenas o necessario para decidir se precisa intervencao.',
+            'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. nivel deve ser leve, medio ou critico. Categorias preferenciais: pornografia, golpe_suspeito, reclamacao, ofensa, insatisfacao, duvida_aluno, suporte, interesse_compra, conversa_normal. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber. Se houver imagem anexada, verifique especialmente pornografia, fraude e falsificacao de identidade.',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ]];
     foreach (array_slice($imageInputs, 0, 4) as $img) {
@@ -1003,6 +1018,89 @@ function whatsapp_ai_requeue_batch(PDO $pdo, int $batchId, string $actor): int {
     }
 }
 
+function whatsapp_ai_normalize_severity(?string $severity): string {
+    $value = strtolower(trim((string)$severity));
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+    if (is_string($ascii) && $ascii !== '') $value = $ascii;
+    if (preg_match('/cr.tic/i', $value) || strpos($value, 'critic') !== false || strpos($value, 'alto') !== false || strpos($value, 'grave') !== false) return 'CRITICO';
+    if (strpos($value, 'med') !== false || strpos($value, 'moder') !== false) return 'MEDIO';
+    return 'LEVE';
+}
+
+function whatsapp_ai_dispatch_analysis_event(PDO $pdo, int $batchId, string $chatId, array $analysis, array $messages): void {
+    if (empty($analysis['precisa_intervencao'])) return;
+    $severity = whatsapp_ai_normalize_severity((string)($analysis['nivel'] ?? ''));
+    $event = 'WHATSAPP_IA_ALERTA_' . $severity;
+    $first = $messages[0] ?? [];
+    $userId = (int)($first['user_id'] ?? 0);
+    $extra = [
+        'batch_id' => $batchId,
+        'chat_id' => $chatId,
+        'chat_type' => (string)($first['chat_type'] ?? 'group'),
+        'categoria' => (string)($analysis['categoria'] ?? ''),
+        'nivel' => strtolower($severity),
+        'resumo' => (string)($analysis['resumo'] ?? ''),
+        'resposta_sugerida' => (string)($analysis['resposta_sugerida'] ?? ''),
+        'telefone' => (string)($first['sender_phone'] ?? ''),
+        'remetente' => (string)($first['sender_name'] ?? ''),
+        'total_mensagens' => count($messages),
+    ];
+    whatsapp_event_notifications_dispatch($pdo, $event, $userId > 0 ? [
+        'id' => $userId,
+        'nome' => $first['aluno_nome'] ?? $first['sender_name'] ?? null,
+        'email' => $first['aluno_email'] ?? null,
+        'telefone' => $first['sender_phone'] ?? null,
+    ] : [], $extra);
+}
+
+function whatsapp_ai_send_direct_reply(PDO $pdo, array $cfg, array $message): ?array {
+    if (empty($cfg['direct_auto_reply_enabled'])) return null;
+    $supportNumber = evolution_clean_whatsapp_phone((string)($cfg['direct_support_number'] ?? ''));
+    $targetPhone = evolution_clean_whatsapp_phone((string)($message['sender_phone'] ?? ''));
+    $instanceKey = trim((string)($message['instance_key'] ?? ''));
+    if ($supportNumber === '' || $targetPhone === '' || $instanceKey === '') return null;
+    $link = 'https://wa.me/' . $supportNumber;
+    $text = strtr((string)$cfg['direct_reply_template'], [
+        '{{support_number}}' => $supportNumber,
+        '{{support_link}}' => $link,
+        '{{aluno_nome}}' => trim((string)($message['aluno_nome'] ?? $message['sender_name'] ?? '')),
+    ]);
+    return evolution_send_text($instanceKey, $targetPhone, $text);
+}
+
+function whatsapp_ai_handle_direct_analysis(PDO $pdo, array $cfg, int $batchId, array $analysis, array $messages): void {
+    $first = $messages[0] ?? [];
+    if (($first['chat_type'] ?? 'group') !== 'direct') return;
+    $category = strtolower(trim((string)($analysis['categoria'] ?? '')));
+    $userId = (int)($first['user_id'] ?? 0);
+    $extra = [
+        'batch_id' => $batchId,
+        'telefone' => (string)($first['sender_phone'] ?? ''),
+        'remetente' => (string)($first['sender_name'] ?? ''),
+        'categoria' => $category,
+        'nivel' => (string)($analysis['nivel'] ?? ''),
+        'resumo' => (string)($analysis['resumo'] ?? ''),
+    ];
+    if (strpos($category, 'golpe') !== false || strpos($category, 'fraude') !== false) {
+        if ($userId > 0) adicionar_tag($userId, 'WHATSAPP_GOLPE_SUSPEITO', 'whatsapp_ai_direct', $batchId);
+        whatsapp_event_notifications_dispatch($pdo, 'WHATSAPP_DIRECT_GOLPE_SUSPEITO', $userId > 0 ? [
+            'id' => $userId,
+            'nome' => $first['aluno_nome'] ?? $first['sender_name'] ?? null,
+            'email' => $first['aluno_email'] ?? null,
+            'telefone' => $first['sender_phone'] ?? null,
+        ] : [], $extra);
+    }
+    if (strpos($category, 'duvida') !== false || strpos($category, 'suporte') !== false) {
+        whatsapp_event_notifications_dispatch($pdo, 'WHATSAPP_DIRECT_DUVIDA_ALUNO', $userId > 0 ? [
+            'id' => $userId,
+            'nome' => $first['aluno_nome'] ?? $first['sender_name'] ?? null,
+            'email' => $first['aluno_email'] ?? null,
+            'telefone' => $first['sender_phone'] ?? null,
+        ] : [], $extra);
+        whatsapp_ai_send_direct_reply($pdo, $cfg, $first);
+    }
+}
+
 function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
     whatsapp_ai_ensure_tables($pdo);
     $cfg = whatsapp_ai_get_config();
@@ -1021,14 +1119,19 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
         }
 
         $minutes = (int)$cfg['interval_minutes'];
+        $directMinutes = 10;
         $groups = $pdo->query("
-            SELECT m.group_id, MIN(m.message_at) AS first_at, MAX(m.message_at) AS last_at, COUNT(*) AS total
-              FROM whatsapp_ai_messages m
+            SELECT m.group_id, m.chat_type, MIN(m.message_at) AS first_at, MAX(m.message_at) AS last_at, COUNT(*) AS total
+             FROM whatsapp_ai_messages m
               LEFT JOIN whatsapp_groups g ON g.group_id = m.group_id
              WHERE m.processed_batch_id IS NULL
-               AND COALESCE(g.is_ignored, 0) = 0
-               AND m.message_at <= DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)
-             GROUP BY m.group_id
+               AND (m.chat_type = 'direct' OR COALESCE(g.is_ignored, 0) = 0)
+             GROUP BY m.group_id, m.chat_type
+            HAVING MAX(m.message_at) <= IF(
+                m.chat_type = 'direct',
+                DATE_SUB(NOW(), INTERVAL {$directMinutes} MINUTE),
+                DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)
+            )
              ORDER BY last_at ASC
              LIMIT " . max(1, min(50, $limitGroups)) . "
         ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -1051,7 +1154,9 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
             if (!$messages) continue;
             $messages = whatsapp_ai_prepare_media_for_messages($pdo, $cfg, $messages);
 
-            $groupName = trim((string)($messages[0]['group_name'] ?? '')) ?: $groupId;
+            $groupName = ($messages[0]['chat_type'] ?? 'group') === 'direct'
+                ? 'Direct: ' . (trim((string)($messages[0]['aluno_nome'] ?? $messages[0]['sender_name'] ?? $messages[0]['sender_phone'] ?? 'Contato')))
+                : (trim((string)($messages[0]['group_name'] ?? '')) ?: $groupId);
             $ctxSt = $pdo->prepare("SELECT summary FROM whatsapp_ai_contexts WHERE group_id = :gid ORDER BY created_at DESC, id DESC LIMIT " . (int)$cfg['context_keep']);
             $ctxSt->execute([':gid' => $groupId]);
             $contexts = array_reverse(array_map(static fn($r) => (string)$r['summary'], $ctxSt->fetchAll(PDO::FETCH_ASSOC) ?: []));
@@ -1119,6 +1224,8 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
                     whatsapp_ai_prune_contexts($pdo, $groupId, (int)$cfg['context_keep']);
                 }
                 whatsapp_ai_queue_actions($pdo, $batchId, $groupId, $a);
+                whatsapp_ai_dispatch_analysis_event($pdo, $batchId, $groupId, $a, $messages);
+                whatsapp_ai_handle_direct_analysis($pdo, $cfg, $batchId, $a, $messages);
             } catch (Throwable $e) {
                 $pdo->prepare("UPDATE whatsapp_ai_batches SET status='error', error_message=:err, processed_at=NOW() WHERE id=:id")
                     ->execute([':err' => substr($e->getMessage(), 0, 1000), ':id' => $batchId]);

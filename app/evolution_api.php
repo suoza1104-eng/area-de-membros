@@ -12,6 +12,9 @@ function evolution_ensure_tables(PDO $pdo): void {
             phone_number VARCHAR(30) NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'DISCONNECTED',
             instance_token VARCHAR(120) NULL,
+            operational_role VARCHAR(30) NOT NULL DEFAULT 'spy',
+            role_priority INT NOT NULL DEFAULT 100,
+            is_enabled TINYINT(1) NOT NULL DEFAULT 1,
             pairing_code VARCHAR(80) NULL,
             qr_code_text LONGTEXT NULL,
             qr_base64 LONGTEXT NULL,
@@ -24,6 +27,17 @@ function evolution_ensure_tables(PDO $pdo): void {
             KEY idx_whatsapp_instances_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+    foreach ([
+        'operational_role' => "ALTER TABLE whatsapp_instances ADD COLUMN operational_role VARCHAR(30) NOT NULL DEFAULT 'spy' AFTER instance_token",
+        'role_priority' => "ALTER TABLE whatsapp_instances ADD COLUMN role_priority INT NOT NULL DEFAULT 100 AFTER operational_role",
+        'is_enabled' => "ALTER TABLE whatsapp_instances ADD COLUMN is_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER role_priority",
+    ] as $column => $sql) {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM whatsapp_instances LIKE :c");
+            $st->execute([':c' => $column]);
+            if (!$st->fetch(PDO::FETCH_ASSOC)) $pdo->exec($sql);
+        } catch (Throwable $e) {}
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS settings (
@@ -398,7 +412,7 @@ function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): a
     $webhook = [
         'enabled' => true,
         'url' => $webhookUrl,
-        'events' => ['GROUP_PARTICIPANTS_UPDATE'],
+        'events' => ['GROUP_PARTICIPANTS_UPDATE', 'MESSAGES_UPSERT'],
         'headers' => new stdClass(),
         'base64' => false,
     ];
@@ -406,6 +420,47 @@ function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): a
     return evolution_http('POST', '/webhook/set/' . rawurlencode($instanceKey), [
         'webhook' => $webhook,
     ]);
+}
+
+function evolution_select_action_instance(PDO $pdo, ?string $preferredInstance = null): string {
+    $preferredInstance = trim((string)$preferredInstance);
+    try {
+        $st = $pdo->query("
+            SELECT instance_key
+              FROM whatsapp_instances
+             WHERE is_enabled = 1
+               AND status = 'CONNECTED'
+               AND operational_role IN ('administrator', 'reserve')
+             ORDER BY FIELD(operational_role, 'administrator', 'reserve'), role_priority ASC, id ASC
+             LIMIT 1
+        ");
+        $selected = trim((string)($st->fetchColumn() ?: ''));
+        if ($selected !== '') return $selected;
+    } catch (Throwable $e) {}
+    return $preferredInstance;
+}
+
+function evolution_select_messaging_instance(PDO $pdo, ?string $preferredInstance = null): string {
+    $preferredInstance = trim((string)$preferredInstance);
+    if ($preferredInstance !== '') {
+        try {
+            $st = $pdo->prepare("SELECT instance_key FROM whatsapp_instances WHERE instance_key=:key AND is_enabled=1 AND status='CONNECTED' LIMIT 1");
+            $st->execute([':key' => $preferredInstance]);
+            $found = trim((string)($st->fetchColumn() ?: ''));
+            if ($found !== '') return $found;
+        } catch (Throwable $e) {}
+    }
+    try {
+        return trim((string)($pdo->query("
+            SELECT instance_key
+              FROM whatsapp_instances
+             WHERE is_enabled=1 AND status='CONNECTED'
+             ORDER BY FIELD(operational_role,'spy','administrator','reserve'), role_priority, id
+             LIMIT 1
+        ")->fetchColumn() ?: ''));
+    } catch (Throwable $e) {
+        return $preferredInstance;
+    }
 }
 
 function evolution_find_webhook(string $instanceKey): array {
@@ -855,10 +910,13 @@ function evolution_blacklist_default_message(): string {
 function evolution_blacklist_get_config(): array {
     $recipientIds = json_decode((string)get_setting('whatsapp_blacklist_notify_team_ids', '[]'), true);
     if (!is_array($recipientIds)) $recipientIds = [];
+    $groupIds = json_decode((string)get_setting('whatsapp_blacklist_notify_group_ids', '[]'), true);
+    if (!is_array($groupIds)) $groupIds = [];
     return [
         'auto_remove' => (int)get_setting('whatsapp_blacklist_auto_remove', '1') === 1,
         'notify_enabled' => (int)get_setting('whatsapp_blacklist_notify_enabled', '1') === 1,
         'recipient_ids' => array_values(array_unique(array_filter(array_map('intval', $recipientIds)))),
+        'group_ids' => array_values(array_unique(array_filter(array_map('strval', $groupIds)))),
         'message_template' => (string)get_setting('whatsapp_blacklist_message_template', evolution_blacklist_default_message()),
     ];
 }
@@ -867,9 +925,13 @@ function evolution_blacklist_set_config(array $data): void {
     $recipientIds = $data['recipient_ids'] ?? [];
     if (!is_array($recipientIds)) $recipientIds = [];
     $recipientIds = array_values(array_unique(array_filter(array_map('intval', $recipientIds))));
+    $groupIds = $data['group_ids'] ?? [];
+    if (!is_array($groupIds)) $groupIds = [];
+    $groupIds = array_values(array_unique(array_filter(array_map('strval', $groupIds))));
     set_setting('whatsapp_blacklist_auto_remove', !empty($data['auto_remove']) ? '1' : '0');
     set_setting('whatsapp_blacklist_notify_enabled', !empty($data['notify_enabled']) ? '1' : '0');
     set_setting('whatsapp_blacklist_notify_team_ids', json_encode($recipientIds));
+    set_setting('whatsapp_blacklist_notify_group_ids', json_encode($groupIds));
     set_setting(
         'whatsapp_blacklist_message_template',
         trim((string)($data['message_template'] ?? '')) ?: evolution_blacklist_default_message()
@@ -915,6 +977,31 @@ function evolution_remove_group_participant(string $instanceKey, string $groupId
         'action' => 'remove',
         'participants' => [$participant],
     ]);
+}
+
+function evolution_remove_group_participant_with_failover(PDO $pdo, string $groupId, string $participant): array {
+    $keys = [];
+    try {
+        $rows = $pdo->query("
+            SELECT instance_key
+              FROM whatsapp_instances
+             WHERE is_enabled=1
+               AND status='CONNECTED'
+               AND operational_role IN ('administrator','reserve')
+             ORDER BY FIELD(operational_role,'administrator','reserve'), role_priority, id
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        foreach ($rows as $key) {
+            $key = trim((string)$key);
+            if ($key !== '') $keys[] = $key;
+        }
+    } catch (Throwable $e) {}
+    $last = ['ok' => false, 'status' => 0, 'data' => null, 'raw' => '', 'error' => 'Nenhuma instância administradora ou reserva disponível.'];
+    foreach (array_values(array_unique($keys)) as $instanceKey) {
+        $last = evolution_remove_group_participant($instanceKey, $groupId, $participant);
+        $last['instance_key'] = $instanceKey;
+        if (!empty($last['ok'])) return $last;
+    }
+    return $last;
 }
 
 function evolution_send_text(string $instanceKey, string $number, string $text): array {
@@ -1046,10 +1133,35 @@ function evolution_blacklist_notify_recipients(PDO $pdo, string $instanceKey, st
     return ['recipients' => count($rows), 'sent' => $sent, 'errors' => $errors];
 }
 
+function evolution_blacklist_notify_groups(PDO $pdo, string $fallbackInstanceKey, string $message, array $groupIds): array {
+    if (!$groupIds) return ['recipients' => 0, 'sent' => 0, 'errors' => []];
+    $sent = 0;
+    $errors = [];
+    foreach ($groupIds as $groupId) {
+        $groupId = trim((string)$groupId);
+        if ($groupId === '') continue;
+        $instanceKey = $fallbackInstanceKey;
+        try {
+            $st = $pdo->prepare("SELECT instance_key FROM whatsapp_groups WHERE group_id = :gid LIMIT 1");
+            $st->execute([':gid' => $groupId]);
+            $groupInstance = trim((string)($st->fetchColumn() ?: ''));
+            if ($groupInstance !== '') $instanceKey = $groupInstance;
+        } catch (Throwable $e) {}
+        $res = evolution_http('POST', '/message/sendText/' . rawurlencode($instanceKey), [
+            'number' => $groupId,
+            'text' => $message,
+        ]);
+        if (!empty($res['ok'])) $sent++;
+        else $errors[] = $groupId . ': ' . substr(trim((string)($res['raw'] ?? $res['error'] ?? 'Falha desconhecida')), 0, 400);
+    }
+    return ['recipients' => count($groupIds), 'sent' => $sent, 'errors' => $errors];
+}
+
 function evolution_handle_blacklist_entry(PDO $pdo, int $logId, array $fields, ?array $user, array $blacklist): array {
     $phone = (string)($fields['participant_phone'] ?? '');
     $protected = evolution_is_team_protected_phone($pdo, $phone);
-    $instanceKey = trim((string)($fields['instance_key'] ?? ''));
+    $eventInstanceKey = trim((string)($fields['instance_key'] ?? ''));
+    $instanceKey = evolution_select_action_instance($pdo, $eventInstanceKey);
     $groupId = trim((string)($fields['group_id'] ?? ''));
     $participant = trim((string)($fields['participant_id'] ?? ''));
     if ($participant === '' || strpos($participant, '@lid') !== false) $participant = $phone;
@@ -1059,7 +1171,8 @@ function evolution_handle_blacklist_entry(PDO $pdo, int $logId, array $fields, ?
     $removalResponse = null;
     $removalHttpStatus = null;
     if (!$protected && !empty($cfg['auto_remove'])) {
-        $remove = evolution_remove_group_participant($instanceKey, $groupId, $participant);
+        $remove = evolution_remove_group_participant_with_failover($pdo, $groupId, $participant);
+        $instanceKey = trim((string)($remove['instance_key'] ?? '')) ?: $instanceKey;
         $removalStatus = !empty($remove['ok']) ? 'removed' : 'error';
         $removalHttpStatus = (int)($remove['status'] ?? 0);
         $removalResponse = (string)($remove['raw'] ?? $remove['error'] ?? '');
@@ -1078,6 +1191,10 @@ function evolution_handle_blacklist_entry(PDO $pdo, int $logId, array $fields, ?
     if (!$protected && !empty($cfg['notify_enabled'])) {
         $message = evolution_render_template((string)$cfg['message_template'], $context);
         $notify = evolution_blacklist_notify_recipients($pdo, $instanceKey, $message, $cfg['recipient_ids']);
+        $groupNotify = evolution_blacklist_notify_groups($pdo, $instanceKey, $message, $cfg['group_ids']);
+        $notify['recipients'] += $groupNotify['recipients'];
+        $notify['sent'] += $groupNotify['sent'];
+        $notify['errors'] = array_merge($notify['errors'], $groupNotify['errors']);
         $notificationStatus = $notify['recipients'] <= 0
             ? 'no_recipients'
             : ($notify['sent'] === $notify['recipients'] ? 'sent' : ($notify['sent'] > 0 ? 'partial' : 'error'));

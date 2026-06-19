@@ -17,6 +17,9 @@ $__isEquipe    = ($_SESSION['admin_tipo'] === 'equipe');
 $__equipePerms = $__isEquipe
     ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
     : [];
+if ($__isEquipe && empty($__equipePerms['whatsapp_config']) && !empty($__equipePerms['whatsapp_ai'])) {
+    $__equipePerms['whatsapp_config'] = $__equipePerms['whatsapp_ai'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -32,7 +35,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -56,6 +59,7 @@ $titleMap = [
     'webhooks'         => 'Webhooks',
     'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
+    'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
     'monitor'          => 'Rastreamento',
@@ -723,7 +727,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -753,6 +757,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M8 9h8M8 13h5"/>
       </svg>
       Manychat
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_config']): ?>
+    <a href="whatsapp_config.php" class="sb-item <?= $currentMenu === 'whatsapp_config' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+      </svg>
+      Configurações WhatsApp
     </a>
     <?php endif; ?>
 
