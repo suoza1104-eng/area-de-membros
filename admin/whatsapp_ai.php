@@ -829,6 +829,7 @@ include __DIR__ . '/_header.php';
 
         <div class="wai-card">
             <div class="wai-title">Fila de revisao manual</div>
+            <div class="wai-help" style="margin-bottom:10px">Alertas leve, médio e crítico e suas tags são executados automaticamente. Esta fila mantém respostas sugeridas e demais ações que exigem aprovação humana.</div>
             <?php if (!$actions): ?>
                 <div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">Nenhuma acao pendente no momento.</div>
             <?php endif; ?>

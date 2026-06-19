@@ -242,9 +242,18 @@ require __DIR__ . '/_header.php';
         </div>
 
         <div class="form-group" style="margin-bottom:18px">
-            <label class="form-label">Senha <?= $modo === 'editar' ? '(deixe em branco para manter)' : '*' ?></label>
+            <?php if ($modo === 'editar'): ?>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12px;color:var(--text)">
+                    <input type="checkbox" id="alterar-senha" onchange="toggleAlterarSenha(this.checked)" style="width:16px;height:16px;accent-color:var(--primary)">
+                    Alterar senha deste membro
+                </label>
+            <?php endif; ?>
+            <label class="form-label">Senha <?= $modo === 'editar' ? '(opcional)' : '*' ?></label>
             <div class="pw-wrap">
-                <input type="password" id="campo-senha" name="senha" <?= $modo === 'novo' ? 'required' : '' ?> placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                <input type="password" id="campo-senha" name="senha"
+                    <?= $modo === 'novo' ? 'required' : 'disabled' ?>
+                    placeholder="<?= $modo === 'editar' ? 'Marque Alterar senha para definir uma nova' : 'Mínimo 6 caracteres' ?>"
+                    autocomplete="new-password">
                 <button type="button" class="pw-eye" onclick="toggleSenha()" title="Mostrar/ocultar senha">
                     <svg id="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -435,6 +444,18 @@ function toggleSenha() {
     } else {
         inp.type = 'password';
         ico.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+}
+function toggleAlterarSenha(ativo) {
+    var inp = document.getElementById('campo-senha');
+    if (!inp) return;
+    inp.disabled = !ativo;
+    inp.required = false;
+    if (!ativo) {
+        inp.value = '';
+        inp.type = 'password';
+    } else {
+        inp.focus();
     }
 }
 </script>

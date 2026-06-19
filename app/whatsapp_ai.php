@@ -817,7 +817,7 @@ function whatsapp_ai_find_user_for_action(PDO $pdo, array $action): ?array {
     return null;
 }
 
-function whatsapp_ai_create_action(PDO $pdo, int $batchId, string $groupId, string $type, array $data): void {
+function whatsapp_ai_create_action(PDO $pdo, int $batchId, string $groupId, string $type, array $data): int {
     $type = whatsapp_ai_normalize_action_type($type);
     $user = whatsapp_ai_find_user_for_action($pdo, $data);
     $phone = evolution_clean_whatsapp_phone((string)($data['telefone'] ?? $data['phone'] ?? $data['aluno_telefone'] ?? $data['target_phone'] ?? ''));
@@ -850,6 +850,7 @@ function whatsapp_ai_create_action(PDO $pdo, int $batchId, string $groupId, stri
         ':message_text' => $message !== '' ? $message : null,
         ':payload_json' => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ]);
+    return (int)$pdo->lastInsertId();
 }
 
 function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, array $analysis): void {
@@ -873,7 +874,30 @@ function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, arra
     foreach ($actions as $action) {
         if (!is_array($action)) continue;
         $type = (string)($action['tipo'] ?? $action['type'] ?? $action['acao'] ?? 'internal_alert');
-        whatsapp_ai_create_action($pdo, $batchId, $groupId, $type, $action);
+        $normalizedType = whatsapp_ai_normalize_action_type($type);
+
+        // O alerta de severidade ja e disparado automaticamente por
+        // whatsapp_ai_dispatch_analysis_event(). Nao duplica na fila manual.
+        if ($normalizedType === 'internal_alert') continue;
+        if ($normalizedType === 'trigger_webhook') {
+            $event = strtoupper(trim((string)($action['evento'] ?? $action['event'] ?? $action['event_name'] ?? '')));
+            if (strpos($event, 'WHATSAPP_IA_ALERTA_') === 0) continue;
+        }
+
+        // Em um caso classificado como alerta, tags sugeridas pela IA sao
+        // executadas imediatamente. Respostas continuam dependendo de aprovacao.
+        if ($normalizedType === 'apply_tag') {
+            $user = whatsapp_ai_find_user_for_action($pdo, $action);
+            $tag = trim((string)($action['tag'] ?? $action['tag_name'] ?? ''));
+            if ($user && $tag !== '') {
+                adicionar_tag((int)$user['id'], $tag, 'whatsapp_ai_alerta_automatico', $batchId);
+            } else {
+                @error_log('whatsapp_ai automatic alert tag ignored: aluno ou tag nao identificado.');
+            }
+            continue;
+        }
+
+        whatsapp_ai_create_action($pdo, $batchId, $groupId, $normalizedType, $action);
     }
 }
 
@@ -1057,6 +1081,9 @@ function whatsapp_ai_dispatch_analysis_event(PDO $pdo, int $batchId, string $cha
     $event = 'WHATSAPP_IA_ALERTA_' . $severity;
     $first = $messages[0] ?? [];
     $userId = (int)($first['user_id'] ?? 0);
+    if ($userId > 0) {
+        adicionar_tag($userId, $event, 'whatsapp_ai_alerta_automatico', $batchId);
+    }
     $extra = [
         'batch_id' => $batchId,
         'chat_id' => $chatId,
