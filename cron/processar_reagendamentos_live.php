@@ -80,7 +80,7 @@ function rl_cron_reagendamento_acessou(PDO $pdo, array $r): bool {
 
 if (!rl_cron_table_exists($pdo, 'reagendamentos_live')) {
     echo "Tabela reagendamentos_live nao existe.\n";
-    exit;
+    return;
 }
 
 $sent = 0;

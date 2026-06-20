@@ -124,10 +124,72 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         ]);
     }
 
+    cron_manager_recover_expired_runs($pdo);
+
     if (cron_manager_token($pdo) === '') {
         cron_manager_rotate_token($pdo);
     }
     $ensured = true;
+}
+
+/**
+ * Finaliza execucoes que perderam o processo PHP antes de chamar
+ * cron_manager_finish(). Isso impede que o painel permaneça em "Executando"
+ * depois do limite configurado para a rotina.
+ */
+function cron_manager_recover_expired_runs(PDO $pdo): int {
+    $recovered = 0;
+    $pdo->beginTransaction();
+    try {
+        $rows = $pdo->query("
+            SELECT task_key, running_token, last_started_at
+              FROM cron_managed_tasks
+             WHERE running_token IS NOT NULL
+               AND running_until IS NOT NULL
+               AND running_until <= NOW()
+             FOR UPDATE
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $finishRun = $pdo->prepare("
+            UPDATE cron_managed_runs
+               SET status='timeout',
+                   finished_at=NOW(),
+                   duration_ms=TIMESTAMPDIFF(MICROSECOND, started_at, NOW()) DIV 1000,
+                   error_message='Execucao interrompida ou excedeu o tempo limite.'
+             WHERE run_token=:run_token
+               AND status='running'
+        ");
+        $releaseTask = $pdo->prepare("
+            UPDATE cron_managed_tasks
+               SET running_until=NULL,
+                   running_token=NULL,
+                   last_finished_at=NOW(),
+                   last_status='timeout',
+                   last_duration_ms=TIMESTAMPDIFF(MICROSECOND, last_started_at, NOW()) DIV 1000,
+                   last_message='Execucao interrompida ou excedeu o tempo limite.',
+                   total_errors=total_errors+1
+             WHERE task_key=:task_key
+               AND running_token=:run_token
+        ");
+
+        foreach ($rows as $row) {
+            $runToken = (string)($row['running_token'] ?? '');
+            if ($runToken === '') continue;
+
+            $finishRun->execute([':run_token' => $runToken]);
+            $releaseTask->execute([
+                ':task_key' => (string)$row['task_key'],
+                ':run_token' => $runToken,
+            ]);
+            if ($releaseTask->rowCount() === 1) $recovered++;
+        }
+
+        $pdo->commit();
+        return $recovered;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
 }
 
 function cron_manager_heartbeat(PDO $pdo, string $source, string $taskKey, string $result = 'received', bool $countRequest = true): void {

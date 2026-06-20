@@ -486,7 +486,8 @@ if (!$turmas) {
         $GLOBALS['manual_live_turma_result'] = ['ok' => false, 'message' => 'Turma indisponivel: ja disparada, live vencida ou sem integracao ativa.'];
         return;
     }
-    exit; // sem nada para disparar
+    echo "Nenhuma turma pendente para processar.\n";
+    return;
 }
 
 // ----------------------------------------------------------------------------------
