@@ -208,6 +208,8 @@ require __DIR__ . '/_header.php';
     <div class="cm-code"><?= cm_h($endpoint) ?></div>
     <div class="cm-help" style="margin-top:8px">Token</div>
     <div class="cm-code cm-secret" tabindex="0"><?= cm_h($token) ?></div>
+    <div class="cm-help" style="margin-top:8px">Instalação automática no VPS como root</div>
+    <div class="cm-code">export CRON_TOKEN='<?= cm_h($token) ?>'; curl -fsSL "https://raw.githubusercontent.com/suoza1104-eng/area-de-membros/main/infra/cron-agent/install.sh" | bash -s -- "<?= cm_h($endpoint) ?>"</div>
     <div class="cm-help" style="margin-top:8px">Comando único para substituir os cron jobs da hospedagem</div>
     <div class="cm-code">* * * * * for task in whatsapp_ai reagendamentos_live lives_turma agendamentos_retorno; do /usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=$task" "<?= cm_h($endpoint) ?>" &gt;/dev/null 2&gt;&amp;1 &amp; done; wait</div>
 </div>

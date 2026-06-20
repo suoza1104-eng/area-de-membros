@@ -30,3 +30,5 @@ systemctl status area-membros-cron-agent.timer
 
 Cada rotina roda em uma unidade independente. Uma live demorada não bloqueia
 as execuções da IA, dos reagendamentos ou dos retornos no minuto seguinte.
+
+Também é possível usar o instalador automático exibido na tela Monitor de Cron.
