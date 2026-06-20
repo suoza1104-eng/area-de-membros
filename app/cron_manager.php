@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/funcoes.php';
 
-function cron_manager_definitions(): array {
+function cron_manager_base_definitions(): array {
     return [
         'whatsapp_ai' => [
             'label' => 'IA WhatsApp',
@@ -34,6 +34,39 @@ function cron_manager_definitions(): array {
             'timeout' => 300,
         ],
     ];
+}
+
+function cron_manager_definitions(): array {
+    $definitions = cron_manager_base_definitions();
+    try {
+        $pdo = getPDO();
+        $rows = $pdo->query("
+            SELECT task_key, label, description, script_file, default_interval_minutes, timeout_seconds
+              FROM cron_custom_definitions
+             WHERE active=1
+             ORDER BY task_key
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($rows as $row) {
+            $scriptFile = basename((string)$row['script_file']);
+            $scriptPath = realpath(__DIR__ . '/../cron/' . $scriptFile);
+            $cronDir = realpath(__DIR__ . '/../cron');
+            if (!$scriptPath || !$cronDir || dirname($scriptPath) !== $cronDir || strtolower(pathinfo($scriptPath, PATHINFO_EXTENSION)) !== 'php') {
+                continue;
+            }
+            $definitions[(string)$row['task_key']] = [
+                'label' => (string)$row['label'],
+                'description' => (string)($row['description'] ?? ''),
+                'script' => $scriptPath,
+                'interval' => max(1, (int)$row['default_interval_minutes']),
+                'timeout' => max(60, (int)$row['timeout_seconds']),
+                'custom' => true,
+                'script_file' => $scriptFile,
+            ];
+        }
+    } catch (Throwable $e) {
+        // A tabela ainda pode nao existir durante a primeira instalacao.
+    }
+    return $definitions;
 }
 
 function cron_manager_ensure_tables(PDO $pdo): void {
@@ -105,6 +138,21 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS cron_custom_definitions (
+            task_key VARCHAR(80) NOT NULL PRIMARY KEY,
+            label VARCHAR(180) NOT NULL,
+            description VARCHAR(500) NULL,
+            script_file VARCHAR(190) NOT NULL,
+            default_interval_minutes INT NOT NULL DEFAULT 1,
+            timeout_seconds INT NOT NULL DEFAULT 300,
+            active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_cron_custom_script (script_file)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     $insert = $pdo->prepare("
         INSERT INTO cron_managed_tasks
             (task_key, label, enabled, mode, primary_source, interval_minutes,
@@ -130,6 +178,98 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         cron_manager_rotate_token($pdo);
     }
     $ensured = true;
+}
+
+function cron_manager_available_scripts(PDO $pdo): array {
+    cron_manager_ensure_tables($pdo);
+    $used = [];
+    foreach (cron_manager_definitions() as $definition) {
+        if (!empty($definition['script'])) {
+            $used[basename((string)$definition['script'])] = true;
+        }
+    }
+
+    $files = glob(__DIR__ . '/../cron/*.php') ?: [];
+    $available = [];
+    foreach ($files as $file) {
+        $name = basename($file);
+        if (!isset($used[$name])) $available[] = $name;
+    }
+    sort($available, SORT_NATURAL | SORT_FLAG_CASE);
+    return $available;
+}
+
+function cron_manager_create_custom_task(PDO $pdo, array $data): string {
+    cron_manager_ensure_tables($pdo);
+
+    $taskKey = strtolower(trim((string)($data['task_key'] ?? '')));
+    $label = trim((string)($data['label'] ?? ''));
+    $description = trim((string)($data['description'] ?? ''));
+    $scriptFile = basename(trim((string)($data['script_file'] ?? '')));
+    $interval = max(1, min(1440, (int)($data['interval_minutes'] ?? 1)));
+    $timeout = max(60, min(7200, (int)($data['timeout_seconds'] ?? 300)));
+
+    if (!preg_match('/^[a-z][a-z0-9_]{2,79}$/', $taskKey)) {
+        throw new InvalidArgumentException('Use uma chave com letras minusculas, numeros e underline, iniciando por letra.');
+    }
+    if ($label === '' || strlen($label) > 180) {
+        throw new InvalidArgumentException('Informe um nome de ate 180 caracteres.');
+    }
+    if (strlen($description) > 500) {
+        throw new InvalidArgumentException('A descricao deve ter no maximo 500 caracteres.');
+    }
+    if (!preg_match('/^[A-Za-z0-9._-]+\.php$/', $scriptFile)) {
+        throw new InvalidArgumentException('Selecione um arquivo PHP valido.');
+    }
+
+    $cronDir = realpath(__DIR__ . '/../cron');
+    $scriptPath = realpath(__DIR__ . '/../cron/' . $scriptFile);
+    if (!$cronDir || !$scriptPath || dirname($scriptPath) !== $cronDir || strtolower(pathinfo($scriptPath, PATHINFO_EXTENSION)) !== 'php') {
+        throw new InvalidArgumentException('O arquivo precisa existir dentro da pasta cron.');
+    }
+    if (!in_array($scriptFile, cron_manager_available_scripts($pdo), true)) {
+        throw new InvalidArgumentException('Esse arquivo ja esta cadastrado ou nao esta disponivel.');
+    }
+    if (isset(cron_manager_definitions()[$taskKey])) {
+        throw new InvalidArgumentException('Essa chave de rotina ja existe.');
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $custom = $pdo->prepare("
+            INSERT INTO cron_custom_definitions
+                (task_key, label, description, script_file, default_interval_minutes, timeout_seconds, active)
+            VALUES
+                (:task_key, :label, :description, :script_file, :interval_minutes, :timeout_seconds, 1)
+        ");
+        $custom->execute([
+            ':task_key' => $taskKey,
+            ':label' => $label,
+            ':description' => $description !== '' ? $description : null,
+            ':script_file' => $scriptFile,
+            ':interval_minutes' => $interval,
+            ':timeout_seconds' => $timeout,
+        ]);
+
+        $task = $pdo->prepare("
+            INSERT INTO cron_managed_tasks
+                (task_key, label, enabled, mode, primary_source, interval_minutes,
+                 fallback_after_minutes, timeout_seconds, next_run_at)
+            VALUES
+                (:task_key, :label, 1, 'redundant', 'vps', :interval_minutes, 3, :timeout_seconds, NOW())
+        ");
+        $task->execute([
+            ':task_key' => $taskKey,
+            ':label' => $label,
+            ':interval_minutes' => $interval,
+            ':timeout_seconds' => $timeout,
+        ]);
+        $pdo->commit();
+        return $taskKey;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
 }
 
 /**

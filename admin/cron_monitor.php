@@ -97,6 +97,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             header('Location: cron_monitor.php?saved=1');
             exit;
         }
+        if ($action === 'create_task') {
+            $taskKey = cron_manager_create_custom_task($pdo, $_POST);
+            header('Location: cron_monitor.php?notice=' . urlencode('Rotina ' . $taskKey . ' cadastrada com sucesso.'));
+            exit;
+        }
         if ($action === 'run_now') {
             $taskKey = trim((string)($_POST['task_key'] ?? ''));
             $result = cron_manager_execute($pdo, $taskKey, 'manual', true);
@@ -127,6 +132,7 @@ if (isset($_GET['ajax'])) {
 $token = cron_manager_token($pdo);
 $endpoint = rtrim(BASE_URL, '/') . '/cron_dispatcher.php';
 $definitions = cron_manager_definitions();
+$availableScripts = cron_manager_available_scripts($pdo);
 $initial = cm_payload($pdo);
 $notice = trim((string)($_GET['notice'] ?? ''));
 $error = trim((string)($_GET['error'] ?? ''));
@@ -165,6 +171,12 @@ require __DIR__ . '/_header.php';
 .cm-notice{padding:11px 13px;border-radius:9px;margin-bottom:14px;font-size:12px}
 .cm-notice.ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#86efac}
 .cm-notice.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#fca5a5}
+.cm-create{margin-bottom:16px}
+.cm-create summary{cursor:pointer;font-weight:800;list-style:none}
+.cm-create summary::-webkit-details-marker{display:none}
+.cm-create summary:after{content:'+';float:right;font-size:20px;color:#facc15}
+.cm-create[open] summary:after{content:'−'}
+.cm-create-form{margin-top:14px}
 @media(max-width:900px){.cm-grid,.cm-agent-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.cm-fields,.cm-meta{grid-template-columns:1fr}}
 </style>
@@ -213,6 +225,54 @@ require __DIR__ . '/_header.php';
     <div class="cm-help" style="margin-top:8px">Comando único para substituir os cron jobs da hospedagem</div>
     <div class="cm-code">* * * * * tasks=$(/usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=list" "<?= cm_h($endpoint) ?>") &amp;&amp; for task in $tasks; do /usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=$task" "<?= cm_h($endpoint) ?>" &gt;/dev/null 2&gt;&amp;1 &amp; done; wait</div>
 </div>
+
+<?php if (cm_can_write()): ?>
+<details class="cm-card cm-create">
+    <summary>Criar nova rotina de cron</summary>
+    <div class="cm-help" style="margin-top:5px">Cadastre somente scripts preparados para cron. O arquivo deve estar dentro da pasta /cron e não deve usar exit ou die.</div>
+    <?php if ($availableScripts): ?>
+    <form method="post" class="cm-create-form">
+        <input type="hidden" name="action" value="create_task">
+        <div class="cm-fields">
+            <div class="cm-field">
+                <label>Arquivo PHP</label>
+                <select name="script_file" required>
+                    <option value="">Selecione...</option>
+                    <?php foreach ($availableScripts as $scriptFile): ?>
+                    <option value="<?= cm_h($scriptFile) ?>"><?= cm_h($scriptFile) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="cm-field">
+                <label>Chave da rotina</label>
+                <input name="task_key" required maxlength="80" pattern="[a-z][a-z0-9_]{2,79}" placeholder="ex.: enviar_certificados">
+            </div>
+            <div class="cm-field">
+                <label>Nome exibido</label>
+                <input name="label" required maxlength="180" placeholder="Ex.: Envio de certificados">
+            </div>
+            <div class="cm-field">
+                <label>Descrição</label>
+                <input name="description" maxlength="500" placeholder="O que esta rotina processa">
+            </div>
+            <div class="cm-field">
+                <label>Intervalo padrão (min)</label>
+                <input type="number" name="interval_minutes" min="1" max="1440" value="1" required>
+            </div>
+            <div class="cm-field">
+                <label>Tempo limite (seg)</label>
+                <input type="number" name="timeout_seconds" min="60" max="7200" value="300" required>
+            </div>
+        </div>
+        <div class="cm-actions">
+            <button class="btn btn-primary btn-sm" type="submit">Cadastrar rotina</button>
+        </div>
+    </form>
+    <?php else: ?>
+    <div class="cm-help" style="margin-top:12px">Não há arquivos PHP livres na pasta /cron. Envie primeiro o novo arquivo para essa pasta.</div>
+    <?php endif; ?>
+</details>
+<?php endif; ?>
 
 <div class="cm-grid" id="cm-tasks">
 <?php foreach ($initial['tasks'] as $task): ?>
