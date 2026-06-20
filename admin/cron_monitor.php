@@ -41,9 +41,9 @@ function cm_payload(PDO $pdo): array {
         } elseif ($runningUntil && $runningUntil > $now) {
             $task['health'] = 'running';
             $task['health_label'] = 'Executando';
-        } elseif ((string)$task['last_status'] === 'error') {
+        } elseif (in_array((string)$task['last_status'], ['error', 'timeout'], true)) {
             $task['health'] = 'error';
-            $task['health_label'] = 'Erro';
+            $task['health_label'] = (string)$task['last_status'] === 'timeout' ? 'Tempo excedido' : 'Erro';
         } elseif ($lastSuccess && $lastSuccess >= $now - $healthySeconds) {
             $task['health'] = 'online';
             $task['health_label'] = 'Saudável';
@@ -211,7 +211,7 @@ require __DIR__ . '/_header.php';
     <div class="cm-help" style="margin-top:8px">Instalação automática no VPS como root</div>
     <div class="cm-code">export CRON_TOKEN='<?= cm_h($token) ?>'; curl -fsSL "https://raw.githubusercontent.com/suoza1104-eng/area-de-membros/main/infra/cron-agent/install.sh" | bash -s -- "<?= cm_h($endpoint) ?>"</div>
     <div class="cm-help" style="margin-top:8px">Comando único para substituir os cron jobs da hospedagem</div>
-    <div class="cm-code">* * * * * for task in whatsapp_ai reagendamentos_live lives_turma agendamentos_retorno; do /usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=$task" "<?= cm_h($endpoint) ?>" &gt;/dev/null 2&gt;&amp;1 &amp; done; wait</div>
+    <div class="cm-code">* * * * * tasks=$(/usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=list" "<?= cm_h($endpoint) ?>") &amp;&amp; for task in $tasks; do /usr/bin/curl -fsS -H "X-Cron-Token: <?= cm_h($token) ?>" --data "source=hosting&amp;task=$task" "<?= cm_h($endpoint) ?>" &gt;/dev/null 2&gt;&amp;1 &amp; done; wait</div>
 </div>
 
 <div class="cm-grid" id="cm-tasks">

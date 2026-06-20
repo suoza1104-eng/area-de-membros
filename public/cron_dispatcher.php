@@ -30,6 +30,14 @@ if (!in_array($source, ['vps', 'hosting'], true)) $source = 'vps';
 $taskKey = trim((string)($_POST['task'] ?? $_GET['task'] ?? ''));
 cron_manager_heartbeat($pdo, $source, $taskKey !== '' ? $taskKey : 'health');
 
+if ($taskKey === 'list') {
+    header('Content-Type: text/plain; charset=utf-8');
+    foreach (array_keys(cron_manager_definitions()) as $registeredTaskKey) {
+        echo $registeredTaskKey . PHP_EOL;
+    }
+    exit;
+}
+
 if ($taskKey === 'health') {
     echo json_encode([
         'ok' => true,
