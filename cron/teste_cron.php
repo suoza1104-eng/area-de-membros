@@ -6,10 +6,19 @@ declare(strict_types=1);
 
 date_default_timezone_set('America/Sao_Paulo');
 
-$logFile = __DIR__ . '/teste_cron_execucoes.log';
+$logDir = __DIR__ . '/../uploads/cron_diagnostico';
+if (!is_dir($logDir) && !mkdir($logDir, 0775, true) && !is_dir($logDir)) {
+    http_response_code(500);
+    echo "Não foi possível criar o diretório persistente do teste.\n";
+    exit(1);
+}
+
+// uploads/ é preservado pelo deploy, enquanto arquivos criados dentro de
+// cron/ podem ser removidos pelo rsync --delete.
+$logFile = $logDir . '/teste_cron_execucoes.log';
 $log = fopen($logFile, 'c+');
 if ($log === false || !flock($log, LOCK_EX)) {
-    fwrite(STDERR, "Não foi possível obter o lock do teste.\n");
+    file_put_contents('php://stderr', "Não foi possível obter o lock do teste.\n");
     exit(1);
 }
 
@@ -35,7 +44,7 @@ try {
 
     echo $line;
 } catch (Throwable $e) {
-    fwrite(STDERR, $e->getMessage() . "\n");
+    file_put_contents('php://stderr', $e->getMessage() . "\n");
     exit(1);
 } finally {
     flock($log, LOCK_UN);
