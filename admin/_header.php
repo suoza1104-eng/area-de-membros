@@ -20,6 +20,9 @@ $__equipePerms = $__isEquipe
 if ($__isEquipe && empty($__equipePerms['whatsapp_config']) && !empty($__equipePerms['whatsapp_ai'])) {
     $__equipePerms['whatsapp_config'] = $__equipePerms['whatsapp_ai'];
 }
+if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerms['logs'])) {
+    $__equipePerms['cron_monitor'] = $__equipePerms['logs'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -35,7 +38,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -63,6 +66,7 @@ $titleMap = [
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
     'monitor'          => 'Rastreamento',
+    'cron_monitor'     => 'Monitor de Cron',
     'logs'             => 'Logs',
     'aparencia'        => 'Aparência',
     'config_app'       => 'Configurações',
@@ -822,7 +826,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
+    <?php if ($__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
     <?php endif; ?>
 
@@ -832,6 +836,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
       Rastreamento
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['cron_monitor']): ?>
+    <a href="cron_monitor.php" class="sb-item <?= $currentMenu === 'cron_monitor' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M12 7v5l3 2"/>
+        <path d="M4 4l2 2M20 4l-2 2"/>
+      </svg>
+      Monitor de Cron
     </a>
     <?php endif; ?>
 
