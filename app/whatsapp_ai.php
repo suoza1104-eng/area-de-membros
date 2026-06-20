@@ -193,6 +193,9 @@ function whatsapp_ai_get_config(): array {
         'context_keep' => max(0, min(50, (int)get_setting('whatsapp_ai_context_keep', '6'))),
         'prompt' => (string)get_setting('whatsapp_ai_prompt', whatsapp_ai_default_prompt()),
         'criteria' => $criteria,
+        'group_alerts_enabled' => (int)get_setting('whatsapp_ai_group_alerts_enabled', '1') === 1,
+        'group_suggestions_enabled' => (int)get_setting('whatsapp_ai_group_suggestions_enabled', '0') === 1,
+        'group_tags_enabled' => (int)get_setting('whatsapp_ai_group_tags_enabled', '1') === 1,
         'temperature' => max(0, min(2, (float)get_setting('whatsapp_ai_temperature', '0.2'))),
         'transcription_model' => trim((string)get_setting('whatsapp_ai_transcription_model', 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
         'direct_window_minutes' => 10,
@@ -215,6 +218,9 @@ function whatsapp_ai_set_config(array $data): void {
         'whatsapp_ai_context_keep' => (string)max(0, min(50, (int)($data['context_keep'] ?? 6))),
         'whatsapp_ai_prompt' => trim((string)($data['prompt'] ?? '')) ?: whatsapp_ai_default_prompt(),
         'whatsapp_ai_criteria' => trim((string)($data['criteria'] ?? '')),
+        'whatsapp_ai_group_alerts_enabled' => !empty($data['group_alerts_enabled']) ? '1' : '0',
+        'whatsapp_ai_group_suggestions_enabled' => !empty($data['group_suggestions_enabled']) ? '1' : '0',
+        'whatsapp_ai_group_tags_enabled' => !empty($data['group_tags_enabled']) ? '1' : '0',
         'whatsapp_ai_temperature' => (string)max(0, min(2, (float)($data['temperature'] ?? 0.2))),
         'whatsapp_ai_transcription_model' => trim((string)($data['transcription_model'] ?? 'gpt-4o-mini-transcribe')) ?: 'gpt-4o-mini-transcribe',
         'whatsapp_direct_auto_reply_enabled' => !empty($data['direct_auto_reply_enabled']) ? '1' : '0',
@@ -509,6 +515,20 @@ function whatsapp_ai_build_prompt(array $cfg, string $groupName, array $contexts
         }
     }
 
+    $isDirect = (string)($messages[0]['chat_type'] ?? 'group') === 'direct';
+    $featureRules = [];
+    if (!$isDirect) {
+        $featureRules[] = !empty($cfg['group_alerts_enabled'])
+            ? 'Classifique e sinalize normalmente os alertas leves, medios e criticos.'
+            : 'Nao solicite alertas nem eventos de alerta para este grupo.';
+        $featureRules[] = !empty($cfg['group_suggestions_enabled'])
+            ? 'Pode preencher resposta_sugerida e propor send_group_message quando isso for util.'
+            : 'Nao sugira respostas: resposta_sugerida deve ser vazia e nao use send_group_message.';
+        $featureRules[] = !empty($cfg['group_tags_enabled'])
+            ? 'Pode propor apply_tag quando houver uma tag util.'
+            : 'Nao proponha nem aplique tags; nao use apply_tag.';
+    }
+
     $userContent = [[
         'type' => 'input_text',
         'text' => json_encode([
@@ -516,6 +536,7 @@ function whatsapp_ai_build_prompt(array $cfg, string $groupName, array $contexts
             'criterios_adicionais' => (string)$cfg['criteria'],
             'contextos_anteriores' => array_values($contexts),
             'mensagens' => $lines,
+            'funcoes_habilitadas' => $featureRules,
             'instrucao_saida' => 'Responda somente JSON valido com as chaves: precisa_intervencao, nivel, categoria, resumo, resposta_sugerida, acoes, novo_contexto. nivel deve ser leve, medio ou critico. Categorias preferenciais: pornografia, golpe_suspeito, reclamacao, ofensa, insatisfacao, duvida_aluno, suporte, interesse_compra, conversa_normal. Em acoes, use tipo: send_group_message, apply_tag, trigger_webhook ou internal_alert. Para tags use tag. Para webhooks use event_name. Para aluno use telefone ou user_id quando souber. Se houver imagem anexada, verifique especialmente pornografia, fraude e falsificacao de identidade.',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ]];
@@ -853,14 +874,14 @@ function whatsapp_ai_create_action(PDO $pdo, int $batchId, string $groupId, stri
     return (int)$pdo->lastInsertId();
 }
 
-function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, array $analysis): void {
+function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, array $analysis, array $cfg, string $chatType): void {
     $pdo->prepare("DELETE FROM whatsapp_ai_actions WHERE batch_id = :bid AND status = 'pending'")
         ->execute([':bid' => $batchId]);
 
     if (empty($analysis['precisa_intervencao'])) return;
 
     $suggested = trim((string)($analysis['resposta_sugerida'] ?? ''));
-    if ($suggested !== '') {
+    if ($chatType === 'group' && !empty($cfg['group_suggestions_enabled']) && $suggested !== '') {
         whatsapp_ai_create_action($pdo, $batchId, $groupId, 'send_group_message', [
             'resposta_sugerida' => $suggested,
             'categoria' => $analysis['categoria'] ?? null,
@@ -876,6 +897,13 @@ function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, arra
         $type = (string)($action['tipo'] ?? $action['type'] ?? $action['acao'] ?? 'internal_alert');
         $normalizedType = whatsapp_ai_normalize_action_type($type);
 
+        if ($normalizedType === 'send_group_message' && (
+            $chatType !== 'group'
+            || empty($cfg['group_suggestions_enabled'])
+        )) {
+            continue;
+        }
+
         // O alerta de severidade ja e disparado automaticamente por
         // whatsapp_ai_dispatch_analysis_event(). Nao duplica na fila manual.
         if ($normalizedType === 'internal_alert') continue;
@@ -887,6 +915,7 @@ function whatsapp_ai_queue_actions(PDO $pdo, int $batchId, string $groupId, arra
         // Em um caso classificado como alerta, tags sugeridas pela IA sao
         // executadas imediatamente. Respostas continuam dependendo de aprovacao.
         if ($normalizedType === 'apply_tag') {
+            if ($chatType === 'group' && empty($cfg['group_tags_enabled'])) continue;
             $user = whatsapp_ai_find_user_for_action($pdo, $action);
             $tag = trim((string)($action['tag'] ?? $action['tag_name'] ?? ''));
             if ($user && $tag !== '') {
@@ -1075,13 +1104,17 @@ function whatsapp_ai_normalize_severity(?string $severity): string {
     return 'LEVE';
 }
 
-function whatsapp_ai_dispatch_analysis_event(PDO $pdo, int $batchId, string $chatId, array $analysis, array $messages): void {
+function whatsapp_ai_dispatch_analysis_event(PDO $pdo, int $batchId, string $chatId, array $analysis, array $messages, array $cfg): void {
     if (empty($analysis['precisa_intervencao'])) return;
+    $first = $messages[0] ?? [];
+    if ((string)($first['chat_type'] ?? 'group') === 'group' && empty($cfg['group_alerts_enabled'])) return;
     $severity = whatsapp_ai_normalize_severity((string)($analysis['nivel'] ?? ''));
     $event = 'WHATSAPP_IA_ALERTA_' . $severity;
-    $first = $messages[0] ?? [];
     $userId = (int)($first['user_id'] ?? 0);
-    if ($userId > 0) {
+    if ($userId > 0 && (
+        (string)($first['chat_type'] ?? 'group') !== 'group'
+        || !empty($cfg['group_tags_enabled'])
+    )) {
         adicionar_tag($userId, $event, 'whatsapp_ai_alerta_automatico', $batchId);
     }
     $extra = [
@@ -1238,6 +1271,10 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
             try {
                 $res = whatsapp_ai_call_openai($cfg, $promptMessages);
                 $a = $res['analysis'];
+                $chatType = (string)($messages[0]['chat_type'] ?? 'group');
+                if ($chatType === 'group' && empty($cfg['group_suggestions_enabled'])) {
+                    $a['resposta_sugerida'] = '';
+                }
                 $usage = $res['raw']['usage'] ?? [];
                 $up = $pdo->prepare("
                     UPDATE whatsapp_ai_batches
@@ -1278,8 +1315,8 @@ function whatsapp_ai_process_due(PDO $pdo, int $limitGroups = 10): array {
                     $ctxIns->execute([':gid' => $groupId, ':bid' => $batchId, ':summary' => $nextContext]);
                     whatsapp_ai_prune_contexts($pdo, $groupId, (int)$cfg['context_keep']);
                 }
-                whatsapp_ai_queue_actions($pdo, $batchId, $groupId, $a);
-                whatsapp_ai_dispatch_analysis_event($pdo, $batchId, $groupId, $a, $messages);
+                whatsapp_ai_queue_actions($pdo, $batchId, $groupId, $a, $cfg, $chatType);
+                whatsapp_ai_dispatch_analysis_event($pdo, $batchId, $groupId, $a, $messages, $cfg);
                 whatsapp_ai_handle_direct_analysis($pdo, $cfg, $batchId, $a, $messages);
             } catch (Throwable $e) {
                 $pdo->prepare("UPDATE whatsapp_ai_batches SET status='error', error_message=:err, processed_at=NOW() WHERE id=:id")

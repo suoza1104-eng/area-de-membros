@@ -128,6 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'transcription_model' => $_POST['transcription_model'] ?? 'gpt-4o-mini-transcribe',
                 'prompt' => $_POST['prompt'] ?? '',
                 'criteria' => $_POST['criteria'] ?? '',
+                'group_alerts_enabled' => !empty($_POST['group_alerts_enabled']),
+                'group_suggestions_enabled' => !empty($_POST['group_suggestions_enabled']),
+                'group_tags_enabled' => !empty($_POST['group_tags_enabled']),
                 'direct_auto_reply_enabled' => !empty($_POST['direct_auto_reply_enabled']),
                 'direct_support_link' => $_POST['direct_support_link'] ?? '',
                 'direct_reply_template' => $_POST['direct_reply_template'] ?? '',
@@ -350,6 +353,13 @@ require __DIR__ . '/_header.php';
         <form method="post">
             <input type="hidden" name="action" value="save_ai">
             <label class="form-label"><input type="checkbox" name="enabled" value="1" <?= $aiCfg['enabled']?'checked':'' ?>> Ativar IA</label>
+            <div class="form-group" style="margin-top:12px">
+                <label class="form-label">Funções da IA nos grupos</label>
+                <label class="form-label"><input type="checkbox" name="group_alerts_enabled" value="1" <?= $aiCfg['group_alerts_enabled']?'checked':'' ?>> Monitorar e notificar alertas leves, médios e críticos</label>
+                <label class="form-label"><input type="checkbox" name="group_suggestions_enabled" value="1" <?= $aiCfg['group_suggestions_enabled']?'checked':'' ?>> Gerar sugestões de respostas para aprovação</label>
+                <label class="form-label"><input type="checkbox" name="group_tags_enabled" value="1" <?= $aiCfg['group_tags_enabled']?'checked':'' ?>> Aplicar tags automáticas relacionadas aos alertas</label>
+                <div class="wc-help">As opções são independentes. Você pode manter os alertas ativos sem gerar sugestões de respostas.</div>
+            </div>
             <?php
                 $aiModels = [
                     'gpt-5.4-mini' => 'Recomendado: modelo atual forte e eficiente para alto volume, classificação e análise multimodal.',

@@ -81,6 +81,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'transcription_model' => $_POST['transcription_model'] ?? 'gpt-4o-mini-transcribe',
                 'prompt' => $_POST['prompt'] ?? '',
                 'criteria' => $_POST['criteria'] ?? '',
+                'group_alerts_enabled' => !empty($_POST['group_alerts_enabled']),
+                'group_suggestions_enabled' => !empty($_POST['group_suggestions_enabled']),
+                'group_tags_enabled' => !empty($_POST['group_tags_enabled']),
+                'direct_auto_reply_enabled' => (bool)$current['direct_auto_reply_enabled'],
+                'direct_support_link' => (string)$current['direct_support_link'],
+                'direct_reply_template' => (string)$current['direct_reply_template'],
             ]);
             header('Location: whatsapp_ai.php?saved=1');
             exit;
@@ -532,7 +538,15 @@ include __DIR__ . '/_header.php';
                 <input type="hidden" name="action" value="save_config">
                 <div class="form-group">
                     <label class="form-label"><input type="checkbox" name="enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>> Ativar analise por IA</label>
-                    <div class="wai-help">A IA analisa e cria sugestoes. Mensagens, tags e webhooks so rodam depois de aprovacao manual na fila de revisao.</div>
+                    <div class="wai-help">A IA analisa os pacotes conforme as funções habilitadas abaixo.</div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Funções da IA nos grupos</label>
+                    <label class="form-label"><input type="checkbox" name="group_alerts_enabled" value="1" <?= $cfg['group_alerts_enabled'] ? 'checked' : '' ?>> Monitorar e notificar alertas leves, médios e críticos</label>
+                    <label class="form-label"><input type="checkbox" name="group_suggestions_enabled" value="1" <?= $cfg['group_suggestions_enabled'] ? 'checked' : '' ?>> Gerar sugestões de respostas para aprovação</label>
+                    <label class="form-label"><input type="checkbox" name="group_tags_enabled" value="1" <?= $cfg['group_tags_enabled'] ? 'checked' : '' ?>> Aplicar tags automáticas relacionadas aos alertas</label>
+                    <div class="wai-help">Desativar sugestões não interfere no monitoramento nem nas notificações de alerta.</div>
                 </div>
 
                 <div class="wai-row">
