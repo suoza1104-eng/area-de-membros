@@ -1,0 +1,11 @@
+[Unit]
+Description=Executa o cron externo da Area de Membros a cada minuto
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=area-membros-cron-agent.service
+
+[Install]
+WantedBy=timers.target

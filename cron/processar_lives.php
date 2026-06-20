@@ -4,6 +4,13 @@
 // Também dispara para o SuperFuncionário se sf_enabled=1 na turma.
 declare(strict_types=1);
 
+if (empty($GLOBALS['cron_manager_task_key']) && empty($GLOBALS['manual_live_turma_id'])) {
+    require_once __DIR__ . '/../app/cron_manager.php';
+    $managedResult = cron_manager_execute(getPDO(), 'lives_turma', 'hosting', false);
+    echo json_encode($managedResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    return;
+}
+
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
 require_once __DIR__ . '/../app/manychat_dispatcher.php';
