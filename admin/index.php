@@ -1920,6 +1920,53 @@ body.dash-chart-fullscreen {
     gap: 12px;
     flex-wrap: wrap;
 }
+.live-relative-range {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255,255,255,.02);
+}
+.live-relative-range label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.live-relative-range input {
+    width: 68px;
+    height: 30px;
+    margin: 0;
+    padding: 4px 7px;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+}
+.live-relative-range button {
+    height: 30px;
+    padding: 4px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.live-relative-range button:hover {
+    color: var(--text);
+    border-color: var(--border-light);
+}
 .live-relative-option {
     display: inline-flex;
     align-items: center;
@@ -1969,6 +2016,18 @@ body.dash-chart-fullscreen {
                 Dia da live reagendada
             </label>
         </div>
+    </div>
+    <div class="live-relative-range" style="margin-bottom:14px">
+        <label for="liveRelativeNegative">
+            Máximo negativo
+            <input type="number" id="liveRelativeNegative" min="0" step="1" value="30" inputmode="numeric">
+        </label>
+        <label for="liveRelativePositive">
+            Máximo positivo
+            <input type="number" id="liveRelativePositive" min="0" step="1" value="30" inputmode="numeric">
+        </label>
+        <button type="button" id="liveRelativeShowAll">Mostrar tudo</button>
+        <span style="color:var(--muted);font-size:11px">Intervalo exibido: <strong id="liveRelativeRangeLabel" style="color:var(--text)">-30 a +30</strong></span>
     </div>
     <div class="live-relative-chart-wrap">
         <canvas id="chartVendasRelativasLive"></canvas>
@@ -2500,10 +2559,57 @@ body.dash-chart-fullscreen {
         }
     };
 
+    let liveRelativeReference = 'original';
+
+    function liveRelativeLimit(inputId, fallback) {
+        const input = document.getElementById(inputId);
+        const parsed = input ? parseInt(input.value, 10) : fallback;
+        return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+    }
+
+    function liveRelativeVisiblePayload(reference) {
+        const full = LIVE_RELATIVE_DATA[reference] || {labels:['0'], days:[0], data:[0], total:0};
+        const negative = liveRelativeLimit('liveRelativeNegative', 30);
+        const positive = liveRelativeLimit('liveRelativePositive', 30);
+        const labels = [];
+        const days = [];
+        const data = [];
+
+        (full.days || []).forEach(function(day, index) {
+            const numericDay = Number(day);
+            if (numericDay < -negative || numericDay > positive) return;
+            days.push(numericDay);
+            labels.push((full.labels || [])[index] ?? (numericDay > 0 ? '+' + numericDay : String(numericDay)));
+            data.push(Number((full.data || [])[index] || 0));
+        });
+
+        if (!days.length) {
+            days.push(0);
+            labels.push('0');
+            data.push(0);
+        }
+
+        try {
+            localStorage.setItem('dashboard_live_relative_negative', String(negative));
+            localStorage.setItem('dashboard_live_relative_positive', String(positive));
+        } catch (e) {}
+
+        const rangeLabel = document.getElementById('liveRelativeRangeLabel');
+        if (rangeLabel) rangeLabel.textContent = '-' + negative + ' a +' + positive;
+
+        return {
+            labels: labels,
+            days: days,
+            data: data,
+            total: data.reduce(function(sum, value) { return sum + Number(value || 0); }, 0)
+        };
+    }
+
     function renderLiveRelativeChart(reference) {
         const canvas = document.getElementById('chartVendasRelativasLive');
         if (!canvas) return;
-        const payload = LIVE_RELATIVE_DATA[reference] || {labels:['0'], days:[0], data:[0], total:0};
+        liveRelativeReference = reference;
+        const payload = liveRelativeVisiblePayload(reference);
         const isRescheduled = reference === 'reagendada';
         const color = isRescheduled ? '#a78bfa' : '#38bdf8';
         const total = Number(payload.total || 0);
@@ -2592,6 +2698,43 @@ body.dash-chart-fullscreen {
             renderLiveRelativeChart(input.getAttribute('data-live-reference') || 'original');
         });
     });
+
+    ['liveRelativeNegative', 'liveRelativePositive'].forEach(function(inputId) {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        input.addEventListener('input', function() {
+            renderLiveRelativeChart(liveRelativeReference);
+        });
+        input.addEventListener('change', function() {
+            input.value = String(liveRelativeLimit(inputId, 30));
+            renderLiveRelativeChart(liveRelativeReference);
+        });
+    });
+
+    const liveRelativeShowAll = document.getElementById('liveRelativeShowAll');
+    if (liveRelativeShowAll) {
+        liveRelativeShowAll.addEventListener('click', function() {
+            const full = LIVE_RELATIVE_DATA[liveRelativeReference] || {days:[0]};
+            const days = (full.days || [0]).map(Number);
+            const minDay = Math.min.apply(null, days);
+            const maxDay = Math.max.apply(null, days);
+            document.getElementById('liveRelativeNegative').value = String(Math.max(0, Math.abs(Math.min(0, minDay))));
+            document.getElementById('liveRelativePositive').value = String(Math.max(0, maxDay));
+            renderLiveRelativeChart(liveRelativeReference);
+        });
+    }
+
+    try {
+        const savedNegative = parseInt(localStorage.getItem('dashboard_live_relative_negative'), 10);
+        const savedPositive = parseInt(localStorage.getItem('dashboard_live_relative_positive'), 10);
+        if (Number.isFinite(savedNegative) && savedNegative >= 0) {
+            document.getElementById('liveRelativeNegative').value = String(savedNegative);
+        }
+        if (Number.isFinite(savedPositive) && savedPositive >= 0) {
+            document.getElementById('liveRelativePositive').value = String(savedPositive);
+        }
+    } catch (e) {}
+
     renderLiveRelativeChart('original');
 
     const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
