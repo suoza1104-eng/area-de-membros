@@ -26,11 +26,12 @@ try {
             $alunoNome = (string)$rowUser['nome'];
             $_SESSION['aluno_nome'] = $alunoNome;
         }
-        if (!empty($rowUser['turma_codigo']) && $turmaCodigo === '') {
+        if (!empty($rowUser['turma_codigo'])) {
             $turmaCodigo = (string)$rowUser['turma_codigo'];
-        } elseif (!empty($rowUser['codigo_turma']) && $turmaCodigo === '') {
+        } elseif (!empty($rowUser['codigo_turma'])) {
             $turmaCodigo = (string)$rowUser['codigo_turma'];
         }
+        $_SESSION['turma_codigo'] = $turmaCodigo;
         if (!empty($rowUser['turma_live_at'])) {
             $turmaLiveAt = (string)$rowUser['turma_live_at'];
         } elseif (!empty($rowUser['data_live'])) {
