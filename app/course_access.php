@@ -65,6 +65,37 @@ function course_access_offer_codes(?string $raw): array
     return array_values(array_unique(array_filter(array_map('trim', $parts), static fn($v) => $v !== '')));
 }
 
+function course_access_checkout_url(string $baseUrl, array $user): string
+{
+    $baseUrl = trim($baseUrl);
+    if ($baseUrl === '') return '';
+
+    $params = [];
+    $name = trim((string)($user['nome'] ?? ''));
+    $email = trim((string)($user['email'] ?? ''));
+    $phone = preg_replace('/\D+/', '', (string)($user['telefone'] ?? '')) ?? '';
+    if (strlen($phone) >= 12 && str_starts_with($phone, '55')) {
+        $phone = substr($phone, 2);
+    }
+    if ($name !== '') $params['name'] = $name;
+    if ($email !== '') $params['email'] = $email;
+    if (strlen($phone) >= 10) {
+        $params['phoneac'] = substr($phone, 0, 2);
+        $params['phonenumber'] = substr($phone, 2);
+    }
+    if (!$params) return $baseUrl;
+
+    $fragment = '';
+    $fragmentPos = strpos($baseUrl, '#');
+    if ($fragmentPos !== false) {
+        $fragment = substr($baseUrl, $fragmentPos);
+        $baseUrl = substr($baseUrl, 0, $fragmentPos);
+    }
+    $separator = str_contains($baseUrl, '?') ? '&' : '?';
+    if (str_ends_with($baseUrl, '?') || str_ends_with($baseUrl, '&')) $separator = '';
+    return $baseUrl . $separator . http_build_query($params, '', '&', PHP_QUERY_RFC3986) . $fragment;
+}
+
 function course_access_status(PDO $pdo, int $userId): array
 {
     $default = [
@@ -98,7 +129,10 @@ function course_access_status(PDO $pdo, int $userId): array
         if (!$turma) return $default;
 
         $default['turma_codigo'] = $turmaCodigo;
-        $default['checkout_url'] = trim((string)($turma['lifetime_checkout_url'] ?? ''));
+        $default['checkout_url'] = course_access_checkout_url(
+            (string)($turma['lifetime_checkout_url'] ?? ''),
+            $user
+        );
         $default['message'] = trim((string)($turma['access_expired_message'] ?? ''));
         $default['offer_codes'] = course_access_offer_codes((string)($turma['lifetime_offer_codes'] ?? ''));
         $default['countdown_enabled'] = (int)($turma['access_countdown_enabled'] ?? 1) === 1;
