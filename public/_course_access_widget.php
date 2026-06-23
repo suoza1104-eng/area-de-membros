@@ -3,7 +3,7 @@ if (!isset($courseAccess) || !is_array($courseAccess)) return;
 $caEnabled = !empty($courseAccess['enabled']);
 $caExpired = !empty($courseAccess['expired']);
 $caLifetime = !empty($courseAccess['lifetime']);
-$caCountdown = $caEnabled && !$caLifetime && !empty($courseAccess['countdown_enabled']) && !empty($courseAccess['expires_at_iso']);
+$caCountdown = $caEnabled && !$caExpired && !$caLifetime && !empty($courseAccess['countdown_enabled']) && !empty($courseAccess['expires_at_iso']);
 $caCheckout = trim((string)($courseAccess['checkout_url'] ?? ''));
 $caMessage = trim((string)($courseAccess['message'] ?? ''));
 if ($caMessage === '') {
