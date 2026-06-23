@@ -205,6 +205,9 @@ try {
     ];
     foreach ($defaults as $k => $v) if (!isset($map[$k])) $map[$k] = $v;
     $ofertaRecebida = trim((string)(iw_get_value($payload, (string)$map['oferta']) ?? ''));
+    $nome     = trim((string)(iw_get_value($payload, (string)$map['nome'])     ?? ''));
+    $email    = trim((string)(iw_get_value($payload, (string)$map['email'])    ?? ''));
+    $telefone = trim((string)(iw_get_value($payload, (string)$map['telefone']) ?? ''));
 
     // ── FILTRO DE OFERTA ──
     // Se oferta_codigo configurado, exige que o valor no payload corresponda
@@ -213,16 +216,37 @@ try {
         $aceitas = array_filter(array_map('trim', explode(',', $ofertaCfg)));
         $bateu = in_array($ofertaRecebida, $aceitas, true);
         if (!$bateu) {
+            $lifetimeAttempt = course_access_try_grant_lifetime_purchase($pdo, [
+                'offer_code' => $ofertaRecebida,
+                'transaction_code' => iw_get_first_mapped($payload, $map, ['transacao', 'transaction', 'transaction_code']),
+                'status' => iw_get_first_mapped($payload, $map, ['status_pagamento', 'status']),
+                'event' => (string)($payload['event'] ?? $payload['evento'] ?? ''),
+                'email' => $email,
+                'phone' => $telefone,
+                'payload' => $payload,
+                'source' => 'inbound_webhook',
+            ]);
+            if (!empty($lifetimeAttempt['granted'])) {
+                $uid = (int)($lifetimeAttempt['user_id'] ?? 0);
+                if ($uid > 0) {
+                    iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $uid, [
+                        'origem' => 'inbound_webhook',
+                        'codigo_turma' => (string)($lifetimeAttempt['turma_codigo'] ?? ''),
+                        'oferta' => $ofertaRecebida,
+                        'transacao' => (string)($lifetimeAttempt['transaction_code'] ?? ''),
+                    ]);
+                }
+                $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='processado', user_id=:u, processado_em=NOW() WHERE id=:i")
+                    ->execute([':u' => $uid ?: null, ':i' => $recId]);
+                $pdo->prepare("UPDATE inbound_webhooks SET total_recebidos = total_recebidos + 1 WHERE id = :i")
+                    ->execute([':i' => (int)$ihw['id']]);
+                exit;
+            }
             $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='ignorado', erro_msg=:m, processado_em=NOW() WHERE id=:i")
-                ->execute([':m' => 'Oferta nao corresponde. Recebida: ' . ($ofertaRecebida !== '' ? $ofertaRecebida : '(vazia)') . ' | Aceitas: ' . $ofertaCfg, ':i' => $recId]);
+                ->execute([':m' => 'Oferta nao corresponde. Recebida: ' . ($ofertaRecebida !== '' ? $ofertaRecebida : '(vazia)') . ' | Aceitas: ' . $ofertaCfg . ' | Vitalicio: ' . (string)($lifetimeAttempt['reason'] ?? 'nao_liberado'), ':i' => $recId]);
             exit;
         }
     }
-
-    $nome     = iw_get_value($payload, (string)$map['nome'])     ?? '';
-    $email    = iw_get_value($payload, (string)$map['email'])    ?? '';
-    $telefone = iw_get_value($payload, (string)$map['telefone']) ?? '';
-    $nome = trim($nome); $email = trim($email); $telefone = trim($telefone);
 
     // Localiza usuário existente
     $userId = 0;
@@ -314,6 +338,28 @@ try {
     }
 
     // Lógica específica do evento
+    if ($evento !== 'LIBERAR_ACESSO_VITALICIO') {
+        $autoLifetimeAttempt = course_access_try_grant_lifetime_purchase($pdo, [
+            'user_id' => $userId,
+            'offer_code' => $ofertaRecebida,
+            'transaction_code' => iw_get_first_mapped($payload, $map, ['transacao', 'transaction', 'transaction_code']),
+            'status' => iw_get_first_mapped($payload, $map, ['status_pagamento', 'status']),
+            'event' => (string)($payload['event'] ?? $payload['evento'] ?? ''),
+            'email' => $email,
+            'phone' => $telefone,
+            'payload' => $payload,
+            'source' => 'inbound_webhook',
+        ]);
+        if (!empty($autoLifetimeAttempt['granted'])) {
+            iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $userId, [
+                'origem' => 'inbound_webhook',
+                'codigo_turma' => (string)($autoLifetimeAttempt['turma_codigo'] ?? ''),
+                'oferta' => $ofertaRecebida,
+                'transacao' => (string)($autoLifetimeAttempt['transaction_code'] ?? ''),
+            ]);
+        }
+    }
+
     switch ($evento) {
         case 'INSCRITO':
             if (function_exists('adicionar_tag')) {

@@ -9,6 +9,7 @@ $menu = 'vendas_analytics';
 $page_title = 'Analise de Vendas';
 
 $pdo = getPDO();
+course_access_ensure_schema($pdo);
 
 /**
  * Helpers compatíveis com PHP 7.4
@@ -443,6 +444,125 @@ foreach ($salesTurmaRows as $r) {
     ];
 }
 
+/**
+ * ===== Acessos vitalicios: quantidade, lucro e conversao por turma =====
+ */
+$lifetimeWhere = [];
+$lifetimeParams = [];
+$lifetimeTurmaExpr = $userTurmaCol
+    ? "COALESCE(NULLIF(cla.turma_codigo,''), NULLIF(lu.`$userTurmaCol`,''), 'Sem turma')"
+    : "COALESCE(NULLIF(cla.turma_codigo,''), 'Sem turma')";
+
+if ($dtIni !== '') {
+    $lifetimeWhere[] = "cla.granted_at >= :life_ini";
+    $lifetimeParams[':life_ini'] = $dtIni . " 00:00:00";
+}
+if ($dtFim !== '') {
+    $lifetimeWhere[] = "cla.granted_at <= :life_fim";
+    $lifetimeParams[':life_fim'] = $dtFim . " 23:59:59";
+}
+if (!$includeOrganic) {
+    $lifetimeWhere[] = "COALESCE(NULLIF(hs.utm_source,''), NULLIF(lu.utm_source,''), 'organico') <> 'organico'";
+}
+
+$appendLifeIn = function(string $expr, array $vals, string $prefix) use (&$lifetimeWhere, &$lifetimeParams) {
+    if (!$vals) return;
+    $ph = [];
+    foreach ($vals as $i => $v) {
+        $k = ':' . $prefix . $i;
+        $ph[] = $k;
+        $lifetimeParams[$k] = $v;
+    }
+    $lifetimeWhere[] = "$expr IN (" . implode(',', $ph) . ")";
+};
+
+$appendLifeIn("COALESCE(NULLIF(hs.utm_source,''), NULLIF(lu.utm_source,''), '(vazio)')", $f_source, 'life_src');
+$appendLifeIn("COALESCE(NULLIF(hs.utm_medium,''), NULLIF(lu.utm_medium,''), '(vazio)')", $f_medium, 'life_med');
+$appendLifeIn("COALESCE(NULLIF(hs.utm_campaign,''), NULLIF(lu.utm_campaign,''), '(vazio)')", $f_campaign, 'life_cam');
+$appendLifeIn("COALESCE(NULLIF(hs.utm_term,''), NULLIF(lu.utm_term,''), '(vazio)')", $f_term, 'life_ter');
+$appendLifeIn("COALESCE(NULLIF(hs.utm_content,''), NULLIF(lu.utm_content,''), '(vazio)')", $f_content, 'life_con');
+$appendLifeIn("COALESCE(NULLIF(hs.product_name,''), '(vazio)')", $f_products, 'life_prd');
+$appendLifeIn($lifetimeTurmaExpr, $f_turmas, 'life_turma');
+
+$sqlWhereLifetime = $lifetimeWhere ? ("WHERE " . implode(" AND ", $lifetimeWhere)) : "";
+$lifetimeTotals = ['qtd' => 0, 'lucro' => 0, 'bruto' => 0, 'compradores' => 0];
+$lifetimeDailyRows = [];
+$lifetimeTurmaRows = [];
+
+try {
+    $stmtLifetimeTotals = $pdo->prepare("
+        SELECT
+          COUNT(*) AS qtd,
+          COUNT(DISTINCT cla.user_id) AS compradores,
+          COALESCE(SUM(hs.producer_net),0) AS lucro,
+          COALESCE(SUM(hs.gross_revenue),0) AS bruto
+        FROM course_lifetime_access cla
+        LEFT JOIN hotmart_sales hs ON hs.transaction_code = cla.transaction_code
+        LEFT JOIN users lu ON lu.id = cla.user_id
+        $sqlWhereLifetime
+    ");
+    $stmtLifetimeTotals->execute($lifetimeParams);
+    $lifetimeTotals = $stmtLifetimeTotals->fetch(PDO::FETCH_ASSOC) ?: $lifetimeTotals;
+
+    $stmtLifetimeDaily = $pdo->prepare("
+        SELECT
+          DATE(cla.granted_at) AS dia,
+          COUNT(*) AS qtd,
+          COALESCE(SUM(hs.producer_net),0) AS lucro
+        FROM course_lifetime_access cla
+        LEFT JOIN hotmart_sales hs ON hs.transaction_code = cla.transaction_code
+        LEFT JOIN users lu ON lu.id = cla.user_id
+        $sqlWhereLifetime
+        GROUP BY dia
+        ORDER BY dia ASC
+        LIMIT 90
+    ");
+    $stmtLifetimeDaily->execute($lifetimeParams);
+    $lifetimeDailyRows = $stmtLifetimeDaily->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $stmtLifetimeTurma = $pdo->prepare("
+        SELECT
+          $lifetimeTurmaExpr AS turma,
+          COUNT(*) AS qtd,
+          COUNT(DISTINCT cla.user_id) AS compradores,
+          COALESCE(SUM(hs.producer_net),0) AS lucro,
+          COALESCE(SUM(hs.gross_revenue),0) AS bruto
+        FROM course_lifetime_access cla
+        LEFT JOIN hotmart_sales hs ON hs.transaction_code = cla.transaction_code
+        LEFT JOIN users lu ON lu.id = cla.user_id
+        $sqlWhereLifetime
+        GROUP BY turma
+        ORDER BY qtd DESC, lucro DESC, turma ASC
+        LIMIT 50
+    ");
+    $stmtLifetimeTurma->execute($lifetimeParams);
+    foreach (($stmtLifetimeTurma->fetchAll(PDO::FETCH_ASSOC) ?: []) as $r) {
+        $turma = (string)($r['turma'] ?? 'Sem turma');
+        $leads = $leadsByTurma[$turma] ?? 0;
+        $compradores = (int)($r['compradores'] ?? 0);
+        $lifetimeTurmaRows[] = [
+            'turma' => $turma,
+            'leads' => $leads,
+            'qtd' => (int)($r['qtd'] ?? 0),
+            'compradores' => $compradores,
+            'lucro' => (float)($r['lucro'] ?? 0),
+            'bruto' => (float)($r['bruto'] ?? 0),
+            'conversao' => $leads > 0 ? round(($compradores / $leads) * 100, 1) : null,
+        ];
+    }
+} catch (\Throwable $e) {
+    $lifetimeTotals = ['qtd' => 0, 'lucro' => 0, 'bruto' => 0, 'compradores' => 0];
+    $lifetimeDailyRows = [];
+    $lifetimeTurmaRows = [];
+}
+
+$lifetimeDailyLabels = array_map(function($r){ return (string)$r['dia']; }, $lifetimeDailyRows);
+$lifetimeDailyQtdArr = array_map(function($r){ return (int)$r['qtd']; }, $lifetimeDailyRows);
+$lifetimeDailyLucroArr = array_map(function($r){ return (float)$r['lucro']; }, $lifetimeDailyRows);
+$lifetimeTurmaLabels = array_map(function($r){ return (string)$r['turma']; }, $lifetimeTurmaRows);
+$lifetimeTurmaQtdArr = array_map(function($r){ return (int)$r['qtd']; }, $lifetimeTurmaRows);
+$lifetimeTurmaLucroArr = array_map(function($r){ return (float)$r['lucro']; }, $lifetimeTurmaRows);
+$lifetimeTurmaConvArr = array_map(function($r){ return $r['conversao'] === null ? 0 : (float)$r['conversao']; }, $lifetimeTurmaRows);
 
 /**
  * ===== NOVO: Lag lead -> compra (0..44 + bucket +45) =====
@@ -1089,8 +1209,65 @@ function salesDetailPageLink(int $page): string {
     </div>
   </div>
 
+  <div class="kpi-grid">
+    <div class="kpi kpi-y">
+      <div class="kpi-icon y">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+      </div>
+      <div class="title">ACESSOS VITALICIOS</div>
+      <div class="value"><?= number_format((int)($lifetimeTotals['qtd'] ?? 0), 0, ',', '.') ?></div>
+      <div class="sub">Fonte: <strong>course_lifetime_access</strong></div>
+    </div>
+    <div class="kpi kpi-g">
+      <div class="kpi-icon g">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7H14a3.5 3.5 0 010 7H6"/></svg>
+      </div>
+      <div class="title">LUCRO VITALICIO</div>
+      <div class="value">R$ <?= number_format((float)($lifetimeTotals['lucro'] ?? 0), 2, ',', '.') ?></div>
+      <div class="sub">Soma de <strong>producer_net</strong> da Hotmart</div>
+    </div>
+    <div class="kpi kpi-b">
+      <div class="kpi-icon b">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3 3-2-2"/></svg>
+      </div>
+      <div class="title">CONVERSAO VITALICIO</div>
+      <?php
+        $lifeLeadsTotal = 0;
+        foreach ($lifetimeTurmaRows as $lifeRow) $lifeLeadsTotal += (int)$lifeRow['leads'];
+        $lifeCompradores = (int)($lifetimeTotals['compradores'] ?? 0);
+        $lifeConvTotal = $lifeLeadsTotal > 0 ? ($lifeCompradores / $lifeLeadsTotal) * 100 : 0;
+      ?>
+      <div class="value"><?= number_format($lifeConvTotal, 1, ',', '.') ?>%</div>
+      <div class="sub">Compradores vitalicios / leads das turmas filtradas</div>
+    </div>
+  </div>
+
   <!-- Charts -->
   <div class="sales-grid">
+    <div class="card-dark">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <h3 style="margin:0;">Acessos vitalicios por data</h3>
+        <span class="badge-dark">Quantidade + lucro</span>
+      </div>
+      <?php if (!$lifetimeDailyLabels): ?>
+        <div class="muted" style="margin-top:10px;">Sem acessos vitalicios para os filtros atuais.</div>
+      <?php else: ?>
+        <div class="sales-chart"><canvas id="chartLifetimeDaily"></canvas></div>
+      <?php endif; ?>
+    </div>
+
+    <div class="card-dark">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <h3 style="margin:0;">Conversao vitalicia por turma</h3>
+        <span class="badge-dark">Compradores / leads</span>
+      </div>
+      <?php if (!$lifetimeTurmaLabels): ?>
+        <div class="muted" style="margin-top:10px;">Sem conversao vitalicia para os filtros atuais.</div>
+      <?php else: ?>
+        <div class="sales-chart"><canvas id="chartLifetimeTurma"></canvas></div>
+      <?php endif; ?>
+    </div>
+
     <div class="card-dark">
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
         <h3 style="margin:0;">Quantidade de vendas por <?= htmlspecialchars($dim) ?></h3>
@@ -1242,6 +1419,48 @@ function salesDetailPageLink(int $page): string {
           <?php endforeach; ?>
           <?php if (!$turmaRows): ?>
             <tr><td colspan="7">Sem vendas com turma atribuida para os filtros selecionados.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card-dark table-wide">
+    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+      <h3 style="margin:0;">Acessos vitalicios por turma</h3>
+      <span class="badge-dark">Quantidade, lucro e conversao</span>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      Conversao calculada por compradores vitalicios unicos / leads da turma, respeitando os filtros globais.
+    </div>
+
+    <div style="overflow:auto; margin-top:10px;">
+      <table class="table table-striped" style="width:100%; min-width:1000px;">
+        <thead>
+          <tr>
+            <th>Turma</th>
+            <th>Leads</th>
+            <th>Acessos vitalicios</th>
+            <th>Compradores</th>
+            <th>Conversao</th>
+            <th>Lucro (R$)</th>
+            <th>Bruto (R$)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($lifetimeTurmaRows as $r): ?>
+            <tr>
+              <td><?= htmlspecialchars((string)$r['turma']) ?></td>
+              <td><?= number_format((int)$r['leads'], 0, ',', '.') ?></td>
+              <td><?= number_format((int)$r['qtd'], 0, ',', '.') ?></td>
+              <td><?= number_format((int)$r['compradores'], 0, ',', '.') ?></td>
+              <td><?= $r['conversao'] === null ? '-' : number_format((float)$r['conversao'], 1, ',', '.') . '%' ?></td>
+              <td><?= number_format((float)$r['lucro'], 2, ',', '.') ?></td>
+              <td><?= number_format((float)$r['bruto'], 2, ',', '.') ?></td>
+            </tr>
+          <?php endforeach; ?>
+          <?php if (!$lifetimeTurmaRows): ?>
+            <tr><td colspan="7">Sem acessos vitalicios para os filtros selecionados.</td></tr>
           <?php endif; ?>
         </tbody>
       </table>
@@ -1561,7 +1780,61 @@ function makeRefundChart(canvasId, labels, valueData, countData, rateData){
   });
 }
 
+function makeLifetimeComboChart(canvasId, labels, moneyData, countData, rateData=null){
+  const el = document.getElementById(canvasId);
+  if (!el) return null;
+
+  const datasets = [
+    { type: 'bar', label: 'Lucro vitalicio', data: moneyData, yAxisID: 'money', backgroundColor: 'rgba(34,197,94,.62)', borderRadius: 4, maxBarThickness: 44 },
+    { type: 'line', label: 'Acessos vitalicios', data: countData, yAxisID: 'count', borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: .35, pointRadius: 3 }
+  ];
+  if (rateData) {
+    datasets.push({ type: 'line', label: 'Conversao (%)', data: rateData, yAxisID: 'count', borderColor: '#facc15', backgroundColor: '#facc15', tension: .35, pointRadius: 3 });
+  }
+
+  return new Chart(el, {
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', boxWidth: 18, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const v = context.parsed.y ?? 0;
+              if (context.dataset.yAxisID === 'money') return `${context.dataset.label}: ${fmtBRL(v)}`;
+              return `${context.dataset.label}: ${v}`;
+            }
+          }
+        },
+        datalabels: { display: false }
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
+        money: { beginAtZero: true, position: 'left', ticks: { color: '#64748b', callback: (v) => fmtBRL(v), font: { size: 11 } }, grid: { color: 'rgba(26,37,64,.6)' } },
+        count: { beginAtZero: true, position: 'right', ticks: { color: '#64748b', font: { size: 11 } }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+
 // Vendas/Lucro
+const lifetimeDailyLabels = <?= json_encode($lifetimeDailyLabels, JSON_UNESCAPED_UNICODE) ?>;
+const lifetimeDailyQtdArr = <?= json_encode($lifetimeDailyQtdArr) ?>;
+const lifetimeDailyLucroArr = <?= json_encode($lifetimeDailyLucroArr) ?>;
+if (document.getElementById('chartLifetimeDaily')) {
+  makeLifetimeComboChart('chartLifetimeDaily', lifetimeDailyLabels, lifetimeDailyLucroArr, lifetimeDailyQtdArr);
+}
+
+const lifetimeTurmaLabels = <?= json_encode($lifetimeTurmaLabels, JSON_UNESCAPED_UNICODE) ?>;
+const lifetimeTurmaQtdArr = <?= json_encode($lifetimeTurmaQtdArr) ?>;
+const lifetimeTurmaLucroArr = <?= json_encode($lifetimeTurmaLucroArr) ?>;
+const lifetimeTurmaConvArr = <?= json_encode($lifetimeTurmaConvArr) ?>;
+if (document.getElementById('chartLifetimeTurma')) {
+  makeLifetimeComboChart('chartLifetimeTurma', lifetimeTurmaLabels, lifetimeTurmaLucroArr, lifetimeTurmaQtdArr, lifetimeTurmaConvArr);
+}
+
 const labelsSales = <?= json_encode($labelsSales, JSON_UNESCAPED_UNICODE) ?>;
 const vendasArr   = <?= json_encode($vendasArr) ?>;
 const lucroArr    = <?= json_encode($lucroArr) ?>;

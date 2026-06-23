@@ -37,7 +37,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
+foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
           'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
@@ -52,6 +52,7 @@ $__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
+    'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
     'reagendamentos_live' => 'Reagendamentos de Live',
@@ -626,7 +627,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -650,6 +651,18 @@ button:not([class]):hover { filter: brightness(1.07); }
         <line x1="6" y1="20" x2="6" y2="16"/>
       </svg>
       Vendas
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['vendas_vitalicio']): ?>
+    <a href="vendas_vitalicio.php" class="sb-item <?= $currentMenu === 'vendas_vitalicio' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20 7h-9"/>
+        <path d="M14 17H5"/>
+        <circle cx="17" cy="17" r="3"/>
+        <circle cx="7" cy="7" r="3"/>
+      </svg>
+      Vendas Vitalicio
     </a>
     <?php endif; ?>
 

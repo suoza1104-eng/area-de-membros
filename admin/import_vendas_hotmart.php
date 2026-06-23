@@ -147,6 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $matchedPhone = 0;
                 $matchedEmail = 0;
                 $organic = 0;
+                $lifetimeGranted = 0;
 
                 while (($row = fgetcsv($fh, 0, ';')) !== false) {
                     $transactionCode = trim((string)$row[$col('Código da transação')]);
@@ -247,13 +248,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':utm_content' => $utm['utm_content'],
                     ]);
 
+                    $lifetimeAttempt = course_access_try_grant_lifetime_purchase($pdo, [
+                        'user_id' => $matchedUserId,
+                        'offer_code' => $priceCode,
+                        'transaction_code' => $transactionCode,
+                        'status' => $status,
+                        'email' => $buyerEmailLower,
+                        'phone' => $buyerPhoneNorm ?: $buyerPhoneRaw,
+                        'source' => 'hotmart_sales',
+                        'payload' => [
+                            'transaction_code' => $transactionCode,
+                            'status' => $status,
+                            'transaction_date' => $transactionDate,
+                            'payment_confirmed_at' => $payConfirmed,
+                            'product_code' => $productCode ?: null,
+                            'product_name' => $productName ?: null,
+                            'price_code' => $priceCode ?: null,
+                            'price_name' => $priceName ?: null,
+                            'currency' => $currency ?: null,
+                            'gross_revenue' => $gross,
+                            'net_revenue' => $net,
+                            'producer_net' => $producerNet,
+                            'buyer_name' => $buyerName ?: null,
+                            'buyer_email' => $buyerEmailLower ?: null,
+                            'buyer_phone_norm' => $buyerPhoneNorm ?: null,
+                        ],
+                    ]);
+                    if (!empty($lifetimeAttempt['granted'])) {
+                        $lifetimeGranted++;
+                    }
+
                     $count++;
                 }
 
                 $pdo->commit();
                 fclose($fh);
 
-                $msg = "Importação concluída! Registros processados: {$count} | Match por telefone: {$matchedPhone} | Match por email: {$matchedEmail} | Orgânico: {$organic}";
+                $msg = "Importação concluída! Registros processados: {$count} | Match por telefone: {$matchedPhone} | Match por email: {$matchedEmail} | Orgânico: {$organic} | Vitalícios liberados: {$lifetimeGranted}";
             }
         }
     }

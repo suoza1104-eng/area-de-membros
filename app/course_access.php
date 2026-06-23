@@ -208,7 +208,8 @@ function course_access_grant_lifetime(
     string $transactionCode,
     string $offerCode = '',
     string $turmaCodigo = '',
-    array $payload = []
+    array $payload = [],
+    string $source = 'webhook'
 ): bool {
     course_access_ensure_schema($pdo);
     $transactionCode = trim($transactionCode);
@@ -224,11 +225,12 @@ function course_access_grant_lifetime(
         INSERT INTO course_lifetime_access
             (user_id, turma_codigo, offer_code, transaction_code, source, payload_json, granted_at)
         VALUES
-            (:user_id, :turma_codigo, :offer_code, :transaction_code, 'webhook', :payload_json, NOW())
+            (:user_id, :turma_codigo, :offer_code, :transaction_code, :source, :payload_json, NOW())
         ON DUPLICATE KEY UPDATE
             user_id = VALUES(user_id),
             turma_codigo = VALUES(turma_codigo),
             offer_code = VALUES(offer_code),
+            source = VALUES(source),
             payload_json = VALUES(payload_json)
     ");
     return $st->execute([
@@ -236,6 +238,120 @@ function course_access_grant_lifetime(
         ':turma_codigo' => $turmaCodigo !== '' ? $turmaCodigo : null,
         ':offer_code' => $offerCode !== '' ? $offerCode : null,
         ':transaction_code' => $transactionCode,
+        ':source' => $source !== '' ? $source : 'webhook',
         ':payload_json' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
     ]);
+}
+
+function course_access_normalize_phone(?string $phone): string
+{
+    $digits = preg_replace('/\D+/', '', (string)$phone) ?? '';
+    if (strlen($digits) >= 12 && str_starts_with($digits, '55')) {
+        $digits = substr($digits, 2);
+    }
+    return ltrim($digits, '0');
+}
+
+function course_access_purchase_is_approved(string $status, string $event = ''): bool
+{
+    $status = strtoupper(trim($status));
+    $event = strtoupper(trim($event));
+    return in_array($status, ['APPROVED', 'APROVADO', 'COMPLETE', 'COMPLETO', 'PAID'], true)
+        || in_array($event, ['PURCHASE_APPROVED', 'PURCHASE_COMPLETE', 'PURCHASE_COMPLETED'], true);
+}
+
+function course_access_find_user_by_purchase(PDO $pdo, ?int $userId, string $email, string $phone): ?array
+{
+    if ($userId && $userId > 0) {
+        $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $user = $st->fetch(PDO::FETCH_ASSOC);
+        if ($user) return $user;
+    }
+
+    $email = trim(mb_strtolower($email));
+    if ($email !== '') {
+        $st = $pdo->prepare("SELECT * FROM users WHERE LOWER(email) = :email LIMIT 1");
+        $st->execute([':email' => $email]);
+        $user = $st->fetch(PDO::FETCH_ASSOC);
+        if ($user) return $user;
+    }
+
+    $rawPhone = trim($phone);
+    $normPhone = course_access_normalize_phone($phone);
+    if ($rawPhone !== '' || $normPhone !== '') {
+        $withCountry = $normPhone !== '' ? '55' . $normPhone : '';
+        $st = $pdo->prepare("SELECT * FROM users WHERE telefone IN (:raw_phone, :norm_phone, :with_country) LIMIT 1");
+        $st->execute([
+            ':raw_phone' => $rawPhone,
+            ':norm_phone' => $normPhone,
+            ':with_country' => $withCountry,
+        ]);
+        $user = $st->fetch(PDO::FETCH_ASSOC);
+        if ($user) return $user;
+    }
+
+    return null;
+}
+
+function course_access_try_grant_lifetime_purchase(PDO $pdo, array $purchase): array
+{
+    course_access_ensure_schema($pdo);
+
+    $offerCode = trim((string)($purchase['offer_code'] ?? ''));
+    $transactionCode = trim((string)($purchase['transaction_code'] ?? ''));
+    $status = trim((string)($purchase['status'] ?? ''));
+    $event = trim((string)($purchase['event'] ?? ''));
+
+    if ($offerCode === '') return ['granted' => false, 'reason' => 'missing_offer_code'];
+    if ($transactionCode === '') return ['granted' => false, 'reason' => 'missing_transaction_code'];
+    if (!course_access_purchase_is_approved($status, $event)) {
+        return ['granted' => false, 'reason' => 'payment_not_approved'];
+    }
+
+    $user = course_access_find_user_by_purchase(
+        $pdo,
+        isset($purchase['user_id']) ? (int)$purchase['user_id'] : null,
+        (string)($purchase['email'] ?? ''),
+        (string)($purchase['phone'] ?? '')
+    );
+    if (!$user) return ['granted' => false, 'reason' => 'user_not_found'];
+
+    $turmaCodigo = trim((string)($purchase['turma_codigo'] ?? ''));
+    if ($turmaCodigo === '') {
+        $turmaCodigo = course_access_user_turma_code($user);
+    }
+    if ($turmaCodigo === '') return ['granted' => false, 'reason' => 'user_without_turma', 'user_id' => (int)$user['id']];
+
+    $st = $pdo->prepare("SELECT lifetime_offer_codes FROM turmas WHERE codigo = :codigo LIMIT 1");
+    $st->execute([':codigo' => $turmaCodigo]);
+    $acceptedOffers = course_access_offer_codes((string)($st->fetchColumn() ?: ''));
+    if (!$acceptedOffers) {
+        return ['granted' => false, 'reason' => 'turma_without_lifetime_offers', 'user_id' => (int)$user['id'], 'turma_codigo' => $turmaCodigo];
+    }
+    if (!in_array($offerCode, $acceptedOffers, true)) {
+        return ['granted' => false, 'reason' => 'offer_not_lifetime', 'user_id' => (int)$user['id'], 'turma_codigo' => $turmaCodigo];
+    }
+
+    course_access_grant_lifetime(
+        $pdo,
+        (int)$user['id'],
+        $transactionCode,
+        $offerCode,
+        $turmaCodigo,
+        is_array($purchase['payload'] ?? null) ? $purchase['payload'] : $purchase,
+        (string)($purchase['source'] ?? 'webhook')
+    );
+
+    if (function_exists('adicionar_tag')) {
+        adicionar_tag((int)$user['id'], 'ACESSO_VITALICIO', (string)($purchase['source'] ?? 'webhook'), null);
+    }
+
+    return [
+        'granted' => true,
+        'user_id' => (int)$user['id'],
+        'turma_codigo' => $turmaCodigo,
+        'offer_code' => $offerCode,
+        'transaction_code' => $transactionCode,
+    ];
 }
