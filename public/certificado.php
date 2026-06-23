@@ -19,6 +19,11 @@ $stUser = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
 $stUser->execute(['id' => $userId]);
 $user = $stUser->fetch();
 if (!$user) { header('Location: login.php'); exit; }
+$courseAccess = course_access_status($pdo, $userId);
+if (!empty($courseAccess['expired'])) {
+    header('Location: trilha.php?access_expired=1');
+    exit;
+}
 
 $stCfgApp = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
 $appCfg   = $stCfgApp->fetch() ?: [];

@@ -191,15 +191,25 @@ try {
         $tmp = json_decode($ihw['payload_map_json'], true);
         if (is_array($tmp)) $map = $tmp;
     }
-    $defaults = ['nome' => 'nome', 'email' => 'email', 'telefone' => 'telefone', 'oferta' => 'oferta', 'retorno_data' => 'retorno_data', 'retorno_tipo' => 'retorno_tipo', 'retorno_assunto' => 'retorno_assunto', 'retorno_mensagem' => 'retorno_mensagem'];
+    $defaults = [
+        'nome' => 'nome',
+        'email' => 'email',
+        'telefone' => 'telefone',
+        'oferta' => 'oferta',
+        'transacao' => 'data.purchase.transaction',
+        'status_pagamento' => 'data.purchase.status',
+        'retorno_data' => 'retorno_data',
+        'retorno_tipo' => 'retorno_tipo',
+        'retorno_assunto' => 'retorno_assunto',
+        'retorno_mensagem' => 'retorno_mensagem',
+    ];
     foreach ($defaults as $k => $v) if (!isset($map[$k])) $map[$k] = $v;
+    $ofertaRecebida = trim((string)(iw_get_value($payload, (string)$map['oferta']) ?? ''));
 
     // ── FILTRO DE OFERTA ──
     // Se oferta_codigo configurado, exige que o valor no payload corresponda
     $ofertaCfg = trim((string)($ihw['oferta_codigo'] ?? ''));
     if ($ofertaCfg !== '') {
-        $ofertaRecebida = iw_get_value($payload, (string)$map['oferta']) ?? '';
-        $ofertaRecebida = trim($ofertaRecebida);
         $aceitas = array_filter(array_map('trim', explode(',', $ofertaCfg)));
         $bateu = in_array($ofertaRecebida, $aceitas, true);
         if (!$bateu) {
@@ -224,6 +234,9 @@ try {
     }
     if ($userId === 0 && $telefone !== '') {
         $telLimpo = preg_replace('/\D+/', '', $telefone);
+        if (strlen((string)$telLimpo) >= 12 && str_starts_with((string)$telLimpo, '55')) {
+            $telLimpo = substr((string)$telLimpo, 2);
+        }
         $st = $pdo->prepare("SELECT id FROM users WHERE telefone = :t OR telefone = :t2 LIMIT 1");
         $st->execute([':t' => $telefone, ':t2' => $telLimpo]);
         $row = $st->fetch();
@@ -235,7 +248,7 @@ try {
     $codigoTurmaCfg = trim((string)($ihw['codigo_turma'] ?? ''));
 
     // Fallback: se não há turma fixa, pega a com janela aberta agora (mesma lógica do api_inscrever)
-    if ($codigoTurmaCfg === '') {
+    if ($codigoTurmaCfg === '' && $evento !== 'LIBERAR_ACESSO_VITALICIO') {
         try {
             $stT = $pdo->prepare("SELECT codigo FROM turmas
                                   WHERE janela_inicio <= NOW() AND janela_fim >= NOW()
@@ -385,6 +398,58 @@ try {
                 'payload_raw' => $payload,
             ], $retornoAssunto);
             if (function_exists('adicionar_tag')) adicionar_tag($userId, 'RETORNO_AGENDADO', 'inbound_webhook', $agId);
+            break;
+
+        case 'LIBERAR_ACESSO_VITALICIO':
+            $statusPagamento = strtoupper(trim((string)(iw_get_value($payload, (string)$map['status_pagamento']) ?? '')));
+            $eventoPagamento = strtoupper(trim((string)($payload['event'] ?? $payload['evento'] ?? '')));
+            $aprovado = in_array($statusPagamento, ['APPROVED', 'APROVADO', 'COMPLETE', 'COMPLETO', 'PAID'], true)
+                || in_array($eventoPagamento, ['PURCHASE_APPROVED', 'PURCHASE_COMPLETE', 'PURCHASE_COMPLETED'], true);
+            if (!$aprovado) {
+                throw new RuntimeException('Pagamento ainda nao aprovado. Status: ' . ($statusPagamento ?: $eventoPagamento ?: '(vazio)'));
+            }
+
+            $transactionCode = trim((string)(iw_get_value($payload, (string)$map['transacao']) ?? ''));
+            if ($transactionCode === '') {
+                $transactionCode = trim((string)(iw_get_value($payload, 'data.purchase.transaction') ?? ''));
+            }
+            if ($transactionCode === '') throw new RuntimeException('Webhook sem codigo de transacao.');
+
+            if ($codigoTurmaCfg === '') {
+                try {
+                    $st = $pdo->prepare("SELECT codigo_turma, turma_codigo FROM users WHERE id = :id LIMIT 1");
+                    $st->execute([':id' => $userId]);
+                    $userTurma = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $codigoTurmaCfg = trim((string)($userTurma['codigo_turma'] ?? $userTurma['turma_codigo'] ?? ''));
+                } catch (Throwable $e) {}
+            }
+            if ($codigoTurmaCfg === '') throw new RuntimeException('Aluno sem turma para validar a oferta vitalicia.');
+
+            $st = $pdo->prepare("SELECT lifetime_offer_codes FROM turmas WHERE codigo = :codigo LIMIT 1");
+            $st->execute([':codigo' => $codigoTurmaCfg]);
+            $offerCodes = course_access_offer_codes((string)($st->fetchColumn() ?: ''));
+            if (!$offerCodes) throw new RuntimeException('Turma sem codigo de oferta vitalicia configurado.');
+            if ($ofertaRecebida === '' || !in_array($ofertaRecebida, $offerCodes, true)) {
+                throw new RuntimeException('Oferta recebida nao libera acesso vitalicio nesta turma.');
+            }
+
+            course_access_grant_lifetime(
+                $pdo,
+                $userId,
+                $transactionCode,
+                $ofertaRecebida,
+                $codigoTurmaCfg,
+                $payload
+            );
+            if (function_exists('adicionar_tag')) {
+                adicionar_tag($userId, 'ACESSO_VITALICIO', 'inbound_webhook', (int)$ihw['id']);
+            }
+            iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $userId, [
+                'origem' => 'inbound_webhook',
+                'codigo_turma' => $codigoTurmaCfg,
+                'oferta' => $ofertaRecebida,
+                'transacao' => $transactionCode,
+            ]);
             break;
 
         case 'TAG_CUSTOM':

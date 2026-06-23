@@ -44,6 +44,7 @@ $primeiroNome = trim((string)preg_split('/\s+/', trim($alunoNome))[0] ?? '');
 if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
 $aluno = ['id' => $alunoId, 'nome' => $alunoNome, 'turma_codigo' => $turmaCodigo];
+$courseAccess = course_access_status($pdo, $alunoId);
 
 try {
     $cfgStmt = $pdo->query("SELECT * FROM app_config LIMIT 1");
@@ -807,6 +808,7 @@ width: 100%;
     </header>
 
     <main class="content">
+        <?php include __DIR__ . '/_course_access_widget.php'; ?>
         <?php if ($liveDataIso && $liveDataBr && !$liveIsPast): ?>
             <div class="live-banner" id="live-banner">
                 <div class="live-dot"></div>
@@ -880,7 +882,7 @@ width: 100%;
             // - Proximas so liberam se TODAS as anteriores estiverem concluidas
             // - Aulas ja concluidas continuam acessiveis
             $isUnlocked = ($idx === 0) || $allPrevCompleted || $completed;
-            $locked = !$isUnlocked;
+            $locked = !empty($courseAccess['expired']) || !$isUnlocked;
 
             $thumb = $ls['thumb_url'] ?? '';
             $aulaNumero = $idx + 1;
@@ -898,7 +900,7 @@ width: 100%;
                     <?php if ($locked): ?>
                         <div class="lesson-locked-overlay" aria-hidden="true">
                             <div class="lesson-locked-overlay-icon">&#128274;</div>
-                            <div class="lesson-locked-overlay-text">Conclua a aula anterior para liberar</div>
+                            <div class="lesson-locked-overlay-text"><?= !empty($courseAccess['expired']) ? 'Prazo máximo de acesso encerrado' : 'Conclua a aula anterior para liberar' ?></div>
                         </div>
                     <?php endif; ?>
                 </div>

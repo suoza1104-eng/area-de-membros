@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 proteger_admin();
 $pdo = getPDO();
+course_access_ensure_schema($pdo);
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
@@ -104,6 +105,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $jf          = (string)($_POST['janela_fim'] ?? '');
     $dl          = (string)($_POST['data_live'] ?? '');
     $senhaCert   = trim((string)($_POST['senha_certificado'] ?? ''));
+    $accessDeadlineEnabled = isset($_POST['access_deadline_enabled']) ? 1 : 0;
+    $accessDeadlineDays = max(1, min(3650, (int)($_POST['access_deadline_days'] ?? 30)));
+    $accessDeadlineStart = (string)($_POST['access_deadline_start'] ?? 'cadastro');
+    if (!in_array($accessDeadlineStart, ['cadastro', 'live'], true)) $accessDeadlineStart = 'cadastro';
+    $accessCountdownEnabled = isset($_POST['access_countdown_enabled']) ? 1 : 0;
+    $lifetimeCheckoutUrl = trim((string)($_POST['lifetime_checkout_url'] ?? ''));
+    $lifetimeOfferCodes = implode(',', course_access_offer_codes((string)($_POST['lifetime_offer_codes'] ?? '')));
+    $accessExpiredMessage = trim((string)($_POST['access_expired_message'] ?? ''));
 
     $jiDb = $ji ? date('Y-m-d H:i:s', strtotime($ji)) : null;
     $jfDb = $jf ? date('Y-m-d H:i:s', strtotime($jf)) : null;
@@ -131,6 +140,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $set[] = "data_live = :dl";     $params[':dl'] = $dlDb;
         if ($hasCodigoLive) { $set[] = "codigo_live = :cl"; $params[':cl'] = $codigoLive; }
         if ($hasSenhaCert)  { $set[] = "senha_certificado = :sc"; $params[':sc'] = $senhaCert; }
+        $set[] = "access_deadline_enabled = :ade"; $params[':ade'] = $accessDeadlineEnabled;
+        $set[] = "access_deadline_days = :add"; $params[':add'] = $accessDeadlineDays;
+        $set[] = "access_deadline_start = :ads"; $params[':ads'] = $accessDeadlineStart;
+        $set[] = "access_countdown_enabled = :ace"; $params[':ace'] = $accessCountdownEnabled;
+        $set[] = "lifetime_checkout_url = :lcu"; $params[':lcu'] = $lifetimeCheckoutUrl ?: null;
+        $set[] = "lifetime_offer_codes = :loc"; $params[':loc'] = $lifetimeOfferCodes ?: null;
+        $set[] = "access_expired_message = :aem"; $params[':aem'] = $accessExpiredMessage ?: null;
 
         try {
             $pdo->prepare("UPDATE turmas SET " . implode(", ", $set) . " WHERE id = :id")->execute($params);
@@ -144,6 +160,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $params = [':c'=>$codigo, ':ji'=>$jiDb, ':jf'=>$jfDb, ':dl'=>$dlDb];
         if ($hasCodigoLive) { $cols[] = "codigo_live"; $vals[] = ":cl"; $params[':cl'] = $codigoLive; }
         if ($hasSenhaCert)  { $cols[] = "senha_certificado"; $vals[] = ":sc"; $params[':sc'] = $senhaCert; }
+        $cols[] = "access_deadline_enabled"; $vals[] = ":ade"; $params[':ade'] = $accessDeadlineEnabled;
+        $cols[] = "access_deadline_days"; $vals[] = ":add"; $params[':add'] = $accessDeadlineDays;
+        $cols[] = "access_deadline_start"; $vals[] = ":ads"; $params[':ads'] = $accessDeadlineStart;
+        $cols[] = "access_countdown_enabled"; $vals[] = ":ace"; $params[':ace'] = $accessCountdownEnabled;
+        $cols[] = "lifetime_checkout_url"; $vals[] = ":lcu"; $params[':lcu'] = $lifetimeCheckoutUrl ?: null;
+        $cols[] = "lifetime_offer_codes"; $vals[] = ":loc"; $params[':loc'] = $lifetimeOfferCodes ?: null;
+        $cols[] = "access_expired_message"; $vals[] = ":aem"; $params[':aem'] = $accessExpiredMessage ?: null;
         if ($hasCreatedAt)  { $cols[] = "created_at"; $vals[] = "NOW()"; }
         if ($hasLiveDisp)   { $cols[] = "live_disparada"; $vals[] = "0"; }
 
@@ -290,6 +313,50 @@ include __DIR__ . '/_header.php';
         </div>
 
         <!-- Ações -->
+        <p class="section-label">Prazo de acesso &amp; oferta vitalícia</p>
+        <div class="grid2t">
+            <div>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <input type="checkbox" name="access_deadline_enabled" value="1" <?= !empty($edit['access_deadline_enabled']) ? 'checked' : '' ?>>
+                    <span class="field-lbl" style="margin:0;">Ativar prazo máximo de acesso nesta turma</span>
+                </label>
+                <div class="grid2t">
+                    <label>
+                        <span class="field-lbl">Prazo em dias</span>
+                        <input type="number" name="access_deadline_days" min="1" max="3650" value="<?= (int)($edit['access_deadline_days'] ?? 30) ?>">
+                    </label>
+                    <label>
+                        <span class="field-lbl">Iniciar contagem em</span>
+                        <select name="access_deadline_start">
+                            <option value="cadastro" <?= (($edit['access_deadline_start'] ?? 'cadastro') === 'cadastro') ? 'selected' : '' ?>>Inscrição na turma</option>
+                            <option value="live" <?= (($edit['access_deadline_start'] ?? '') === 'live') ? 'selected' : '' ?>>Data da live</option>
+                        </select>
+                    </label>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+                    <input type="checkbox" name="access_countdown_enabled" value="1" <?= !isset($edit['access_countdown_enabled']) || !empty($edit['access_countdown_enabled']) ? 'checked' : '' ?>>
+                    <span class="field-lbl" style="margin:0;">Mostrar relógio regressivo para o aluno</span>
+                </label>
+            </div>
+            <div>
+                <label>
+                    <span class="field-lbl">URL do checkout vitalício</span>
+                    <input type="url" name="lifetime_checkout_url" value="<?= h((string)($edit['lifetime_checkout_url'] ?? '')) ?>" placeholder="https://pay.hotmart.com/...">
+                </label>
+                <label style="display:block;margin-top:12px;">
+                    <span class="field-lbl">Código(s) da oferta vitalícia</span>
+                    <input type="text" name="lifetime_offer_codes" value="<?= h((string)($edit['lifetime_offer_codes'] ?? '')) ?>" placeholder="ABC123, DEF456">
+                </label>
+            </div>
+        </div>
+        <label style="display:block;margin-top:12px;">
+            <span class="field-lbl">Mensagem exibida após o prazo</span>
+            <textarea name="access_expired_message" rows="3" placeholder="Seu prazo máximo de acesso terminou. Libere o acesso vitalício para continuar."><?= h((string)($edit['access_expired_message'] ?? '')) ?></textarea>
+        </label>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5;">
+            A liberação vitalícia ocorre somente após webhook de pagamento aprovado com um dos códigos de oferta configurados.
+        </div>
+
         <div style="margin-top:18px;display:flex;gap:10px;align-items:center;">
             <button class="btn" type="submit">
                 <?= $isClone ? 'Criar turma clonada' : ($isEdit ? 'Salvar alterações' : 'Criar turma') ?>

@@ -53,6 +53,15 @@ try {
     }
 
     $pdo = getPDO();
+    $courseAccess = course_access_status($pdo, $user_id);
+    if (!empty($courseAccess['expired'])) {
+        json_out([
+            'ok' => false,
+            'error' => 'access_expired',
+            'message' => 'Seu prazo máximo de acesso terminou. Libere o acesso vitalício para continuar.',
+            'checkout_url' => (string)($courseAccess['checkout_url'] ?? ''),
+        ], 403);
+    }
 
     // Verifica se já existe progresso dessa aula
     $stmt = $pdo->prepare("SELECT id, status FROM lesson_progress WHERE user_id = :u AND lesson_id = :l LIMIT 1");

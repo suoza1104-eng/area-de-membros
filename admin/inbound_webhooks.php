@@ -432,6 +432,7 @@ require_once __DIR__ . '/_header.php';
           <option value="CERT_EMITIDO">CERT_EMITIDO — dispara evento de certificado</option>
           <option value="REENVIO_CERTIFICADO">REENVIO_CERTIFICADO — dispara gatilho de reenvio do certificado</option>
           <option value="AGENDAR_RETORNO">AGENDAR_RETORNO — cria retorno agendado por payload</option>
+          <option value="LIBERAR_ACESSO_VITALICIO">LIBERAR_ACESSO_VITALICIO — libera o curso após pagamento aprovado</option>
           <option value="TAG_CUSTOM">TAG_CUSTOM — apenas aplica tag e dispara evento custom</option>
         </select>
       </div>
@@ -560,6 +561,8 @@ require_once __DIR__ . '/_header.php';
             <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">email</td><td><code>data.buyer.email</code></td></tr>
             <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">telefone</td><td><code>data.buyer.checkout_phone</code> <span style="color:var(--text-muted)">(número completo com DDD)</span></td></tr>
             <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">oferta</td><td><code>data.purchase.offer.code</code> <span style="color:var(--text-muted)">(ou <code>data.product.ucode</code> p/ produto)</span></td></tr>
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">transacao</td><td><code>data.purchase.transaction</code></td></tr>
+            <tr><td style="padding:2px 8px 2px 0;color:var(--text-muted)">status_pagamento</td><td><code>data.purchase.status</code></td></tr>
           </table>
         </div>
       </div>
@@ -660,6 +663,7 @@ function iwNovo() {
     document.getElementById('iwCriarSeNaoExistir').checked = true;
     document.getElementById('iwMap').innerHTML = '';
     iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+    iwAddMap('transacao','data.purchase.transaction'); iwAddMap('status_pagamento','data.purchase.status');
     iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
     document.getElementById('iwFormPanel').style.display = '';
@@ -698,6 +702,7 @@ async function iwEditar(id) {
     Object.entries(map).forEach(([k,v]) => iwAddMap(k,v));
     if (!Object.keys(map).length) {
         iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+        iwAddMap('transacao','data.purchase.transaction'); iwAddMap('status_pagamento','data.purchase.status');
         iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     }
     document.getElementById('iwFormTitle').textContent = 'Editar: ' + d.nome;

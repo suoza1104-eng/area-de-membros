@@ -39,6 +39,11 @@ $stUser = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
 $stUser->execute(['id' => $userId]);
 $user = $stUser->fetch();
 if (!$user) { header('Location: login.php'); exit; }
+$courseAccess = course_access_status($pdo, $userId);
+if (!empty($courseAccess['expired'])) {
+    header('Location: trilha.php?access_expired=1');
+    exit;
+}
 
 $stCfg = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
 $appCfg = $stCfg->fetch() ?: [];
@@ -809,6 +814,8 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             <span>Voltar para a trilha</span>
         </button>
     </div>
+
+    <?php include __DIR__ . '/_course_access_widget.php'; ?>
 
     <div class="progress-card">
         <div class="progress-title">Progresso no treinamento</div>

@@ -7,6 +7,7 @@ require_once __DIR__ . '/webhook_dispatcher.php';
 require_once __DIR__ . '/superfuncionario_dispatcher.php';
 require_once __DIR__ . '/manychat_dispatcher.php';
 require_once __DIR__ . '/whatsapp_event_notifications.php';
+require_once __DIR__ . '/course_access.php';
 
 function aluno_auth_ensure_remember_tokens(PDO $pdo): void {
     $pdo->exec("
