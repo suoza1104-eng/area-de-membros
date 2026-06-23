@@ -916,6 +916,151 @@ $comprasReais = dash_count_compras_reais($pdo, $whereUsers, $paramsUsers);
 $taxaConversaoVendas = $totalAlunos > 0 ? round($comprasReais / $totalAlunos * 100, 1) : 0;
 $taxaShowup = $totalAlunos > 0 ? round($liveAcessou / $totalAlunos * 100, 1) : 0;
 
+function dash_table_exists(PDO $pdo, string $table): bool {
+    try {
+        $pdo->query("SELECT 1 FROM `$table` LIMIT 0");
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function dash_column_exists(PDO $pdo, string $table, string $column): bool {
+    try {
+        $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :column");
+        $st->execute([':column' => $column]);
+        return (bool)$st->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function dash_vendas_relativas_live(PDO $pdo, array $whereUsers, array $paramsUsers): array {
+    $empty = [
+        'original' => ['labels' => ['0'], 'days' => [0], 'data' => [0], 'total' => 0],
+        'reagendada' => ['labels' => ['0'], 'days' => [0], 'data' => [0], 'total' => 0],
+    ];
+
+    if (
+        !dash_table_exists($pdo, 'hotmart_sales')
+        || !dash_column_exists($pdo, 'hotmart_sales', 'matched_user_id')
+        || !dash_column_exists($pdo, 'hotmart_sales', 'transaction_date')
+    ) {
+        return $empty;
+    }
+
+    $hasReagendamentos = dash_table_exists($pdo, 'reagendamentos_live')
+        && dash_column_exists($pdo, 'reagendamentos_live', 'old_turma_live_at')
+        && dash_column_exists($pdo, 'reagendamentos_live', 'new_turma_live_at');
+
+    $originalCandidates = [];
+    if ($hasReagendamentos) {
+        $originalCandidates[] = "(SELECT rr.old_turma_live_at
+            FROM reagendamentos_live rr
+            WHERE rr.user_id = s.matched_user_id
+              AND rr.old_turma_live_at IS NOT NULL
+            ORDER BY rr.created_at ASC, rr.id ASC
+            LIMIT 1)";
+    }
+    if (dash_column_exists($pdo, 'users', 'turma_live_at')) $originalCandidates[] = 'u.turma_live_at';
+    if (dash_column_exists($pdo, 'users', 'data_live')) $originalCandidates[] = 'u.data_live';
+    if (!$originalCandidates) return $empty;
+
+    $originalExpr = count($originalCandidates) === 1
+        ? $originalCandidates[0]
+        : 'COALESCE(' . implode(', ', $originalCandidates) . ')';
+
+    $reagendadaExpr = $hasReagendamentos
+        ? "(SELECT rr.new_turma_live_at
+            FROM reagendamentos_live rr
+            WHERE rr.user_id = s.matched_user_id
+              AND rr.new_turma_live_at IS NOT NULL
+              AND rr.created_at <= s.transaction_date
+            ORDER BY rr.created_at DESC, rr.id DESC
+            LIMIT 1)"
+        : 'NULL';
+
+    $userWhereSql = $whereUsers ? (' AND ' . implode(' AND ', $whereUsers)) : '';
+    $sql = "
+        SELECT z.referencia, z.dia_relativo, COUNT(*) AS vendas
+        FROM (
+            SELECT 'original' AS referencia,
+                   DATEDIFF(DATE(original_base.transaction_date), DATE(original_base.live_at)) AS dia_relativo
+            FROM (
+                SELECT s.transaction_date, $originalExpr AS live_at
+                FROM hotmart_sales s
+                JOIN users u ON u.id = s.matched_user_id
+                WHERE s.matched_user_id IS NOT NULL
+                  AND s.transaction_date IS NOT NULL
+                  AND LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')
+                  $userWhereSql
+            ) original_base
+            WHERE original_base.live_at IS NOT NULL
+            UNION ALL
+            SELECT 'reagendada' AS referencia,
+                   DATEDIFF(DATE(reagendada_base.transaction_date), DATE(reagendada_base.live_at)) AS dia_relativo
+            FROM (
+                SELECT s.transaction_date, $reagendadaExpr AS live_at
+                FROM hotmart_sales s
+                JOIN users u ON u.id = s.matched_user_id
+                WHERE s.matched_user_id IS NOT NULL
+                  AND s.transaction_date IS NOT NULL
+                  AND LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')
+                  $userWhereSql
+            ) reagendada_base
+            WHERE reagendada_base.live_at IS NOT NULL
+        ) z
+        GROUP BY z.referencia, z.dia_relativo
+        ORDER BY z.referencia, z.dia_relativo
+    ";
+
+    try {
+        // Os mesmos placeholders aparecem nas duas metades do UNION.
+        // Emulação permite reutilizá-los sem alterar os filtros do dashboard.
+        $oldEmulate = $pdo->getAttribute(PDO::ATTR_EMULATE_PREPARES);
+        $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        try {
+            $st = $pdo->prepare($sql);
+            $st->execute($paramsUsers);
+        } finally {
+            $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, $oldEmulate);
+        }
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return $empty;
+    }
+
+    $counts = ['original' => [], 'reagendada' => []];
+    foreach ($rows as $row) {
+        $ref = (string)($row['referencia'] ?? '');
+        if (!isset($counts[$ref])) continue;
+        $counts[$ref][(int)$row['dia_relativo']] = (int)$row['vendas'];
+    }
+
+    foreach ($counts as $ref => $byDay) {
+        if (!$byDay) continue;
+        $minDay = min(0, min(array_keys($byDay)));
+        $maxDay = max(0, max(array_keys($byDay)));
+        $days = range($minDay, $maxDay);
+        $data = [];
+        $labels = [];
+        foreach ($days as $day) {
+            $labels[] = $day > 0 ? '+' . $day : (string)$day;
+            $data[] = (int)($byDay[$day] ?? 0);
+        }
+        $empty[$ref] = [
+            'labels' => $labels,
+            'days' => $days,
+            'data' => $data,
+            'total' => array_sum($data),
+        ];
+    }
+
+    return $empty;
+}
+
+$vendasRelativasLive = dash_vendas_relativas_live($pdo, $whereUsers, $paramsUsers);
+
 function dash_compras_por_certificados(PDO $pdo, array $whereUsers, array $paramsUsers): array {
     try {
         $pdo->query("SELECT matched_user_id FROM hotmart_sales LIMIT 0");
@@ -1769,7 +1914,71 @@ dashTurmaRender();
 body.dash-chart-fullscreen {
     overflow: hidden;
 }
+.live-relative-options {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.live-relative-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+}
+.live-relative-option input {
+    margin: 0;
+    accent-color: var(--primary);
+}
+.live-relative-chart-wrap {
+    height: 320px;
+    min-height: 260px;
+}
+.live-relative-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 11px;
+}
+.live-relative-legend strong {
+    color: var(--text);
+}
 </style>
+
+<div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:center;gap:14px;justify-content:space-between;flex-wrap:wrap">
+        <div>
+            <span>Vendas por dia em relação à live</span>
+            <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:4px">
+                Dia 0 = dia da live; negativos = antes; positivos = depois
+            </div>
+        </div>
+        <div class="live-relative-options" role="group" aria-label="Data de referência da live">
+            <label class="live-relative-option">
+                <input type="checkbox" data-live-reference="original" checked>
+                Dia da live
+            </label>
+            <label class="live-relative-option">
+                <input type="checkbox" data-live-reference="reagendada">
+                Dia da live reagendada
+            </label>
+        </div>
+    </div>
+    <div class="live-relative-chart-wrap">
+        <canvas id="chartVendasRelativasLive"></canvas>
+    </div>
+    <div class="live-relative-legend">
+        <span>Referência: <strong id="liveRelativeReferenceLabel">live original</strong></span>
+        <span>Vendas contabilizadas: <strong id="liveRelativeTotal">0</strong></span>
+        <span id="liveRelativeEmpty" style="display:none">Sem vendas vinculadas a esta referência nos filtros atuais.</span>
+    </div>
+</div>
 
 <!-- CHARTS: Atividade diaria/mensal/anual -->
 <div class="grid-2 mb-4">
@@ -2264,6 +2473,127 @@ body.dash-chart-fullscreen {
     Chart.defaults.font.family = "'Inter', sans-serif";
 
     // Inscrições por dia
+    const LIVE_RELATIVE_DATA = <?= json_encode($vendasRelativasLive, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    let liveRelativeChart = null;
+
+    const liveDayZeroPlugin = {
+        id: 'liveDayZero',
+        afterDraw: function(chart) {
+            const active = chart.$liveRelativePayload;
+            if (!active || !Array.isArray(active.days)) return;
+            const zeroIndex = active.days.indexOf(0);
+            if (zeroIndex < 0) return;
+            const xScale = chart.scales.x;
+            const area = chart.chartArea;
+            if (!xScale || !area) return;
+            const x = xScale.getPixelForValue(zeroIndex);
+            const ctx = chart.ctx;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(250,204,21,.85)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(x, area.top);
+            ctx.lineTo(x, area.bottom);
+            ctx.stroke();
+            ctx.restore();
+        }
+    };
+
+    function renderLiveRelativeChart(reference) {
+        const canvas = document.getElementById('chartVendasRelativasLive');
+        if (!canvas) return;
+        const payload = LIVE_RELATIVE_DATA[reference] || {labels:['0'], days:[0], data:[0], total:0};
+        const isRescheduled = reference === 'reagendada';
+        const color = isRescheduled ? '#a78bfa' : '#38bdf8';
+        const total = Number(payload.total || 0);
+
+        document.getElementById('liveRelativeReferenceLabel').textContent = isRescheduled ? 'live reagendada' : 'live original';
+        document.getElementById('liveRelativeTotal').textContent = total.toLocaleString('pt-BR');
+        document.getElementById('liveRelativeEmpty').style.display = total > 0 ? 'none' : 'inline';
+
+        if (liveRelativeChart) liveRelativeChart.destroy();
+        liveRelativeChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: payload.labels || ['0'],
+                datasets: [{
+                    label: 'Vendas',
+                    data: payload.data || [0],
+                    borderColor: color,
+                    backgroundColor: color + '22',
+                    pointBackgroundColor: function(ctx) {
+                        return Number((payload.days || [])[ctx.dataIndex]) === 0 ? '#facc15' : color;
+                    },
+                    pointBorderColor: function(ctx) {
+                        return Number((payload.days || [])[ctx.dataIndex]) === 0 ? '#fef08a' : color;
+                    },
+                    pointRadius: function(ctx) {
+                        const value = Number((payload.data || [])[ctx.dataIndex] || 0);
+                        const day = Number((payload.days || [])[ctx.dataIndex]);
+                        return day === 0 ? 6 : (value > 0 ? 4 : 2);
+                    },
+                    pointHoverRadius: 7,
+                    borderWidth: 2.5,
+                    tension: 0.28,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return '';
+                                const day = Number((payload.days || [])[items[0].dataIndex] || 0);
+                                if (day === 0) return 'Dia 0 — dia da live';
+                                return day < 0
+                                    ? Math.abs(day) + ' dia(s) antes da live'
+                                    : day + ' dia(s) depois da live';
+                            },
+                            label: function(ctx) {
+                                return Number(ctx.parsed.y || 0).toLocaleString('pt-BR') + ' venda(s)';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Dias em relação à live', color: '#94a3b8' },
+                        ticks: { color:'#94a3b8', autoSkip:true, maxTicksLimit:18, maxRotation:0 },
+                        grid: { color:'rgba(26,37,64,.45)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Quantidade de vendas', color: '#94a3b8' },
+                        ticks: { color:'#94a3b8', precision:0 },
+                        grid: { color:'rgba(26,37,64,.6)' }
+                    }
+                }
+            },
+            plugins: [liveDayZeroPlugin]
+        });
+        liveRelativeChart.$liveRelativePayload = payload;
+    }
+
+    document.querySelectorAll('input[data-live-reference]').forEach(function(input) {
+        input.addEventListener('change', function() {
+            if (!input.checked) {
+                input.checked = true;
+                return;
+            }
+            document.querySelectorAll('input[data-live-reference]').forEach(function(other) {
+                if (other !== input) other.checked = false;
+            });
+            renderLiveRelativeChart(input.getAttribute('data-live-reference') || 'original');
+        });
+    });
+    renderLiveRelativeChart('original');
+
     const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const dashLineInstances = {};
 
