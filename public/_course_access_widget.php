@@ -22,6 +22,7 @@ if (!$caEnabled && !$caLifetime) return;
 .course-access-cta{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border:0;border-radius:10px;background:#facc15;color:#111827;font-size:12px;font-weight:800;text-decoration:none;cursor:pointer}
 .course-access-modal{position:fixed;inset:0;z-index:20000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,6,23,.82);backdrop-filter:blur(5px)}
 .course-access-modal.open{display:flex}
+.whatsapp-fab{z-index:20001!important}
 .course-access-dialog{width:min(480px,100%);padding:28px;border:1px solid rgba(250,204,21,.3);border-radius:18px;background:#0b1220;box-shadow:0 24px 80px rgba(0,0,0,.55);text-align:center;color:#e5e7eb}
 .course-access-icon{width:56px;height:56px;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(250,204,21,.12);font-size:26px}
 .course-access-dialog h2{margin:0 0 10px;font-size:21px}
