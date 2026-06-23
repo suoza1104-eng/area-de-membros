@@ -77,6 +77,11 @@ function course_access_checkout_url(string $baseUrl, array $user): string
     if (strlen($phone) >= 12 && str_starts_with($phone, '55')) {
         $phone = substr($phone, 2);
     }
+    // Celulares brasileiros antigos podem estar salvos como DDD + 8 dígitos.
+    // Para faixas móveis (6–9), inclui o nono dígito exigido no checkout.
+    if (strlen($phone) === 10 && preg_match('/^[1-9]{2}[6-9]/', $phone)) {
+        $phone = substr($phone, 0, 2) . '9' . substr($phone, 2);
+    }
     if ($name !== '') $params['name'] = $name;
     if ($email !== '') $params['email'] = $email;
     if (strlen($phone) >= 10) {
