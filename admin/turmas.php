@@ -56,12 +56,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 
         }
 
         $stats = is_array($resultado['stats'] ?? null) ? $resultado['stats'] : [];
+        $pendentes = (int)($stats['pending'] ?? 0) + (int)($stats['processing'] ?? 0) + (int)($stats['retryable_failed'] ?? 0);
         $resumo = sprintf(
-            'Disparo manual concluido. Elegiveis: %d; SF: %d; ManyChat: %d; Webhook: %d.',
+            '%s Elegiveis: %d; enviados: %d; pendentes: %d; falhas finais: %d.',
+            (string)($resultado['message'] ?? 'Disparo manual enfileirado.'),
             (int)($stats['elegiveis'] ?? 0),
-            (int)($stats['sf_ok'] ?? 0),
-            (int)($stats['manychat_ok'] ?? 0),
-            (int)($stats['webhook_ok'] ?? 0)
+            (int)($stats['sent'] ?? 0),
+            $pendentes,
+            (int)($stats['failed'] ?? 0)
         );
         header('Location: turmas.php?ok=' . urlencode($resumo));
         exit;

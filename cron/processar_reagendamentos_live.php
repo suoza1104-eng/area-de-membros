@@ -93,6 +93,15 @@ if ($dispatchGraceMin < 1) $dispatchGraceMin = 1;
 if ($dispatchGraceMin > 1440) $dispatchGraceMin = 1440;
 
 try {
+    $pdo->exec("
+        UPDATE reagendamentos_live
+           SET status='reagendado'
+         WHERE status='processando_cron'
+           AND sf_sent_at IS NULL
+           AND sf_disparo_at IS NOT NULL
+           AND sf_disparo_at <= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ");
+
     $rows = $pdo->query("SELECT * FROM reagendamentos_live
         WHERE status = 'reagendado'
           AND sf_disparo_at IS NOT NULL
@@ -101,6 +110,7 @@ try {
           AND sf_disparo_at >= DATE_SUB(NOW(), INTERVAL {$dispatchGraceMin} MINUTE)
         ORDER BY sf_disparo_at ASC
         LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $dispatchLoopStarted = microtime(true);
     foreach ($rows as $r) {
         $claim = $pdo->prepare("
             UPDATE reagendamentos_live
@@ -140,6 +150,7 @@ try {
         }
         $delay = max(0, min(30000, (int)($r['sf_delay_ms'] ?? 500)));
         if ($delay > 0) usleep($delay * 1000);
+        if ((microtime(true) - $dispatchLoopStarted) >= 50) break;
     }
 } catch (Throwable $e) {
     echo "Erro lembretes: " . $e->getMessage() . "\n";

@@ -60,6 +60,12 @@ function logs_ensure_live_dispatch_table(PDO $pdo): void {
     foreach ([
         'manychat_ok' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_ok INT NOT NULL DEFAULT 0 AFTER sf_fail",
         'manychat_fail' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_fail INT NOT NULL DEFAULT 0 AFTER manychat_ok",
+        'trigger_type' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN trigger_type VARCHAR(30) NOT NULL DEFAULT 'cron' AFTER turma_codigo",
+        'enqueued_at' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN enqueued_at DATETIME NULL AFTER started_at",
+        'last_heartbeat_at' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN last_heartbeat_at DATETIME NULL AFTER finished_at",
+        'batch_runs' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN batch_runs INT NOT NULL DEFAULT 0 AFTER last_heartbeat_at",
+        'locked_until' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN locked_until DATETIME NULL AFTER batch_runs",
+        'lock_token' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN lock_token VARCHAR(64) NULL AFTER locked_until",
     ] as $col => $sql) {
         try {
             $st = $pdo->prepare("SHOW COLUMNS FROM live_turma_dispatch_logs LIKE :c");
@@ -67,6 +73,39 @@ function logs_ensure_live_dispatch_table(PDO $pdo): void {
             if (!$st->fetchColumn()) $pdo->exec($sql);
         } catch (Throwable $e) {}
     }
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS live_turma_dispatch_recipients (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                dispatch_id INT NOT NULL,
+                turma_id INT NULL,
+                turma_codigo VARCHAR(80) NULL,
+                user_id INT NOT NULL,
+                nome VARCHAR(190) NULL,
+                email VARCHAR(190) NULL,
+                telefone VARCHAR(60) NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                skip_reason VARCHAR(80) NULL,
+                attempts INT NOT NULL DEFAULT 0,
+                webhook_ok TINYINT(1) NOT NULL DEFAULT 0,
+                webhook_fail TINYINT(1) NOT NULL DEFAULT 0,
+                sf_ok TINYINT(1) NOT NULL DEFAULT 0,
+                sf_fail TINYINT(1) NOT NULL DEFAULT 0,
+                manychat_ok TINYINT(1) NOT NULL DEFAULT 0,
+                manychat_fail TINYINT(1) NOT NULL DEFAULT 0,
+                error_message TEXT NULL,
+                payload_json LONGTEXT NULL,
+                started_at DATETIME NULL,
+                finished_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_live_dispatch_user (dispatch_id, user_id),
+                KEY idx_live_dispatch_status (dispatch_id, status),
+                KEY idx_live_dispatch_turma_user (turma_codigo, user_id),
+                KEY idx_live_dispatch_updated (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (Throwable $e) {}
 }
 
 function logs_cleanup_old(PDO $pdo): void {
@@ -302,7 +341,7 @@ if (($source === '' || $source === 'formulario') && logs_table_exists($pdo, 'sys
                 'evento' => 'FORMULARIO_LEAD',
                 'grupo' => 'Formulario',
                 'turma' => (string)($context['codigo_turma'] ?? ''),
-                'aluno_nome' => '',
+                'aluno_nome' => (string)($context['nome'] ?? ''),
                 'aluno_email' => (string)($context['email'] ?? ''),
                 'aluno_tel' => (string)($context['telefone'] ?? ''),
                 'user_id' => (int)($context['user_id'] ?? 0),
@@ -591,7 +630,17 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
     $params = [];
     logs_add_like_any($where, $params, "'CRON_LIVE_TURMA'", 'evento', $eventos);
     logs_add_like_any($where, $params, 'turma_codigo', 'turma', $turmas);
-    if ($aluno !== '') { $where[] = '1=0'; }
+    if ($aluno !== '' && logs_table_exists($pdo, 'live_turma_dispatch_recipients')) {
+        $where[] = "EXISTS (
+            SELECT 1 FROM live_turma_dispatch_recipients lr
+             WHERE lr.dispatch_id = live_turma_dispatch_logs.id
+               AND (lr.nome LIKE :cron_aluno OR lr.email LIKE :cron_aluno OR lr.telefone LIKE :cron_aluno OR lr.user_id = :cron_aluno_id)
+        )";
+        $params[':cron_aluno'] = '%' . $aluno . '%';
+        $params[':cron_aluno_id'] = ctype_digit($aluno) ? (int)$aluno : 0;
+    } elseif ($aluno !== '') {
+        $where[] = '1=0';
+    }
     if ($de !== '') { $where[] = 'started_at >= :de'; $params[':de'] = $de . ' 00:00:00'; }
     if ($ate !== '') { $where[] = 'started_at <= :ate'; $params[':ate'] = $ate . ' 23:59:59'; }
     if ($status === 'ok') $where[] = "status = 'concluido'";
@@ -603,12 +652,38 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
         $st->bindValue(':lim', $limit, PDO::PARAM_INT);
         $st->execute();
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+            $recipientStats = [];
+            $recipientSample = [];
+            if (logs_table_exists($pdo, 'live_turma_dispatch_recipients')) {
+                try {
+                    $rs = $pdo->prepare("SELECT status, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id=:id GROUP BY status");
+                    $rs->execute([':id' => (int)$r['id']]);
+                    foreach ($rs->fetchAll(PDO::FETCH_ASSOC) ?: [] as $sr) {
+                        $recipientStats[(string)$sr['status']] = (int)$sr['qtd'];
+                    }
+                    $rr = $pdo->prepare("
+                        SELECT user_id, nome, email, telefone, status, skip_reason, attempts,
+                               webhook_ok, webhook_fail, sf_ok, sf_fail, manychat_ok, manychat_fail,
+                               error_message, started_at, finished_at
+                          FROM live_turma_dispatch_recipients
+                         WHERE dispatch_id=:id
+                      ORDER BY FIELD(status,'failed','processing','pending','sent','skipped'), id ASC
+                         LIMIT 500
+                    ");
+                    $rr->execute([':id' => (int)$r['id']]);
+                    $recipientSample = $rr->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                } catch (Throwable $e) {}
+            }
             $payload = json_encode([
                 'turma_id' => $r['turma_id'] ?? null,
                 'turma_codigo' => $r['turma_codigo'] ?? '',
+                'tipo_disparo' => $r['trigger_type'] ?? 'cron',
                 'planned_at' => $r['planned_at'] ?? null,
                 'started_at' => $r['started_at'] ?? null,
+                'enqueued_at' => $r['enqueued_at'] ?? null,
                 'finished_at' => $r['finished_at'] ?? null,
+                'last_heartbeat_at' => $r['last_heartbeat_at'] ?? null,
+                'batch_runs' => (int)($r['batch_runs'] ?? 0),
                 'total_alunos' => (int)($r['total_alunos'] ?? 0),
                 'elegiveis' => (int)($r['elegiveis'] ?? 0),
                 'sf_ok' => (int)($r['sf_ok'] ?? 0),
@@ -617,8 +692,13 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
                 'manychat_fail' => (int)($r['manychat_fail'] ?? 0),
                 'webhook_ok' => (int)($r['webhook_ok'] ?? 0),
                 'webhook_fail' => (int)($r['webhook_fail'] ?? 0),
+                'destinatarios_status' => $recipientStats,
+                'destinatarios_amostra_limite_500' => $recipientSample,
                 'skipped' => json_decode((string)($r['skipped_json'] ?? ''), true),
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $sent = (int)($recipientStats['sent'] ?? 0);
+            $pending = (int)($recipientStats['pending'] ?? 0) + (int)($recipientStats['processing'] ?? 0);
+            $failed = (int)($recipientStats['failed'] ?? 0);
             $allRows[] = [
                 'source' => 'cron_live',
                 'id' => (int)$r['id'],
@@ -632,8 +712,8 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
                 'user_id' => 0,
                 'ok' => (string)($r['status'] ?? '') === 'concluido',
                 'status_label' => (string)($r['status'] ?? ''),
-                'destino' => 'Cron processar_lives',
-                'summary' => 'Total: ' . (int)($r['total_alunos'] ?? 0) . ' | Elegiveis: ' . (int)($r['elegiveis'] ?? 0) . ' | SF OK: ' . (int)($r['sf_ok'] ?? 0) . ' | Manychat OK: ' . (int)($r['manychat_ok'] ?? 0) . ' | Excluidos: ' . logs_skipped_summary($r['skipped_json'] ?? null),
+                'destino' => 'Cron processar_lives (' . (string)($r['trigger_type'] ?? 'cron') . ')',
+                'summary' => 'Total: ' . (int)($r['total_alunos'] ?? 0) . ' | Elegiveis: ' . (int)($r['elegiveis'] ?? 0) . ' | Enviados: ' . $sent . ' | Pendentes: ' . $pending . ' | Falhas: ' . $failed . ' | Excluidos: ' . logs_skipped_summary($r['skipped_json'] ?? null),
                 'payload' => $payload ?: '',
                 'response' => (string)($r['message'] ?? ''),
             ];

@@ -196,11 +196,51 @@ function ensure_live_dispatch_log_table(PDO $pdo): void {
     foreach ([
         'manychat_ok' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_ok INT NOT NULL DEFAULT 0 AFTER sf_fail",
         'manychat_fail' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN manychat_fail INT NOT NULL DEFAULT 0 AFTER manychat_ok",
+        'trigger_type' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN trigger_type VARCHAR(30) NOT NULL DEFAULT 'cron' AFTER turma_codigo",
+        'enqueued_at' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN enqueued_at DATETIME NULL AFTER started_at",
+        'last_heartbeat_at' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN last_heartbeat_at DATETIME NULL AFTER finished_at",
+        'batch_runs' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN batch_runs INT NOT NULL DEFAULT 0 AFTER last_heartbeat_at",
+        'locked_until' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN locked_until DATETIME NULL AFTER batch_runs",
+        'lock_token' => "ALTER TABLE live_turma_dispatch_logs ADD COLUMN lock_token VARCHAR(64) NULL AFTER locked_until",
     ] as $col => $sql) {
         try {
             if (!column_exists($pdo, 'live_turma_dispatch_logs', $col)) $pdo->exec($sql);
         } catch (Throwable $e) {}
     }
+
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS live_turma_dispatch_recipients (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                dispatch_id INT NOT NULL,
+                turma_id INT NULL,
+                turma_codigo VARCHAR(80) NULL,
+                user_id INT NOT NULL,
+                nome VARCHAR(190) NULL,
+                email VARCHAR(190) NULL,
+                telefone VARCHAR(60) NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                skip_reason VARCHAR(80) NULL,
+                attempts INT NOT NULL DEFAULT 0,
+                webhook_ok TINYINT(1) NOT NULL DEFAULT 0,
+                webhook_fail TINYINT(1) NOT NULL DEFAULT 0,
+                sf_ok TINYINT(1) NOT NULL DEFAULT 0,
+                sf_fail TINYINT(1) NOT NULL DEFAULT 0,
+                manychat_ok TINYINT(1) NOT NULL DEFAULT 0,
+                manychat_fail TINYINT(1) NOT NULL DEFAULT 0,
+                error_message TEXT NULL,
+                payload_json LONGTEXT NULL,
+                started_at DATETIME NULL,
+                finished_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_live_dispatch_user (dispatch_id, user_id),
+                KEY idx_live_dispatch_status (dispatch_id, status),
+                KEY idx_live_dispatch_turma_user (turma_codigo, user_id),
+                KEY idx_live_dispatch_updated (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (Throwable $e) {}
 }
 
 function start_live_dispatch_log(PDO $pdo, array $turma): int {
@@ -262,6 +302,337 @@ function finish_live_dispatch_log(PDO $pdo, int $logId, array $stats, string $st
             ':id' => $logId,
         ]);
     } catch (Throwable $e) {}
+}
+
+function live_dispatch_trigger_type(): string {
+    return !empty($GLOBALS['manual_live_turma_id']) ? 'manual' : 'cron';
+}
+
+function live_dispatch_open_status_sql(): string {
+    return "'queued','iniciado','processando'";
+}
+
+function live_dispatch_create_or_reuse(PDO $pdo, array $turma, string $triggerType): int {
+    ensure_live_dispatch_log_table($pdo);
+    $turmaId = (int)($turma['id'] ?? 0);
+    if ($turmaId <= 0) return 0;
+
+    try {
+        $st = $pdo->prepare("
+            SELECT id
+              FROM live_turma_dispatch_logs
+             WHERE turma_id = :tid
+               AND status IN (" . live_dispatch_open_status_sql() . ")
+             ORDER BY id DESC
+             LIMIT 1
+        ");
+        $st->execute([':tid' => $turmaId]);
+        $id = (int)($st->fetchColumn() ?: 0);
+        if ($id > 0) {
+            $pdo->prepare("
+                UPDATE live_turma_dispatch_logs
+                   SET trigger_type = IF(trigger_type='manual' OR :trigger_type='cron', trigger_type, :trigger_type2),
+                       message = IF(:trigger_type3='manual', 'Disparo manual retomou a fila existente da turma.', message),
+                       last_heartbeat_at = NOW()
+                 WHERE id = :id
+                 LIMIT 1
+            ")->execute([
+                ':trigger_type' => $triggerType,
+                ':trigger_type2' => $triggerType,
+                ':trigger_type3' => $triggerType,
+                ':id' => $id,
+            ]);
+            return $id;
+        }
+    } catch (Throwable $e) {}
+
+    try {
+        $message = $triggerType === 'manual'
+            ? 'Administrador enfileirou o disparo manual da turma.'
+            : 'Cron enfileirou processamento da turma.';
+        $st = $pdo->prepare("
+            INSERT INTO live_turma_dispatch_logs
+                (turma_id, turma_codigo, trigger_type, planned_at, started_at, last_heartbeat_at, status, message)
+            VALUES
+                (:tid, :codigo, :trigger_type, :planned, NOW(), NOW(), 'queued', :message)
+        ");
+        $st->execute([
+            ':tid' => $turmaId,
+            ':codigo' => (string)($turma['codigo'] ?? ''),
+            ':trigger_type' => $triggerType,
+            ':planned' => $turma['live_disparo_data'] ?? null,
+            ':message' => $message,
+        ]);
+        return (int)$pdo->lastInsertId();
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+function live_dispatch_row_count(PDO $pdo, int $dispatchId): int {
+    try {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM live_turma_dispatch_recipients WHERE dispatch_id=:id");
+        $st->execute([':id' => $dispatchId]);
+        return (int)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+function live_dispatch_record_recipient(PDO $pdo, int $dispatchId, array $turma, array $aluno, string $status, ?string $skipReason = null, ?array $payload = null): void {
+    try {
+        $st = $pdo->prepare("
+            INSERT INTO live_turma_dispatch_recipients
+                (dispatch_id, turma_id, turma_codigo, user_id, nome, email, telefone, status, skip_reason, payload_json, finished_at)
+            VALUES
+                (:dispatch_id, :turma_id, :turma_codigo, :user_id, :nome, :email, :telefone, :status, :skip_reason, :payload_json, IF(:is_terminal=1, NOW(), NULL))
+            ON DUPLICATE KEY UPDATE
+                nome=VALUES(nome),
+                email=VALUES(email),
+                telefone=VALUES(telefone),
+                status=IF(status IN ('sent','skipped'), status, VALUES(status)),
+                skip_reason=IF(status IN ('sent','skipped'), skip_reason, VALUES(skip_reason)),
+                payload_json=IF(VALUES(payload_json) IS NULL, payload_json, VALUES(payload_json)),
+                finished_at=IF(status IN ('sent','skipped'), finished_at, VALUES(finished_at))
+        ");
+        $st->execute([
+            ':dispatch_id' => $dispatchId,
+            ':turma_id' => (int)($turma['id'] ?? 0) ?: null,
+            ':turma_codigo' => (string)($turma['codigo'] ?? ''),
+            ':user_id' => (int)($aluno['id'] ?? 0),
+            ':nome' => (string)($aluno['nome'] ?? ''),
+            ':email' => (string)($aluno['email'] ?? ''),
+            ':telefone' => (string)($aluno['telefone'] ?? ''),
+            ':status' => $status,
+            ':skip_reason' => $skipReason,
+            ':payload_json' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+            ':is_terminal' => in_array($status, ['skipped', 'failed'], true) ? 1 : 0,
+        ]);
+    } catch (Throwable $e) {}
+}
+
+function live_dispatch_enqueue_recipients(PDO $pdo, int $dispatchId, array $turma, ?string $tagRelTable, int $totalObrigatoriasGlobal): array {
+    $codigo = (string)($turma['codigo'] ?? '');
+    $stats = [
+        'total_alunos' => 0,
+        'elegiveis' => 0,
+        'skipped' => [
+            'include_tag_table_missing' => 0,
+            'andamento_zero' => 0,
+            'tag_excluida' => 0,
+            'certificado' => 0,
+            'compra' => 0,
+            'live_reagendada' => 0,
+            'bloqueado' => 0,
+        ],
+    ];
+    if ($dispatchId <= 0 || $codigo === '') return $stats;
+
+    $filterCfg = live_filter_config($turma['live_filter_tag_ids'] ?? null);
+    $includeTagIds = $filterCfg['include_any'];
+    $excludeTagIds = $filterCfg['exclude_any'];
+    $excludeCert = (int)$filterCfg['exclude_cert'] === 1;
+    $excludeZero = (int)$filterCfg['exclude_zero'] === 1;
+    $excludePurchase = (int)$filterCfg['exclude_purchase'] === 1;
+    $excludeRescheduled = (int)$filterCfg['exclude_rescheduled'] === 1;
+
+    if ($includeTagIds && $tagRelTable) {
+        $in = implode(',', array_fill(0, count($includeTagIds), '?'));
+        $sql = "
+            SELECT u.*
+              FROM users u
+              JOIN `$tagRelTable` ut ON ut.user_id = u.id
+             WHERE u.codigo_turma = ?
+               AND ut.tag_id IN ($in)
+          GROUP BY u.id
+          ORDER BY u.id ASC
+        ";
+        $stU = $pdo->prepare($sql);
+        $stU->execute(array_merge([$codigo], $includeTagIds));
+        $alunos = $stU->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } else {
+        $stU = $pdo->prepare("SELECT * FROM users WHERE codigo_turma = :c ORDER BY id ASC");
+        $stU->execute([':c' => $codigo]);
+        $alunos = $stU->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    $stats['total_alunos'] = count($alunos);
+    foreach ($alunos as $aluno) {
+        $uid = (int)($aluno['id'] ?? 0);
+        if ($uid <= 0) continue;
+        $skip = null;
+        if (function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
+            $skip = 'bloqueado';
+        }
+
+        $prog = calc_andamento($pdo, $uid, $totalObrigatoriasGlobal);
+        $aluno['andamento'] = $prog['andamento'];
+        $aluno['aulas_concluidas'] = $prog['concluidas'];
+        $aluno['aulas_totais'] = $prog['total'];
+
+        if ($skip === null && $includeTagIds && !$tagRelTable) $skip = 'include_tag_table_missing';
+        if ($skip === null && $excludeZero && (int)$aluno['andamento'] <= 0) $skip = 'andamento_zero';
+        if ($skip === null && $excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) $skip = 'tag_excluida';
+        if ($skip === null && $excludeCert && user_has_certificate($pdo, $uid)) $skip = 'certificado';
+        if ($skip === null && $excludePurchase && user_has_purchase($pdo, $uid)) $skip = 'compra';
+        if ($skip === null && $excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) $skip = 'live_reagendada';
+
+        if ($skip !== null) {
+            $stats['skipped'][$skip] = (int)($stats['skipped'][$skip] ?? 0) + 1;
+            live_dispatch_record_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', $skip, null);
+            continue;
+        }
+
+        $stats['elegiveis']++;
+        $payload = [
+            'andamento' => $aluno['andamento'],
+            'aulas_concluidas' => $aluno['aulas_concluidas'],
+            'aulas_totais' => $aluno['aulas_totais'],
+        ];
+        live_dispatch_record_recipient($pdo, $dispatchId, $turma, $aluno, 'pending', null, $payload);
+    }
+
+    live_dispatch_refresh_summary($pdo, $dispatchId, false);
+    try {
+        $pdo->prepare("UPDATE live_turma_dispatch_logs SET enqueued_at=NOW(), status='processando', message='Fila criada; processamento em lotes pelo cron.' WHERE id=:id AND enqueued_at IS NULL")
+            ->execute([':id' => $dispatchId]);
+    } catch (Throwable $e) {}
+    return $stats;
+}
+
+function live_dispatch_refresh_summary(PDO $pdo, int $dispatchId, bool $finishIfDone = true): array {
+    $stats = [
+        'total_alunos' => 0,
+        'elegiveis' => 0,
+        'sf_ok' => 0,
+        'sf_fail' => 0,
+        'manychat_ok' => 0,
+        'manychat_fail' => 0,
+        'webhook_ok' => 0,
+        'webhook_fail' => 0,
+        'skipped' => [],
+        'pending' => 0,
+        'processing' => 0,
+        'failed' => 0,
+        'retryable_failed' => 0,
+        'sent' => 0,
+    ];
+    if ($dispatchId <= 0) return $stats;
+
+    try {
+        $st = $pdo->prepare("
+            SELECT
+                COUNT(*) total,
+                SUM(status IN ('pending','processing','sent','failed')) elegiveis,
+                SUM(status='pending') pending,
+                SUM(status='processing') processing,
+                SUM(status='sent') sent,
+                SUM(status='failed') failed,
+                SUM(status='failed' AND attempts < 3) retryable_failed,
+                SUM(sf_ok=1) sf_ok,
+                SUM(sf_fail=1) sf_fail,
+                SUM(manychat_ok=1) manychat_ok,
+                SUM(manychat_fail=1) manychat_fail,
+                SUM(webhook_ok=1) webhook_ok,
+                SUM(webhook_fail=1) webhook_fail
+            FROM live_turma_dispatch_recipients
+            WHERE dispatch_id=:id
+        ");
+        $st->execute([':id' => $dispatchId]);
+        $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        foreach (['total_alunos' => 'total', 'elegiveis' => 'elegiveis', 'pending' => 'pending', 'processing' => 'processing', 'sent' => 'sent', 'failed' => 'failed', 'retryable_failed' => 'retryable_failed', 'sf_ok' => 'sf_ok', 'sf_fail' => 'sf_fail', 'manychat_ok' => 'manychat_ok', 'manychat_fail' => 'manychat_fail', 'webhook_ok' => 'webhook_ok', 'webhook_fail' => 'webhook_fail'] as $out => $in) {
+            $stats[$out] = (int)($r[$in] ?? 0);
+        }
+
+        $skip = $pdo->prepare("SELECT skip_reason, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id=:id AND status='skipped' GROUP BY skip_reason");
+        $skip->execute([':id' => $dispatchId]);
+        foreach ($skip->fetchAll(PDO::FETCH_ASSOC) ?: [] as $sr) {
+            $key = (string)($sr['skip_reason'] ?? 'outro');
+            $stats['skipped'][$key] = (int)($sr['qtd'] ?? 0);
+        }
+
+        $done = ($stats['pending'] <= 0 && $stats['processing'] <= 0 && $stats['retryable_failed'] <= 0);
+        $status = 'processando';
+        $message = 'Processamento em lotes pelo cron.';
+        $finishedSql = '';
+        if ($finishIfDone && $done) {
+            $status = ($stats['failed'] > 0 || $stats['sf_fail'] > 0 || $stats['manychat_fail'] > 0 || $stats['webhook_fail'] > 0) ? 'concluido_com_falhas' : 'concluido';
+            $message = $stats['elegiveis'] > 0 ? 'Fila concluida.' : 'Fila concluida sem alunos elegiveis apos os filtros.';
+            $finishedSql = ', finished_at = IF(finished_at IS NULL, NOW(), finished_at)';
+        }
+
+        $up = $pdo->prepare("
+            UPDATE live_turma_dispatch_logs
+               SET total_alunos=:total,
+                   elegiveis=:elegiveis,
+                   sf_ok=:sf_ok,
+                   sf_fail=:sf_fail,
+                   manychat_ok=:manychat_ok,
+                   manychat_fail=:manychat_fail,
+                   webhook_ok=:webhook_ok,
+                   webhook_fail=:webhook_fail,
+                   skipped_json=:skipped,
+                   status=:status,
+                   message=:message,
+                   last_heartbeat_at=NOW(),
+                   locked_until=NULL,
+                   lock_token=NULL
+                   $finishedSql
+             WHERE id=:id
+             LIMIT 1
+        ");
+        $up->execute([
+            ':total' => $stats['total_alunos'],
+            ':elegiveis' => $stats['elegiveis'],
+            ':sf_ok' => $stats['sf_ok'],
+            ':sf_fail' => $stats['sf_fail'],
+            ':manychat_ok' => $stats['manychat_ok'],
+            ':manychat_fail' => $stats['manychat_fail'],
+            ':webhook_ok' => $stats['webhook_ok'],
+            ':webhook_fail' => $stats['webhook_fail'],
+            ':skipped' => json_encode($stats['skipped'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':status' => $status,
+            ':message' => $message,
+            ':id' => $dispatchId,
+        ]);
+
+        if ($finishIfDone && $done) {
+            $tid = (int)$pdo->query("SELECT turma_id FROM live_turma_dispatch_logs WHERE id=" . (int)$dispatchId)->fetchColumn();
+            if ($tid > 0) {
+                $pdo->prepare("UPDATE turmas SET live_disparada=1 WHERE id=:id LIMIT 1")->execute([':id' => $tid]);
+            }
+        }
+    } catch (Throwable $e) {}
+    return $stats;
+}
+
+function live_dispatch_claim_batch(PDO $pdo, int $dispatchId, int $limit): array {
+    $limit = max(1, min(200, $limit));
+    try {
+        $ids = $pdo->prepare("
+            SELECT id
+              FROM live_turma_dispatch_recipients
+             WHERE dispatch_id=:id
+               AND (
+                    status='pending'
+                    OR (status='processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+                    OR (status='failed' AND attempts < 3)
+               )
+             ORDER BY FIELD(status,'pending','processing','failed'), id ASC
+             LIMIT {$limit}
+        ");
+        $ids->execute([':id' => $dispatchId]);
+        $rowIds = array_map('intval', $ids->fetchAll(PDO::FETCH_COLUMN) ?: []);
+        if (!$rowIds) return [];
+        $in = implode(',', array_fill(0, count($rowIds), '?'));
+        $up = $pdo->prepare("UPDATE live_turma_dispatch_recipients SET status='processing', attempts=attempts+1, started_at=IF(started_at IS NULL, NOW(), started_at), updated_at=NOW() WHERE id IN ($in)");
+        $up->execute($rowIds);
+        $st = $pdo->prepare("SELECT * FROM live_turma_dispatch_recipients WHERE id IN ($in) ORDER BY id ASC");
+        $st->execute($rowIds);
+        return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
 }
 
 /**
@@ -418,6 +789,161 @@ function post_json(string $url, string $json, int $timeout = 15): array {
     return [$st, $resp, $err];
 }
 
+function live_dispatch_send_recipient(PDO $pdo, int $dispatchId, array $turma, array $recipient, bool $hasSfCol, bool $hasManychatLiveRules): void {
+    $codigo = (string)($turma['codigo'] ?? '');
+    $uid = (int)($recipient['user_id'] ?? 0);
+    if ($dispatchId <= 0 || $codigo === '' || $uid <= 0) return;
+
+    $stU = $pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");
+    $stU->execute([':id' => $uid]);
+    $aluno = $stU->fetch(PDO::FETCH_ASSOC) ?: [
+        'id' => $uid,
+        'nome' => (string)($recipient['nome'] ?? ''),
+        'email' => (string)($recipient['email'] ?? ''),
+        'telefone' => (string)($recipient['telefone'] ?? ''),
+        'codigo_turma' => $codigo,
+    ];
+
+    $snapshot = json_decode((string)($recipient['payload_json'] ?? ''), true);
+    if (!is_array($snapshot)) $snapshot = [];
+    foreach (['andamento', 'aulas_concluidas', 'aulas_totais'] as $k) {
+        if (array_key_exists($k, $snapshot)) $aluno[$k] = $snapshot[$k];
+    }
+
+    $url = trim((string)($turma['webhook_live_url'] ?? ''));
+    $whEnabled = (int)($turma['live_webhook_enabled'] ?? 1) === 1 && $url !== '';
+    $sfEnabled = $hasSfCol && (int)($turma['sf_enabled'] ?? 0) === 1;
+    $webhookOk = 0;
+    $webhookFail = 0;
+    $sfOkCount = 0;
+    $sfFailCount = 0;
+    $mcOkCount = 0;
+    $mcFailCount = 0;
+    $errors = [];
+
+    $extra = [
+        'codigo_turma' => $turma['codigo'],
+        'codigo_live' => $turma['codigo_live'] ?? $turma['codigo'],
+        'data_live' => $turma['data_live'],
+        'data_live_br' => (function(?string $d): ?string {
+            if (!$d) return null;
+            try { return (new DateTime($d))->format('d/m/Y H:i'); } catch (Throwable $e) { return $d; }
+        })($turma['data_live'] ?? null),
+        'andamento' => $aluno['andamento'] ?? null,
+        'aulas_concluidas' => $aluno['aulas_concluidas'] ?? null,
+        'aulas_totais' => $aluno['aulas_totais'] ?? null,
+    ];
+
+    if ($whEnabled) {
+        $payload = build_live_payload($turma, $aluno);
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
+        if ($status >= 200 && $status < 300 && !$err) $webhookOk = 1;
+        else {
+            $webhookFail = 1;
+            $errors[] = 'webhook direto: ' . ($err ?: ('HTTP ' . $status));
+        }
+
+        try {
+            if (table_exists($pdo, 'webhook_logs')) {
+                $pdo->prepare("
+                    INSERT INTO webhook_logs
+                        (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at)
+                    VALUES (NULL, :u, :e, :p, :s, :b, :er, NOW())
+                ")->execute([
+                    ':u' => $uid,
+                    ':e' => 'LIVE_TURMA_' . $codigo,
+                    ':p' => $json,
+                    ':s' => $status ?: null,
+                    ':b' => $resp,
+                    ':er' => $err ?: null,
+                ]);
+            }
+        } catch (Throwable $e) {}
+    }
+
+    $userStd = [
+        'id' => $aluno['id'] ?? $uid,
+        'nome' => $aluno['nome'] ?? '',
+        'email' => $aluno['email'] ?? '',
+        'telefone' => $aluno['telefone'] ?? '',
+    ];
+
+    try {
+        disparar_evento_webhooks($pdo, 'LIVE_TURMA', $userStd, $extra);
+    } catch (Throwable $e) {
+        $errors[] = 'webhook global: ' . $e->getMessage();
+    }
+
+    if ($sfEnabled) {
+        try {
+            $sfOk = sf_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
+            if ($sfOk) $sfOkCount = 1;
+            else {
+                $sfFailCount = 1;
+                $errors[] = 'SuperFuncionario retornou falha';
+            }
+        } catch (Throwable $e) {
+            $sfFailCount = 1;
+            $errors[] = 'SuperFuncionario: ' . $e->getMessage();
+        }
+    }
+
+    if (function_exists('whatsapp_event_notifications_dispatch')) {
+        try {
+            whatsapp_event_notifications_dispatch($pdo, 'LIVE_TURMA', $userStd, $extra);
+            whatsapp_event_notifications_dispatch($pdo, 'LIVE_TURMA_' . $codigo, $userStd, $extra);
+        } catch (Throwable $e) {}
+    }
+
+    if ($hasManychatLiveRules) {
+        try {
+            $mcOkGlobal = mc_disparar_evento($pdo, 'LIVE_TURMA', $userStd, $extra);
+            $mcOkTurma = mc_disparar_evento($pdo, 'LIVE_TURMA_' . $codigo, $userStd, $extra);
+            if ($mcOkGlobal || $mcOkTurma) $mcOkCount = 1;
+            else {
+                $mcFailCount = 1;
+                $errors[] = 'ManyChat retornou falha';
+            }
+        } catch (Throwable $e) {
+            $mcFailCount = 1;
+            $errors[] = 'ManyChat: ' . $e->getMessage();
+        }
+    }
+
+    $hasFailure = ($webhookFail || $sfFailCount || $mcFailCount) > 0;
+    $newStatus = $hasFailure ? 'failed' : 'sent';
+    try {
+        $up = $pdo->prepare("
+            UPDATE live_turma_dispatch_recipients
+               SET status=:status,
+                   webhook_ok=:webhook_ok,
+                   webhook_fail=:webhook_fail,
+                   sf_ok=:sf_ok,
+                   sf_fail=:sf_fail,
+                   manychat_ok=:manychat_ok,
+                   manychat_fail=:manychat_fail,
+                   error_message=:error_message,
+                   finished_at=IF(:status2='sent', NOW(), finished_at),
+                   updated_at=NOW()
+             WHERE id=:id
+             LIMIT 1
+        ");
+        $up->execute([
+            ':status' => $newStatus,
+            ':webhook_ok' => $webhookOk,
+            ':webhook_fail' => $webhookFail,
+            ':sf_ok' => $sfOkCount,
+            ':sf_fail' => $sfFailCount,
+            ':manychat_ok' => $mcOkCount,
+            ':manychat_fail' => $mcFailCount,
+            ':error_message' => $errors ? implode(' | ', array_slice($errors, 0, 6)) : null,
+            ':status2' => $newStatus,
+            ':id' => (int)$recipient['id'],
+        ]);
+    } catch (Throwable $e) {}
+}
+
 // ----------------------------------------------------------------------------------
 // 1) Detecta se coluna sf_enabled existe (migration gradual)
 // ----------------------------------------------------------------------------------
@@ -435,6 +961,157 @@ try {
         $hasManychatLiveRules = (bool)($stMc ? $stMc->fetchColumn() : false);
     }
 } catch (Throwable $e) {}
+
+ensure_live_dispatch_log_table($pdo);
+
+$sfOrClause = $hasSfCol ? "OR (sf_enabled = 1)" : "";
+$manychatOrClause = $hasManychatLiveRules ? "OR 1=1" : "";
+$manualTurmaId = (int)($GLOBALS['manual_live_turma_id'] ?? 0);
+
+if ($manualTurmaId > 0) {
+    $stmt = $pdo->prepare("
+        SELECT *
+          FROM turmas
+         WHERE id = :id
+           AND data_live IS NOT NULL
+           AND (
+               (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+               $sfOrClause
+               $manychatOrClause
+           )
+         LIMIT 1
+    ");
+    $stmt->execute([':id' => $manualTurmaId]);
+} else {
+    $stmt = $pdo->prepare("
+        SELECT *
+          FROM turmas
+         WHERE live_disparada = 0
+           AND live_disparo_data IS NOT NULL
+           AND live_disparo_data <= :agora
+           AND (data_live IS NULL OR data_live >= DATE_SUB(NOW(), INTERVAL 2 HOUR))
+           AND (
+               (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+               $sfOrClause
+               $manychatOrClause
+           )
+      ORDER BY live_disparo_data ASC, id ASC
+      LIMIT 10
+    ");
+    $stmt->execute([':agora' => $agora]);
+}
+$turmas = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+if ($manualTurmaId <= 0) {
+    try {
+        $stOpen = $pdo->query("
+            SELECT t.*
+             FROM live_turma_dispatch_logs l
+             JOIN turmas t ON t.id = l.turma_id
+             WHERE l.status IN (" . live_dispatch_open_status_sql() . ")
+               AND (
+                    EXISTS (SELECT 1 FROM live_turma_dispatch_recipients lr WHERE lr.dispatch_id = l.id LIMIT 1)
+                    OR t.data_live >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+               )
+          GROUP BY t.id
+          ORDER BY MIN(l.started_at) ASC, t.id ASC
+             LIMIT 10
+        ");
+        $seen = [];
+        foreach ($turmas as $t) $seen[(int)$t['id']] = true;
+        foreach ($stOpen->fetchAll(PDO::FETCH_ASSOC) ?: [] as $t) {
+            if (!isset($seen[(int)$t['id']])) $turmas[] = $t;
+        }
+    } catch (Throwable $e) {}
+}
+
+$totalObrigatoriasGlobal = total_aulas_obrigatorias($pdo);
+$tagRelTable = first_existing_table($pdo, [
+    'user_tags',
+    'usuarios_tags',
+    'aluno_tags',
+    'users_tags',
+    'tags_users',
+    'user_tag_rel',
+    'user_tag_relations',
+]);
+
+if (!$turmas) {
+    if ($manualTurmaId > 0) {
+        $GLOBALS['manual_live_turma_result'] = ['ok' => false, 'message' => 'Turma indisponivel ou sem integracao ativa.'];
+        return;
+    }
+    echo "Nenhuma turma pendente para processar.\n";
+    return;
+}
+
+$processedDispatches = 0;
+$processedRecipients = 0;
+foreach ($turmas as $turma) {
+    $codigo = (string)($turma['codigo'] ?? '');
+    if ($codigo === '') continue;
+
+    $dispatchLogId = live_dispatch_create_or_reuse($pdo, $turma, live_dispatch_trigger_type());
+    if ($dispatchLogId <= 0) continue;
+
+    $lockToken = bin2hex(random_bytes(16));
+    try {
+        $claim = $pdo->prepare("
+            UPDATE live_turma_dispatch_logs
+               SET locked_until=DATE_ADD(NOW(), INTERVAL 5 MINUTE),
+                   lock_token=:token,
+                   last_heartbeat_at=NOW(),
+                   batch_runs=batch_runs+1,
+                   status='processando'
+             WHERE id=:id
+               AND status IN (" . live_dispatch_open_status_sql() . ")
+               AND (locked_until IS NULL OR locked_until < NOW() OR lock_token=:token2)
+             LIMIT 1
+        ");
+        $claim->execute([':token' => $lockToken, ':token2' => $lockToken, ':id' => $dispatchLogId]);
+        if ($claim->rowCount() !== 1) continue;
+    } catch (Throwable $e) {
+        continue;
+    }
+
+    if (live_dispatch_row_count($pdo, $dispatchLogId) <= 0) {
+        live_dispatch_enqueue_recipients($pdo, $dispatchLogId, $turma, $tagRelTable, (int)$totalObrigatoriasGlobal);
+    }
+
+    $delay = (int)($turma['delay_ms'] ?? 500);
+    if ($delay < 0) $delay = 0;
+    if ($delay > 30000) $delay = 30000;
+
+    $batchLimit = (int)get_setting('live_dispatch_batch_limit', '60');
+    if ($batchLimit < 1) $batchLimit = 1;
+    if ($batchLimit > 200) $batchLimit = 200;
+    if ($delay > 0) $batchLimit = min($batchLimit, max(1, (int)floor(45000 / max(1, $delay))));
+    if ($manualTurmaId > 0) $batchLimit = min($batchLimit, 10);
+
+    $recipients = live_dispatch_claim_batch($pdo, $dispatchLogId, $batchLimit);
+    $batchStarted = microtime(true);
+    foreach ($recipients as $recipient) {
+        live_dispatch_send_recipient($pdo, $dispatchLogId, $turma, $recipient, $hasSfCol, $hasManychatLiveRules);
+        $processedRecipients++;
+        if ($delay > 0) usleep($delay * 1000);
+        if ((microtime(true) - $batchStarted) >= 50) break;
+    }
+
+    $stats = live_dispatch_refresh_summary($pdo, $dispatchLogId, true);
+    $processedDispatches++;
+    if ($manualTurmaId > 0) {
+        $remaining = (int)($stats['pending'] ?? 0) + (int)($stats['processing'] ?? 0) + (int)($stats['retryable_failed'] ?? 0);
+        $GLOBALS['manual_live_turma_result'] = [
+            'ok' => true,
+            'message' => $remaining > 0 ? 'Disparo manual enfileirado. O cron continuara processando ate concluir.' : 'Disparo manual concluido.',
+            'stats' => $stats,
+            'dispatch_id' => $dispatchLogId,
+        ];
+    }
+}
+
+echo "Filas processadas: {$processedDispatches}; destinatarios neste lote: {$processedRecipients}\n";
+return;
 
 // ----------------------------------------------------------------------------------
 // 2) Pega turmas aptas: não disparadas, com data de disparo <= agora, e
