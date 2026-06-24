@@ -107,6 +107,72 @@ function lw_get_value(array $data, string $path): ?string {
     return null;
 }
 
+function lw_clean_phone(?string $value): string {
+    return preg_replace('/\D+/', '', (string)$value) ?? '';
+}
+
+function lw_phone_variants(?string $phone): array {
+    $phone = lw_clean_phone($phone);
+    if ($phone === '') return [];
+
+    $variants = [$phone];
+    if (str_starts_with($phone, '55') && strlen($phone) > 11) {
+        $variants[] = substr($phone, 2);
+    } else {
+        $variants[] = '55' . $phone;
+    }
+    if (strlen($phone) >= 11) {
+        $last11 = substr($phone, -11);
+        $variants[] = $last11;
+        $variants[] = '55' . $last11;
+        if (strlen($last11) === 11 && substr($last11, 2, 1) === '9') {
+            $withoutNine = substr($last11, 0, 2) . substr($last11, 3);
+            $variants[] = $withoutNine;
+            $variants[] = '55' . $withoutNine;
+        }
+    }
+    if (strlen($phone) >= 10) {
+        $last10 = substr($phone, -10);
+        $variants[] = $last10;
+        $variants[] = '55' . $last10;
+        if (preg_match('/^[1-9]{2}[6-9]/', $last10)) {
+            $withNine = substr($last10, 0, 2) . '9' . substr($last10, 2);
+            $variants[] = $withNine;
+            $variants[] = '55' . $withNine;
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('lw_clean_phone', $variants))));
+}
+
+function lw_find_user(PDO $pdo, string $email, string $telefone): int {
+    $email = mb_strtolower(trim($email));
+    if ($email !== '') {
+        $stU = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = :e LIMIT 1");
+        $stU->execute([':e' => $email]);
+        $row = $stU->fetch();
+        if ($row) return (int)$row['id'];
+    }
+
+    $variants = lw_phone_variants($telefone);
+    if ($variants) {
+        $cleanExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
+        $where = [];
+        $params = [];
+        foreach ($variants as $i => $variant) {
+            $key = ':p' . $i;
+            $where[] = "$cleanExpr = $key";
+            $params[$key] = $variant;
+        }
+        $stU = $pdo->prepare("SELECT id FROM users WHERE " . implode(' OR ', $where) . " ORDER BY id ASC LIMIT 1");
+        $stU->execute($params);
+        $row = $stU->fetch();
+        if ($row) return (int)$row['id'];
+    }
+
+    return 0;
+}
+
 // ── Processa este recebimento (síncrono após resposta) ────────────────────────
 try {
     // Aplica mapeamento de payload (se houver)
@@ -126,16 +192,25 @@ try {
     $telefone = trim((string)(lw_get_value($payload, (string)$map['telefone']) ?? ''));
 
     // Fallback: se mapeamento não achou, tenta chaves padrão diretamente
-    if ($nome     === '' && isset($payload['nome']))     $nome     = trim((string)$payload['nome']);
-    if ($email    === '' && isset($payload['email']))    $email    = trim((string)$payload['email']);
-    if ($telefone === '' && isset($payload['telefone'])) $telefone = trim((string)$payload['telefone']);
+    foreach (['nome', 'name', 'full_name', 'first_name'] as $key) {
+        if ($nome === '' && isset($payload[$key])) $nome = trim((string)$payload[$key]);
+    }
+    foreach (['email', 'e-mail', 'mail'] as $key) {
+        if ($email === '' && isset($payload[$key])) $email = trim((string)$payload[$key]);
+    }
+    foreach (['telefone', 'phone', 'whatsapp', 'celular', 'mobile'] as $key) {
+        if ($telefone === '' && isset($payload[$key])) $telefone = trim((string)$payload[$key]);
+    }
 
     if ($email === '' && $telefone === '') {
         throw new RuntimeException('Payload sem email nem telefone. Mapeamento usado: email=' . $map['email'] . ', telefone=' . $map['telefone'] . '. Chaves do payload: ' . implode(',', array_keys($payload)));
     }
 
     // Busca usuário existente
-    $userId = 0;
+    $userId = lw_find_user($pdo, $email, $telefone);
+    if ($userId === 0) {
+        throw new RuntimeException('Aluno nao encontrado para evento de live. Nenhum cadastro novo foi criado. Email=' . ($email ?: '(vazio)') . ' Telefone=' . ($telefone ?: '(vazio)') . ' Variantes=' . implode(',', lw_phone_variants($telefone)));
+    }
     if ($email !== '') {
         $stU = $pdo->prepare("SELECT id FROM users WHERE email = :e LIMIT 1");
         $stU->execute([':e' => $email]);
