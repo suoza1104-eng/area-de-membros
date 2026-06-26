@@ -218,26 +218,87 @@ $menu = 'turmas';
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.page-turmas { max-width: 1100px; margin: 0 auto; }
+.page-turmas { width: 100%; max-width: 1280px; margin: 0 auto; }
 .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .grid2t { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3t { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 @media (max-width: 780px) { .grid2t, .grid3t { grid-template-columns: 1fr; } }
 .field-lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
-.btn-sm { font-size: 11px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; }
+.btn-sm { min-height: 26px; font-size: 11px; line-height: 1.2; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .btn-sm:hover { background: rgba(255,255,255,.08); }
 .btn-danger-sm { border-color: rgba(239,68,68,.3); color: #ef4444; }
 .btn-danger-sm:hover { background: rgba(239,68,68,.12); }
 .badge-ok   { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.25); }
 .badge-off  { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
 .badge-warn { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.25); }
+.turmas-table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
 .table-turmas td, .table-turmas th { font-size: 12px; }
 .table-turmas td { vertical-align: middle; }
 .table-turmas th { user-select:none; }
+.table-turmas .actions-head { width: 360px; }
+.table-turmas .actions-cell { min-width: 330px; white-space: normal; }
+.turma-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 360px; }
+.turma-actions form { display: inline-flex; }
 .sort-head { appearance:none; border:0; background:transparent; color:inherit; font:inherit; font-weight:700; text-transform:inherit; letter-spacing:inherit; padding:0; cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
 .sort-head::after { content:"↕"; font-size:10px; color:var(--muted); opacity:.7; }
 .sort-head.asc::after { content:"↑"; color:#facc15; opacity:1; }
 .sort-head.desc::after { content:"↓"; color:#facc15; opacity:1; }
+@media (max-width: 1100px) {
+    .page-turmas { max-width: none; }
+    .table-turmas { min-width: 1040px; }
+}
+@media (max-width: 720px) {
+    .page-turmas .card { padding: 14px; }
+    .turmas-table-wrap { overflow: visible; }
+    .table-turmas,
+    .table-turmas thead,
+    .table-turmas tbody,
+    .table-turmas th,
+    .table-turmas td,
+    .table-turmas tr { display: block; width: 100%; min-width: 0 !important; }
+    .table-turmas thead { display: none; }
+    .table-turmas tr {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+        background: rgba(255,255,255,.02);
+    }
+    .table-turmas td {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--border);
+        white-space: normal !important;
+    }
+    .table-turmas td::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+    }
+    .table-turmas td:last-child { border-bottom: 0; }
+    .table-turmas .actions-cell {
+        display: block;
+        min-width: 0;
+    }
+    .table-turmas .actions-cell::before {
+        display: block;
+        margin-bottom: 8px;
+    }
+    .turma-actions { max-width: none; }
+    .turma-actions .btn-sm,
+    .turma-actions form { flex: 1 1 calc(50% - 6px); }
+    .turma-actions form .btn-sm { width: 100%; }
+}
+@media (max-width: 420px) {
+    .turma-actions .btn-sm,
+    .turma-actions form { flex-basis: 100%; }
+}
 </style>
 
 <div class="page-turmas">
@@ -380,8 +441,8 @@ include __DIR__ . '/_header.php';
     <?php if (!$turmas): ?>
         <p style="color:var(--muted);font-size:13px;">Nenhuma turma cadastrada ainda.</p>
     <?php else: ?>
-    <div style="overflow-x:auto;">
-    <table class="table table-turmas" id="turmas-sort-table" style="width:100%;min-width:900px;">
+    <div class="turmas-table-wrap">
+    <table class="table table-turmas" id="turmas-sort-table" style="width:100%;">
         <thead>
         <tr>
             <th><button type="button" class="sort-head" data-sort="codigo">Código</button></th>
@@ -391,7 +452,7 @@ include __DIR__ . '/_header.php';
             <th><button type="button" class="sort-head" data-sort="webhook">Webhook</button></th>
             <th><button type="button" class="sort-head" data-sort="sf">SF</button></th>
             <th><button type="button" class="sort-head" data-sort="disparado">Disparado</button></th>
-            <th>Ações</th>
+            <th class="actions-head">Ações</th>
         </tr>
         </thead>
         <tbody>
@@ -402,19 +463,19 @@ include __DIR__ . '/_header.php';
             $disparada = (int)($t['live_disparada'] ?? 0) === 1;
             ?>
             <tr>
-                <td data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
+                <td data-label="Código" data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
                     <strong><?= h((string)$t['codigo']) ?></strong>
                     <?php if (!empty($t['codigo_live'])): ?>
                         <br><span style="font-size:10.5px;color:var(--muted);"><?= h((string)$t['codigo_live']) ?></span>
                     <?php endif; ?>
                 </td>
-                <td data-sort-janela="<?= sort_ts($t['janela_inicio'] ?? null) ?>" style="white-space:nowrap;font-size:11px;">
+                <td data-label="Janela" data-sort-janela="<?= sort_ts($t['janela_inicio'] ?? null) ?>" style="white-space:nowrap;font-size:11px;">
                     <?= h(dt_br_short($t['janela_inicio'] ?? null)) ?><br>
                     <span style="color:var(--muted)">→ <?= h(dt_br_short($t['janela_fim'] ?? null)) ?></span>
                 </td>
-                <td data-sort-live="<?= sort_ts($t['data_live'] ?? null) ?>" style="white-space:nowrap;font-size:11px;"><?= h(dt_br_short($t['data_live'] ?? null)) ?></td>
-                <td data-sort-senha="<?= h(strtolower((string)($t['senha_certificado'] ?? ''))) ?>" style="font-size:11px;color:var(--muted);"><?= h((string)($t['senha_certificado']??'—')) ?></td>
-                <td data-sort-webhook="<?= $whEnabled ? 2 : (!empty($t['webhook_live_url']) ? 1 : 0) ?>">
+                <td data-label="Live" data-sort-live="<?= sort_ts($t['data_live'] ?? null) ?>" style="white-space:nowrap;font-size:11px;"><?= h(dt_br_short($t['data_live'] ?? null)) ?></td>
+                <td data-label="Senha" data-sort-senha="<?= h(strtolower((string)($t['senha_certificado'] ?? ''))) ?>" style="font-size:11px;color:var(--muted);"><?= h((string)($t['senha_certificado']??'—')) ?></td>
+                <td data-label="Webhook" data-sort-webhook="<?= $whEnabled ? 2 : (!empty($t['webhook_live_url']) ? 1 : 0) ?>">
                     <?php if ($whEnabled): ?>
                         <span class="badge-ok">ON</span>
                     <?php elseif (!empty($t['webhook_live_url'])): ?>
@@ -423,27 +484,28 @@ include __DIR__ . '/_header.php';
                         <span class="badge-off">—</span>
                     <?php endif; ?>
                 </td>
-                <td data-sort-sf="<?= $sfEnabled2 ? 1 : 0 ?>">
+                <td data-label="SF" data-sort-sf="<?= $sfEnabled2 ? 1 : 0 ?>">
                     <?php if ($sfEnabled2): ?>
                         <span class="badge-ok">ON</span>
                     <?php else: ?>
                         <span class="badge-off">OFF</span>
                     <?php endif; ?>
                 </td>
-                <td data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
+                <td data-label="Disparado" data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
                     <?php if ($disparada): ?>
                         <span class="badge-ok">Sim</span>
                     <?php else: ?>
                         <span class="badge-off">Não</span>
                     <?php endif; ?>
                 </td>
-                <td style="white-space:nowrap;">
+                <td class="actions-cell" data-label="Ações">
                     <?php
                         $liveTs = sort_ts($t['data_live'] ?? null);
                         $manualLivePermitido = !$disparada && $liveTs > time();
                     ?>
+                    <div class="turma-actions">
                     <?php if ($manualLivePermitido): ?>
-                        <form method="post" style="display:inline" onsubmit="return confirm('Disparar agora os avisos de live desta turma? O cron nao enviara novamente.')">
+                        <form method="post" onsubmit="return confirm('Disparar agora os avisos de live desta turma? O cron nao enviara novamente.')">
                             <input type="hidden" name="acao" value="disparar_live_turma_manual">
                             <input type="hidden" name="turma_id" value="<?= (int)$t['id'] ?>">
                             <button type="submit" class="btn-sm">Disparar live</button>
@@ -456,6 +518,7 @@ include __DIR__ . '/_header.php';
                     <a href="webhooks.php?live_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ Webhook</a>
                     <a href="superfuncionario.php?sf_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ SF</a>
                     <a href="?del=<?= (int)$t['id'] ?>" class="btn-sm btn-danger-sm" onclick="return confirm('Remover turma?')">Remover</a>
+                    </div>
                 </td>
             </tr>
         <?php endforeach; ?>
