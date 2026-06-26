@@ -211,32 +211,6 @@ try {
     if ($userId === 0) {
         throw new RuntimeException('Aluno nao encontrado para evento de live. Nenhum cadastro novo foi criado. Email=' . ($email ?: '(vazio)') . ' Telefone=' . ($telefone ?: '(vazio)') . ' Variantes=' . implode(',', lw_phone_variants($telefone)));
     }
-    if ($email !== '') {
-        $stU = $pdo->prepare("SELECT id FROM users WHERE email = :e LIMIT 1");
-        $stU->execute([':e' => $email]);
-        $row = $stU->fetch();
-        if ($row) $userId = (int)$row['id'];
-    }
-    if ($userId === 0 && $telefone !== '') {
-        $telLimpo = preg_replace('/\D+/', '', $telefone);
-        $stU = $pdo->prepare("SELECT id FROM users WHERE telefone = :t OR telefone = :t2 LIMIT 1");
-        $stU->execute([':t' => $telefone, ':t2' => $telLimpo]);
-        $row = $stU->fetch();
-        if ($row) $userId = (int)$row['id'];
-    }
-
-    // Se não existe, cria
-    if ($userId === 0) {
-        $hash = password_hash($telefone !== '' ? preg_replace('/\D+/', '', $telefone) : bin2hex(random_bytes(4)), PASSWORD_DEFAULT);
-        $stIns = $pdo->prepare("INSERT INTO users (nome, email, telefone, senha_hash, created_at) VALUES (:n, :e, :t, :s, NOW())");
-        $stIns->execute([
-            ':n' => $nome !== '' ? $nome : ($email ?: $telefone),
-            ':e' => $email,
-            ':t' => $telefone,
-            ':s' => $hash,
-        ]);
-        $userId = (int)$pdo->lastInsertId();
-    }
 
     // Aplica tag configurada no evento
     if (function_exists('adicionar_tag')) {
