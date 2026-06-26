@@ -24,7 +24,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa turmas com horário de disparo atingido.',
             'script' => __DIR__ . '/../cron/processar_lives.php',
             'interval' => 1,
-            'timeout' => 1800,
+            'timeout' => 120,
         ],
         'agendamentos_retorno' => [
             'label' => 'Agendamentos de retorno',
@@ -172,6 +172,15 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         ]);
     }
 
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET timeout_seconds = 120
+             WHERE task_key = 'lives_turma'
+               AND timeout_seconds > 120
+        ");
+    } catch (Throwable $e) {}
+
     cron_manager_recover_expired_runs($pdo);
 
     if (cron_manager_token($pdo) === '') {
@@ -285,8 +294,13 @@ function cron_manager_recover_expired_runs(PDO $pdo): int {
             SELECT task_key, running_token, last_started_at
               FROM cron_managed_tasks
              WHERE running_token IS NOT NULL
-               AND running_until IS NOT NULL
-               AND running_until <= NOW()
+               AND (
+                    (running_until IS NOT NULL AND running_until <= NOW())
+                    OR (
+                        last_started_at IS NOT NULL
+                        AND DATE_ADD(last_started_at, INTERVAL GREATEST(60, LEAST(7200, timeout_seconds)) SECOND) <= NOW()
+                    )
+               )
              FOR UPDATE
         ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -569,6 +583,9 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
     $error = '';
     $output = '';
     $definition = $claim['definition'];
+    $runToken = (string)$claim['run_token'];
+    $runId = (int)$claim['run_id'];
+    $role = (string)$claim['role'];
     @set_time_limit(max(60, (int)$definition['timeout']));
 
     ob_start();
@@ -588,8 +605,8 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
     cron_manager_finish(
         $pdo,
         $taskKey,
-        (string)$claim['run_token'],
-        (int)$claim['run_id'],
+        $runToken,
+        $runId,
         $status,
         $durationMs,
         $output,
@@ -601,7 +618,7 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
         'executed' => true,
         'task' => $taskKey,
         'source' => $source,
-        'role' => $claim['role'],
+        'role' => $role,
         'status' => $status,
         'duration_ms' => $durationMs,
         'output' => $output,

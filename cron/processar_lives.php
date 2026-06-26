@@ -615,10 +615,17 @@ function live_dispatch_claim_batch(PDO $pdo, int $dispatchId, int $limit): array
              WHERE dispatch_id=:id
                AND (
                     status='pending'
-                    OR (status='processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+                    OR (status='processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 2 MINUTE))
                     OR (status='failed' AND attempts < 3)
                )
-             ORDER BY FIELD(status,'pending','processing','failed'), id ASC
+             ORDER BY
+               CASE
+                 WHEN status='processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 2 MINUTE) THEN 0
+                 WHEN status='failed' AND attempts < 3 THEN 1
+                 WHEN status='pending' THEN 2
+                 ELSE 3
+               END,
+               id ASC
              LIMIT {$limit}
         ");
         $ids->execute([':id' => $dispatchId]);
@@ -1082,7 +1089,7 @@ foreach ($turmas as $turma) {
     if ($delay < 0) $delay = 0;
     if ($delay > 30000) $delay = 30000;
 
-    $batchLimit = (int)get_setting('live_dispatch_batch_limit', '60');
+    $batchLimit = (int)get_setting('live_dispatch_batch_limit', '20');
     if ($batchLimit < 1) $batchLimit = 1;
     if ($batchLimit > 200) $batchLimit = 200;
     if ($delay > 0) $batchLimit = min($batchLimit, max(1, (int)floor(45000 / max(1, $delay))));
