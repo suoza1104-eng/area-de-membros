@@ -749,14 +749,45 @@ $hotmartSalesReady = rl_table_exists($pdo, 'hotmart_sales')
     && rl_col_exists($pdo, 'hotmart_sales', 'matched_user_id')
     && rl_col_exists($pdo, 'hotmart_sales', 'status')
     && rl_col_exists($pdo, 'hotmart_sales', 'transaction_date');
-$exprCompraCurso = $hotmartSalesReady
+$approvedSalesStatusSql = "LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')";
+$exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
     ? "EXISTS (
         SELECT 1
         FROM hotmart_sales s
         WHERE s.matched_user_id = r.user_id
-          AND LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')
+          AND $approvedSalesStatusSql
           AND s.transaction_date IS NOT NULL
-          AND s.transaction_date >= COALESCE(r.new_turma_live_at, r.created_at)
+          AND s.transaction_date >= r.created_at
+          AND EXISTS (
+              SELECT 1
+              FROM live_event_recebimentos ler_oferta
+              JOIN live_events le_oferta ON le_oferta.id = ler_oferta.event_id
+              WHERE ler_oferta.user_id = r.user_id
+                AND ler_oferta.status = 'processado'
+                AND le_oferta.tipo = 'oferta'
+                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) >= r.created_at
+                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) <= s.transaction_date
+              LIMIT 1
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM reagendamentos_live r2
+              WHERE r2.user_id = r.user_id
+                AND r2.id <> r.id
+                AND r2.created_at > r.created_at
+                AND r2.created_at <= s.transaction_date
+                AND EXISTS (
+                    SELECT 1
+                    FROM live_event_recebimentos ler2
+                    JOIN live_events le2 ON le2.id = ler2.event_id
+                    WHERE ler2.user_id = r2.user_id
+                      AND ler2.status = 'processado'
+                      AND le2.tipo = 'oferta'
+                      AND COALESCE(ler2.processado_em, ler2.recebido_em) >= r2.created_at
+                      AND COALESCE(ler2.processado_em, ler2.recebido_em) <= s.transaction_date
+                    LIMIT 1
+                )
+          )
         LIMIT 1
     )"
     : '0';
