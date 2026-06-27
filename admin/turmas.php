@@ -37,12 +37,48 @@ function sort_ts(?string $dbValue): int {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'disparar_live_turma_manual') {
     $turmaId = (int)($_POST['turma_id'] ?? 0);
+    $confirmarRedisparo = (string)($_POST['confirmar_redisparo'] ?? '') === '1';
     if ($turmaId <= 0) {
         header('Location: turmas.php?err=' . urlencode('Turma invalida para disparo manual.'));
         exit;
     }
 
     try {
+        $stTurmaDisparo = $pdo->prepare("SELECT codigo, data_live, live_disparada FROM turmas WHERE id = :id LIMIT 1");
+        $stTurmaDisparo->execute([':id' => $turmaId]);
+        $turmaDisparo = $stTurmaDisparo->fetch(PDO::FETCH_ASSOC);
+        if (!$turmaDisparo) {
+            header('Location: turmas.php?err=' . urlencode('Turma nao encontrada para disparo manual.'));
+            exit;
+        }
+
+        $liveTsDisparo = sort_ts($turmaDisparo['data_live'] ?? null);
+        if ($liveTsDisparo <= time()) {
+            header('Location: turmas.php?err=' . urlencode('A data da live ja encerrou ou nao foi definida.'));
+            exit;
+        }
+
+        $jaDisparada = (int)($turmaDisparo['live_disparada'] ?? 0) === 1;
+        if ($jaDisparada && !$confirmarRedisparo) {
+            header('Location: turmas.php?err=' . urlencode('Este aviso ja foi disparado. Confirme explicitamente para enviar novamente.'));
+            exit;
+        }
+
+        try {
+            $stFilaAtiva = $pdo->prepare("
+                SELECT 1
+                  FROM live_turma_dispatch_logs
+                 WHERE turma_id = :id
+                   AND status IN ('queued', 'iniciado', 'processando')
+                 LIMIT 1
+            ");
+            $stFilaAtiva->execute([':id' => $turmaId]);
+            if ($stFilaAtiva->fetchColumn()) {
+                header('Location: turmas.php?err=' . urlencode('Ja existe um disparo desta turma em andamento. Aguarde a conclusao antes de tentar novamente.'));
+                exit;
+            }
+        } catch (Throwable $e) {}
+
         $GLOBALS['manual_live_turma_id'] = $turmaId;
         ob_start();
         require __DIR__ . '/../cron/processar_lives.php';
@@ -213,6 +249,26 @@ if (isset($_GET['edit'])) {
 if ($cloneFill) $edit = $cloneFill;
 
 $turmas = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$ultimosDisparosLive = [];
+$disparosLiveEmAndamento = [];
+try {
+    $stUltimosDisparos = $pdo->query("
+        SELECT turma_id,
+               MAX(CASE
+                   WHEN status NOT IN ('queued', 'iniciado', 'processando')
+                   THEN COALESCE(finished_at, started_at)
+                   ELSE NULL
+               END) AS disparado_em,
+               SUM(CASE WHEN status IN ('queued', 'iniciado', 'processando') THEN 1 ELSE 0 END) AS em_andamento
+          FROM live_turma_dispatch_logs
+         GROUP BY turma_id
+    ");
+    foreach ($stUltimosDisparos->fetchAll(PDO::FETCH_ASSOC) ?: [] as $disparo) {
+        $turmaDisparoId = (int)$disparo['turma_id'];
+        $ultimosDisparosLive[$turmaDisparoId] = (string)($disparo['disparado_em'] ?? '');
+        $disparosLiveEmAndamento[$turmaDisparoId] = (int)($disparo['em_andamento'] ?? 0) > 0;
+    }
+} catch (Throwable $e) {}
 
 $menu = 'turmas';
 include __DIR__ . '/_header.php';
@@ -461,6 +517,9 @@ include __DIR__ . '/_header.php';
             $whEnabled = (int)($t['live_webhook_enabled'] ?? 0) === 1 && !empty($t['webhook_live_url']);
             $sfEnabled2 = (int)($t['sf_enabled'] ?? 0) === 1;
             $disparada = (int)($t['live_disparada'] ?? 0) === 1;
+            $ultimoDisparo = $ultimosDisparosLive[(int)$t['id']] ?? '';
+            $ultimoDisparoLabel = $ultimoDisparo !== '' ? dt_br_short($ultimoDisparo) : '';
+            $disparoEmAndamento = !empty($disparosLiveEmAndamento[(int)$t['id']]);
             ?>
             <tr>
                 <td data-label="Código" data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
@@ -494,6 +553,9 @@ include __DIR__ . '/_header.php';
                 <td data-label="Disparado" data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
                     <?php if ($disparada): ?>
                         <span class="badge-ok">Sim</span>
+                        <?php if ($ultimoDisparoLabel !== ''): ?>
+                            <br><span style="font-size:10px;color:var(--muted);white-space:nowrap;"><?= h($ultimoDisparoLabel) ?></span>
+                        <?php endif; ?>
                     <?php else: ?>
                         <span class="badge-off">Não</span>
                     <?php endif; ?>
@@ -501,14 +563,22 @@ include __DIR__ . '/_header.php';
                 <td class="actions-cell" data-label="Ações">
                     <?php
                         $liveTs = sort_ts($t['data_live'] ?? null);
-                        $manualLivePermitido = !$disparada && $liveTs > time();
+                        $manualLivePermitido = $liveTs > time();
+                        $confirmacaoDisparo = $disparada
+                            ? 'Esta live ja foi disparada' . ($ultimoDisparoLabel !== '' ? ' em ' . $ultimoDisparoLabel : '') . '. Tem certeza de que deseja disparar novamente? Os alunos elegiveis poderao receber o aviso outra vez.'
+                            : 'Disparar agora os avisos de live desta turma? O cron nao enviara novamente.';
                     ?>
                     <div class="turma-actions">
-                    <?php if ($manualLivePermitido): ?>
-                        <form method="post" onsubmit="return confirm('Disparar agora os avisos de live desta turma? O cron nao enviara novamente.')">
+                    <?php if ($disparoEmAndamento): ?>
+                        <button type="button" class="btn-sm" disabled title="A fila desta turma ainda esta sendo processada">Disparo em andamento</button>
+                    <?php elseif ($manualLivePermitido): ?>
+                        <form method="post" onsubmit="return confirm(<?= h(json_encode($confirmacaoDisparo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>)">
                             <input type="hidden" name="acao" value="disparar_live_turma_manual">
                             <input type="hidden" name="turma_id" value="<?= (int)$t['id'] ?>">
-                            <button type="submit" class="btn-sm">Disparar live</button>
+                            <?php if ($disparada): ?>
+                                <input type="hidden" name="confirmar_redisparo" value="1">
+                            <?php endif; ?>
+                            <button type="submit" class="btn-sm"><?= $disparada ? 'Disparar novamente' : 'Disparar live' ?></button>
                         </form>
                     <?php else: ?>
                         <button type="button" class="btn-sm" disabled title="<?= $disparada ? 'Avisos ja disparados' : 'Data da live encerrada ou nao definida' ?>">Live indisponivel</button>
