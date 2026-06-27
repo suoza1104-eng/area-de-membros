@@ -233,3 +233,59 @@ function md_filter_options(PDO $pdo): array
     $turmas=array_column(md_rows($pdo,"SELECT DISTINCT NULLIF(turma_codigo,'') v FROM attribution_leads HAVING v IS NOT NULL ORDER BY v"),'v');
     return compact('products','campaigns','adsets','turmas');
 }
+
+function md_ads_empty_metrics(array $windows): array
+{
+    $out=[];
+    foreach(array_keys($windows) as $key)$out[$key]=['spend'=>0.0,'impressions'=>0,'reach'=>0,'clicks'=>0,'meta_leads'=>0,'meta_sales'=>0,'meta_revenue'=>0.0,'meta_roas_revenue'=>0.0,'cross_leads'=>0,'cross_sales'=>0,'cross_revenue'=>0.0];
+    return $out;
+}
+
+function md_ads_merge_metrics(array &$target,array $source): void
+{
+    foreach($source as $window=>$values)foreach($values as $key=>$value)$target[$window][$key]=($target[$window][$key]??0)+$value;
+}
+
+function md_ads_hierarchy(PDO $pdo,string $endDate,string $model,array $windowDays): array
+{
+    $model=$model==='first_touch'?'first_touch':'last_touch';
+    $windows=[];$end=new DateTimeImmutable($endDate);
+    foreach($windowDays as $key=>$days){$days=max(1,min(365,(int)$days));$windows[$key]=$end->modify('-'.($days-1).' days')->format('Y-m-d');}
+    $start=min($windows);$leaves=[];
+    $ensure=function(string $campaign,string $adset,string $ad)use(&$leaves,$windows):string{
+        $campaign=trim($campaign)?:'Sem campanha';$adset=trim($adset)?:'Sem conjunto';$ad=trim($ad)?:'Sem anúncio';
+        $key=normalize_match_key($campaign).'|'.normalize_match_key($adset).'|'.normalize_match_key($ad);
+        if(!isset($leaves[$key]))$leaves[$key]=['campaign'=>$campaign,'adset'=>$adset,'ad'=>$ad,'metrics'=>md_ads_empty_metrics($windows)];
+        return $key;
+    };
+    $windowKeys=function(string $date)use($windows):array{$out=[];foreach($windows as $key=>$from)if($date>=$from)$out[]=$key;return $out;};
+
+    $meta=md_rows($pdo,"SELECT report_date,campaign_name,adset_name,ad_name,SUM(spend) spend,SUM(impressions) impressions,SUM(reach) reach,SUM(clicks) clicks,SUM(leads) leads,SUM(purchases) purchases,SUM(purchase_value) purchase_value,SUM(purchase_roas*spend) meta_roas_revenue FROM meta_ad_daily WHERE report_date BETWEEN :start AND :end GROUP BY report_date,campaign_name,adset_name,ad_name",['start'=>$start,'end'=>$endDate]);
+    foreach($meta as $r){$key=$ensure((string)$r['campaign_name'],(string)$r['adset_name'],(string)$r['ad_name']);foreach($windowKeys((string)$r['report_date']) as $w){$m=&$leaves[$key]['metrics'][$w];$m['spend']+=(float)$r['spend'];$m['impressions']+=(int)$r['impressions'];$m['reach']+=(int)$r['reach'];$m['clicks']+=(int)$r['clicks'];$m['meta_leads']+=(int)$r['leads'];$m['meta_sales']+=(int)$r['purchases'];$m['meta_revenue']+=(float)$r['purchase_value'];$m['meta_roas_revenue']+=(float)$r['meta_roas_revenue'];unset($m);}}
+
+    $leads=md_rows($pdo,"SELECT DATE(created_at) report_date,utm_campaign_group campaign,utm_campaign_name adset,utm_ad_name ad,COUNT(*) qty FROM attribution_leads WHERE created_at BETWEEN :start AND :end GROUP BY DATE(created_at),utm_campaign_group_norm,utm_campaign_name_norm,utm_ad_name_norm,utm_campaign_group,utm_campaign_name,utm_ad_name",['start'=>$start.' 00:00:00','end'=>$endDate.' 23:59:59']);
+    foreach($leads as $r){$key=$ensure((string)$r['campaign'],(string)$r['adset'],(string)$r['ad']);foreach($windowKeys((string)$r['report_date']) as $w)$leaves[$key]['metrics'][$w]['cross_leads']+=(int)$r['qty'];}
+
+    $sales=md_rows($pdo,"SELECT DATE(sale_date) report_date,campaign_group campaign,campaign_name adset,ad_name ad,COUNT(*) qty,SUM(revenue_value) revenue FROM attribution_matches WHERE attribution_model=:model AND sale_date BETWEEN :start AND :end GROUP BY DATE(sale_date),campaign_group_norm,campaign_name_norm,ad_name_norm,campaign_group,campaign_name,ad_name",['model'=>$model,'start'=>$start.' 00:00:00','end'=>$endDate.' 23:59:59']);
+    foreach($sales as $r){$key=$ensure((string)$r['campaign'],(string)$r['adset'],(string)$r['ad']);foreach($windowKeys((string)$r['report_date']) as $w){$leaves[$key]['metrics'][$w]['cross_sales']+=(int)$r['qty'];$leaves[$key]['metrics'][$w]['cross_revenue']+=(float)$r['revenue'];}}
+
+    $tree=[];
+    foreach($leaves as $leaf){$c=$leaf['campaign'];$a=$leaf['adset'];if(!isset($tree[$c]))$tree[$c]=['name'=>$c,'metrics'=>md_ads_empty_metrics($windows),'adsets'=>[]];if(!isset($tree[$c]['adsets'][$a]))$tree[$c]['adsets'][$a]=['name'=>$a,'metrics'=>md_ads_empty_metrics($windows),'ads'=>[]];$tree[$c]['adsets'][$a]['ads'][]=['name'=>$leaf['ad'],'metrics'=>$leaf['metrics']];md_ads_merge_metrics($tree[$c]['adsets'][$a]['metrics'],$leaf['metrics']);md_ads_merge_metrics($tree[$c]['metrics'],$leaf['metrics']);}
+    $metaFields=['spend','impressions','reach','clicks','meta_leads','meta_sales','meta_revenue','meta_roas_revenue'];
+    $loadLevel=function(string $table,string $selectNames,string $groupNames)use($pdo,$start,$endDate,$windows,$windowKeys):array{$map=[];$rows=md_rows($pdo,"SELECT report_date,{$selectNames},SUM(spend) spend,SUM(impressions) impressions,SUM(reach) reach,SUM(clicks) clicks,SUM(leads) meta_leads,SUM(purchases) meta_sales,SUM(purchase_value) meta_revenue,SUM(purchase_roas*spend) meta_roas_revenue FROM {$table} WHERE report_date BETWEEN :start AND :end GROUP BY report_date,{$groupNames}",['start'=>$start,'end'=>$endDate]);foreach($rows as $r){$key=normalize_match_key((string)$r['campaign_name']).(isset($r['adset_name'])?'|'.normalize_match_key((string)$r['adset_name']):'');if(!isset($map[$key]))$map[$key]=md_ads_empty_metrics($windows);foreach($windowKeys((string)$r['report_date']) as $w)foreach(['spend','impressions','reach','clicks','meta_leads','meta_sales','meta_revenue','meta_roas_revenue'] as $field)$map[$key][$w][$field]+=(float)$r[$field];}return $map;};
+    $campaignMeta=$loadLevel('meta_campaign_daily','campaign_name','campaign_name');$adsetMeta=$loadLevel('meta_adset_daily','campaign_name,adset_name','campaign_name,adset_name');
+    foreach($tree as &$campaign){$ck=normalize_match_key((string)$campaign['name']);if(isset($campaignMeta[$ck]))foreach($windows as $w=>$unused)foreach($metaFields as $field)$campaign['metrics'][$w][$field]=$campaignMeta[$ck][$w][$field];foreach($campaign['adsets'] as &$adset){$ak=$ck.'|'.normalize_match_key((string)$adset['name']);if(isset($adsetMeta[$ak]))foreach($windows as $w=>$unused)foreach($metaFields as $field)$adset['metrics'][$w][$field]=$adsetMeta[$ak][$w][$field];}unset($adset);}unset($campaign);
+    $totals=md_ads_empty_metrics($windows);foreach($tree as $campaign)md_ads_merge_metrics($totals,$campaign['metrics']);
+    $accountRows=md_rows($pdo,"SELECT report_date,SUM(spend) spend,SUM(impressions) impressions,SUM(reach) reach,SUM(clicks) clicks,SUM(leads) meta_leads,SUM(purchases) meta_sales,SUM(purchase_value) meta_revenue,SUM(purchase_roas*spend) meta_roas_revenue FROM meta_account_daily WHERE report_date BETWEEN :start AND :end GROUP BY report_date",['start'=>$start,'end'=>$endDate]);$accountMetrics=md_ads_empty_metrics($windows);foreach($accountRows as $r)foreach($windowKeys((string)$r['report_date']) as $w)foreach($metaFields as $field)$accountMetrics[$w][$field]+=(float)$r[$field];foreach($windows as $w=>$unused)foreach($metaFields as $field)$totals[$w][$field]=$accountMetrics[$w][$field];
+    $sortMetric=static fn($x):float=>(float)($x['metrics']['x']['spend']??0);
+    uasort($tree,static fn($a,$b)=>$sortMetric($b)<=>$sortMetric($a));
+    foreach($tree as &$campaign){uasort($campaign['adsets'],static fn($a,$b)=>$sortMetric($b)<=>$sortMetric($a));foreach($campaign['adsets'] as &$adset)usort($adset['ads'],static fn($a,$b)=>$sortMetric($b)<=>$sortMetric($a));unset($adset);}unset($campaign);
+    return ['windows'=>$windows,'tree'=>$tree,'totals'=>$totals];
+}
+
+function md_ads_metric_view(array $metrics,string $source): array
+{
+    $spend=(float)($metrics['spend']??0);$impressions=(int)($metrics['impressions']??0);$reach=(int)($metrics['reach']??0);$clicks=(int)($metrics['clicks']??0);$meta=$source==='meta';
+    $leads=(int)($metrics[$meta?'meta_leads':'cross_leads']??0);$sales=(int)($metrics[$meta?'meta_sales':'cross_sales']??0);$revenue=(float)($metrics[$meta?'meta_roas_revenue':'cross_revenue']??0);
+    return ['spend'=>$spend,'leads'=>$leads,'sales'=>$sales,'revenue'=>$revenue,'cpl'=>$leads>0?$spend/$leads:0,'cac'=>$sales>0?$spend/$sales:0,'roas'=>$spend>0?$revenue/$spend:0,'cpc'=>$clicks>0?$spend/$clicks:0,'cpm'=>$impressions>0?$spend/$impressions*1000:0,'frequency'=>$reach>0?$impressions/$reach:0];
+}
