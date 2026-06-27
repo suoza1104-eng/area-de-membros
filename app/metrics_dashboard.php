@@ -18,7 +18,8 @@ function md_row(PDO $pdo, string $sql, array $params = []): array
 
 function md_approved_sql(string $alias = 's'): string
 {
-    return "UPPER(COALESCE({$alias}.status,'')) IN ('APROVADO','APPROVED','PURCHASE_APPROVED','COMPLETO','COMPLETE','PURCHASE_COMPLETE','PAID')";
+    return "(UPPER(COALESCE({$alias}.webhook_event,'')) IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE')
+        OR UPPER(COALESCE({$alias}.status,'')) IN ('APROVADO','APPROVED','PURCHASE_APPROVED','COMPLETO','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PAID'))";
 }
 
 function md_refund_sql(string $alias = 's'): string
@@ -41,9 +42,9 @@ function md_filter_sql(array $filters, string $kind, array &$params): string
     $model = ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch';
 
     if ($kind === 'lead') {
-        if ($campaign !== '') { $where[] = "COALESCE(NULLIF(u.utm_medium,''),NULLIF(u.utm_source,''),'Organico') = :lead_campaign"; $params['lead_campaign'] = $campaign; }
-        if ($adset !== '') { $where[] = "COALESCE(NULLIF(u.utm_campaign,''),'Sem conjunto') = :lead_adset"; $params['lead_adset'] = $adset; }
-        if ($turma !== '') { $where[] = "COALESCE(NULLIF(u.codigo_turma,''),NULLIF(u.turma_codigo,''),'Sem turma') = :lead_turma"; $params['lead_turma'] = $turma; }
+        if ($campaign !== '') { $where[] = "COALESCE(NULLIF(l.utm_campaign_group,''),NULLIF(l.utm_source,''),'Organico') = :lead_campaign"; $params['lead_campaign'] = $campaign; }
+        if ($adset !== '') { $where[] = "COALESCE(NULLIF(l.utm_campaign_name,''),'Sem conjunto') = :lead_adset"; $params['lead_adset'] = $adset; }
+        if ($turma !== '') { $where[] = "COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') = :lead_turma"; $params['lead_turma'] = $turma; }
     } elseif ($kind === 'sale') {
         if ($product !== '') { $where[] = 's.product_name = :sale_product'; $params['sale_product'] = $product; }
         if ($campaign !== '' || $adset !== '' || $turma !== '') {
@@ -92,7 +93,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
 
     $leadParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $leadFilter = md_filter_sql($filters, 'lead', $leadParams);
-    $leads = md_row($pdo, "SELECT COUNT(*) leads FROM users u WHERE u.created_at BETWEEN :start AND :end{$leadFilter}", $leadParams);
+    $leads = md_row($pdo, "SELECT COUNT(*) leads FROM attribution_leads l WHERE l.created_at BETWEEN :start AND :end{$leadFilter}", $leadParams);
 
     $saleParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $saleFilter = md_filter_sql($filters, 'sale', $saleParams);
@@ -104,7 +105,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
               SUM(s.matched_user_id IS NOT NULL) matched_sales
             FROM hotmart_sales_live s
             WHERE " . md_approved_sql('s') . "
-              AND COALESCE(s.payment_confirmed_at,s.transaction_date) BETWEEN :start AND :end{$saleFilter}", $saleParams);
+              AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$saleFilter}", $saleParams);
 
     $attrParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59', 'model' => ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch'];
     $attrWhere = [];
@@ -113,12 +114,15 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
     if (!empty($filters['product'])) { $attrWhere[] = 'axs.product_name=:ap'; $attrParams['ap'] = $filters['product']; }
     if (!empty($filters['turma'])) { $attrWhere[] = "COALESCE(NULLIF(al.turma_codigo,''),'Sem turma')=:at"; $attrParams['at'] = $filters['turma']; }
     $attrExtra = $attrWhere ? ' AND ' . implode(' AND ', $attrWhere) : '';
-    $attr = md_row($pdo, "SELECT COUNT(DISTINCT am.sale_id) attributed_sales,
-              COALESCE(SUM(am.revenue_value),0) attributed_revenue
+    $attr = md_row($pdo, "SELECT COUNT(DISTINCT hs.transaction_code) attributed_sales,
+              COALESCE(SUM(hs.{$basis}),0) attributed_revenue
             FROM attribution_matches am
             JOIN attribution_sales axs ON axs.id=am.sale_id
+            JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
             JOIN attribution_leads al ON al.id=am.lead_id
-            WHERE am.attribution_model=:model AND am.sale_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
+            WHERE am.attribution_model=:model
+              AND " . md_approved_sql('hs') . "
+              AND COALESCE(hs.transaction_date,hs.payment_confirmed_at) BETWEEN :start AND :end{$attrExtra}", $attrParams);
 
     $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
@@ -159,10 +163,10 @@ function md_daily_series(PDO $pdo, string $start, string $end, array $filters): 
     foreach (md_rows($pdo,"SELECT m.report_date d,SUM(m.spend) spend FROM {$table} m WHERE m.report_date BETWEEN :start AND :end{$extra} GROUP BY m.report_date",$mParams) as $r) if(isset($days[$r['d']])) $days[$r['d']]['spend']=(float)$r['spend'];
 
     $lParams=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59']; $lf=md_filter_sql($filters,'lead',$lParams);
-    foreach(md_rows($pdo,"SELECT DATE(u.created_at) d,COUNT(*) qty FROM users u WHERE u.created_at BETWEEN :start AND :end{$lf} GROUP BY DATE(u.created_at)",$lParams) as $r) if(isset($days[$r['d']])) $days[$r['d']]['leads']=(int)$r['qty'];
+    foreach(md_rows($pdo,"SELECT DATE(l.created_at) d,COUNT(*) qty FROM attribution_leads l WHERE l.created_at BETWEEN :start AND :end{$lf} GROUP BY DATE(l.created_at)",$lParams) as $r) if(isset($days[$r['d']])) $days[$r['d']]['leads']=(int)$r['qty'];
 
     $sParams=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59']; $sf=md_filter_sql($filters,'sale',$sParams);
-    foreach(md_rows($pdo,"SELECT DATE(COALESCE(s.payment_confirmed_at,s.transaction_date)) d,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.payment_confirmed_at,s.transaction_date) BETWEEN :start AND :end{$sf} GROUP BY DATE(COALESCE(s.payment_confirmed_at,s.transaction_date))",$sParams) as $r) if(isset($days[$r['d']])) { $days[$r['d']]['sales']=(int)$r['qty']; $days[$r['d']]['gross']=(float)$r['gross']; $days[$r['d']]['net']=(float)$r['net']; $days[$r['d']]['producer']=(float)$r['producer']; }
+    foreach(md_rows($pdo,"SELECT DATE(COALESCE(s.transaction_date,s.payment_confirmed_at)) d,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$sf} GROUP BY DATE(COALESCE(s.transaction_date,s.payment_confirmed_at))",$sParams) as $r) if(isset($days[$r['d']])) { $days[$r['d']]['sales']=(int)$r['qty']; $days[$r['d']]['gross']=(float)$r['gross']; $days[$r['d']]['net']=(float)$r['net']; $days[$r['d']]['producer']=(float)$r['producer']; }
     return array_values($days);
 }
 
@@ -171,13 +175,13 @@ function md_monthly_series(PDO $pdo, array $filters): array
     $end=(new DateTimeImmutable('last day of this month'))->format('Y-m-d').' 23:59:59';
     $start=(new DateTimeImmutable('first day of this month'))->modify('-11 months')->format('Y-m-d').' 00:00:00';
     $params=['start'=>$start,'end'=>$end]; $sf=md_filter_sql($filters,'sale',$params);
-    return md_rows($pdo,"SELECT DATE_FORMAT(COALESCE(s.payment_confirmed_at,s.transaction_date),'%Y-%m') month,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.payment_confirmed_at,s.transaction_date) BETWEEN :start AND :end{$sf} GROUP BY month ORDER BY month",$params);
+    return md_rows($pdo,"SELECT DATE_FORMAT(COALESCE(s.transaction_date,s.payment_confirmed_at),'%Y-%m') month,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$sf} GROUP BY month ORDER BY month",$params);
 }
 
 function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): array
 {
     $params=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59']; $sf=md_filter_sql($filters,'sale',$params);
-    $base=" FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.payment_confirmed_at,s.transaction_date) BETWEEN :start AND :end{$sf}";
+    $base=" FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$sf}";
     $payments=md_rows($pdo,"SELECT COALESCE(NULLIF(s.payment_type,''),'Nao informado') label,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.producer_net) producer{$base} GROUP BY label ORDER BY qty DESC",$params);
     $installments=md_rows($pdo,"SELECT CASE WHEN s.installments_number IS NULL OR s.installments_number=0 THEN 'Nao informado' WHEN s.installments_number=1 THEN 'A vista' ELSE CONCAT(s.installments_number,'x') END label,COUNT(*) qty,SUM(s.gross_revenue) gross{$base} GROUP BY label ORDER BY qty DESC",$params);
     $products=md_rows($pdo,"SELECT COALESCE(NULLIF(s.product_name,''),'Sem produto') label,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.producer_net) producer,AVG(s.gross_revenue) ticket{$base} GROUP BY label ORDER BY producer DESC LIMIT 20",$params);
@@ -190,10 +194,10 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     $leadParams=[];
     $leadFilter=md_filter_sql($filters,'lead',$leadParams);
     $leadFilter=$leadFilter!==''?' WHERE '.substr($leadFilter,5):'';
-    $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(u.codigo_turma,''),NULLIF(u.turma_codigo,''),'Sem turma') turma,COUNT(*) leads FROM users u{$leadFilter} GROUP BY turma",$leadParams);
+    $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads FROM attribution_leads l{$leadFilter} GROUP BY turma",$leadParams);
     $leadMap=[]; foreach($leads as $r)$leadMap[$r['turma']]=(int)$r['leads'];
     $params=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59','model'=>($filters['model']??'last_touch')==='first_touch'?'first_touch':'last_touch'];
-    $rows=md_rows($pdo,"SELECT COALESCE(NULLIF(al.turma_codigo,''),'Sem turma') turma,COUNT(DISTINCT am.sale_id) sales,SUM(axs.gross_revenue) gross,SUM(axs.producer_net) producer FROM attribution_matches am JOIN attribution_sales axs ON axs.id=am.sale_id JOIN attribution_leads al ON al.id=am.lead_id WHERE am.attribution_model=:model AND am.sale_date BETWEEN :start AND :end GROUP BY turma ORDER BY producer DESC LIMIT 30",$params);
+    $rows=md_rows($pdo,"SELECT COALESCE(NULLIF(al.turma_codigo,''),'Sem turma') turma,COUNT(DISTINCT hs.transaction_code) sales,SUM(hs.gross_revenue) gross,SUM(hs.producer_net) producer FROM attribution_matches am JOIN attribution_sales axs ON axs.id=am.sale_id JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code JOIN attribution_leads al ON al.id=am.lead_id WHERE am.attribution_model=:model AND ".md_approved_sql('hs')." AND COALESCE(hs.transaction_date,hs.payment_confirmed_at) BETWEEN :start AND :end GROUP BY turma ORDER BY producer DESC LIMIT 30",$params);
     foreach($rows as &$r){$r['leads']=$leadMap[$r['turma']]??0;$r['conversion']=$r['leads']>0?(int)$r['sales']/(int)$r['leads']*100:0;} unset($r);
     return $rows;
 }
@@ -209,11 +213,12 @@ function md_adset_performance(PDO $pdo): array
       SUM(CASE WHEN report_date>=:d30 THEN spend ELSE 0 END) spend30,SUM(CASE WHEN report_date>=:d30 THEN leads ELSE 0 END) leads30,
       SUM(spend) spend90,SUM(leads) leads90
       FROM meta_adset_daily WHERE report_date BETWEEN :d90 AND :end GROUP BY campaign_name,adset_name HAVING spend90>0 ORDER BY spend30 DESC LIMIT 80",['d7'=>$start7,'d30'=>$start30,'d90'=>$start90,'end'=>$end]);
-    $attrs=md_rows($pdo,"SELECT campaign_group, campaign_name,
-      COUNT(DISTINCT CASE WHEN sale_date>=:d7 THEN sale_id END) sales7,SUM(CASE WHEN sale_date>=:d7 THEN revenue_value ELSE 0 END) revenue7,
-      COUNT(DISTINCT CASE WHEN sale_date>=:d30 THEN sale_id END) sales30,SUM(CASE WHEN sale_date>=:d30 THEN revenue_value ELSE 0 END) revenue30,
-      COUNT(DISTINCT sale_id) sales90,SUM(revenue_value) revenue90
-      FROM attribution_matches WHERE attribution_model='last_touch' AND sale_date BETWEEN :d90 AND :enddt GROUP BY campaign_group,campaign_name",['d7'=>$start7.' 00:00:00','d30'=>$start30.' 00:00:00','d90'=>$start90.' 00:00:00','enddt'=>$end.' 23:59:59']);
+    $attrs=md_rows($pdo,"SELECT am.campaign_group, am.campaign_name,
+      COUNT(DISTINCT CASE WHEN hs.transaction_date>=:d7 THEN hs.transaction_code END) sales7,SUM(CASE WHEN hs.transaction_date>=:d7 THEN hs.producer_net ELSE 0 END) revenue7,
+      COUNT(DISTINCT CASE WHEN hs.transaction_date>=:d30 THEN hs.transaction_code END) sales30,SUM(CASE WHEN hs.transaction_date>=:d30 THEN hs.producer_net ELSE 0 END) revenue30,
+      COUNT(DISTINCT hs.transaction_code) sales90,SUM(hs.producer_net) revenue90
+      FROM attribution_matches am JOIN attribution_sales axs ON axs.id=am.sale_id JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
+      WHERE am.attribution_model='last_touch' AND ".md_approved_sql('hs')." AND hs.transaction_date BETWEEN :d90 AND :enddt GROUP BY am.campaign_group,am.campaign_name",['d7'=>$start7.' 00:00:00','d30'=>$start30.' 00:00:00','d90'=>$start90.' 00:00:00','enddt'=>$end.' 23:59:59']);
     $map=[];foreach($attrs as $r)$map[normalize_text_value($r['campaign_group']).'|'.normalize_text_value($r['campaign_name'])]=$r;
     foreach($meta as &$r){$a=$map[normalize_text_value($r['campaign_name']).'|'.normalize_text_value($r['adset_name'])]??[];foreach(['sales7','sales30','sales90','revenue7','revenue30','revenue90'] as $k)$r[$k]=(float)($a[$k]??0);foreach([7,30,90] as $w){$sp=(float)$r['spend'.$w];$ld=(float)$r['leads'.$w];$sa=(float)$r['sales'.$w];$rv=(float)$r['revenue'.$w];$r['cpl'.$w]=$ld>0?$sp/$ld:0;$r['cac'.$w]=$sa>0?$sp/$sa:0;$r['roas'.$w]=$sp>0?$rv/$sp:0;}$r['trend']=($r['roas7']>=$r['roas30']?'up':'down');$r['resilient']=$r['sales30']>=2&&$r['roas7']>=max(.8,$r['roas30']*.8)&&$r['roas30']>=max(.8,$r['roas90']*.8);}unset($r);
     usort($meta,function($a,$b){return ($b['roas30']<=>$a['roas30'])?:($b['sales30']<=>$a['sales30']);});
@@ -225,6 +230,6 @@ function md_filter_options(PDO $pdo): array
     $products=array_column(md_rows($pdo,"SELECT DISTINCT product_name v FROM hotmart_sales_live WHERE product_name IS NOT NULL AND product_name<>'' ORDER BY v"),'v');
     $campaigns=array_column(md_rows($pdo,"SELECT DISTINCT campaign_name v FROM meta_campaign_daily WHERE campaign_name<>'' ORDER BY v"),'v');
     $adsets=array_column(md_rows($pdo,"SELECT DISTINCT adset_name v FROM meta_adset_daily WHERE adset_name<>'' ORDER BY v"),'v');
-    $turmas=array_column(md_rows($pdo,"SELECT DISTINCT COALESCE(NULLIF(codigo_turma,''),NULLIF(turma_codigo,'')) v FROM users HAVING v IS NOT NULL ORDER BY v"),'v');
+    $turmas=array_column(md_rows($pdo,"SELECT DISTINCT NULLIF(turma_codigo,'') v FROM attribution_leads HAVING v IS NOT NULL ORDER BY v"),'v');
     return compact('products','campaigns','adsets','turmas');
 }

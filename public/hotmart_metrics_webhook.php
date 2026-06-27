@@ -11,6 +11,8 @@ function hmw_datetime($value): ?string {
     $ts=strtotime((string)$value); return $ts ? date('Y-m-d H:i:s',$ts) : null;
 }
 function hmw_status(string $event, string $status): string {
+    $event=strtoupper(trim($event));
+    if(in_array($event,['PURCHASE_APPROVED','PURCHASE_COMPLETE'],true))return 'APPROVED';
     $v=strtoupper(trim($status ?: $event));
     if(strpos($v,'REFUND')!==false)return 'REFUNDED';
     if(strpos($v,'CHARGEBACK')!==false)return 'CHARGEBACK';

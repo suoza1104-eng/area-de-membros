@@ -73,7 +73,7 @@ function safe_string($value, int $maxLen = 255) {
 }
 
 function sale_date_value($row) {
-    $value = $row['payment_confirmed_at'] ?? $row['transaction_date'] ?? null;
+    $value = $row['transaction_date'] ?? $row['payment_confirmed_at'] ?? null;
     if (!$value) {
         return date('Y-m-d H:i:s');
     }
@@ -265,6 +265,9 @@ function sync_attribution_imports($pdo, PDO $sourcePdo) {
             column_exists_in($saleCols, 'utm_term') ? 'utm_term' : "'' AS utm_term",
         ];
         $saleSql = 'SELECT ' . implode(', ', $saleSelect) . ' FROM hotmart_sales_live WHERE status IN (' . $in . ')';
+        if (column_exists_in($saleCols, 'webhook_event')) {
+            $saleSql .= " OR webhook_event IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE')";
+        }
         $saleStmt = $pdo->prepare($saleSql);
         $saleStmt->execute($validStatuses);
 
@@ -317,7 +320,8 @@ function sync_attribution_imports($pdo, PDO $sourcePdo) {
 
         $removedSales = $pdo->exec("DELETE axs FROM attribution_sales axs
             LEFT JOIN hotmart_sales_live hs ON hs.id = axs.source_sale_id
-              AND hs.status IN ('Aprovado','APPROVED','PURCHASE_APPROVED','Completo','COMPLETE','PURCHASE_COMPLETE')
+              AND (hs.status IN ('Aprovado','APPROVED','PURCHASE_APPROVED','Completo','COMPLETE','COMPLETED','PURCHASE_COMPLETE')
+                OR hs.webhook_event IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE'))
             WHERE hs.id IS NULL");
 
         $stats = [
