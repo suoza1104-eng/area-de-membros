@@ -320,7 +320,8 @@ $menu = 'turmas';
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.page-turmas { width: 100%; max-width: 1280px; margin: 0 auto; }
+.page-turmas { width: 100%; max-width: 1600px; min-width: 0; margin: 0 auto; }
+.page-turmas .card { min-width: 0; }
 .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .grid2t { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3t { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -334,10 +335,10 @@ include __DIR__ . '/_header.php';
 .badge-off  { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
 .badge-warn { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.25); }
 .badge-error { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.25); }
-.live-dispatch-summary { min-width:190px; }
-.live-dispatch-counts { margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; white-space:nowrap; }
+.live-dispatch-summary { min-width:180px; }
+.live-dispatch-counts { display:flex; flex-wrap:wrap; gap:2px 10px; margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; }
 .live-dispatch-counts strong { color:var(--text); font-weight:700; }
-.turmas-table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.turmas-table-wrap { width: 100%; max-width:100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
 .table-turmas td, .table-turmas th { font-size: 12px; }
 .table-turmas td { vertical-align: middle; }
 .table-turmas th { user-select:none; }
@@ -349,11 +350,8 @@ include __DIR__ . '/_header.php';
 .sort-head::after { content:"↕"; font-size:10px; color:var(--muted); opacity:.7; }
 .sort-head.asc::after { content:"↑"; color:#facc15; opacity:1; }
 .sort-head.desc::after { content:"↓"; color:#facc15; opacity:1; }
-@media (max-width: 1100px) {
+@media (max-width: 1750px) {
     .page-turmas { max-width: none; }
-    .table-turmas { min-width: 1230px; }
-}
-@media (max-width: 720px) {
     .page-turmas .card { padding: 14px; }
     .turmas-table-wrap { overflow: visible; }
     .table-turmas,
@@ -361,47 +359,65 @@ include __DIR__ . '/_header.php';
     .table-turmas tbody,
     .table-turmas th,
     .table-turmas td,
-    .table-turmas tr { display: block; width: 100%; min-width: 0 !important; }
+    .table-turmas tr { width: 100%; min-width: 0 !important; }
+    .table-turmas,
+    .table-turmas tbody { display: block; }
     .table-turmas thead { display: none; }
     .table-turmas tr {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0 12px;
         border: 1px solid var(--border);
         border-radius: 12px;
-        padding: 10px 12px;
+        padding: 10px 14px;
         margin-bottom: 10px;
         background: rgba(255,255,255,.02);
     }
     .table-turmas td {
-        display: grid;
-        grid-template-columns: 112px minmax(0, 1fr);
-        gap: 10px;
-        align-items: start;
-        padding: 7px 0;
-        border-bottom: 1px solid var(--border);
+        display: block;
+        padding: 8px 0;
+        border: 0;
         white-space: normal !important;
+        overflow-wrap: anywhere;
     }
     .table-turmas td::before {
         content: attr(data-label);
+        display: block;
+        margin-bottom: 5px;
         color: var(--muted);
-        font-size: 10.5px;
+        font-size: 9.5px;
         font-weight: 700;
         letter-spacing: .06em;
         text-transform: uppercase;
     }
-    .table-turmas td:last-child { border-bottom: 0; }
     .table-turmas .actions-cell {
+        grid-column: 1 / -1;
         display: block;
         min-width: 0;
+        margin-top: 4px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
     }
     .table-turmas .actions-cell::before {
         display: block;
         margin-bottom: 8px;
     }
-    .turma-actions { max-width: none; }
+    .live-dispatch-summary { min-width: 0; }
+    .turma-actions { max-width: none; align-items:stretch; }
     .turma-actions .btn-sm,
-    .turma-actions form { flex: 1 1 calc(50% - 6px); }
+    .turma-actions form { flex: 1 1 120px; min-width:0; }
     .turma-actions form .btn-sm { width: 100%; }
 }
+@media (max-width: 800px) {
+    .table-turmas tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .table-turmas .live-dispatch-summary { grid-column: 1 / -1; }
+    .turma-actions .btn-sm,
+    .turma-actions form { flex-basis: calc(50% - 6px); }
+}
 @media (max-width: 420px) {
+    .page-turmas .card { padding: 12px; }
+    .table-turmas tr { grid-template-columns: minmax(0, 1fr); padding: 9px 12px; }
+    .table-turmas .live-dispatch-summary { grid-column: auto; }
     .turma-actions .btn-sm,
     .turma-actions form { flex-basis: 100%; }
 }
@@ -622,9 +638,9 @@ include __DIR__ . '/_header.php';
                 <td class="live-dispatch-summary" data-label="Envio da live" data-live-dispatch-turma="<?= (int)$t['id'] ?>">
                     <span class="<?= h($statusDisparoClasse) ?>" data-live-status><?= h($statusDisparoLabel) ?></span>
                     <div class="live-dispatch-counts" <?= $statusDisparo ? '' : 'hidden' ?>>
-                        Enviados: <strong data-live-enviados><?= (int)($statusDisparo['enviados'] ?? 0) ?></strong>
-                        &nbsp; Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong>
-                        &nbsp; Erros: <strong data-live-erros><?= (int)($statusDisparo['erros'] ?? 0) ?></strong>
+                        <span>Enviados: <strong data-live-enviados><?= (int)($statusDisparo['enviados'] ?? 0) ?></strong></span>
+                        <span>Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong></span>
+                        <span>Erros: <strong data-live-erros><?= (int)($statusDisparo['erros'] ?? 0) ?></strong></span>
                     </div>
                 </td>
                 <td class="actions-cell" data-label="Ações">
