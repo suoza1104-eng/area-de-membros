@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/metrics.php';
 
 proteger_admin();
 $pdo = getPDO();
+metrics_ensure_schema($pdo);
 
 $mensagemOk = '';
 $mensagemErro = '';
@@ -36,7 +38,39 @@ try {
     ];
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$formSection = (string)($_POST['form_section'] ?? 'visual');
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection === 'metrics') {
+    try {
+        $integration = metrics_active_integration($pdo);
+        $name = trim((string)($_POST['meta_name'] ?? 'Meta Principal')) ?: 'Meta Principal';
+        $account = normalize_account_id((string)($_POST['meta_ad_account_id'] ?? ''));
+        $appId = trim((string)($_POST['meta_app_id'] ?? ''));
+        $appSecret = trim((string)($_POST['meta_app_secret'] ?? ''));
+        $accessToken = trim((string)($_POST['meta_access_token'] ?? ''));
+        $interval = max(5, min(1440, (int)($_POST['meta_sync_interval'] ?? 30)));
+        if ($account === '') throw new RuntimeException('Informe o ID da conta de anuncios da Meta.');
+        if ($integration) {
+            $stmt = $pdo->prepare("UPDATE meta_integrations SET name=:name,app_id=:app_id,
+                app_secret=CASE WHEN :app_secret='' THEN app_secret ELSE :app_secret END,
+                access_token=CASE WHEN :access_token='' THEN access_token ELSE :access_token END,
+                ad_account_id=:account,sync_interval_minutes=:sync_interval,status='active',updated_at=NOW() WHERE id=:id");
+            $stmt->execute(['name'=>$name,'app_id'=>$appId?:null,'app_secret'=>$appSecret,'access_token'=>$accessToken,'account'=>$account,'sync_interval'=>$interval,'id'=>(int)$integration['id']]);
+        } else {
+            if ($accessToken === '') throw new RuntimeException('Informe o token de acesso da Meta na primeira configuracao.');
+            $stmt = $pdo->prepare("INSERT INTO meta_integrations (name,app_id,app_secret,access_token,ad_account_id,status,sync_interval_minutes,timezone,created_at,updated_at) VALUES (:name,:app_id,:app_secret,:access_token,:account,'active',:sync_interval,'America/Sao_Paulo',NOW(),NOW())");
+            $stmt->execute(['name'=>$name,'app_id'=>$appId?:null,'app_secret'=>$appSecret?:null,'access_token'=>$accessToken,'account'=>$account,'sync_interval'=>$interval]);
+        }
+        $hotmartToken = trim((string)($_POST['hotmart_hottok'] ?? ''));
+        if ($hotmartToken !== '') set_setting('metrics_hotmart_hottok', $hotmartToken);
+        set_setting('metrics_default_revenue_basis', in_array(($_POST['metrics_revenue_basis'] ?? ''), ['gross_revenue','net_revenue','producer_net'], true) ? $_POST['metrics_revenue_basis'] : 'producer_net');
+        $mensagemOk = 'Integracoes de metricas salvas com sucesso.';
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro ao salvar integracoes: ' . $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection !== 'metrics') {
     $courseTitle      = trim((string)($_POST['course_title'] ?? ''));
     $primaryColor     = trim((string)($_POST['primary_color'] ?? ''));
     $secondaryColor   = trim((string)($_POST['secondary_color'] ?? ''));
@@ -81,6 +115,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$metricsIntegration = metrics_active_integration($pdo) ?: [];
+$metricsRevenueBasis = get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net';
+$hasHotmartToken = (get_setting('metrics_hotmart_hottok', '') ?: '') !== '';
+
 function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
@@ -99,6 +137,7 @@ include __DIR__ . '/_header.php';
 
     <div class="card">
         <form method="post" action="">
+            <input type="hidden" name="form_section" value="visual">
             <div class="section-label">Identidade visual</div>
 
             <div class="form-group">
@@ -151,6 +190,25 @@ include __DIR__ . '/_header.php';
             </div>
 
             <button type="submit" class="btn btn-primary">Salvar configurações</button>
+        </form>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+        <form method="post" action="" autocomplete="off">
+            <input type="hidden" name="form_section" value="metrics">
+            <div class="section-label">Metricas, Meta Ads e vendas</div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 16px">Credenciais usadas pela sincronizacao do painel de desempenho. Campos secretos em branco preservam o valor atual.</p>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px">
+                <div class="form-group"><label class="form-label" for="meta_name">Nome da integracao</label><input type="text" id="meta_name" name="meta_name" value="<?= h((string)($metricsIntegration['name'] ?? 'Meta Principal')) ?>"></div>
+                <div class="form-group"><label class="form-label" for="meta_ad_account_id">Conta de anuncios</label><input type="text" id="meta_ad_account_id" name="meta_ad_account_id" placeholder="act_123456789" value="<?= h((string)($metricsIntegration['ad_account_id'] ?? '')) ?>" required></div>
+                <div class="form-group"><label class="form-label" for="meta_app_id">Meta App ID</label><input type="text" id="meta_app_id" name="meta_app_id" value="<?= h((string)($metricsIntegration['app_id'] ?? '')) ?>"></div>
+                <div class="form-group"><label class="form-label" for="meta_sync_interval">Intervalo de sincronizacao (minutos)</label><input type="number" min="5" max="1440" id="meta_sync_interval" name="meta_sync_interval" value="<?= (int)($metricsIntegration['sync_interval_minutes'] ?? 30) ?>"></div>
+                <div class="form-group"><label class="form-label" for="meta_app_secret">Meta App Secret</label><input type="password" id="meta_app_secret" name="meta_app_secret" placeholder="<?= !empty($metricsIntegration['app_secret']) ? 'Configurado - deixe vazio para manter' : 'Informe o App Secret' ?>"></div>
+                <div class="form-group"><label class="form-label" for="meta_access_token">Meta Access Token</label><input type="password" id="meta_access_token" name="meta_access_token" placeholder="<?= !empty($metricsIntegration['access_token']) ? 'Configurado - deixe vazio para manter' : 'Informe o token' ?>"></div>
+                <div class="form-group"><label class="form-label" for="hotmart_hottok">Hotmart HOTTOK</label><input type="password" id="hotmart_hottok" name="hotmart_hottok" placeholder="<?= $hasHotmartToken ? 'Configurado - deixe vazio para manter' : 'Token de validacao do webhook' ?>"></div>
+                <div class="form-group"><label class="form-label" for="metrics_revenue_basis">Base padrao para o ROAS</label><select id="metrics_revenue_basis" name="metrics_revenue_basis"><option value="producer_net" <?= $metricsRevenueBasis==='producer_net'?'selected':'' ?>>Liquido do produtor</option><option value="net_revenue" <?= $metricsRevenueBasis==='net_revenue'?'selected':'' ?>>Receita liquida</option><option value="gross_revenue" <?= $metricsRevenueBasis==='gross_revenue'?'selected':'' ?>>Faturamento bruto</option></select></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px"><button type="submit" class="btn btn-primary">Salvar integracoes</button><span style="font-size:11px;color:var(--muted)">Ultima sincronizacao: <?= !empty($metricsIntegration['last_success_sync_at']) ? h(date('d/m/Y H:i',strtotime((string)$metricsIntegration['last_success_sync_at']))) : 'ainda nao executada' ?></span></div>
         </form>
     </div>
 

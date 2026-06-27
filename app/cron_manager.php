@@ -33,6 +33,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'metricas_negocio' => [
+            'label' => 'Metricas do negocio',
+            'description' => 'Sincroniza Meta Ads, reconcilia vendas Hotmart e recalcula atribuicoes.',
+            'script' => __DIR__ . '/../cron/processar_metricas_negocio.php',
+            'interval' => 30,
+            'timeout' => 900,
+        ],
     ];
 }
 
