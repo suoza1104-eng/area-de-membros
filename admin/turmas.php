@@ -35,6 +35,54 @@ function sort_ts(?string $dbValue): int {
     return $ts ? (int)$ts : 0;
 }
 
+function carregar_status_disparos_live(PDO $pdo): array {
+    $status = [];
+    try {
+        $st = $pdo->query("
+            SELECT l.id AS dispatch_id,
+                   l.turma_id,
+                   l.status,
+                   l.started_at,
+                   l.finished_at,
+                   COALESCE(SUM(r.status IN ('pending','processing','sent','failed')), 0) AS elegiveis,
+                   COALESCE(SUM(r.status = 'sent'), 0) AS enviados,
+                   COALESCE(SUM(r.status IN ('pending','processing') OR (r.status = 'failed' AND r.attempts < 3)), 0) AS faltam,
+                   COALESCE(SUM(r.status = 'failed' AND r.attempts >= 3), 0) AS erros
+              FROM live_turma_dispatch_logs l
+              JOIN (
+                    SELECT turma_id, MAX(id) AS dispatch_id
+                      FROM live_turma_dispatch_logs
+                     WHERE turma_id IS NOT NULL
+                  GROUP BY turma_id
+              ) ultimo ON ultimo.dispatch_id = l.id
+         LEFT JOIN live_turma_dispatch_recipients r ON r.dispatch_id = l.id
+          GROUP BY l.id, l.turma_id, l.status, l.started_at, l.finished_at
+        ");
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $turmaId = (int)($row['turma_id'] ?? 0);
+            if ($turmaId <= 0) continue;
+            $status[$turmaId] = [
+                'dispatch_id' => (int)($row['dispatch_id'] ?? 0),
+                'status' => (string)($row['status'] ?? ''),
+                'started_at' => (string)($row['started_at'] ?? ''),
+                'finished_at' => (string)($row['finished_at'] ?? ''),
+                'elegiveis' => (int)($row['elegiveis'] ?? 0),
+                'enviados' => (int)($row['enviados'] ?? 0),
+                'faltam' => (int)($row['faltam'] ?? 0),
+                'erros' => (int)($row['erros'] ?? 0),
+            ];
+        }
+    } catch (Throwable $e) {}
+    return $status;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string)($_GET['acao'] ?? '') === 'status_disparos_live') {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    echo json_encode(['ok' => true, 'status' => carregar_status_disparos_live($pdo)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'disparar_live_turma_manual') {
     $turmaId = (int)($_POST['turma_id'] ?? 0);
     $confirmarRedisparo = (string)($_POST['confirmar_redisparo'] ?? '') === '1';
@@ -250,7 +298,6 @@ if ($cloneFill) $edit = $cloneFill;
 
 $turmas = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $ultimosDisparosLive = [];
-$disparosLiveEmAndamento = [];
 try {
     $stUltimosDisparos = $pdo->query("
         SELECT turma_id,
@@ -258,17 +305,16 @@ try {
                    WHEN status NOT IN ('queued', 'iniciado', 'processando')
                    THEN COALESCE(finished_at, started_at)
                    ELSE NULL
-               END) AS disparado_em,
-               SUM(CASE WHEN status IN ('queued', 'iniciado', 'processando') THEN 1 ELSE 0 END) AS em_andamento
+               END) AS disparado_em
           FROM live_turma_dispatch_logs
          GROUP BY turma_id
     ");
     foreach ($stUltimosDisparos->fetchAll(PDO::FETCH_ASSOC) ?: [] as $disparo) {
         $turmaDisparoId = (int)$disparo['turma_id'];
         $ultimosDisparosLive[$turmaDisparoId] = (string)($disparo['disparado_em'] ?? '');
-        $disparosLiveEmAndamento[$turmaDisparoId] = (int)($disparo['em_andamento'] ?? 0) > 0;
     }
 } catch (Throwable $e) {}
+$statusDisparosLive = carregar_status_disparos_live($pdo);
 
 $menu = 'turmas';
 include __DIR__ . '/_header.php';
@@ -287,6 +333,10 @@ include __DIR__ . '/_header.php';
 .badge-ok   { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.25); }
 .badge-off  { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
 .badge-warn { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.25); }
+.badge-error { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.25); }
+.live-dispatch-summary { min-width:190px; }
+.live-dispatch-counts { margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; white-space:nowrap; }
+.live-dispatch-counts strong { color:var(--text); font-weight:700; }
 .turmas-table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
 .table-turmas td, .table-turmas th { font-size: 12px; }
 .table-turmas td { vertical-align: middle; }
@@ -301,7 +351,7 @@ include __DIR__ . '/_header.php';
 .sort-head.desc::after { content:"↓"; color:#facc15; opacity:1; }
 @media (max-width: 1100px) {
     .page-turmas { max-width: none; }
-    .table-turmas { min-width: 1040px; }
+    .table-turmas { min-width: 1230px; }
 }
 @media (max-width: 720px) {
     .page-turmas .card { padding: 14px; }
@@ -508,6 +558,7 @@ include __DIR__ . '/_header.php';
             <th><button type="button" class="sort-head" data-sort="webhook">Webhook</button></th>
             <th><button type="button" class="sort-head" data-sort="sf">SF</button></th>
             <th><button type="button" class="sort-head" data-sort="disparado">Disparado</button></th>
+            <th>Envio da live</th>
             <th class="actions-head">Ações</th>
         </tr>
         </thead>
@@ -519,7 +570,15 @@ include __DIR__ . '/_header.php';
             $disparada = (int)($t['live_disparada'] ?? 0) === 1;
             $ultimoDisparo = $ultimosDisparosLive[(int)$t['id']] ?? '';
             $ultimoDisparoLabel = $ultimoDisparo !== '' ? dt_br_short($ultimoDisparo) : '';
-            $disparoEmAndamento = !empty($disparosLiveEmAndamento[(int)$t['id']]);
+            $statusDisparo = $statusDisparosLive[(int)$t['id']] ?? null;
+            $statusDisparoCodigo = (string)($statusDisparo['status'] ?? '');
+            $disparoEmAndamento = in_array($statusDisparoCodigo, ['queued', 'iniciado', 'processando'], true);
+            $statusDisparoLabel = $disparoEmAndamento
+                ? 'Disparando'
+                : ($statusDisparoCodigo === 'concluido_com_falhas' ? 'Concluído com erros' : ($statusDisparoCodigo === 'concluido' ? 'Concluído' : 'Sem disparo'));
+            $statusDisparoClasse = $disparoEmAndamento
+                ? 'badge-warn'
+                : ($statusDisparoCodigo === 'concluido_com_falhas' ? 'badge-error' : ($statusDisparoCodigo === 'concluido' ? 'badge-ok' : 'badge-off'));
             ?>
             <tr>
                 <td data-label="Código" data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
@@ -560,6 +619,14 @@ include __DIR__ . '/_header.php';
                         <span class="badge-off">Não</span>
                     <?php endif; ?>
                 </td>
+                <td class="live-dispatch-summary" data-label="Envio da live" data-live-dispatch-turma="<?= (int)$t['id'] ?>">
+                    <span class="<?= h($statusDisparoClasse) ?>" data-live-status><?= h($statusDisparoLabel) ?></span>
+                    <div class="live-dispatch-counts" <?= $statusDisparo ? '' : 'hidden' ?>>
+                        Enviados: <strong data-live-enviados><?= (int)($statusDisparo['enviados'] ?? 0) ?></strong>
+                        &nbsp; Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong>
+                        &nbsp; Erros: <strong data-live-erros><?= (int)($statusDisparo['erros'] ?? 0) ?></strong>
+                    </div>
+                </td>
                 <td class="actions-cell" data-label="Ações">
                     <?php
                         $liveTs = sort_ts($t['data_live'] ?? null);
@@ -570,7 +637,7 @@ include __DIR__ . '/_header.php';
                     ?>
                     <div class="turma-actions">
                     <?php if ($disparoEmAndamento): ?>
-                        <button type="button" class="btn-sm" disabled title="A fila desta turma ainda esta sendo processada">Disparo em andamento</button>
+                        <button type="button" class="btn-sm" data-live-progress-button disabled title="A fila desta turma ainda esta sendo processada">Disparo em andamento</button>
                     <?php elseif ($manualLivePermitido): ?>
                         <form method="post" onsubmit="return confirm(<?= h(json_encode($confirmacaoDisparo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>)">
                             <input type="hidden" name="acao" value="disparar_live_turma_manual">
@@ -611,6 +678,63 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var currentKey = '';
     var currentDir = 'asc';
+
+    function atualizarIndicadorDisparo(cell, info) {
+        var codigo = String(info.status || '');
+        var ativo = ['queued', 'iniciado', 'processando'].indexOf(codigo) !== -1;
+        var comErros = codigo === 'concluido_com_falhas';
+        var concluido = codigo === 'concluido';
+        var label = ativo ? 'Disparando' : (comErros ? 'Concluído com erros' : (concluido ? 'Concluído' : 'Sem disparo'));
+        var classe = ativo ? 'badge-warn' : (comErros ? 'badge-error' : (concluido ? 'badge-ok' : 'badge-off'));
+        var badge = cell.querySelector('[data-live-status]');
+        var counts = cell.querySelector('.live-dispatch-counts');
+
+        badge.className = classe;
+        badge.textContent = label;
+        counts.hidden = false;
+        cell.querySelector('[data-live-enviados]').textContent = String(Number(info.enviados || 0));
+        cell.querySelector('[data-live-faltam]').textContent = String(Number(info.faltam || 0));
+        cell.querySelector('[data-live-erros]').textContent = String(Number(info.erros || 0));
+
+        var progressButton = cell.closest('tr').querySelector('[data-live-progress-button]');
+        if (progressButton && !ativo) {
+            progressButton.textContent = label;
+            progressButton.title = 'O disparo terminou. Atualize a pagina para liberar as acoes novamente.';
+        }
+        return ativo;
+    }
+
+    async function consultarAndamentoDisparos() {
+        var haviaDisparoAtivo = !!table.querySelector('[data-live-dispatch-turma] [data-live-status].badge-warn');
+        if (!haviaDisparoAtivo) return;
+
+        var continuarConsultando = false;
+        try {
+            var url = new URL(window.location.href);
+            url.search = '';
+            url.searchParams.set('acao', 'status_disparos_live');
+            var response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}, cache: 'no-store'});
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var payload = await response.json();
+            var status = payload && payload.status ? payload.status : {};
+
+            table.querySelectorAll('[data-live-dispatch-turma]').forEach(function (cell) {
+                var turmaId = cell.getAttribute('data-live-dispatch-turma');
+                if (status[turmaId]) {
+                    continuarConsultando = atualizarIndicadorDisparo(cell, status[turmaId]) || continuarConsultando;
+                }
+            });
+        } catch (e) {
+            continuarConsultando = true;
+            console.error('Falha ao atualizar o andamento do disparo:', e);
+        }
+
+        if (continuarConsultando) window.setTimeout(consultarAndamentoDisparos, 5000);
+    }
+
+    if (table.querySelector('[data-live-dispatch-turma] [data-live-status].badge-warn')) {
+        window.setTimeout(consultarAndamentoDisparos, 2000);
+    }
 
     function readValue(row, key) {
         var cell = row.querySelector('[data-sort-' + key + ']');
