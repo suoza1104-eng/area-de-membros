@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
-session_start();
+if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 proteger_admin();
 
 $menu = 'vendas_vitalicio';
@@ -23,6 +23,15 @@ function vv_date_br(?string $value): string {
     if (!$value) return '-';
     $ts = strtotime($value);
     return $ts ? date('d/m/Y H:i', $ts) : (string)$value;
+}
+
+function vv_duration(?int $seconds): string {
+    if ($seconds === null || $seconds < 0) return '-';
+    $days = intdiv($seconds, 86400);
+    $hours = intdiv($seconds % 86400, 3600);
+    if ($days > 0) return $days . 'd ' . $hours . 'h';
+    $minutes = intdiv($seconds % 3600, 60);
+    return $hours > 0 ? $hours . 'h ' . $minutes . 'min' : $minutes . 'min';
 }
 
 function vv_table_exists(PDO $pdo, string $table): bool {
@@ -59,9 +68,10 @@ function vv_payload_value(array $payload, array $paths): ?float {
     return null;
 }
 
-$yesterday = (new DateTimeImmutable('yesterday'))->format('Y-m-d');
-$ini = trim((string)($_GET['ini'] ?? $yesterday));
-$fim = trim((string)($_GET['fim'] ?? $yesterday));
+$today = new DateTimeImmutable('today');
+$defaultStart = $today->modify('-29 days')->format('Y-m-d');
+$ini = trim((string)($_GET['ini'] ?? $defaultStart));
+$fim = trim((string)($_GET['fim'] ?? $today->format('Y-m-d')));
 $mode = (string)($_GET['mode'] ?? 'lifetime');
 $q = trim((string)($_GET['q'] ?? ''));
 if (!in_array($mode, ['lifetime', 'hotmart'], true)) $mode = 'lifetime';
@@ -86,14 +96,16 @@ if ($mode === 'lifetime') {
 
     $joinHotmart = $hotmartReady ? "LEFT JOIN hotmart_sales hs ON hs.transaction_code = cla.transaction_code" : "";
     $selectHotmart = $hotmartReady
-        ? "hs.status AS sale_status, hs.product_name, hs.price_name, hs.currency, hs.gross_revenue, hs.net_revenue, hs.producer_net,"
-        : "NULL AS sale_status, NULL AS product_name, NULL AS price_name, NULL AS currency, NULL AS gross_revenue, NULL AS net_revenue, NULL AS producer_net,";
+        ? "hs.status AS sale_status, hs.product_name, hs.price_name, hs.currency, hs.gross_revenue, hs.net_revenue, hs.producer_net, hs.transaction_date AS sale_at,"
+        : "NULL AS sale_status, NULL AS product_name, NULL AS price_name, NULL AS currency, NULL AS gross_revenue, NULL AS net_revenue, NULL AS producer_net, NULL AS sale_at,";
 
     $sql = "
         SELECT
-            cla.id, cla.user_id, cla.turma_codigo, cla.offer_code, cla.transaction_code,
+            cla.id, cla.user_id, COALESCE(NULLIF(cla.turma_codigo,''),u.codigo_turma) AS turma_codigo, cla.offer_code, cla.transaction_code,
             cla.payload_json, cla.granted_at,
             u.nome AS aluno_nome, u.email AS aluno_email, u.telefone AS aluno_telefone,
+            u.created_at AS lead_created_at,
+            u.utm_source, u.utm_medium, u.utm_campaign, u.utm_term, u.utm_content,
             $selectHotmart
             'course_lifetime_access' AS origem
         FROM course_lifetime_access cla
@@ -147,13 +159,19 @@ if ($mode === 'lifetime') {
 
     $sql = "
         SELECT
-            s.id, s.matched_user_id AS user_id, NULL AS turma_codigo, s.price_code AS offer_code,
-            s.transaction_code, NULL AS payload_json, s.transaction_date AS granted_at,
+            s.id, s.matched_user_id AS user_id, u.codigo_turma AS turma_codigo, s.price_code AS offer_code,
+            s.transaction_code, NULL AS payload_json, s.transaction_date AS granted_at, s.transaction_date AS sale_at,
             COALESCE(u.nome, s.buyer_name) AS aluno_nome,
             COALESCE(u.email, s.buyer_email) AS aluno_email,
             COALESCE(u.telefone, s.buyer_phone_norm) AS aluno_telefone,
+            u.created_at AS lead_created_at,
             s.status AS sale_status, s.product_name, s.price_name, s.currency,
             s.gross_revenue, s.net_revenue, s.producer_net,
+            COALESCE(NULLIF(s.utm_source,''),u.utm_source) AS utm_source,
+            COALESCE(NULLIF(s.utm_medium,''),u.utm_medium) AS utm_medium,
+            COALESCE(NULLIF(s.utm_campaign,''),u.utm_campaign) AS utm_campaign,
+            COALESCE(NULLIF(s.utm_term,''),u.utm_term) AS utm_term,
+            COALESCE(NULLIF(s.utm_content,''),u.utm_content) AS utm_content,
             'hotmart_sales' AS origem
         FROM hotmart_sales s
         LEFT JOIN users u ON u.id = s.matched_user_id
@@ -171,6 +189,23 @@ if ($mode === 'lifetime') {
     unset($row);
 }
 
+$turmaStats = [];
+$conversionTimes = [];
+$conversionBuckets = [
+    'Até 1 dia' => 0,
+    '2 a 3 dias' => 0,
+    '4 a 7 dias' => 0,
+    '8 a 14 dias' => 0,
+    '15 a 30 dias' => 0,
+    'Mais de 30 dias' => 0,
+];
+foreach ($rows as &$row) {
+    $leadTs = !empty($row['lead_created_at']) ? strtotime((string)$row['lead_created_at']) : false;
+    $saleTs = !empty($row['sale_at']) ? strtotime((string)$row['sale_at']) : strtotime((string)($row['granted_at'] ?? ''));
+    $row['conversion_seconds'] = ($leadTs && $saleTs && $saleTs >= $leadTs) ? ($saleTs - $leadTs) : null;
+}
+unset($row);
+
 foreach ($rows as $row) {
     $totalSales++;
     $gross = (float)($row['dashboard_gross'] ?? 0);
@@ -182,10 +217,47 @@ foreach ($rows as $row) {
     $daily[$day]['qtd']++;
     $daily[$day]['gross'] += $gross;
     $daily[$day]['net'] += $net;
+
+    $turma = trim((string)($row['turma_codigo'] ?? '')) ?: 'Sem turma';
+    if (!isset($turmaStats[$turma])) $turmaStats[$turma] = ['turma' => $turma, 'qtd' => 0, 'gross' => 0.0, 'net' => 0.0, 'tempo_total' => 0, 'tempo_qtd' => 0];
+    $turmaStats[$turma]['qtd']++;
+    $turmaStats[$turma]['gross'] += $gross;
+    $turmaStats[$turma]['net'] += $net;
+
+    if ($row['conversion_seconds'] !== null) {
+        $seconds = (int)$row['conversion_seconds'];
+        $conversionTimes[] = $seconds;
+        $turmaStats[$turma]['tempo_total'] += $seconds;
+        $turmaStats[$turma]['tempo_qtd']++;
+        $daysToBuy = $seconds / 86400;
+        if ($daysToBuy <= 1) $conversionBuckets['Até 1 dia']++;
+        elseif ($daysToBuy <= 3) $conversionBuckets['2 a 3 dias']++;
+        elseif ($daysToBuy <= 7) $conversionBuckets['4 a 7 dias']++;
+        elseif ($daysToBuy <= 14) $conversionBuckets['8 a 14 dias']++;
+        elseif ($daysToBuy <= 30) $conversionBuckets['15 a 30 dias']++;
+        else $conversionBuckets['Mais de 30 dias']++;
+    }
 }
 ksort($daily);
 $dailyRows = array_values($daily);
+$turmaRows = array_values($turmaStats);
+usort($turmaRows, static fn(array $a, array $b): int => $b['qtd'] <=> $a['qtd']);
+$turmaRows = array_slice($turmaRows, 0, 20);
 $avgTicket = $totalSales > 0 ? $totalGross / $totalSales : 0.0;
+$avgConversionSeconds = $conversionTimes ? (int)round(array_sum($conversionTimes) / count($conversionTimes)) : null;
+$medianConversionSeconds = null;
+if ($conversionTimes) {
+    sort($conversionTimes);
+    $middle = intdiv(count($conversionTimes), 2);
+    $medianConversionSeconds = count($conversionTimes) % 2
+        ? $conversionTimes[$middle]
+        : (int)round(($conversionTimes[$middle - 1] + $conversionTimes[$middle]) / 2);
+}
+$journeyCoverage = $totalSales > 0 ? count($conversionTimes) / $totalSales * 100 : 0.0;
+foreach ($turmaRows as &$turmaRow) {
+    $turmaRow['tempo_medio'] = $turmaRow['tempo_qtd'] > 0 ? (int)round($turmaRow['tempo_total'] / $turmaRow['tempo_qtd']) : null;
+}
+unset($turmaRow);
 
 require_once __DIR__ . '/_header.php';
 ?>
@@ -195,14 +267,15 @@ require_once __DIR__ . '/_header.php';
 .vv-field label{display:block;font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
 .vv-field input,.vv-field select{width:100%;height:40px;border:1px solid var(--border-light);border-radius:10px;background:var(--bg-card);color:var(--text);padding:0 10px}
 .vv-btn{height:40px;border-radius:10px;background:var(--primary);color:#111827;font-weight:900;padding:0 14px}
-.vv-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.vv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
 .vv-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px}
 .vv-k{font-size:12px;color:var(--muted);font-weight:800;text-transform:uppercase}.vv-v{font-size:24px;font-weight:900;margin-top:4px}.vv-note{font-size:12px;color:var(--muted);margin-top:4px}
 .vv-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px}
 .vv-table{width:100%;border-collapse:collapse}.vv-table th,.vv-table td{padding:10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}.vv-table th{font-size:11px;color:var(--muted);text-transform:uppercase}.vv-money{font-weight:900;color:#bbf7d0}.vv-muted{font-size:12px;color:var(--muted)}.vv-empty{padding:20px;color:var(--muted);text-align:center}
 .vv-alert{border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.09);color:#fde68a;border-radius:12px;padding:12px;margin-bottom:14px}
 .vv-chart{height:280px}
-@media(max-width:900px){.vv-filter,.vv-grid{grid-template-columns:1fr 1fr}.vv-filter .vv-wide{grid-column:1/-1}}@media(max-width:640px){.vv-filter,.vv-grid{grid-template-columns:1fr}.vv-table{min-width:860px}.vv-scroll{overflow:auto}}
+.vv-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}.vv-panel-title{margin-bottom:10px}.vv-journey{color:#bfdbfe;font-weight:800}.vv-utm{max-width:260px;overflow-wrap:anywhere}
+@media(max-width:900px){.vv-filter{grid-template-columns:1fr 1fr}.vv-filter .vv-wide{grid-column:1/-1}.vv-chart-grid{grid-template-columns:1fr}}@media(max-width:640px){.vv-filter{grid-template-columns:1fr}.vv-table{min-width:1200px}.vv-scroll{overflow:auto}.vv-chart{height:240px}}
 </style>
 
 <form class="vv-filter" method="get">
@@ -240,11 +313,41 @@ require_once __DIR__ . '/_header.php';
   <div class="vv-card"><div class="vv-k">Valor bruto</div><div class="vv-v"><?= vv_money($totalGross) ?></div><div class="vv-note">Soma de venda</div></div>
   <div class="vv-card"><div class="vv-k">Liquido produtor</div><div class="vv-v"><?= vv_money($totalNet) ?></div><div class="vv-note">Quando houver Hotmart importada</div></div>
   <div class="vv-card"><div class="vv-k">Ticket medio</div><div class="vv-v"><?= vv_money($avgTicket) ?></div><div class="vv-note">Bruto / vendas</div></div>
+  <div class="vv-card"><div class="vv-k">Tempo médio até comprar</div><div class="vv-v"><?= vv_h(vv_duration($avgConversionSeconds)) ?></div><div class="vv-note">Da inscrição à compra vitalícia</div></div>
+  <div class="vv-card"><div class="vv-k">Mediana até comprar</div><div class="vv-v"><?= vv_h(vv_duration($medianConversionSeconds)) ?></div><div class="vv-note">Menos sensível a compras tardias</div></div>
+  <div class="vv-card"><div class="vv-k">Jornadas identificadas</div><div class="vv-v"><?= number_format($journeyCoverage, 1, ',', '.') ?>%</div><div class="vv-note"><?= count($conversionTimes) ?> de <?= (int)$totalSales ?> vendas ligadas à inscrição</div></div>
 </div>
 
-<div class="vv-panel">
-  <div class="vv-k">Vendas por data</div>
-  <div class="vv-chart"><canvas id="vvChart"></canvas></div>
+<div class="vv-chart-grid">
+  <div class="vv-panel" style="margin-bottom:0">
+    <div class="vv-k vv-panel-title">Vendas por dia</div>
+    <div class="vv-chart"><canvas id="vvChart"></canvas></div>
+  </div>
+  <div class="vv-panel" style="margin-bottom:0">
+    <div class="vv-k vv-panel-title">Vendas por turma</div>
+    <div class="vv-chart"><canvas id="vvTurmaChart"></canvas></div>
+  </div>
+</div>
+
+<div class="vv-chart-grid">
+  <div class="vv-panel" style="margin-bottom:0">
+    <div class="vv-k vv-panel-title">Tempo entre inscrição e compra</div>
+    <div class="vv-chart"><canvas id="vvJourneyChart"></canvas></div>
+  </div>
+  <div class="vv-panel" style="margin-bottom:0">
+    <div class="vv-k vv-panel-title">Desempenho por turma</div>
+    <div class="vv-scroll">
+      <table class="vv-table">
+        <thead><tr><th>Turma</th><th>Vendas</th><th>Bruto</th><th>Líquido</th><th>Tempo médio</th></tr></thead>
+        <tbody>
+        <?php foreach ($turmaRows as $turmaRow): ?>
+          <tr><td><strong><?= vv_h((string)$turmaRow['turma']) ?></strong></td><td><?= (int)$turmaRow['qtd'] ?></td><td><?= vv_money((float)$turmaRow['gross']) ?></td><td><?= vv_money((float)$turmaRow['net']) ?></td><td><?= vv_h(vv_duration($turmaRow['tempo_medio'])) ?></td></tr>
+        <?php endforeach; ?>
+        <?php if (!$turmaRows): ?><tr><td colspan="5" class="vv-empty">Sem dados por turma.</td></tr><?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div class="vv-panel">
@@ -258,13 +361,15 @@ require_once __DIR__ . '/_header.php';
           <th>Produto / Oferta</th>
           <th>Valor</th>
           <th>Status</th>
+          <th>Jornada</th>
+          <th>UTMs</th>
           <th>Transacao</th>
           <th>Origem</th>
         </tr>
       </thead>
       <tbody>
       <?php if (!$rows): ?>
-        <tr><td colspan="7" class="vv-empty">Nenhum registro encontrado.</td></tr>
+        <tr><td colspan="9" class="vv-empty">Nenhum registro encontrado.</td></tr>
       <?php endif; ?>
       <?php foreach ($rows as $row): ?>
         <tr>
@@ -284,6 +389,17 @@ require_once __DIR__ . '/_header.php';
             <div class="vv-muted">Liquido: <?= vv_money((float)($row['dashboard_net'] ?? 0)) ?></div>
           </td>
           <td><?= vv_h((string)($row['sale_status'] ?: 'Liberado')) ?></td>
+          <td>
+            <div class="vv-journey"><?= vv_h(vv_duration($row['conversion_seconds'])) ?></div>
+            <div class="vv-muted">Inscrição: <?= vv_h(vv_date_br((string)($row['lead_created_at'] ?? ''))) ?></div>
+          </td>
+          <td class="vv-utm">
+            <strong><?= vv_h((string)($row['utm_source'] ?: 'Orgânico/não informado')) ?></strong>
+            <div class="vv-muted">Medium: <?= vv_h((string)($row['utm_medium'] ?: '-')) ?></div>
+            <div class="vv-muted">Campaign: <?= vv_h((string)($row['utm_campaign'] ?: '-')) ?></div>
+            <div class="vv-muted">Term: <?= vv_h((string)($row['utm_term'] ?: '-')) ?></div>
+            <div class="vv-muted">Content: <?= vv_h((string)($row['utm_content'] ?: '-')) ?></div>
+          </td>
           <td><strong><?= vv_h((string)($row['transaction_code'] ?? '-')) ?></strong></td>
           <td><?= vv_h((string)($row['origem'] ?? '-')) ?></td>
         </tr>
@@ -297,6 +413,11 @@ require_once __DIR__ . '/_header.php';
 const vvLabels = <?= json_encode(array_column($dailyRows, 'date'), JSON_UNESCAPED_UNICODE) ?>;
 const vvQtd = <?= json_encode(array_map(static fn($r) => (int)$r['qtd'], $dailyRows)) ?>;
 const vvGross = <?= json_encode(array_map(static fn($r) => round((float)$r['gross'], 2), $dailyRows)) ?>;
+const vvTurmas = <?= json_encode(array_column($turmaRows, 'turma'), JSON_UNESCAPED_UNICODE) ?>;
+const vvTurmaQtd = <?= json_encode(array_map(static fn($r) => (int)$r['qtd'], $turmaRows)) ?>;
+const vvTurmaGross = <?= json_encode(array_map(static fn($r) => round((float)$r['gross'], 2), $turmaRows)) ?>;
+const vvJourneyLabels = <?= json_encode(array_keys($conversionBuckets), JSON_UNESCAPED_UNICODE) ?>;
+const vvJourneyValues = <?= json_encode(array_values($conversionBuckets)) ?>;
 const vvFmt = (n) => new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL'}).format(n || 0);
 new Chart(document.getElementById('vvChart'), {
   data: {
@@ -316,6 +437,22 @@ new Chart(document.getElementById('vvChart'), {
       count:{beginAtZero:true, position:'right', ticks:{color:'#64748b'}, grid:{drawOnChartArea:false}}
     }
   }
+});
+new Chart(document.getElementById('vvTurmaChart'), {
+  data:{labels:vvTurmas,datasets:[
+    {type:'bar',label:'Vendas',data:vvTurmaQtd,backgroundColor:'rgba(56,189,248,.62)',borderRadius:4,xAxisID:'count'},
+    {type:'line',label:'Valor bruto',data:vvTurmaGross,borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.25,xAxisID:'money'}
+  ]},
+  options:{
+    responsive:true,maintainAspectRatio:false,indexAxis:'y',
+    plugins:{legend:{labels:{color:'#94a3b8'}},tooltip:{callbacks:{label:(c)=>c.dataset.xAxisID==='money'?c.dataset.label+': '+vvFmt(c.parsed.x):c.dataset.label+': '+c.parsed.x}}},
+    scales:{y:{ticks:{color:'#94a3b8'},grid:{display:false}},count:{beginAtZero:true,position:'bottom',ticks:{color:'#64748b'},grid:{color:'rgba(26,37,64,.55)'}},money:{beginAtZero:true,position:'top',ticks:{color:'#22c55e',callback:(v)=>vvFmt(v)},grid:{drawOnChartArea:false}}}
+  }
+});
+new Chart(document.getElementById('vvJourneyChart'), {
+  type:'bar',
+  data:{labels:vvJourneyLabels,datasets:[{label:'Compras',data:vvJourneyValues,backgroundColor:['#38bdf8','#60a5fa','#818cf8','#a78bfa','#c084fc','#e879f9'],borderRadius:5}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',maxRotation:25,minRotation:0},grid:{display:false}},y:{beginAtZero:true,ticks:{color:'#64748b',precision:0},grid:{color:'rgba(26,37,64,.55)'}}}}
 });
 </script>
 
