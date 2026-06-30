@@ -197,7 +197,7 @@ if ($acao !== '') {
         $directManychatFields = trim((string)($_POST['direct_manychat_fields_json'] ?? ''));
         $criar     = isset($_POST['criar_se_nao_existir']) ? 1 : 0;
 
-        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_assunto'=>'retorno_assunto','retorno_mensagem'=>'retorno_mensagem']);
+        if ($mapJson === '') $mapJson = json_encode(['nome'=>'nome','email'=>'email','telefone'=>'telefone','oferta'=>'oferta','utm_source'=>'utm_source','utm_medium'=>'utm_medium','utm_campaign'=>'utm_campaign','utm_term'=>'utm_term','utm_content'=>'utm_content','retorno_data'=>'retorno_data','retorno_tipo'=>'retorno_tipo','retorno_assunto'=>'retorno_assunto','retorno_mensagem'=>'retorno_mensagem']);
         if ($nome === '' || $evento === '') { echo json_encode(['ok'=>false,'msg'=>'Nome e evento são obrigatórios']); exit; }
         if ($evento === 'VIU_AULA' && $lessonId <= 0) { echo json_encode(['ok'=>false,'msg'=>'Selecione a aula']); exit; }
 
@@ -426,6 +426,8 @@ require_once __DIR__ . '/_header.php';
         <label>Evento que será disparado no sistema *</label>
         <select id="iwEvento" onchange="iwAtualizaCamposCondicionais()">
           <option value="INSCRITO">INSCRITO — cria aluno e libera acesso (principal — Hotmart/Kiwify)</option>
+          <option value="INSCRICAO_GRATUITA">INSCRICAO_GRATUITA — cria/atualiza aluno com acesso temporario da turma</option>
+          <option value="INSCRICAO_VITALICIA">INSCRICAO_VITALICIA — cria/atualiza aluno com acesso vitalicio nao pago</option>
           <option value="PRIMEIRO_LOGIN">PRIMEIRO_LOGIN — marca como acessou a plataforma</option>
           <option value="VIU_AULA">VIU_AULA — marca aula como concluída</option>
           <option value="CONCLUIU_TRILHA">CONCLUIU_TRILHA — marca toda a trilha como concluída</option>
@@ -588,7 +590,7 @@ require_once __DIR__ . '/_header.php';
 <script>
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const EV_CLS = {
-    'INSCRITO':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
+    'INSCRITO':'ev-inscrito','INSCRICAO_GRATUITA':'ev-inscrito','INSCRICAO_VITALICIA':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
     'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
 };
 
@@ -663,6 +665,7 @@ function iwNovo() {
     document.getElementById('iwCriarSeNaoExistir').checked = true;
     document.getElementById('iwMap').innerHTML = '';
     iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+    iwAddMap('utm_source','utm_source'); iwAddMap('utm_medium','utm_medium'); iwAddMap('utm_campaign','utm_campaign'); iwAddMap('utm_term','utm_term'); iwAddMap('utm_content','utm_content');
     iwAddMap('transacao','data.purchase.transaction'); iwAddMap('status_pagamento','data.purchase.status');
     iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
@@ -702,6 +705,7 @@ async function iwEditar(id) {
     Object.entries(map).forEach(([k,v]) => iwAddMap(k,v));
     if (!Object.keys(map).length) {
         iwAddMap('nome','nome'); iwAddMap('email','email'); iwAddMap('telefone','telefone'); iwAddMap('oferta','oferta');
+        iwAddMap('utm_source','utm_source'); iwAddMap('utm_medium','utm_medium'); iwAddMap('utm_campaign','utm_campaign'); iwAddMap('utm_term','utm_term'); iwAddMap('utm_content','utm_content');
         iwAddMap('transacao','data.purchase.transaction'); iwAddMap('status_pagamento','data.purchase.status');
         iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     }
@@ -715,7 +719,7 @@ function iwFechar() { document.getElementById('iwFormPanel').style.display = 'no
 function iwAtualizaCamposCondicionais() {
     const ev = document.getElementById('iwEvento').value;
     document.getElementById('iwLessonWrap').style.display = (ev === 'VIU_AULA') ? '' : 'none';
-    document.getElementById('iwTurmaWrap').style.display  = (ev === 'INSCRITO') ? '' : 'none';
+    document.getElementById('iwTurmaWrap').style.display  = (['INSCRITO','INSCRICAO_GRATUITA','INSCRICAO_VITALICIA'].includes(ev)) ? '' : 'none';
 }
 
 function iwAtualizaEventosDiretos(id) {

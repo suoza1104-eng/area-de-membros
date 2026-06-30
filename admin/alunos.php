@@ -6,6 +6,8 @@ require_once __DIR__ . '/../app/retorno_agendamentos.php';
 proteger_admin();
 $pdo = getPDO();
 retorno_ensure_tables($pdo);
+course_access_ensure_schema($pdo);
+enrollment_ensure_schema($pdo);
 $menu       = 'alunos';
 $page_title = 'Alunos';
 
@@ -287,8 +289,15 @@ $hasUtm     = col_ok($pdo,'users','utm_source');
 
 // ── Detecta turmas disponíveis ────────────────────────────────────────────
 $turmas = [];
+$turmaDetails = [];
 if (table_ok($pdo,'turmas') && $colTurma !== '') {
-    $turmas = $pdo->query("SELECT codigo FROM turmas ORDER BY codigo ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $turmaRows = $pdo->query("SELECT codigo, data_live, codigo_live FROM turmas ORDER BY codigo ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($turmaRows as $turmaRow) {
+        $turmaCode = trim((string)($turmaRow['codigo'] ?? ''));
+        if ($turmaCode === '') continue;
+        $turmas[] = $turmaCode;
+        $turmaDetails[$turmaCode] = $turmaRow;
+    }
 }
 
 // ── POST: ações inline ────────────────────────────────────────────────────
@@ -318,7 +327,31 @@ $msgPost = ''; $msgPostTipo = 'ok';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
 
-    if ($acao === 'gerar_cert_manual') {
+    if ($acao === 'liberar_vitalicio_manual') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            if ($uid <= 0) throw new RuntimeException('Aluno invalido.');
+            $transactionCode = 'manual_admin_' . $uid . '_' . bin2hex(random_bytes(8));
+            course_access_grant_lifetime($pdo, $uid, $transactionCode, '', '', [
+                'admin_id'=>$_SESSION['admin_id'] ?? null,
+                'motivo'=>trim((string)($_POST['motivo'] ?? 'Liberacao manual pela equipe')),
+            ], 'admin_alunos', 'manual', false);
+            if (function_exists('adicionar_tag')) {
+                adicionar_tag($uid, 'ACESSO_VITALICIO', 'admin_alunos', null);
+                adicionar_tag($uid, 'INSCRICAO_VITALICIA', 'admin_alunos', null);
+            }
+            disparar_webhooks('INSCRICAO_VITALICIA', $uid, [
+                'origem'=>'admin_alunos', 'tipo_inscricao'=>'vitalicia',
+                'acesso_vitalicio'=>true, 'acesso_pago'=>false, 'concessao'=>'manual',
+            ]);
+            disparar_webhooks('ACESSO_VITALICIO_LIBERADO', $uid, [
+                'origem'=>'admin_alunos', 'acesso_pago'=>false, 'concessao'=>'manual',
+            ]);
+            $msgPost = 'Acesso vitalicio liberado manualmente. Esta concessao nao conta como venda.';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
+    } elseif ($acao === 'gerar_cert_manual') {
         $uid = (int)($_POST['uid'] ?? 0);
         if ($uid <= 0) {
             $msgPost = 'Aluno inválido.'; $msgPostTipo = 'erro';
@@ -927,6 +960,7 @@ require __DIR__ . '/_header.php';
                     <th>Nome / E-mail</th>
                     <th>Telefone</th>
                     <th>Turma</th>
+                    <th>Acesso</th>
                     <th>Tags</th>
                     <th style="text-align:center">Cadastros</th>
                     <th>1° Cadastro</th>
@@ -936,7 +970,7 @@ require __DIR__ . '/_header.php';
             </thead>
             <tbody>
             <?php if (!$alunos): ?>
-                <tr><td colspan="9" style="padding:28px;text-align:center;color:var(--muted)">Nenhum aluno encontrado para os filtros aplicados.</td></tr>
+                <tr><td colspan="10" style="padding:28px;text-align:center;color:var(--muted)">Nenhum aluno encontrado para os filtros aplicados.</td></tr>
             <?php else: ?>
             <?php foreach ($alunos as $i => $a):
                 $tags    = array_filter(array_map('trim', explode('|', (string)($a['tags_lista']??''))));
@@ -951,10 +985,16 @@ require __DIR__ . '/_header.php';
                 $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
                 $retornosAluno = $retornosPorUser[(int)$a['id']] ?? [];
+                $accessStatus = course_access_status($pdo, (int)$a['id']);
+                $accessRemainingDays = isset($accessStatus['remaining_seconds']) && $accessStatus['remaining_seconds'] !== null
+                    ? (int)ceil((int)$accessStatus['remaining_seconds'] / 86400)
+                    : null;
                 $liveAtual = trim((string)($a['turma_live_at'] ?? ''));
                 if ($liveAtual === '') $liveAtual = trim((string)($a['data_live'] ?? ''));
+                if ($liveAtual === '') $liveAtual = trim((string)($turmaDetails[$turma]['data_live'] ?? ''));
                 $liveAtualBr = fmtDtHora($liveAtual);
                 $codigoLiveAtual = trim((string)($a['codigo_live'] ?? ''));
+                if ($codigoLiveAtual === '') $codigoLiveAtual = trim((string)($turmaDetails[$turma]['codigo_live'] ?? ''));
                 if ($codigoLiveAtual === '') $codigoLiveAtual = $turma;
                 $systemVars = [
                     'user.id' => ['value' => (string)($a['id'] ?? ''), 'desc' => 'ID interno do aluno. Formato: numero.'],
@@ -985,6 +1025,9 @@ require __DIR__ . '/_header.php';
                     'extra.qtd_inscricoes' => ['value' => (string)$qtd, 'desc' => 'Quantidade de inscricoes detectadas. Formato: numero.'],
                     'extra.primeira_inscricao' => ['value' => $primCad, 'desc' => 'Primeira inscricao. Formato banco/data.'],
                     'extra.ultima_inscricao' => ['value' => $ultCad, 'desc' => 'Ultima inscricao. Formato banco/data.'],
+                    'extra.acesso.vitalicio' => ['value' => !empty($accessStatus['lifetime']) ? '1' : '0', 'desc' => 'Indica se o aluno possui acesso vitalicio.'],
+                    'extra.acesso.pago' => ['value' => !empty($accessStatus['is_paid']) ? '1' : '0', 'desc' => 'Indica se o vitalicio veio de pagamento real.'],
+                    'extra.acesso.dias_restantes' => ['value' => $accessRemainingDays !== null ? (string)$accessRemainingDays : '', 'desc' => 'Dias restantes do acesso temporario.'],
                     'extra.certificado.codigo' => ['value' => $certCod, 'desc' => 'Codigo publico do certificado. Formato: texto.'],
                     'extra.certificado.pdf_url' => ['value' => $certPdf, 'desc' => 'URL do PDF do certificado. Formato: URL.'],
                     'extra.certificado.emitido_em' => ['value' => $certEmitido, 'desc' => 'Data de emissao do certificado. Formato banco.'],
@@ -1001,6 +1044,13 @@ require __DIR__ . '/_header.php';
                     <?php if ($turma !== ''): ?>
                     <span class="badge badge-info" style="font-size:11px"><?= h($turma) ?></span>
                     <?php else: ?><span style="color:var(--dim);font-size:12px">—</span><?php endif; ?>
+                </td>
+                <td style="font-size:11px;white-space:nowrap">
+                    <?php if (!empty($accessStatus['lifetime'])): ?>
+                        <span class="badge" style="color:var(--success);border-color:var(--success)">Vitalicio<?= !empty($accessStatus['is_paid']) ? ' pago' : '' ?></span>
+                    <?php elseif (!empty($accessStatus['enabled'])): ?>
+                        <span style="color:<?= !empty($accessStatus['expired']) ? 'var(--danger)' : 'var(--muted)' ?>"><?= $accessRemainingDays !== null ? $accessRemainingDays . ' dia(s)' : '-' ?></span>
+                    <?php else: ?><span style="color:var(--dim)">Sem prazo</span><?php endif; ?>
                 </td>
                 <td style="max-width:180px">
                     <?php $shown=0; foreach ($tags as $tag):
@@ -1024,7 +1074,7 @@ require __DIR__ . '/_header.php';
                 </td>
             </tr>
             <tr id="exp-<?= $i ?>">
-                <td colspan="9" style="padding:0;border-bottom:none">
+                <td colspan="10" style="padding:0;border-bottom:none">
                     <div class="expand-detail" id="det-<?= $i ?>">
                         <!-- UTMs + cadastros -->
                         <div>
@@ -1056,6 +1106,26 @@ require __DIR__ . '/_header.php';
                         </div>
                         <!-- Certificado + ações -->
                         <div>
+                            <div class="det-title">Acesso ao curso</div>
+                            <?php if (!empty($accessStatus['lifetime'])): ?>
+                                <div class="det-row"><span class="det-key">Modalidade</span><span class="det-val" style="color:var(--success)">Vitalicio</span></div>
+                                <div class="det-row"><span class="det-key">Origem</span><span class="det-val"><?= !empty($accessStatus['is_paid']) ? 'Pagamento confirmado' : h((string)($accessStatus['grant_type'] ?? 'concessao')) ?></span></div>
+                                <div class="det-row"><span class="det-key">Liberado em</span><span class="det-val"><?= h(fmtDtHora((string)($accessStatus['lifetime_granted_at'] ?? ''))) ?></span></div>
+                            <?php elseif (!empty($accessStatus['enabled'])): ?>
+                                <div class="det-row"><span class="det-key">Plano</span><span class="det-val">Gratuito por <?= (int)($accessStatus['access_days'] ?? 0) ?> dias</span></div>
+                                <div class="det-row"><span class="det-key">Restante</span><span class="det-val"><?= $accessRemainingDays !== null ? $accessRemainingDays . ' dia(s)' : '-' ?></span></div>
+                                <div class="det-row"><span class="det-key">Expira em</span><span class="det-val"><?= h(fmtDtHora((string)($accessStatus['expires_at'] ?? ''))) ?></span></div>
+                            <?php else: ?>
+                                <div style="font-size:12px;color:var(--dim)">Prazo de acesso nao configurado para a turma.</div>
+                            <?php endif; ?>
+                            <?php if (empty($accessStatus['lifetime'])): ?>
+                            <form method="post" style="margin:10px 0 16px" onsubmit="return confirm('Liberar acesso vitalicio manualmente? Esta acao nao sera contabilizada como venda.')">
+                                <input type="hidden" name="acao" value="liberar_vitalicio_manual">
+                                <input type="hidden" name="uid" value="<?=(int)$a['id']?>">
+                                <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--success)">Liberar vitalicio manualmente</button>
+                            </form>
+                            <?php endif; ?>
+
                             <div class="det-title">Certificado</div>
                             <?php if($certUrl): ?>
                             <div class="det-row"><span class="det-key">Emitido em</span><span class="det-val"><?=h(fmtDtHora($certEmitido))?></span></div>

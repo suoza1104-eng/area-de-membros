@@ -88,7 +88,9 @@ if ($mode === 'lifetime') {
         ':ini' => $ini . ' 00:00:00',
         ':fim' => $fim . ' 23:59:59',
     ];
-    $where = ["cla.granted_at BETWEEN :ini AND :fim"];
+    // Indicadores comerciais contam somente liberacoes originadas de pagamento real.
+    // Concessoes manuais e inscricoes vitalicias administrativas permanecem fora daqui.
+    $where = ["cla.granted_at BETWEEN :ini AND :fim", "cla.is_paid = 1"];
     if ($q !== '') {
         $where[] = "(cla.offer_code LIKE :q OR cla.transaction_code LIKE :q OR cla.turma_codigo LIKE :q OR u.nome LIKE :q OR u.email LIKE :q)";
         $params[':q'] = '%' . $q . '%';
@@ -102,7 +104,7 @@ if ($mode === 'lifetime') {
     $sql = "
         SELECT
             cla.id, cla.user_id, COALESCE(NULLIF(cla.turma_codigo,''),u.codigo_turma) AS turma_codigo, cla.offer_code, cla.transaction_code,
-            cla.payload_json, cla.granted_at,
+            cla.payload_json, cla.granted_at, cla.grant_type, cla.is_paid, cla.source AS grant_source,
             u.nome AS aluno_nome, u.email AS aluno_email, u.telefone AS aluno_telefone,
             u.created_at AS lead_created_at,
             u.utm_source, u.utm_medium, u.utm_campaign, u.utm_term, u.utm_content,

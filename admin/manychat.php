@@ -18,6 +18,9 @@ mc_ensure_tables($pdo);
 
 $eventOptions = [
     'INSCRITO',
+    'INSCRICAO_GRATUITA',
+    'INSCRICAO_VITALICIA',
+    'ACESSO_VITALICIO_LIBERADO',
     'REINSCRITO',
     'PRIMEIRO_LOGIN',
     'ASSISTIU_ALGUMA_AULA',

@@ -265,6 +265,9 @@ sf_admin_ensure_live_dispatch_logs($pdo);
 // ===== eventos (mesmos do Webhooks) =====
 $eventOptions = [
     'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
+    'INSCRICAO_GRATUITA'    => 'Aluno recebeu inscricao gratuita com prazo da turma',
+    'INSCRICAO_VITALICIA'   => 'Aluno recebeu acesso vitalicio pago ou concedido',
+    'ACESSO_VITALICIO_LIBERADO' => 'Acesso vitalicio foi liberado para o aluno',
     'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
     'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
     'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
@@ -320,6 +323,10 @@ $fieldOptions = [
         'extra.data.live'                 => 'Data da live atual em BR (alias de extra.data_live)',
         'extra.data_live_iso'             => 'Data da live atual em banco (Y-m-d H:i:s)',
         'extra.data.live_iso'             => 'Data da live atual em banco (alias de extra.data_live_iso)',
+        'extra.tipo_inscricao'            => 'Tipo da inscricao: gratuita ou vitalicia',
+        'extra.acesso_vitalicio'          => '1 quando o aluno possui acesso vitalicio',
+        'extra.acesso_pago'               => '1 somente quando o vitalicio veio de pagamento real',
+        'extra.acesso.dias_restantes'     => 'Dias restantes do acesso temporario',
         'extra.live_url'                  => 'Link da sala/live quando configurado',
         'extra.reagendamento_id'          => 'ID do histórico de reagendamento',
         'extra.qtd_inscricoes'            => 'Total de inscrições do aluno',
@@ -376,6 +383,8 @@ $fieldOptions = [
 $eventHints = [
     'RETORNO_AGENDADO'   => 'Extras disponiveis: <code>extra.tipo</code>, <code>extra.scheduled_at</code>, <code>extra.assunto</code>, <code>extra.mensagem</code>, <code>extra.mensagem_renderizada</code>, <code>extra.agendamento_id</code>',
     'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
+    'INSCRICAO_GRATUITA' => 'Disponiveis: <code>extra.tipo_inscricao</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.acesso_vitalicio</code> (=0), <code>extra.acesso_pago</code> (=0)',
+    'INSCRICAO_VITALICIA' => 'Disponiveis: <code>extra.tipo_inscricao</code>, <code>extra.codigo_turma</code>, <code>extra.acesso_vitalicio</code> (=1), <code>extra.acesso_pago</code>',
     'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
     'PRIMEIRO_LOGIN'     => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a plataforma. Tag PRIMEIRO_LOGIN aplicada automaticamente. Disponíveis: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.magic_link</code>',
     'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
@@ -1042,6 +1051,18 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="INSCRITO">
                                         <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="INSCRICAO_GRATUITA">
+                                        <strong>INSCRICAO_GRATUITA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Aluno recebeu acesso temporario conforme o prazo configurado na turma.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="INSCRICAO_VITALICIA">
+                                        <strong>INSCRICAO_VITALICIA <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>Aluno recebeu acesso vitalicio por pagamento ou concessao.</em>
+                                    </div>
+                                    <div class="evento-opcao" data-value="ACESSO_VITALICIO_LIBERADO">
+                                        <strong>ACESSO_VITALICIO_LIBERADO <span class="ev-pill aluno">Aluno</span></strong>
+                                        <em>O acesso vitalicio foi efetivamente liberado.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="REINSCRITO">
                                         <strong>REINSCRITO <span class="ev-pill aluno">Aluno</span></strong>

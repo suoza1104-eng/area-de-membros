@@ -40,6 +40,8 @@ function course_access_ensure_schema(PDO $pdo): void
             offer_code VARCHAR(200) NULL,
             transaction_code VARCHAR(200) NOT NULL,
             source VARCHAR(40) NOT NULL DEFAULT 'webhook',
+            grant_type VARCHAR(30) NOT NULL DEFAULT 'paid',
+            is_paid TINYINT(1) NOT NULL DEFAULT 1,
             payload_json LONGTEXT NULL,
             granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uk_course_lifetime_transaction (transaction_code),
@@ -47,6 +49,12 @@ function course_access_ensure_schema(PDO $pdo): void
             KEY idx_course_lifetime_turma (turma_codigo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    if (!course_access_column_exists($pdo, 'course_lifetime_access', 'grant_type')) {
+        try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN grant_type VARCHAR(30) NOT NULL DEFAULT 'paid' AFTER source"); } catch (Throwable $e) {}
+    }
+    if (!course_access_column_exists($pdo, 'course_lifetime_access', 'is_paid')) {
+        try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN is_paid TINYINT(1) NOT NULL DEFAULT 1 AFTER grant_type"); } catch (Throwable $e) {}
+    }
     $done = true;
 }
 
@@ -103,6 +111,7 @@ function course_access_checkout_url(string $baseUrl, array $user): string
 
 function course_access_status(PDO $pdo, int $userId): array
 {
+    course_access_ensure_schema($pdo);
     $default = [
         'enabled' => false,
         'allowed' => true,
@@ -116,6 +125,10 @@ function course_access_status(PDO $pdo, int $userId): array
         'countdown_enabled' => false,
         'turma_codigo' => '',
         'offer_codes' => [],
+        'access_days' => null,
+        'grant_type' => null,
+        'is_paid' => false,
+        'grant_source' => null,
     ];
     if ($userId <= 0) return $default;
 
@@ -142,7 +155,7 @@ function course_access_status(PDO $pdo, int $userId): array
         $default['offer_codes'] = course_access_offer_codes((string)($turma['lifetime_offer_codes'] ?? ''));
         $default['countdown_enabled'] = (int)($turma['access_countdown_enabled'] ?? 1) === 1;
 
-        $st = $pdo->prepare("SELECT granted_at, transaction_code, offer_code
+        $st = $pdo->prepare("SELECT granted_at, transaction_code, offer_code, source, grant_type, is_paid
             FROM course_lifetime_access
             WHERE user_id = :user_id
             ORDER BY granted_at DESC, id DESC
@@ -152,6 +165,9 @@ function course_access_status(PDO $pdo, int $userId): array
             $default['lifetime'] = true;
             $default['lifetime_granted_at'] = $grant['granted_at'] ?? null;
             $default['lifetime_transaction_code'] = $grant['transaction_code'] ?? null;
+            $default['grant_type'] = $grant['grant_type'] ?? 'paid';
+            $default['is_paid'] = (int)($grant['is_paid'] ?? 1) === 1;
+            $default['grant_source'] = $grant['source'] ?? null;
             return $default;
         }
 
@@ -159,6 +175,7 @@ function course_access_status(PDO $pdo, int $userId): array
         $days = max(1, (int)($turma['access_deadline_days'] ?? 30));
         $startMode = (string)($turma['access_deadline_start'] ?? 'cadastro');
         $default['enabled'] = $enabled;
+        $default['access_days'] = $days;
         if (!$enabled) return $default;
 
         $startAt = null;
@@ -209,7 +226,9 @@ function course_access_grant_lifetime(
     string $offerCode = '',
     string $turmaCodigo = '',
     array $payload = [],
-    string $source = 'webhook'
+    string $source = 'webhook',
+    string $grantType = 'paid',
+    bool $isPaid = true
 ): bool {
     course_access_ensure_schema($pdo);
     $transactionCode = trim($transactionCode);
@@ -223,14 +242,16 @@ function course_access_grant_lifetime(
     }
     $st = $pdo->prepare("
         INSERT INTO course_lifetime_access
-            (user_id, turma_codigo, offer_code, transaction_code, source, payload_json, granted_at)
+            (user_id, turma_codigo, offer_code, transaction_code, source, grant_type, is_paid, payload_json, granted_at)
         VALUES
-            (:user_id, :turma_codigo, :offer_code, :transaction_code, :source, :payload_json, NOW())
+            (:user_id, :turma_codigo, :offer_code, :transaction_code, :source, :grant_type, :is_paid, :payload_json, NOW())
         ON DUPLICATE KEY UPDATE
             user_id = VALUES(user_id),
             turma_codigo = VALUES(turma_codigo),
             offer_code = VALUES(offer_code),
             source = VALUES(source),
+            grant_type = VALUES(grant_type),
+            is_paid = VALUES(is_paid),
             payload_json = VALUES(payload_json)
     ");
     return $st->execute([
@@ -239,6 +260,8 @@ function course_access_grant_lifetime(
         ':offer_code' => $offerCode !== '' ? $offerCode : null,
         ':transaction_code' => $transactionCode,
         ':source' => $source !== '' ? $source : 'webhook',
+        ':grant_type' => $grantType !== '' ? $grantType : ($isPaid ? 'paid' : 'integration'),
+        ':is_paid' => $isPaid ? 1 : 0,
         ':payload_json' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
     ]);
 }

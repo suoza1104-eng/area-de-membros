@@ -198,6 +198,11 @@ try {
         'oferta' => 'oferta',
         'transacao' => 'data.purchase.transaction',
         'status_pagamento' => 'data.purchase.status',
+        'utm_source' => 'utm_source',
+        'utm_medium' => 'utm_medium',
+        'utm_campaign' => 'utm_campaign',
+        'utm_term' => 'utm_term',
+        'utm_content' => 'utm_content',
         'retorno_data' => 'retorno_data',
         'retorno_tipo' => 'retorno_tipo',
         'retorno_assunto' => 'retorno_assunto',
@@ -229,6 +234,16 @@ try {
             if (!empty($lifetimeAttempt['granted'])) {
                 $uid = (int)($lifetimeAttempt['user_id'] ?? 0);
                 if ($uid > 0) {
+                    $paidRegistration = enrollment_register($pdo, [
+                        'nome'=>$nome, 'email'=>$email, 'telefone'=>$telefone,
+                        'codigo_turma'=>(string)($lifetimeAttempt['turma_codigo'] ?? ''),
+                        'access_type'=>'lifetime', 'source'=>'inbound_webhook',
+                        'offer_code'=>$ofertaRecebida,
+                        'transaction_code'=>(string)($lifetimeAttempt['transaction_code'] ?? ''),
+                        'grant_type'=>'paid', 'is_paid'=>true, 'payload'=>$payload,
+                    ]);
+                    iw_disparar_integracoes($pdo, $ihw, (string)$paidRegistration['event'], $uid, (array)$paidRegistration['extras']);
+                    iw_disparar_integracoes($pdo, $ihw, 'INSCRICAO_VITALICIA', $uid, (array)$paidRegistration['extras']);
                     iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $uid, [
                         'origem' => 'inbound_webhook',
                         'codigo_turma' => (string)($lifetimeAttempt['turma_codigo'] ?? ''),
@@ -249,6 +264,66 @@ try {
     }
 
     // Localiza usuário existente
+    if (in_array((string)$ihw['evento'], ['INSCRITO', 'INSCRICAO_GRATUITA', 'INSCRICAO_VITALICIA', 'LIBERAR_ACESSO_VITALICIO'], true)) {
+        $isPaidLifetime = (string)$ihw['evento'] === 'LIBERAR_ACESSO_VITALICIO';
+        $accessType = in_array((string)$ihw['evento'], ['INSCRICAO_VITALICIA', 'LIBERAR_ACESSO_VITALICIO'], true) ? 'lifetime' : 'free';
+        $transactionCode = '';
+        $registrationTurmaCode = trim((string)($ihw['codigo_turma'] ?? ''));
+        if ($isPaidLifetime && $registrationTurmaCode === '') {
+            $purchaseUser = enrollment_find_user($pdo, $email, $telefone);
+            $registrationTurmaCode = $purchaseUser ? course_access_user_turma_code($purchaseUser) : '';
+        }
+        if ($isPaidLifetime) {
+            $statusPagamento = iw_get_first_mapped($payload, $map, ['status_pagamento', 'status']);
+            $eventoPagamento = (string)($payload['event'] ?? $payload['evento'] ?? '');
+            if (!course_access_purchase_is_approved($statusPagamento, $eventoPagamento)) {
+                throw new RuntimeException('Pagamento ainda nao aprovado.');
+            }
+            $transactionCode = iw_get_first_mapped($payload, $map, ['transacao', 'transaction', 'transaction_code']);
+            if ($transactionCode === '') throw new RuntimeException('Webhook sem codigo de transacao.');
+            $turmaValidacao = enrollment_find_turma($pdo, $registrationTurmaCode);
+            $offers = course_access_offer_codes((string)($turmaValidacao['lifetime_offer_codes'] ?? ''));
+            if ($ofertaRecebida === '' || !in_array($ofertaRecebida, $offers, true)) {
+                throw new RuntimeException('Oferta recebida nao libera acesso vitalicio nesta turma.');
+            }
+        }
+        $registration = enrollment_register($pdo, [
+            'nome'=>$nome, 'email'=>$email, 'telefone'=>$telefone,
+            'codigo_turma'=>$registrationTurmaCode,
+            'utm_source'=>iw_get_first_mapped($payload, $map, ['utm_source']),
+            'utm_medium'=>iw_get_first_mapped($payload, $map, ['utm_medium']),
+            'utm_campaign'=>iw_get_first_mapped($payload, $map, ['utm_campaign']),
+            'utm_term'=>iw_get_first_mapped($payload, $map, ['utm_term']),
+            'utm_content'=>iw_get_first_mapped($payload, $map, ['utm_content']),
+            'access_type'=>$accessType, 'source'=>'inbound_webhook',
+            'offer_code'=>$ofertaRecebida,
+            'transaction_code'=>$transactionCode,
+            'grant_type'=>$isPaidLifetime ? 'paid' : 'integration',
+            'is_paid'=>$isPaidLifetime,
+            'payload'=>$payload,
+        ]);
+        $userId = (int)$registration['user_id'];
+        $codigoTurmaCfg = (string)$registration['codigo_turma'];
+        if (function_exists('adicionar_tag') && !empty($ihw['tag_extra'])) {
+            adicionar_tag($userId, (string)$ihw['tag_extra'], 'inbound_webhook', (int)$ihw['id']);
+        }
+        iw_disparar_integracoes($pdo, $ihw, (string)$registration['event'], $userId, (array)$registration['extras']);
+        iw_disparar_integracoes($pdo, $ihw, (string)$registration['access_event'], $userId, (array)$registration['extras']);
+        if ($accessType === 'lifetime') {
+            iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $userId, (array)$registration['extras']);
+        }
+        iw_disparar_eventos_diretos($pdo, $ihw, $userId, [
+            'origem'=>'inbound_webhook', 'inbound_id'=>(int)$ihw['id'],
+            'evento_base'=>(string)$ihw['evento'], 'codigo_turma'=>$codigoTurmaCfg,
+            'payload_raw'=>$payload,
+        ]);
+        $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='processado', user_id=:u, processado_em=NOW() WHERE id=:i")
+            ->execute([':u'=>$userId, ':i'=>$recId]);
+        $pdo->prepare("UPDATE inbound_webhooks SET total_recebidos = total_recebidos + 1 WHERE id = :i")
+            ->execute([':i'=>(int)$ihw['id']]);
+        exit;
+    }
+
     $userId = 0;
     if ($email !== '') {
         $st = $pdo->prepare("SELECT id FROM users WHERE email = :e LIMIT 1");

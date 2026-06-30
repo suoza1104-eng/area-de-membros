@@ -357,6 +357,9 @@ try {
         'turma_anterior'           => $turmaAnterior,
         'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
     ];
+    $extras['tipo_inscricao'] = 'gratuita';
+    $extras['acesso_vitalicio'] = false;
+    $extras['acesso_pago'] = false;
 
     // tarefas secundárias depois da resposta
     if ($foi_cadastrado) {
@@ -441,6 +444,16 @@ try {
                 'user_id' => $user_id, 'erro' => $e->getMessage(),
             ]);
         }
+    }
+
+    try {
+        if (function_exists('disparar_webhooks')) {
+            disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao disparar INSCRICAO_GRATUITA', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
     }
 
     exit;
