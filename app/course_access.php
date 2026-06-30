@@ -109,6 +109,20 @@ function course_access_checkout_url(string $baseUrl, array $user): string
     return $baseUrl . $separator . http_build_query($params, '', '&', PHP_QUERY_RFC3986) . $fragment;
 }
 
+function course_access_lifetime_entitlement(PDO $pdo, int $userId): ?array
+{
+    if ($userId <= 0) return null;
+    course_access_ensure_schema($pdo);
+    $st = $pdo->prepare("SELECT granted_at, transaction_code, offer_code, source, grant_type, is_paid
+        FROM course_lifetime_access
+        WHERE user_id = :user_id
+        ORDER BY is_paid DESC, granted_at DESC, id DESC
+        LIMIT 1");
+    $st->execute([':user_id' => $userId]);
+    $grant = $st->fetch(PDO::FETCH_ASSOC);
+    return $grant ?: null;
+}
+
 function course_access_status(PDO $pdo, int $userId): array
 {
     course_access_ensure_schema($pdo);
@@ -139,6 +153,20 @@ function course_access_status(PDO $pdo, int $userId): array
         if (!$user) return $default;
 
         $turmaCodigo = course_access_user_turma_code($user);
+        $default['turma_codigo'] = $turmaCodigo;
+
+        // O vitalicio pertence ao aluno, nao a uma turma. Registros pagos sao
+        // priorizados para que uma concessao manual posterior nao apague a origem paga.
+        $grant = course_access_lifetime_entitlement($pdo, $userId);
+        if ($grant) {
+            $default['lifetime'] = true;
+            $default['lifetime_granted_at'] = $grant['granted_at'] ?? null;
+            $default['lifetime_transaction_code'] = $grant['transaction_code'] ?? null;
+            $default['grant_type'] = (int)($grant['is_paid'] ?? 0) === 1 ? 'paid' : ($grant['grant_type'] ?? 'manual');
+            $default['is_paid'] = (int)($grant['is_paid'] ?? 0) === 1;
+            $default['grant_source'] = $grant['source'] ?? null;
+        }
+
         if ($turmaCodigo === '') return $default;
 
         $st = $pdo->prepare("SELECT * FROM turmas WHERE codigo = :codigo LIMIT 1");
@@ -146,7 +174,6 @@ function course_access_status(PDO $pdo, int $userId): array
         $turma = $st->fetch(PDO::FETCH_ASSOC);
         if (!$turma) return $default;
 
-        $default['turma_codigo'] = $turmaCodigo;
         $default['checkout_url'] = course_access_checkout_url(
             (string)($turma['lifetime_checkout_url'] ?? ''),
             $user
@@ -155,21 +182,7 @@ function course_access_status(PDO $pdo, int $userId): array
         $default['offer_codes'] = course_access_offer_codes((string)($turma['lifetime_offer_codes'] ?? ''));
         $default['countdown_enabled'] = (int)($turma['access_countdown_enabled'] ?? 1) === 1;
 
-        $st = $pdo->prepare("SELECT granted_at, transaction_code, offer_code, source, grant_type, is_paid
-            FROM course_lifetime_access
-            WHERE user_id = :user_id
-            ORDER BY granted_at DESC, id DESC
-            LIMIT 1");
-        $st->execute([':user_id' => $userId]);
-        if ($grant = $st->fetch(PDO::FETCH_ASSOC)) {
-            $default['lifetime'] = true;
-            $default['lifetime_granted_at'] = $grant['granted_at'] ?? null;
-            $default['lifetime_transaction_code'] = $grant['transaction_code'] ?? null;
-            $default['grant_type'] = $grant['grant_type'] ?? 'paid';
-            $default['is_paid'] = (int)($grant['is_paid'] ?? 1) === 1;
-            $default['grant_source'] = $grant['source'] ?? null;
-            return $default;
-        }
+        if ($grant) return $default;
 
         $enabled = (int)($turma['access_deadline_enabled'] ?? 0) === 1;
         $days = max(1, (int)($turma['access_deadline_days'] ?? 30));

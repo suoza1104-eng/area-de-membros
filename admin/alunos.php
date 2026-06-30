@@ -331,6 +331,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uid = (int)($_POST['uid'] ?? 0);
         try {
             if ($uid <= 0) throw new RuntimeException('Aluno invalido.');
+            $currentAccess = course_access_status($pdo, $uid);
+            if (!empty($currentAccess['lifetime'])) {
+                throw new RuntimeException(!empty($currentAccess['is_paid'])
+                    ? 'Este aluno ja possui acesso vitalicio pago.'
+                    : 'Este aluno ja possui acesso vitalicio concedido.');
+            }
             $transactionCode = 'manual_admin_' . $uid . '_' . bin2hex(random_bytes(8));
             course_access_grant_lifetime($pdo, $uid, $transactionCode, '', '', [
                 'admin_id'=>$_SESSION['admin_id'] ?? null,
@@ -1027,6 +1033,7 @@ require __DIR__ . '/_header.php';
                     'extra.ultima_inscricao' => ['value' => $ultCad, 'desc' => 'Ultima inscricao. Formato banco/data.'],
                     'extra.acesso.vitalicio' => ['value' => !empty($accessStatus['lifetime']) ? '1' : '0', 'desc' => 'Indica se o aluno possui acesso vitalicio.'],
                     'extra.acesso.pago' => ['value' => !empty($accessStatus['is_paid']) ? '1' : '0', 'desc' => 'Indica se o vitalicio veio de pagamento real.'],
+                    'extra.tipo_inscricao' => ['value' => !empty($accessStatus['lifetime']) ? 'vitalicia' : 'gratuita', 'desc' => 'Tipo efetivo do acesso atual do aluno.'],
                     'extra.acesso.dias_restantes' => ['value' => $accessRemainingDays !== null ? (string)$accessRemainingDays : '', 'desc' => 'Dias restantes do acesso temporario.'],
                     'extra.certificado.codigo' => ['value' => $certCod, 'desc' => 'Codigo publico do certificado. Formato: texto.'],
                     'extra.certificado.pdf_url' => ['value' => $certPdf, 'desc' => 'URL do PDF do certificado. Formato: URL.'],

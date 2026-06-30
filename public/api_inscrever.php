@@ -146,6 +146,7 @@ try {
     }
 
     $pdo = getPDO();
+    enrollment_ensure_schema($pdo);
 
     // Garante existência da tabela de histórico de inscrições
     try {
@@ -193,6 +194,11 @@ try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :e LIMIT 1");
     $stmt->execute([':e' => $email]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $turmaAnteriorAtual = $user ? course_access_user_turma_code($user) : '';
+    $reinscricaoMesmaTurma = $user && $turmaAnteriorAtual !== '' && $turmaAnteriorAtual === (string)$codigo_turma;
+    $renovouPrazo = !$reinscricaoMesmaTurma;
+    $priorLifetimeGrant = $user ? course_access_lifetime_entitlement($pdo, (int)$user['id']) : null;
+    $logAccessType = $priorLifetimeGrant ? 'lifetime' : 'free';
 
     if ($user) {
         $upd = $pdo->prepare("
@@ -272,13 +278,13 @@ try {
     }
 
     // Historiza a inscrição (nova ou re-inscrição) — dentro da mesma transação
-    if ($user_id > 0) {
+    if ($user_id > 0 && $renovouPrazo) {
         try {
             $logIns = $pdo->prepare("
                 INSERT INTO inscricao_logs
-                    (user_id, codigo_turma, utm_source, utm_medium, utm_campaign, utm_term, utm_content, is_novo, created_at)
+                    (user_id, codigo_turma, utm_source, utm_medium, utm_campaign, utm_term, utm_content, is_novo, access_type, source, created_at)
                 VALUES
-                    (:uid, :ct, :us, :um, :uc, :ut, :uco, :novo, NOW())
+                    (:uid, :ct, :us, :um, :uc, :ut, :uco, :novo, :access_type, :source, NOW())
             ");
             $logIns->execute([
                 ':uid'  => $user_id,
@@ -289,6 +295,8 @@ try {
                 ':ut'   => $utm_term,
                 ':uco'  => $utm_content,
                 ':novo' => $foi_cadastrado ? 1 : 0,
+                ':access_type' => $logAccessType,
+                ':source' => 'formulario',
             ]);
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao registrar inscricao_log', [
@@ -357,9 +365,12 @@ try {
         'turma_anterior'           => $turmaAnterior,
         'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
     ];
-    $extras['tipo_inscricao'] = 'gratuita';
-    $extras['acesso_vitalicio'] = false;
-    $extras['acesso_pago'] = false;
+    $effectiveAccess = course_access_status($pdo, $user_id);
+    $extras['tipo_inscricao'] = !empty($effectiveAccess['lifetime']) ? 'vitalicia' : 'gratuita';
+    $extras['tipo_inscricao_solicitada'] = 'gratuita';
+    $extras['acesso_vitalicio'] = !empty($effectiveAccess['lifetime']);
+    $extras['acesso_pago'] = !empty($effectiveAccess['is_paid']);
+    $extras['reinscricao_renovou_prazo'] = $renovouPrazo;
 
     // tarefas secundárias depois da resposta
     if ($foi_cadastrado) {
@@ -446,14 +457,15 @@ try {
         }
     }
 
-    try {
-        if (function_exists('disparar_webhooks')) {
-            disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+    if (empty($effectiveAccess['lifetime']) && $renovouPrazo) {
+        try {
+            if (function_exists('adicionar_tag')) adicionar_tag($user_id, 'INSCRICAO_GRATUITA', 'inscricao', null);
+            if (function_exists('disparar_webhooks')) disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao disparar INSCRICAO_GRATUITA', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
         }
-    } catch (Throwable $e) {
-        api_safe_log('warning', 'api_inscrever', 'Falha ao disparar INSCRICAO_GRATUITA', [
-            'user_id' => $user_id, 'erro' => $e->getMessage(),
-        ]);
     }
 
     exit;

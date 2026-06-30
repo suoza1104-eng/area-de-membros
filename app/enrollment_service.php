@@ -135,6 +135,10 @@ function enrollment_register(PDO $pdo, array $input): array
     try {
         $existing = enrollment_find_user($pdo, $email, $telefone);
         $isNew = !$existing;
+        $oldTurmaCodigo = $existing ? course_access_user_turma_code($existing) : '';
+        $priorLifetimeGrant = $existing ? course_access_lifetime_entitlement($pdo, (int)$existing['id']) : null;
+        $hadLifetime = $priorLifetimeGrant !== null;
+        $sameTurma = !$isNew && $oldTurmaCodigo !== '' && $oldTurmaCodigo === $codigoTurma;
         if ($existing) {
             $sets = [];
             $params = [':id' => (int)$existing['id']];
@@ -181,25 +185,25 @@ function enrollment_register(PDO $pdo, array $input): array
             $userId = (int)$pdo->lastInsertId();
         }
 
-        $pdo->prepare("INSERT INTO inscricao_logs
-            (user_id,codigo_turma,utm_source,utm_medium,utm_campaign,utm_term,utm_content,is_novo,access_type,source,created_at)
-            VALUES (:uid,:turma,:us,:um,:uc,:ut,:uco,:novo,:access_type,:source,NOW())")
-            ->execute([
-                ':uid'=>$userId, ':turma'=>$codigoTurma, ':us'=>$utm['utm_source'] ?: null,
-                ':um'=>$utm['utm_medium'] ?: null, ':uc'=>$utm['utm_campaign'] ?: null,
-                ':ut'=>$utm['utm_term'] ?: null, ':uco'=>$utm['utm_content'] ?: null,
-                ':novo'=>$isNew ? 1 : 0, ':access_type'=>$accessType, ':source'=>$source,
-            ]);
+        // Reenvio gratuito para a mesma turma nao renova o prazo. Nova turma,
+        // primeira inscricao e conversao vitalicia continuam sendo historizadas.
+        $renewedAccess = $isNew || !$sameTurma || $accessType === 'lifetime' || !empty($input['force_renew']);
+        if ($renewedAccess) {
+            $logAccessType = ($accessType === 'lifetime' || $hadLifetime) ? 'lifetime' : 'free';
+            $pdo->prepare("INSERT INTO inscricao_logs
+                (user_id,codigo_turma,utm_source,utm_medium,utm_campaign,utm_term,utm_content,is_novo,access_type,source,created_at)
+                VALUES (:uid,:turma,:us,:um,:uc,:ut,:uco,:novo,:access_type,:source,NOW())")
+                ->execute([
+                    ':uid'=>$userId, ':turma'=>$codigoTurma, ':us'=>$utm['utm_source'] ?: null,
+                    ':um'=>$utm['utm_medium'] ?: null, ':uc'=>$utm['utm_campaign'] ?: null,
+                    ':ut'=>$utm['utm_term'] ?: null, ':uco'=>$utm['utm_content'] ?: null,
+                    ':novo'=>$isNew ? 1 : 0, ':access_type'=>$logAccessType, ':source'=>$source,
+                ]);
+        }
         if ($ownsTransaction) $pdo->commit();
     } catch (Throwable $e) {
         if ($ownsTransaction && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
-    }
-
-    if (function_exists('adicionar_tag')) {
-        adicionar_tag($userId, $isNew ? 'INSCRITO' : 'REINSCRITO', $source, null);
-        adicionar_tag($userId, ($isNew ? 'INSCRITO_TURMA_' : 'REINSCRITO_TURMA_') . $codigoTurma, $source, null);
-        adicionar_tag($userId, $accessType === 'lifetime' ? 'INSCRICAO_VITALICIA' : 'INSCRICAO_GRATUITA', $source, null);
     }
 
     $lifetimeGrant = null;
@@ -216,6 +220,22 @@ function enrollment_register(PDO $pdo, array $input): array
         $lifetimeGrant = ['transaction_code'=>$transactionCode, 'is_paid'=>$isPaid];
     }
 
+    $effectiveGrant = course_access_lifetime_entitlement($pdo, $userId);
+    $effectiveLifetime = $effectiveGrant !== null;
+    $effectivePaid = $effectiveGrant && (int)($effectiveGrant['is_paid'] ?? 0) === 1;
+    $accessEvent = null;
+    if ($accessType === 'lifetime') {
+        $accessEvent = 'INSCRICAO_VITALICIA';
+    } elseif (!$hadLifetime && $renewedAccess) {
+        $accessEvent = 'INSCRICAO_GRATUITA';
+    }
+
+    if (function_exists('adicionar_tag')) {
+        adicionar_tag($userId, $isNew ? 'INSCRITO' : 'REINSCRITO', $source, null);
+        adicionar_tag($userId, ($isNew ? 'INSCRITO_TURMA_' : 'REINSCRITO_TURMA_') . $codigoTurma, $source, null);
+        if ($accessEvent !== null) adicionar_tag($userId, $accessEvent, $source, null);
+    }
+
     $st = $pdo->prepare("SELECT COUNT(*) qtd, MIN(created_at) primeira FROM inscricao_logs WHERE user_id = :uid");
     $st->execute([':uid'=>$userId]);
     $history = $st->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -227,15 +247,18 @@ function enrollment_register(PDO $pdo, array $input): array
         'qtd_inscricoes'=>(int)($history['qtd'] ?? 1),
         'primeira_inscricao'=>$history['primeira'] ?? null,
         'eh_reinscrito'=>$isNew ? 0 : 1,
-        'tipo_inscricao'=>$accessType === 'lifetime' ? 'vitalicia' : 'gratuita',
-        'acesso_vitalicio'=>$accessType === 'lifetime',
-        'acesso_pago'=>(bool)($lifetimeGrant['is_paid'] ?? false),
+        'tipo_inscricao'=>$effectiveLifetime ? 'vitalicia' : 'gratuita',
+        'tipo_inscricao_solicitada'=>$accessType === 'lifetime' ? 'vitalicia' : 'gratuita',
+        'acesso_vitalicio'=>$effectiveLifetime,
+        'acesso_pago'=>$effectivePaid,
+        'reinscricao_renovou_prazo'=>$renewedAccess,
         'origem'=>$source,
     ];
     return [
         'user_id'=>$userId, 'is_new'=>$isNew, 'event'=>$isNew ? 'INSCRITO' : 'REINSCRITO',
-        'access_event'=>$accessType === 'lifetime' ? 'INSCRICAO_VITALICIA' : 'INSCRICAO_GRATUITA',
+        'access_event'=>$accessEvent,
         'codigo_turma'=>$codigoTurma, 'data_live'=>$dataLive, 'codigo_live'=>$codigoLive,
-        'access_type'=>$accessType, 'extras'=>$extras, 'lifetime_grant'=>$lifetimeGrant,
+        'access_type'=>$effectiveLifetime ? 'lifetime' : 'free', 'requested_access_type'=>$accessType,
+        'extras'=>$extras, 'lifetime_grant'=>$lifetimeGrant,
     ];
 }

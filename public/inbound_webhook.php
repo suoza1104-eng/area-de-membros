@@ -308,7 +308,9 @@ try {
             adicionar_tag($userId, (string)$ihw['tag_extra'], 'inbound_webhook', (int)$ihw['id']);
         }
         iw_disparar_integracoes($pdo, $ihw, (string)$registration['event'], $userId, (array)$registration['extras']);
-        iw_disparar_integracoes($pdo, $ihw, (string)$registration['access_event'], $userId, (array)$registration['extras']);
+        if (!empty($registration['access_event'])) {
+            iw_disparar_integracoes($pdo, $ihw, (string)$registration['access_event'], $userId, (array)$registration['extras']);
+        }
         if ($accessType === 'lifetime') {
             iw_disparar_integracoes($pdo, $ihw, 'ACESSO_VITALICIO_LIBERADO', $userId, (array)$registration['extras']);
         }
