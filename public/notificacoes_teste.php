@@ -24,21 +24,71 @@ $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidK
     <div class="steps">
         <strong>Instalação no Android</strong><br>
         1. Abra esta página no Google Chrome.<br>
-        2. Toque no menu ⋮ do Chrome.<br>
-        3. Escolha “Instalar app” ou “Adicionar à tela inicial”.<br>
-        4. Abra o ícone instalado e volte a esta página.<br>
-        5. Toque no botão abaixo para autorizar notificações.
+        2. Toque em “Instalar aplicativo” abaixo.<br>
+        3. Confirme a instalação na janela do Android.<br>
+        4. Abra o novo ícone na tela inicial.<br>
+        5. Volte a esta página e ative as notificações.
     </div>
+    <button class="btn" id="installApp" type="button">Instalar aplicativo</button>
+    <div class="status" id="installStatus">Verificando se o aplicativo pode ser instalado.</div>
     <?php if (!$configured): ?>
         <div class="status err">O Firebase ainda não foi configurado no painel administrativo.</div>
     <?php else: ?>
-        <button class="btn" id="enablePush" type="button">Ativar notificações neste telefone</button>
+        <button class="btn" id="enablePush" type="button" style="margin-top:14px">Ativar notificações neste telefone</button>
         <div class="status" id="pushStatus">Aguardando ativação.</div>
     <?php endif; ?>
     <div class="meta" id="installMode"></div>
     <p style="text-align:center;margin-bottom:0"><a href="trilha.php">Voltar para as aulas</a></p>
 </main>
 <?php include __DIR__ . '/_pwa_runtime.php'; ?>
+<script>
+(function () {
+    const installButton = document.getElementById('installApp');
+    const installStatus = document.getElementById('installStatus');
+    const runningStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    let installPrompt = null;
+
+    function setInstallStatus(message, type) {
+        installStatus.textContent = message;
+        installStatus.className = 'status' + (type ? ' ' + type : '');
+    }
+    if (runningStandalone) {
+        installButton.disabled = true;
+        installButton.textContent = 'Aplicativo instalado';
+        setInstallStatus('Você já está usando a versão instalada.', 'ok');
+    } else {
+        installButton.disabled = true;
+        window.addEventListener('beforeinstallprompt', function (event) {
+            event.preventDefault();
+            installPrompt = event;
+            installButton.disabled = false;
+            setInstallStatus('Pronto para instalar com um toque.', 'ok');
+        });
+        installButton.addEventListener('click', async function () {
+            if (!installPrompt) {
+                setInstallStatus('O Chrome ainda não liberou a instalação. Atualize esta página ou use o menu ⋮ > Instalar app.', 'err');
+                return;
+            }
+            installButton.disabled = true;
+            installPrompt.prompt();
+            const choice = await installPrompt.userChoice;
+            installPrompt = null;
+            if (choice.outcome === 'accepted') {
+                installButton.textContent = 'Instalação confirmada';
+                setInstallStatus('O Android está instalando o aplicativo.', 'ok');
+            } else {
+                installButton.disabled = false;
+                setInstallStatus('Instalação cancelada. Você pode tentar novamente.', '');
+            }
+        });
+    }
+    window.addEventListener('appinstalled', function () {
+        installButton.disabled = true;
+        installButton.textContent = 'Aplicativo instalado';
+        setInstallStatus('Aplicativo instalado. Abra o novo ícone na tela inicial.', 'ok');
+    });
+})();
+</script>
 <?php if ($configured): ?>
 <script>
 (function () {
