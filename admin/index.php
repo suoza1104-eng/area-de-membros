@@ -449,6 +449,61 @@ function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, str
     return $out;
 }
 
+function dash_device_family(?string $userAgent): string {
+    $ua = strtolower(trim((string)$userAgent));
+    if ($ua === '') return 'Não identificado';
+    if (strpos($ua, 'android') !== false) return 'Android';
+    if (strpos($ua, 'iphone') !== false || strpos($ua, 'ipod') !== false) return 'iPhone';
+    if (strpos($ua, 'ipad') !== false || (strpos($ua, 'macintosh') !== false && strpos($ua, 'mobile') !== false)) return 'iPad';
+    if (strpos($ua, 'windows') !== false) return 'Windows';
+    if (strpos($ua, 'macintosh') !== false || strpos($ua, 'mac os') !== false) return 'Mac';
+    if (strpos($ua, 'linux') !== false) return 'Linux';
+    return 'Outro';
+}
+
+// Cada aluno aparece uma vez, classificado pelo dispositivo de sua abertura de aula
+// mais recente dentro do período selecionado.
+$deviceOrder = ['Android', 'iPhone', 'iPad', 'Windows', 'Mac', 'Linux', 'Outro', 'Não identificado'];
+$deviceCounts = array_fill_keys($deviceOrder, 0);
+try {
+    $deviceParams = [];
+    $deviceEventWhere = [];
+    if ($dataDe !== '') {
+        $deviceEventWhere[] = 'viewed_at >= :device_de';
+        $deviceParams['device_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $deviceEventWhere[] = 'viewed_at <= :device_ate';
+        $deviceParams['device_ate'] = $dataAte . ' 23:59:59';
+    }
+    $deviceEventSql = $deviceEventWhere ? ('WHERE ' . implode(' AND ', $deviceEventWhere)) : '';
+    $deviceTurmaWhere = dash_turma_where('u', $turmaColTop, $turmaIds, $codigosTurmaFiltro, $deviceParams, 'device');
+    $deviceTurmaSql = $deviceTurmaWhere ? ('WHERE ' . implode(' AND ', $deviceTurmaWhere)) : '';
+    $deviceStmt = $pdo->prepare("
+        SELECT lve.user_agent
+          FROM lesson_view_events lve
+          JOIN (
+                SELECT user_id, MAX(id) AS latest_id
+                  FROM lesson_view_events
+                  {$deviceEventSql}
+              GROUP BY user_id
+          ) latest ON latest.latest_id = lve.id
+          JOIN users u ON u.id = lve.user_id
+          {$deviceTurmaSql}
+    ");
+    $deviceStmt->execute($deviceParams);
+    foreach ($deviceStmt->fetchAll(PDO::FETCH_COLUMN) ?: [] as $userAgent) {
+        $family = dash_device_family(is_string($userAgent) ? $userAgent : null);
+        $deviceCounts[$family] = ($deviceCounts[$family] ?? 0) + 1;
+    }
+} catch (Throwable $e) {}
+$deviceCounts = array_filter($deviceCounts, static fn($count) => (int)$count > 0);
+$deviceLabels = array_keys($deviceCounts);
+$deviceData = array_values($deviceCounts);
+$deviceTotalStudents = array_sum($deviceData);
+$deviceMobileStudents = (int)($deviceCounts['Android'] ?? 0) + (int)($deviceCounts['iPhone'] ?? 0) + (int)($deviceCounts['iPad'] ?? 0);
+$deviceMobilePct = $deviceTotalStudents > 0 ? round($deviceMobileStudents / $deviceTotalStudents * 100, 1) : 0.0;
+
 $dashLineCharts = [];
 $lineTurmaCol = $turmaColTop;
 
@@ -2067,6 +2122,34 @@ body.dash-chart-fullscreen {
     <?php endforeach; ?>
 </div>
 
+<!-- CHART: Dispositivos usados para assistir às aulas -->
+<div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
+        <div>
+            <span>Dispositivos usados nas aulas</span>
+            <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:4px">
+                Último dispositivo registrado por aluno no período selecionado
+            </div>
+        </div>
+        <?php if ($deviceTotalStudents > 0): ?>
+            <div style="font-size:12px;color:var(--muted);text-align:right">
+                <strong style="display:block;color:var(--text);font-size:18px"><?= number_format($deviceMobilePct, 1, ',', '.') ?>%</strong>
+                em Android, iPhone ou iPad
+            </div>
+        <?php endif; ?>
+    </div>
+    <?php if ($deviceTotalStudents > 0): ?>
+        <div style="height:300px;position:relative">
+            <canvas id="chartDevices"></canvas>
+        </div>
+        <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:10px">
+            <?= number_format($deviceTotalStudents) ?> aluno(s) com abertura de aula identificada
+        </div>
+    <?php else: ?>
+        <p style="font-size:13px;color:var(--muted);text-align:center;padding:70px 0">Nenhuma abertura de aula registrada no período.</p>
+    <?php endif; ?>
+</div>
+
 <!-- CHARTS: Novos vs Reinscritos -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2857,6 +2940,52 @@ body.dash-chart-fullscreen {
 
     var labelsDia = <?= json_encode($labelsDia, JSON_UNESCAPED_UNICODE) ?>;
     var dataDia   = <?= json_encode($dataDia) ?>;
+    var deviceLabels = <?= json_encode($deviceLabels, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    var deviceData = <?= json_encode($deviceData) ?>;
+    var deviceColors = {
+        'Android': '#22c55e',
+        'iPhone': '#a855f7',
+        'iPad': '#c084fc',
+        'Windows': '#38bdf8',
+        'Mac': '#f59e0b',
+        'Linux': '#fb7185',
+        'Outro': '#64748b',
+        'Não identificado': '#334155'
+    };
+    var cDevices = document.getElementById('chartDevices');
+    if (cDevices && deviceLabels.length) {
+        new Chart(cDevices, {
+            type: 'doughnut',
+            data: {
+                labels: deviceLabels,
+                datasets: [{
+                    data: deviceData,
+                    backgroundColor: deviceLabels.map(function(label) { return deviceColors[label] || '#64748b'; }),
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '62%',
+                plugins: {
+                    legend: { position: 'right', labels: { color: '#94a3b8', padding: 16, usePointStyle: true } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var total = ctx.dataset.data.reduce(function(sum, value) { return sum + Number(value || 0); }, 0);
+                                var value = Number(ctx.parsed || 0);
+                                var pct = total > 0 ? (value / total * 100).toFixed(1).replace('.', ',') : '0,0';
+                                return ctx.label + ': ' + value.toLocaleString('pt-BR') + ' aluno(s) (' + pct + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
     var cDia = document.getElementById('chartDia');
     if (cDia && labelsDia.length) {
         new Chart(cDia, {
