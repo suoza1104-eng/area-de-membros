@@ -14,7 +14,7 @@ $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidK
     <title>Teste do aplicativo</title>
     <?php include __DIR__ . '/_pwa_head.php'; ?>
     <style>
-        *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#080e1a;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;display:grid;place-items:center;padding:20px}.box{width:min(100%,520px);background:#0d1526;border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:24px;box-shadow:0 18px 50px rgba(0,0,0,.35)}h1{font-size:22px;margin:0 0 8px}p{color:#94a3b8;font-size:14px;line-height:1.55}.steps{background:#080e1a;border-radius:12px;padding:14px 18px;margin:18px 0;color:#cbd5e1;font-size:13px;line-height:1.7}.btn{width:100%;border:0;border-radius:10px;padding:13px 16px;background:#facc15;color:#111827;font-size:15px;font-weight:800;cursor:pointer}.btn:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:14px;padding:12px;border-radius:10px;background:rgba(56,189,248,.09);color:#93c5fd;font-size:13px;word-break:break-word}.status.ok{background:rgba(34,197,94,.1);color:#86efac}.status.err{background:rgba(239,68,68,.1);color:#fca5a5}.meta{margin-top:12px;color:#64748b;font-size:11px;text-align:center}a{color:#facc15}
+        *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#080e1a;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;display:grid;place-items:center;padding:20px}.box{width:min(100%,520px);background:#0d1526;border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:24px;box-shadow:0 18px 50px rgba(0,0,0,.35)}h1{font-size:22px;margin:0 0 8px}p{color:#94a3b8;font-size:14px;line-height:1.55}.steps{background:#080e1a;border-radius:12px;padding:14px 18px;margin:18px 0;color:#cbd5e1;font-size:13px;line-height:1.7}.btn{display:block;width:100%;border:0;border-radius:10px;padding:13px 16px;background:#facc15;color:#111827;font-size:15px;font-weight:800;cursor:pointer;text-align:center;text-decoration:none}.btn:disabled{opacity:.55;cursor:not-allowed}.btn.secondary{margin-top:9px;background:transparent;color:#cbd5e1;border:1px solid rgba(255,255,255,.14)}.browser-gate{display:none;margin:18px 0;padding:16px;border:1px solid rgba(250,204,21,.35);border-radius:12px;background:rgba(250,204,21,.08)}.browser-gate strong{display:block;color:#fde047;margin-bottom:6px}.browser-gate p{margin:0 0 13px;font-size:13px}.status{margin-top:14px;padding:12px;border-radius:10px;background:rgba(56,189,248,.09);color:#93c5fd;font-size:13px;word-break:break-word}.status.ok{background:rgba(34,197,94,.1);color:#86efac}.status.err{background:rgba(239,68,68,.1);color:#fca5a5}.meta{margin-top:12px;color:#64748b;font-size:11px;text-align:center}a{color:#facc15}
     </style>
 </head>
 <body>
@@ -28,6 +28,13 @@ $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidK
         3. Confirme a instalação na janela do Android.<br>
         4. Abra o novo ícone na tela inicial.<br>
         5. Volte a esta página e ative as notificações.
+    </div>
+    <div class="browser-gate" id="browserGate">
+        <strong>Abra no Google Chrome</strong>
+        <p>Este navegador não permite uma instalação confiável. Continue no Chrome para instalar o aplicativo e receber notificações.</p>
+        <a class="btn" id="openChrome" href="#">Continuar no Google Chrome</a>
+        <button class="btn secondary" id="copyInstallLink" type="button">Copiar link</button>
+        <div class="status" id="copyStatus" style="display:none"></div>
     </div>
     <button class="btn" id="installApp" type="button">Instalar aplicativo</button>
     <div class="status" id="installStatus">Verificando se o aplicativo pode ser instalado.</div>
@@ -46,11 +53,40 @@ $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidK
     const installButton = document.getElementById('installApp');
     const installStatus = document.getElementById('installStatus');
     const runningStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    const ua = navigator.userAgent || '';
+    const isAndroid = /Android/i.test(ua);
+    const isChrome = /Chrome\//i.test(ua) && !/(?:wv\)|; wv|Version\/4\.0|EdgA|OPR|Opera|SamsungBrowser|FBAN|FBAV|Instagram|WhatsApp)/i.test(ua);
     let installPrompt = null;
 
     function setInstallStatus(message, type) {
         installStatus.textContent = message;
         installStatus.className = 'status' + (type ? ' ' + type : '');
+    }
+    if (isAndroid && !isChrome && !runningStandalone) {
+        const gate = document.getElementById('browserGate');
+        const chromeLink = document.getElementById('openChrome');
+        const copyButton = document.getElementById('copyInstallLink');
+        const copyStatus = document.getElementById('copyStatus');
+        const fallbackUrl = window.location.href;
+        const intentPath = window.location.host + window.location.pathname + window.location.search;
+        chromeLink.href = 'intent://' + intentPath + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(fallbackUrl) + ';end';
+        gate.style.display = 'block';
+        installButton.disabled = true;
+        const pushButton = document.getElementById('enablePush');
+        if (pushButton) pushButton.disabled = true;
+        setInstallStatus('Continue no Google Chrome para liberar a instalação.', 'err');
+        copyButton.addEventListener('click', async function () {
+            try {
+                await navigator.clipboard.writeText(fallbackUrl);
+                copyStatus.textContent = 'Link copiado. Cole-o na barra de endereço do Chrome.';
+                copyStatus.className = 'status ok';
+            } catch (error) {
+                copyStatus.textContent = fallbackUrl;
+                copyStatus.className = 'status';
+            }
+            copyStatus.style.display = 'block';
+        });
+        return;
     }
     if (runningStandalone) {
         installButton.disabled = true;

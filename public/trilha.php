@@ -811,6 +811,7 @@ width: 100%;
 
     <main class="content">
         <?php include __DIR__ . '/_course_access_widget.php'; ?>
+        <?php include __DIR__ . '/_pwa_install_banner.php'; ?>
         <?php if ($liveDataIso && $liveDataBr && !$liveIsPast): ?>
             <div class="live-banner" id="live-banner">
                 <div class="live-dot"></div>
