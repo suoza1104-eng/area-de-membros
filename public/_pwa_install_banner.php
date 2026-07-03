@@ -1,20 +1,20 @@
 <style>
-.pwa-promo{display:none;position:relative;overflow:hidden;margin:0 0 18px;padding:18px;border:1px solid rgba(250,204,21,.34);border-radius:18px;background:radial-gradient(circle at 92% 8%,rgba(250,204,21,.2),transparent 34%),linear-gradient(135deg,#121827 0%,#0b1220 65%,#151407 100%);box-shadow:0 16px 40px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.04)}
-.pwa-promo:before{content:'';position:absolute;width:150px;height:150px;border-radius:50%;right:-75px;bottom:-95px;background:rgba(250,204,21,.12);filter:blur(2px)}.pwa-promo-inner{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:15px}.pwa-promo-icon{width:58px;height:58px;border-radius:16px;box-shadow:0 8px 22px rgba(0,0,0,.3)}.pwa-promo-copy strong{display:block;color:#fff;font-size:17px;line-height:1.25;margin-bottom:4px}.pwa-promo-copy p{margin:0;color:#aeb9cc;font-size:12px;line-height:1.45}.pwa-promo-benefits{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.pwa-promo-benefits span{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:#d6deeb;font-size:9px;font-weight:700}.pwa-promo-benefits span:before{content:'✓';color:#facc15}.pwa-promo-action{min-width:170px;border:0;border-radius:11px;padding:12px 15px;background:linear-gradient(135deg,#fde047,#eab308);color:#171301;font-size:13px;font-weight:900;cursor:pointer;box-shadow:0 8px 22px rgba(234,179,8,.2);text-align:center;text-decoration:none}.pwa-promo-action:hover{filter:brightness(1.05);text-decoration:none}.pwa-promo-action:disabled{opacity:.58;cursor:wait}.pwa-promo-close{position:absolute;top:7px;right:8px;width:26px;height:26px;border:0;border-radius:50%;background:rgba(255,255,255,.06);color:#94a3b8;font-size:17px;cursor:pointer}.pwa-promo-status{display:none;position:relative;margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);color:#93c5fd;font-size:11px}.pwa-promo-status.ok{color:#86efac}.pwa-promo-status.err{color:#fca5a5}@media(max-width:720px){.pwa-promo{padding:16px}.pwa-promo-inner{grid-template-columns:auto 1fr}.pwa-promo-icon{width:50px;height:50px}.pwa-promo-action{grid-column:1/-1;width:100%;min-width:0}.pwa-promo-copy strong{font-size:15px}.pwa-promo-close{top:5px;right:5px}}
+body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset:0;z-index:9999;padding:18px;background:rgba(2,6,15,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);align-items:center;justify-content:center}.pwa-promo-card{position:relative;width:min(920px,100%);max-height:calc(100vh - 36px);display:grid;grid-template-columns:minmax(300px,44%) minmax(0,1fr);overflow:hidden;border:1px solid rgba(250,204,21,.34);border-radius:26px;background:radial-gradient(circle at 92% 8%,rgba(250,204,21,.17),transparent 35%),linear-gradient(145deg,#101827,#080e1a 68%);box-shadow:0 28px 100px rgba(0,0,0,.72),0 0 60px rgba(250,204,21,.08)}.pwa-promo-visual{min-height:540px;background:#060b15}.pwa-promo-visual img{width:100%;height:100%;display:block;object-fit:cover;object-position:center}.pwa-promo-content{display:flex;flex-direction:column;justify-content:center;padding:54px 46px 42px}.pwa-promo-eyebrow{display:inline-flex;align-self:flex-start;padding:5px 9px;border:1px solid rgba(250,204,21,.25);border-radius:999px;background:rgba(250,204,21,.08);color:#fde047;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.pwa-promo-content h2{margin:15px 0 10px;color:#fff;font-size:34px;line-height:1.08;letter-spacing:-.035em}.pwa-promo-content>p{margin:0;color:#aeb9cc;font-size:14px;line-height:1.6}.pwa-promo-benefits{display:grid;gap:9px;margin:22px 0}.pwa-promo-benefits span{display:flex;align-items:center;gap:9px;color:#e2e8f0;font-size:12px;font-weight:650}.pwa-promo-benefits span:before{content:'✓';display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(250,204,21,.14);color:#facc15;font-size:11px;font-weight:900}.pwa-promo-action{width:100%;border:1px solid rgba(255,255,255,.32);border-radius:14px;padding:15px 18px;background:linear-gradient(135deg,#fde047,#eab308);color:#171301;font-size:16px;font-weight:950;cursor:pointer;text-align:center;box-shadow:0 0 0 0 rgba(250,204,21,.55);animation:pwaCtaPulse 1.8s infinite}.pwa-promo-action:hover{filter:brightness(1.08)}.pwa-promo-action:disabled{opacity:.62;cursor:wait;animation:none}.pwa-promo-close{position:absolute;top:14px;right:14px;z-index:2;width:38px;height:38px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.13);border-radius:50%;background:rgba(2,6,15,.72);color:#e2e8f0;font-size:24px;line-height:1;cursor:pointer;backdrop-filter:blur(5px)}.pwa-promo-status{display:none;margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(56,189,248,.08);color:#93c5fd;font-size:11px;line-height:1.45}.pwa-promo-status.ok{display:block;background:rgba(34,197,94,.1);color:#86efac}.pwa-promo-status.err{display:block;background:rgba(239,68,68,.1);color:#fca5a5}@keyframes pwaCtaPulse{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(250,204,21,.55)}65%{transform:scale(1.018);box-shadow:0 0 0 13px rgba(250,204,21,0)}100%{transform:scale(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}}@media(prefers-reduced-motion:reduce){.pwa-promo-action{animation:none}}@media(max-width:720px){.pwa-promo{padding:0;align-items:stretch}.pwa-promo-card{width:100%;max-height:none;min-height:100dvh;border:0;border-radius:0;grid-template-columns:1fr;grid-template-rows:minmax(250px,39dvh) 1fr;overflow-y:auto}.pwa-promo-visual{min-height:0}.pwa-promo-visual img{object-position:center 45%}.pwa-promo-content{justify-content:flex-start;padding:25px 22px calc(25px + env(safe-area-inset-bottom))}.pwa-promo-content h2{font-size:27px;margin-top:12px}.pwa-promo-benefits{grid-template-columns:1fr 1fr;gap:8px;margin:17px 0}.pwa-promo-benefits span{font-size:11px}.pwa-promo-close{top:12px;right:12px}}
 </style>
-<aside class="pwa-promo" id="pwaPromo" aria-label="Instalar aplicativo da área de membros">
-    <button class="pwa-promo-close" id="pwaPromoClose" type="button" aria-label="Fechar">×</button>
-    <div class="pwa-promo-inner">
-        <img class="pwa-promo-icon" src="pwa-icon.svg" alt="">
-        <div class="pwa-promo-copy">
-            <strong id="pwaPromoTitle">Leve suas aulas com você</strong>
-            <p id="pwaPromoText">Instale o aplicativo para acessar mais rápido e receber os avisos importantes.</p>
-            <div class="pwa-promo-benefits"><span>Acesso rápido</span><span>Notificações</span><span>Sem Play Store</span></div>
+<div class="pwa-promo" id="pwaPromo" role="dialog" aria-modal="true" aria-labelledby="pwaPromoTitle">
+    <div class="pwa-promo-card">
+        <button class="pwa-promo-close" id="pwaPromoClose" type="button" aria-label="Fechar">×</button>
+        <div class="pwa-promo-visual"><img src="pwa-install-phone.jpg" alt="Aplicativo da área de membros exibindo uma aula no celular"></div>
+        <div class="pwa-promo-content">
+            <span class="pwa-promo-eyebrow">Aplicativo da área de membros</span>
+            <h2 id="pwaPromoTitle">Suas aulas sempre com você</h2>
+            <p id="pwaPromoText">Instale o aplicativo no seu celular e acesse o treinamento com muito mais rapidez.</p>
+            <div class="pwa-promo-benefits"><span>Acesso em um toque</span><span>Avisos importantes</span><span>Experiência de aplicativo</span><span>Instalação gratuita</span></div>
+            <button class="pwa-promo-action" id="pwaPromoAction" type="button">Instalar aplicativo agora</button>
+            <div class="pwa-promo-status" id="pwaPromoStatus"></div>
         </div>
-        <button class="pwa-promo-action" id="pwaPromoAction" type="button">Instalar aplicativo</button>
     </div>
-    <div class="pwa-promo-status" id="pwaPromoStatus"></div>
-</aside>
+</div>
 <script>
 (function(){
     const promo=document.getElementById('pwaPromo');
@@ -26,54 +26,46 @@
     const android=/Android/i.test(ua);
     const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
     const chrome=/Chrome\//i.test(ua)&&!/(?:wv\)|; wv|Version\/4\.0|EdgA|OPR|Opera|SamsungBrowser|FBAN|FBAV|Instagram|WhatsApp)/i.test(ua);
-    const pushReady=('Notification'in window)&&Notification.permission==='granted'&&!!localStorage.getItem('push_fcm_token');
-    const dismissedUntil=Number(localStorage.getItem('pwa_promo_dismissed_until')||0);
     let deferredPrompt=null;
 
-    function show(){if(Date.now()<dismissedUntil)return;promo.style.display='block'}
+    function show(){promo.style.display='flex';document.body.classList.add('pwa-modal-open')}
+    function hide(){promo.style.display='none';document.body.classList.remove('pwa-modal-open')}
     function message(value,type){status.textContent=value;status.className='pwa-promo-status '+(type||'');status.style.display='block'}
-    document.getElementById('pwaPromoClose').addEventListener('click',function(){localStorage.setItem('pwa_promo_dismissed_until',String(Date.now()+3*86400000));promo.style.display='none'});
+    document.getElementById('pwaPromoClose').addEventListener('click',hide);
+
     function activationMode(){
-        title.textContent='Ative os avisos no seu celular';
-        text.textContent='Receba lembretes de aulas, liberações e comunicados importantes.';
-        action.textContent='Ativar notificações';
-        action.disabled=false;
+        title.textContent='Não perca nenhum aviso importante';
+        text.textContent='Ative as notificações para receber lembretes de aulas, liberações e comunicados no seu celular.';
+        action.textContent='Ativar notificações agora';action.disabled=false;
         action.onclick=async function(){
             action.disabled=true;action.textContent='Ativando...';
             try{
-                if(typeof window.areaMembrosEnablePush!=='function')throw new Error('Serviço de notificações indisponível. Atualize a página.');
+                if(typeof window.areaMembrosEnablePush!=='function')throw new Error('Serviço indisponível. Atualize a página e tente novamente.');
                 await window.areaMembrosEnablePush();
-                action.textContent='Notificações ativadas';message('Pronto! Este telefone já pode receber os avisos.','ok');
-                setTimeout(function(){promo.style.display='none'},1800);
+                action.textContent='Notificações ativadas';message('Pronto! Este telefone já pode receber os avisos.','ok');setTimeout(hide,1800);
             }catch(error){action.disabled=false;action.textContent='Tentar novamente';message(error&&error.message?error.message:String(error),'err')}
-        };
-        show();
+        };show();
     }
 
-    if(standalone){if(!pushReady)activationMode();return}
+    if(standalone)return;
     if(!android)return;
     if(localStorage.getItem('pwa_install_confirmed')==='1')return;
     if(!chrome){
         title.textContent='Continue no Google Chrome';
-        text.textContent='Abra esta mesma página no Chrome para instalar o aplicativo com segurança.';
+        text.textContent='Abra esta página no Chrome para instalar o aplicativo com segurança e receber notificações.';
         action.textContent='Abrir no Google Chrome';
-        action.onclick=function(){
-            const fallback=window.location.href;
-            const path=window.location.host+window.location.pathname+window.location.search;
-            window.location.href='intent://'+path+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallback)+';end';
-        };
+        action.onclick=function(){const fallback=window.location.href;const path=window.location.host+window.location.pathname+window.location.search;window.location.href='intent://'+path+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallback)+';end'};
         show();return;
     }
 
     show();action.disabled=true;action.textContent='Preparando instalação...';
-    window.addEventListener('beforeinstallprompt',function(event){event.preventDefault();deferredPrompt=event;action.disabled=false;action.textContent='Instalar aplicativo'});
+    window.addEventListener('beforeinstallprompt',function(event){event.preventDefault();deferredPrompt=event;action.disabled=false;action.textContent='Instalar aplicativo agora'});
     action.onclick=async function(){
         if(!deferredPrompt){message('O Chrome ainda está preparando a instalação. Atualize a página e tente novamente.','err');return}
-        action.disabled=true;deferredPrompt.prompt();
-        const choice=await deferredPrompt.userChoice;deferredPrompt=null;
-        if(choice.outcome==='accepted'){localStorage.setItem('pwa_install_confirmed','1');action.textContent='Aplicativo instalado';message('Abra o novo ícone na tela inicial para concluir.','ok')}
-        else{action.disabled=false;action.textContent='Instalar aplicativo'}
+        action.disabled=true;deferredPrompt.prompt();const choice=await deferredPrompt.userChoice;deferredPrompt=null;
+        if(choice.outcome==='accepted'){localStorage.setItem('pwa_install_confirmed','1');activationMode();message('Aplicativo instalado. Ative os avisos para concluir.','ok')}
+        else{action.disabled=false;action.textContent='Instalar aplicativo agora'}
     };
-    window.addEventListener('appinstalled',function(){localStorage.setItem('pwa_install_confirmed','1');action.disabled=true;action.textContent='Aplicativo instalado';message('Abra o novo ícone na tela inicial para concluir.','ok')});
+    window.addEventListener('appinstalled',function(){localStorage.setItem('pwa_install_confirmed','1');activationMode();message('Aplicativo instalado. Ative os avisos para concluir.','ok')});
 })();
 </script>
