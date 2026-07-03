@@ -141,6 +141,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
     $revenue = (float)$out[$basis];
     $out['revenue'] = $revenue;
     $out['fees'] = max(0.0, (float)$out['gross_revenue'] - (float)$out['producer_net']);
+    $out['profit'] = (float)$out['net_revenue'] - (float)$out['spend'];
     $out['conversion_rate'] = $out['leads'] > 0 ? $out['sales'] / $out['leads'] * 100 : 0;
     $out['cpl'] = $out['leads'] > 0 ? $out['spend'] / $out['leads'] : 0;
     $out['cac'] = $out['sales'] > 0 ? $out['spend'] / $out['sales'] : 0;

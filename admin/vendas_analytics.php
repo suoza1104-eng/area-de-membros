@@ -73,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (string)($_POST['acao']??'')==='atrib
 if(empty($_SESSION['sales_csrf']))$_SESSION['sales_csrf']=bin2hex(random_bytes(24));
 
 $preset = (string)($_GET['period'] ?? 'month');
-if (!in_array($preset, ['7','30','90','365','month','quarter','year','custom'], true)) $preset = 'month';
+if (!in_array($preset, ['today','7','30','90','365','month','quarter','year','custom'], true)) $preset = 'month';
 $period = metrics_period($preset, $_GET['from'] ?? null, $_GET['to'] ?? null);
 $filters = [
     'basis' => in_array(($_GET['basis'] ?? ''), ['gross_revenue','net_revenue','producer_net'], true) ? $_GET['basis'] : (get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net'),
@@ -188,6 +188,7 @@ $metricCards = [
     ['sales','Vendas aprovadas','number',false,'Transacoes unicas concluídas'],
     ['gross_revenue','Faturamento bruto','money',false,'Valor pago pelo cliente'],
     ['net_revenue','Receita liquida','money',false,'Apos taxas da plataforma'],
+    ['profit','Lucro','money',false,'Receita liquida menos investimento Meta'],
     ['producer_net','Liquido do produtor','money',false,'Comissoes liquidas recebidas'],
     ['fees','Taxas e diferencas','money',true,'Bruto menos liquido do produtor'],
     ['conversion_rate','Conversao lead/venda','pct',false,'Vendas aprovadas / leads'],
@@ -230,7 +231,7 @@ include __DIR__ . '/_header.php';
 
   <form class="bi-filter" method="get">
     <div class="periods">
-      <?php foreach(['7'=>'7 dias','30'=>'30 dias','90'=>'90 dias','365'=>'365 dias','month'=>'Mes atual','quarter'=>'Trimestre','year'=>'Ano atual','custom'=>'Personalizado'] as $k=>$label): ?>
+      <?php foreach(['today'=>'Hoje','7'=>'7 dias','30'=>'30 dias','90'=>'90 dias','365'=>'365 dias','month'=>'Mes atual','quarter'=>'Trimestre','year'=>'Ano atual','custom'=>'Personalizado'] as $k=>$label): ?>
         <a class="<?= $preset===$k?'active':'' ?>" href="?<?= va_h(http_build_query(array_merge($_GET,['period'=>$k]))) ?>"><?= va_h($label) ?></a>
       <?php endforeach; ?>
     </div>

@@ -278,7 +278,9 @@ function metrics_sync_all(PDO $pdo, int $daysBack = 3, bool $syncMeta = true): a
 function metrics_period(string $preset, ?string $from = null, ?string $to = null): array
 {
     $today = new DateTimeImmutable('today');
-    if ($preset === 'custom' && $from && $to) {
+    if ($preset === 'today') {
+        $start = $today; $end = $today;
+    } elseif ($preset === 'custom' && $from && $to) {
         $start = new DateTimeImmutable($from);
         $end = new DateTimeImmutable($to);
     } elseif ($preset === 'month') {
