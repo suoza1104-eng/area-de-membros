@@ -38,7 +38,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','notificacoes','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -66,6 +66,7 @@ $titleMap = [
     'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
+    'notificacoes'     => 'Notificações do App',
     'monitor'          => 'Rastreamento',
     'cron_monitor'     => 'Monitor de Cron',
     'logs'             => 'Logs',
@@ -839,8 +840,18 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
+    <?php if ($__sbV['notificacoes'] || $__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
+    <?php endif; ?>
+
+    <?php if ($__sbV['notificacoes']): ?>
+    <a href="notificacoes.php" class="sb-item <?= $currentMenu === 'notificacoes' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+        <path d="M10 21h4"/>
+      </svg>
+      Notificações do App
+    </a>
     <?php endif; ?>
 
     <?php if ($__sbV['monitor']): ?>

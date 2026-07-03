@@ -790,6 +790,7 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
 
         
 </style>
+<?php include __DIR__ . '/_pwa_head.php'; ?>
 </head>
 <body>
 <div class="page">
@@ -1220,5 +1221,6 @@ document.querySelectorAll('.carousel').forEach(function(carousel){
 })();
 </script>
 
+<?php include __DIR__ . '/_pwa_runtime.php'; ?>
 </body>
 </html>

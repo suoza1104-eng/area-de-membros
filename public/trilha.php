@@ -784,6 +784,7 @@ width: 100%;
             }
         }
     </style>
+<?php include __DIR__ . '/_pwa_head.php'; ?>
 </head>
 <body>
 <div class="page">
@@ -1115,5 +1116,6 @@ document.addEventListener('DOMContentLoaded', function () {
     setInterval(update, 1000);
 })();</script>
 <?php endif; ?>
+<?php include __DIR__ . '/_pwa_runtime.php'; ?>
 </body>
 </html>

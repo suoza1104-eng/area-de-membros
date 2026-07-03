@@ -535,6 +535,7 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
             line-height: 1.6;
         }
     </style>
+<?php include __DIR__ . '/_pwa_head.php'; ?>
 </head>
 <body>
 <div class="shell">
@@ -633,5 +634,6 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
     </div>
 
 </div>
+<?php include __DIR__ . '/_pwa_runtime.php'; ?>
 </body>
 </html>

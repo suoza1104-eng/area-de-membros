@@ -53,6 +53,7 @@ $PAGINAS = [
     'whatsapp_config'   => 'Configurações WhatsApp',
     'whatsapp_monitor'  => 'WhatsApp Monitor',
     'whatsapp_ai'       => 'IA WhatsApp',
+    'notificacoes'      => 'Notificações do App',
     'monitor'          => 'Rastreamento',
     'cron_monitor'     => 'Monitor de Cron',
     'logs'             => 'Logs',
