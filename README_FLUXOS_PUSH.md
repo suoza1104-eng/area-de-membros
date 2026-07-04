@@ -93,6 +93,7 @@ O motor da etapa 3 captura somente eventos novos. A publicação de um fluxo nã
 
 - Possui/não possui tag.
 - Está/não está inscrito em turma.
+- Clicou/não clicou no bloco push anterior da mesma execução.
 - Comparações de campos suportados do aluno e do evento.
 - Grupos `E` e `OU`, com validação de operadores por tipo de campo.
 
@@ -108,7 +109,8 @@ O motor da etapa 3 captura somente eventos novos. A publicação de um fluxo nã
 - Adicionar tag e remover tag.
 - SuperFuncionário, ManyChat e webhooks.
 - Configuração de regra/fluxo/tag, payload e variáveis permitidas.
-- Notificação push com título, texto e link interno seguro.
+- Notificação push com título, texto e link interno ou HTTPS externo autorizado.
+- Prévia aproximada da notificação recolhida e expandida no Android antes da publicação.
 - Continuação automática ao próximo bloco após sucesso ou conforme política de erro configurada.
 
 ### Persistência

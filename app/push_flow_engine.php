@@ -249,9 +249,20 @@ function push_flow_user_has_turma(PDO $pdo, int $userId, string $turma, array $u
     } catch (Throwable $e) { return false; }
 }
 
-function push_flow_evaluate_condition(PDO $pdo, array $config, int $userId, array $user): bool
+function push_flow_previous_push_clicked(PDO $pdo, int $runId, int $currentJobId, int $userId): bool
+{
+    if ($runId <= 0 || $currentJobId <= 0) return false;
+    $st=$pdo->prepare("SELECT MAX(s.job_id) FROM push_flow_steps s JOIN push_flow_jobs j ON j.id=s.job_id WHERE s.run_id=:run AND s.node_type='push' AND s.status='completed' AND s.job_id<:job AND j.run_id=:run2");
+    $st->execute(['run'=>$runId,'job'=>$currentJobId,'run2'=>$runId]);$pushJobId=(int)$st->fetchColumn();
+    if($pushJobId<=0)return false;
+    $clicked=$pdo->prepare("SELECT 1 FROM push_notifications n JOIN push_delivery_logs dl ON dl.notification_id=n.id WHERE n.target_type='flow_job' AND n.target_value=:target AND dl.user_id=:user AND dl.clicked_at IS NOT NULL LIMIT 1");
+    $clicked->execute(['target'=>'flow_job:'.$pushJobId,'user'=>$userId]);return (bool)$clicked->fetchColumn();
+}
+
+function push_flow_evaluate_condition(PDO $pdo, array $config, int $userId, array $user, int $runId = 0, int $currentJobId = 0): bool
 {
     $field = (string)($config['field'] ?? ''); $operator = (string)($config['operator'] ?? ''); $value = trim((string)($config['value'] ?? ''));
+    if ($field === 'previous_push_clicked') return push_flow_previous_push_clicked($pdo,$runId,$currentJobId,$userId);
     if ($field === 'tag') $match = push_flow_user_has_tag($pdo, $userId, $value);
     elseif ($field === 'turma') $match = push_flow_user_has_turma($pdo, $userId, $value, $user);
     else {
@@ -370,7 +381,7 @@ function push_flow_process_job(PDO $pdo, array $job): string
     $step = $pdo->prepare("INSERT INTO push_flow_steps (run_id,job_id,node_id,node_type,attempt,status) VALUES (:run,:job,:node,:type,:attempt,'processing')"); $step->execute(['run'=>(int)$job['run_id'],'job'=>(int)$job['id'],'node'=>(string)$job['node_id'],'type'=>$type,'attempt'=>(int)$job['attempts']]); $stepId=(int)$pdo->lastInsertId();
     try {
         $handle='default'; $output=[];
-        if ($type==='condition') { $result=push_flow_evaluate_condition($pdo,$config,(int)$job['user_id'],$user); $handle=$result?'yes':'no'; $output=['result'=>$result,'route'=>$handle]; }
+        if ($type==='condition') { $result=push_flow_evaluate_condition($pdo,$config,(int)$job['user_id'],$user,(int)$job['run_id'],(int)$job['id']); $handle=$result?'yes':'no'; $output=['result'=>$result,'route'=>$handle,'condition_field'=>(string)($config['field']??'')]; }
         elseif ($type==='wait') {
             if (empty($input['_wait_ready'])) {
                 $resume=push_flow_wait_until($config); $input['_wait_ready']=true; $input['_wait_until']=$resume;

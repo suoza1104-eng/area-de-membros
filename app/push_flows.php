@@ -148,7 +148,11 @@ function push_flow_validate_graph(array $graph, bool $forPublish = false): array
             if (trim((string)($config['filter'] ?? '')) === '' || mb_strlen((string)($config['filter'] ?? '')) > 100) $errors[] = 'Selecione a turma do lembrete de live.';
             if ((int)($config['advanceDuration'] ?? 0) < 1 || (int)($config['advanceDuration'] ?? 0) > 525600 || !in_array(($config['advanceUnit'] ?? ''), ['minutes','hours','days'], true)) $errors[] = 'Configure uma antecedência válida para o lembrete de live.';
         }
-        if ($type === 'condition' && (!in_array(($config['field'] ?? ''), ['tag','turma','email'], true) || !in_array(($config['operator'] ?? ''), ['has','not_has','equals','not_equals'], true) || trim((string)($config['value'] ?? '')) === '' || mb_strlen((string)($config['value'] ?? '')) > 255)) $errors[] = 'Configure campo, operador e valor válidos em todas as condições.';
+        if ($type === 'condition') {
+            $conditionField=(string)($config['field']??'');
+            if(!in_array($conditionField,['tag','turma','email','previous_push_clicked'],true))$errors[]='Selecione um campo válido em todas as condições.';
+            elseif($conditionField!=='previous_push_clicked'&&(!in_array(($config['operator']??''),['has','not_has','equals','not_equals'],true)||trim((string)($config['value']??''))===''||mb_strlen((string)($config['value']??''))>255))$errors[]='Configure operador e valor válidos em todas as condições.';
+        }
         if ($type === 'wait' && ((int)($config['duration'] ?? 0) < 1 || (int)($config['duration'] ?? 0) > 525600 || !in_array(($config['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure uma espera válida em minutos, horas ou dias.';
         if ($type === 'wait' && !empty($config['limitWindow'])) {
             $start = (string)($config['windowStart'] ?? ''); $end = (string)($config['windowEnd'] ?? '');
