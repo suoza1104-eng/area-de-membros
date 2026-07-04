@@ -230,7 +230,7 @@ include __DIR__ . '/_header.php';
 
     <section class="pn-card"><h2>Dispositivos</h2><p>“Excluído” só pode ser detectado depois que o Firebase rejeitar um novo envio para o token.</p><div class="pn-table"><table><thead><tr><th>ID</th><th>Aluno</th><th>Plataforma</th><th>Instalado</th><th>Permissão</th><th>Status</th><th>Último acesso</th></tr></thead><tbody><?php foreach($devices as $d):?><tr><td>#<?=(int)$d['id']?></td><td><?=pn_h($d['nome']?:('Aluno #'.$d['user_id']))?><div class="text-xs text-muted"><?=pn_h($d['email']??'')?></div></td><td><?=pn_h($d['platform'])?><div class="text-xs text-muted"><?=pn_h($d['browser']??'')?></div></td><td><?=$d['installed_at']?pn_h(date('d/m/Y H:i',strtotime($d['installed_at']))):'Não confirmado'?></td><td><?=pn_h($d['notification_permission'])?></td><td><span class="pn-pill <?=pn_h($d['status'])?>"><?=pn_h($d['status'])?></span></td><td><?=pn_h(date('d/m/Y H:i',strtotime($d['last_seen_at'])))?></td></tr><?php endforeach;?><?php if(!$devices):?><tr><td colspan="7" class="text-muted">Nenhum dispositivo registrado.</td></tr><?php endif;?></tbody></table></div></section>
     <section class="pn-card"><h2>Logs de envio</h2><p>“Aceita” significa que o Firebase aceitou a mensagem; o clique confirma interação do aluno.</p><div class="pn-table"><table><thead><tr><th>Data</th><th>Aluno</th><th>Notificação</th><th>Status</th><th>HTTP</th><th>Clique</th><th>Erro</th></tr></thead><tbody><?php foreach($logs as $l):?><tr><td><?=pn_h(date('d/m/Y H:i:s',strtotime($l['created_at'])))?></td><td><?=pn_h($l['nome']?:('Aluno #'.$l['user_id']))?></td><td><strong><?=pn_h($l['title'])?></strong><div class="text-xs text-muted"><?=pn_h($l['body'])?></div></td><td><span class="pn-pill <?=pn_h($l['status'])?>"><?=pn_h($l['status'])?></span></td><td><?=pn_h($l['http_status']??'-')?></td><td><?=$l['clicked_at']?pn_h(date('d/m/Y H:i:s',strtotime($l['clicked_at']))):'-'?></td><td><?=pn_h($l['error_message']??'')?></td></tr><?php endforeach;?><?php if(!$logs):?><tr><td colspan="7" class="text-muted">Nenhum envio realizado.</td></tr><?php endif;?></tbody></table></div></section>
-    <section class="pn-card pn-settings-source" id="pnAppSettings">
+    <section class="pn-card">
         <h2>Simulador dos avisos</h2><p>Veja como cada popup aparece para o aluno. A simulação não instala o aplicativo nem solicita permissões reais.</p>
         <div class="pn-preview-actions">
             <button class="btn btn-primary" type="button" data-preview="install">Popup de instalação</button>
@@ -238,7 +238,7 @@ include __DIR__ . '/_header.php';
             <button class="btn" type="button" data-preview="live">Ativar aviso da aula ao vivo</button>
         </div>
     </section>
-    <section class="pn-card">
+    <section class="pn-card pn-settings-source" id="pnAppSettings">
         <h2>Eventos, tags e popup de instalação</h2><p>Personalize a instalação e as automações disparadas em cada etapa do aplicativo.</p>
         <form method="post" enctype="multipart/form-data" class="pn-form">
             <input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="save_app_settings">
