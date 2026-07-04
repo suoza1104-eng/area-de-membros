@@ -135,6 +135,17 @@ O banco deverá separar:
 
 > O Firebase confirma que aceitou a mensagem, mas nem sempre confirma visualização no aparelho. A interface deve chamar essa métrica de `aceita pelo Firebase`, e não de leitura garantida.
 
+## Campanhas push
+
+- Campanhas podem ser imediatas ou agendadas e selecionar um ou mais fluxos publicados.
+- A audiência é congelada na criação usando filtros de busca, turma, tag, progresso e autorização push.
+- Cada combinação de campanha, aluno, fluxo e versão possui chave única para impedir duplicidade.
+- A entrada usa o evento técnico `CAMPANHA_PUSH`, mas inicia a versão selecionada diretamente no gatilho; eventos comportamentais não são falsificados.
+- Todos os blocos do fluxo são executados, inclusive tags e integrações externas, e ficam visíveis antes da confirmação.
+- O cron cria as entradas em lotes e o motor existente processa os blocos, esperas e retentativas.
+- O painel separa alunos selecionados, alunos com push, execuções concluídas/em andamento, erros de fluxo, aceitações Firebase, erros de entrega e cliques.
+- Pausar ou cancelar impede novas entradas; execuções que já entraram no fluxo seguem a versão imutável selecionada.
+
 ## Proteções de desempenho e segurança
 
 - Execução assíncrona em fila no banco.

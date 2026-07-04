@@ -273,7 +273,7 @@ include __DIR__ . '/_header.php';
     </div>
 
     <section class="pn-card">
-        <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p><?=$appSettings['flow_engine_enabled']?'Motor ativo: fluxos publicados recebem novos eventos e são processados pelo cron.':'Motor global pausado: ative-o nas configurações após revisar os fluxos publicados.'?></p></div><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div>
+        <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p><?=$appSettings['flow_engine_enabled']?'Motor ativo: fluxos publicados recebem novos eventos e são processados pelo cron.':'Motor global pausado: ative-o nas configurações após revisar os fluxos publicados.'?></p></div><div class="pn-flow-actions"><a class="btn btn-ghost" href="push_campanhas.php">Campanhas Push</a><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div></div>
         <div class="pn-flow-list">
             <?php foreach($flows as $flow):?>
             <?php $flowDetails = $flowRunDetailsByFlow[(int)$flow['id']] ?? []; ?>
