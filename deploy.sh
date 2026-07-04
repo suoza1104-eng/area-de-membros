@@ -35,6 +35,7 @@ cd "$REPO_DIR" || exit 1
 
 run_php_cron "$DEPLOY_DIR/cron/processar_reagendamentos_live.php" "reagendamentos_live"
 run_php_cron "$DEPLOY_DIR/cron/processar_metricas_negocio.php" "metricas_negocio"
+run_php_cron "$DEPLOY_DIR/cron/processar_fluxos_push.php" "fluxos_push"
 
 git fetch --all -q
 

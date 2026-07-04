@@ -31,4 +31,8 @@ systemctl status area-membros-cron-agent.timer
 Cada rotina roda em uma unidade independente. Uma live demorada não bloqueia
 as execuções da IA, dos reagendamentos ou dos retornos no minuto seguinte.
 
+Ao adicionar uma rotina base nova, execute novamente o instalador no VPS para
+atualizar o agente. A lista de tarefas é consultada no servidor a cada minuto;
+o fallback da hospedagem continua responsável por assumir tarefas atrasadas.
+
 Também é possível usar o instalador automático exibido na tela Monitor de Cron.
