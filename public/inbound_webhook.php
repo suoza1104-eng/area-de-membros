@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/retorno_agendamentos.php';
+require_once __DIR__ . '/../app/firepay.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -84,6 +85,44 @@ if (!is_array($payload)) {
 $ins = $pdo->prepare("INSERT INTO inbound_webhook_recebimentos (webhook_id, payload_raw, status) VALUES (:w, :p, 'pendente')");
 $ins->execute([':w' => (int)$ihw['id'], ':p' => $rawBody !== '' ? $rawBody : json_encode($payload, JSON_UNESCAPED_UNICODE)]);
 $recId = (int)$pdo->lastInsertId();
+
+// Entradas financeiras sao processadas antes da resposta para que a Firepay
+// possa repetir a entrega caso ocorra uma falha real no servidor.
+if ((string)($ihw['evento'] ?? '') === 'FIREPAY') {
+    try {
+        $result = firepay_process_webhook(
+            $pdo,
+            $payload,
+            $rawBody !== '' ? $rawBody : (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            (int)$ihw['id']
+        );
+        $isMapped = ($result['normalized_status'] ?? '') === 'APPROVED';
+        $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status=:status,user_id=:user_id,erro_msg=:message,processado_em=NOW() WHERE id=:id")
+            ->execute([
+                ':status'=>$isMapped ? 'processado' : 'ignorado',
+                ':user_id'=>(int)($result['matched_user_id'] ?? 0) ?: null,
+                ':message'=>$isMapped ? null : 'Status Firepay ainda nao mapeado: ' . (string)($payload['status'] ?? ''),
+                ':id'=>$recId,
+            ]);
+        $pdo->prepare("UPDATE inbound_webhooks SET total_recebidos=total_recebidos+1 WHERE id=:id")
+            ->execute([':id'=>(int)$ihw['id']]);
+        http_response_code(200);
+        echo json_encode(['ok'=>true,'processed'=>$recId,'transaction'=>$result['transaction_id'],
+            'status'=>$result['normalized_status']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (InvalidArgumentException $e) {
+        $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='erro',erro_msg=:message,processado_em=NOW() WHERE id=:id")
+            ->execute([':message'=>$e->getMessage(), ':id'=>$recId]);
+        http_response_code(422);
+        echo json_encode(['ok'=>false,'message'=>$e->getMessage()], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='erro',erro_msg=:message,processado_em=NOW() WHERE id=:id")
+            ->execute([':message'=>'Falha interna ao processar Firepay', ':id'=>$recId]);
+        app_log('Falha no webhook Firepay', ['inbound_id'=>(int)$ihw['id'],'receipt_id'=>$recId,'error'=>$e->getMessage()]);
+        http_response_code(500);
+        echo json_encode(['ok'=>false,'message'=>'Falha ao processar webhook Firepay']);
+    }
+    exit;
+}
 
 // Responde imediato
 echo json_encode(['ok' => true, 'queued' => $recId]);

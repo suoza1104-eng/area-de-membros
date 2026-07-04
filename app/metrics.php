@@ -182,7 +182,7 @@ function metrics_ensure_schema(PDO $pdo): void
 {
     static $ready = false;
     if ($ready) return;
-    $schemaVersion = '3';
+    $schemaVersion = '4';
     try {
         if ((string)get_setting('metrics_schema_version', '') === $schemaVersion) {
             $ready = true;

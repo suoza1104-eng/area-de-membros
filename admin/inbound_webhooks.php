@@ -426,6 +426,7 @@ require_once __DIR__ . '/_header.php';
         <label>Evento que será disparado no sistema *</label>
         <select id="iwEvento" onchange="iwAtualizaCamposCondicionais()">
           <option value="INSCRITO">INSCRITO — cria aluno e libera acesso (principal — Hotmart/Kiwify)</option>
+          <option value="FIREPAY">FIREPAY — recebe e registra pagamentos da Firepay</option>
           <option value="INSCRICAO_GRATUITA">INSCRICAO_GRATUITA — cria/atualiza aluno com acesso temporario da turma</option>
           <option value="INSCRICAO_VITALICIA">INSCRICAO_VITALICIA — cria/atualiza aluno com acesso vitalicio nao pago</option>
           <option value="PRIMEIRO_LOGIN">PRIMEIRO_LOGIN — marca como acessou a plataforma</option>
@@ -437,6 +438,9 @@ require_once __DIR__ . '/_header.php';
           <option value="LIBERAR_ACESSO_VITALICIO">LIBERAR_ACESSO_VITALICIO — libera o curso após pagamento aprovado</option>
           <option value="TAG_CUSTOM">TAG_CUSTOM — apenas aplica tag e dispara evento custom</option>
         </select>
+        <div id="iwFirepayInfo" style="display:none;font-size:11px;color:#fbbf24;margin-top:8px;background:#211b0d;padding:10px 12px;border-radius:6px;border:1px solid rgba(251,191,36,.3)">
+          Esta entrada usa o formato fixo da Firepay. O mapeamento manual abaixo nao e utilizado. Nesta primeira etapa, vendas com <code>status: paid</code> entram nos relatorios e os demais status ficam preservados no log para mapeamento posterior. Ela relaciona um aluno existente por telefone ou email, mas nao cria matricula automaticamente.
+        </div>
       </div>
 
       <div class="form-row">
@@ -720,6 +724,7 @@ function iwAtualizaCamposCondicionais() {
     const ev = document.getElementById('iwEvento').value;
     document.getElementById('iwLessonWrap').style.display = (ev === 'VIU_AULA') ? '' : 'none';
     document.getElementById('iwTurmaWrap').style.display  = (['INSCRITO','INSCRICAO_GRATUITA','INSCRICAO_VITALICIA'].includes(ev)) ? '' : 'none';
+    document.getElementById('iwFirepayInfo').style.display = (ev === 'FIREPAY') ? '' : 'none';
 }
 
 function iwAtualizaEventosDiretos(id) {
