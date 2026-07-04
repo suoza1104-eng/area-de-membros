@@ -56,6 +56,13 @@ if ($taskKey === 'health') {
 
 try {
     $result = cron_manager_execute($pdo, $taskKey, $source, false);
+    // Compatibilidade com agentes instalados antes da criação dos fluxos push.
+    // Eles já chamam agendamentos_retorno a cada minuto; a verificação adicional
+    // é barata e o gerenciador impede execução duplicada quando o agente novo
+    // também solicitar fluxos_push diretamente.
+    if ($taskKey === 'agendamentos_retorno') {
+        $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
+    }
     cron_manager_heartbeat($pdo, $source, $taskKey, (string)($result['reason'] ?? $result['status'] ?? 'ok'), false);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $e) {
