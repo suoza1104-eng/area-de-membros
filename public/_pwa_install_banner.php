@@ -85,7 +85,7 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
         };show();
     }
 
-    if(standalone||localStorage.getItem('pwa_install_confirmed')==='1'){
+    if(standalone){
         if(options.requestPush){
             if(!('Notification'in window)||Notification.permission!=='granted')activationMode();
         }
@@ -111,9 +111,9 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
     action.onclick=async function(){
         if(!deferredPrompt){message('O Chrome ainda está preparando a instalação. Atualize a página e tente novamente.','err');return}
         action.disabled=true;deferredPrompt.prompt();const choice=await deferredPrompt.userChoice;deferredPrompt=null;
-        if(choice.outcome==='accepted'){localStorage.setItem('pwa_install_confirmed','1');reportInstall();hide()}
+        if(choice.outcome==='accepted'){reportInstall();hide()}
         else{action.disabled=false;action.textContent=options.button||'Instalar aplicativo agora'}
     };
-    window.addEventListener('appinstalled',function(){localStorage.setItem('pwa_install_confirmed','1');reportInstall();hide()});
+    window.addEventListener('appinstalled',function(){reportInstall();hide()});
 })();
 </script>
