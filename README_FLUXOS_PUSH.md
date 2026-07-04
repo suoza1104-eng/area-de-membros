@@ -8,6 +8,15 @@ Permitir que administradores criem fluxos visuais acionados por eventos da área
 
 O envio manual de teste continuará disponível durante todas as etapas.
 
+## Progresso da implementação
+
+- [x] Etapa 1 — organização da tela, configurações na engrenagem e identidade do aplicativo.
+- [x] Etapa 2 — cadastro, listagem, clonagem, pausa, exclusão, editor visual e publicação versionada.
+- [ ] Etapa 3 — motor assíncrono, condições, esperas e execução das integrações.
+- [ ] Etapa 4 — métricas por bloco, observabilidade e testes de concorrência/volume.
+
+Na etapa 2, o estado `Publicado` indica que existe uma versão imutável pronta. Nenhum fluxo publicado é executado enquanto o motor da etapa 3 não estiver implantado e habilitado.
+
 ## Etapa 1 — organização e identidade do aplicativo
 
 - Manter os KPIs no início da tela.
@@ -142,4 +151,3 @@ O banco deverá separar:
 ## Estratégia de implantação
 
 Cada etapa será publicada separadamente e deverá preservar compatibilidade com o envio manual existente. O motor começará desativado por padrão e será habilitado somente após migrações, validação do cron e teste de um fluxo controlado. O tamanho dos lotes será aumentado apenas com base em tempo de execução, memória, erros e crescimento da fila.
-

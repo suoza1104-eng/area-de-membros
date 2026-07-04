@@ -2,9 +2,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/push_notifications.php';
+require_once __DIR__ . '/../app/push_flows.php';
 proteger_admin();
 $pdo = getPDO();
 push_ensure_schema($pdo);
+push_flows_ensure_schema($pdo);
 
 $canWrite = ($_SESSION['admin_tipo'] ?? 'principal') !== 'equipe';
 if (!$canWrite) {
@@ -25,6 +27,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$canWrite) throw new RuntimeException('Seu usuário não possui permissão de escrita.');
         if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) throw new RuntimeException('Sessão expirada. Recarregue a página.');
         $action = (string)($_POST['action'] ?? '');
+        $adminName = (string)($_SESSION['equipe_nome'] ?? 'Administrador');
+        if ($action === 'flow_create') {
+            $flowId = push_flow_create($pdo, (string)($_POST['name'] ?? 'Novo fluxo'), $adminName);
+            header('Location: notificacao_fluxo.php?id=' . $flowId);
+            exit;
+        }
+        if ($action === 'flow_clone') {
+            $flowId = push_flow_clone($pdo, (int)($_POST['flow_id'] ?? 0), $adminName);
+            header('Location: notificacao_fluxo.php?id=' . $flowId);
+            exit;
+        }
+        if ($action === 'flow_toggle') {
+            push_flow_set_status($pdo, (int)($_POST['flow_id'] ?? 0), (string)($_POST['status'] ?? ''), $adminName);
+            header('Location: notificacoes.php?flow_saved=1');
+            exit;
+        }
+        if ($action === 'flow_delete') {
+            push_flow_delete($pdo, (int)($_POST['flow_id'] ?? 0));
+            header('Location: notificacoes.php?flow_deleted=1');
+            exit;
+        }
         if ($action === 'save_config') {
             $fields = [
                 'push_app_name'=>'app_name','push_firebase_api_key'=>'api_key','push_firebase_auth_domain'=>'auth_domain',
@@ -128,6 +151,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (!empty($_GET['saved'])) $message = 'Configuração salva.';
 
 if (!empty($_GET['app_saved'])) $message = 'Configurações do aplicativo salvas.';
+if (!empty($_GET['flow_saved'])) $message = 'Fluxo atualizado.';
+if (!empty($_GET['flow_deleted'])) $message = 'Fluxo excluído.';
 
 $publicConfig = push_public_config();
 $serviceConfigured = trim((string)(get_setting('push_firebase_service_account', '') ?? '')) !== '';
@@ -166,6 +191,7 @@ try {
 $devices = $pdo->query("SELECT d.*,u.nome,u.email FROM push_devices d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $activeDevices = array_values(array_filter($devices, static fn($d) => ($d['status']??'')==='active' && ($d['notification_permission']??'')==='granted' && !empty($d['token'])));
 $logs = $pdo->query("SELECT l.*,n.title,n.body,u.nome,u.email FROM push_delivery_logs l JOIN push_notifications n ON n.id=l.notification_id LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$flows = $pdo->query("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id ORDER BY f.updated_at DESC,f.id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $previewImage = trim($appSettings['popup_image_url']);
 if ($previewImage === '') $previewImage = 'pwa-install-phone.jpg';
 if (!preg_match('~^(?:https?:)?//|^data:|^/~i', $previewImage)) $previewImage = '../public/' . ltrim($previewImage, '/');
@@ -179,6 +205,7 @@ include __DIR__ . '/_header.php';
 .pn-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.pn-check{display:flex!important;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--border);border-radius:9px;color:var(--text)!important;text-transform:none!important;font-size:11px!important}.pn-check input{width:auto!important;margin:1px 0 0!important}.pn-help{font-size:10px;color:var(--muted);line-height:1.45}@media(max-width:700px){.pn-checks{grid-template-columns:1fr}}
 .pn-preview-actions{display:flex;flex-wrap:wrap;gap:8px}.pn-preview-overlay{display:none;position:fixed;inset:0;z-index:12000;padding:18px;background:rgba(2,6,15,.9);align-items:center;justify-content:center}.pn-preview-overlay.open{display:flex}.pn-preview-phone{position:relative;width:min(880px,100%);max-height:calc(100vh - 36px);display:grid;grid-template-columns:minmax(280px,42%) minmax(0,1fr);overflow:hidden;border:1px solid rgba(250,204,21,.35);border-radius:26px;background:radial-gradient(circle at 92% 8%,rgba(250,204,21,.17),transparent 35%),linear-gradient(145deg,#101827,#080e1a 68%);box-shadow:0 28px 100px rgba(0,0,0,.75)}.pn-preview-timer{position:absolute;top:0;left:0;right:0;z-index:3;height:4px;background:rgba(255,255,255,.08)}.pn-preview-timer span{display:block;width:100%;height:100%;background:#facc15;transform-origin:left}.pn-preview-overlay.open .pn-preview-timer span{animation:pnPreviewTimer 20s linear forwards}.pn-preview-image{min-height:510px;background:#060b15}.pn-preview-image img{width:100%;height:100%;display:block;object-fit:contain}.pn-preview-content{display:flex;flex-direction:column;justify-content:center;padding:48px 42px;color:#fff}.pn-preview-eyebrow{align-self:flex-start;padding:5px 9px;border:1px solid rgba(250,204,21,.25);border-radius:999px;background:rgba(250,204,21,.08);color:#fde047;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.pn-preview-content h3{margin:15px 0 10px;font-size:32px;line-height:1.08}.pn-preview-content p{margin:0;color:#aeb9cc;font-size:14px;line-height:1.6}.pn-preview-benefits{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:22px 0;color:#e2e8f0;font-size:12px;font-weight:650}.pn-preview-benefits span:before{content:'✓';margin-right:7px;color:#facc15}.pn-preview-cta{width:100%;border:1px solid rgba(255,255,255,.3);border-radius:14px;padding:15px 18px;background:linear-gradient(135deg,#fde047,#eab308);color:#171301;font-size:15px;font-weight:900}.pn-preview-close{position:absolute;top:14px;right:14px;z-index:4;display:flex;align-items:center;gap:7px;border:1px solid #fde047;border-radius:999px;padding:9px 13px;background:#facc15;color:#171301;font-size:12px;font-weight:900;cursor:pointer;box-shadow:0 5px 20px rgba(250,204,21,.3)}.pn-preview-close b{font-size:18px;line-height:.8}@keyframes pnPreviewTimer{from{transform:scaleX(1)}to{transform:scaleX(0)}}@media(max-width:720px){.pn-preview-overlay{padding:0}.pn-preview-phone{min-height:100dvh;max-height:100dvh;border:0;border-radius:0;grid-template-columns:1fr;grid-template-rows:minmax(230px,38dvh) 1fr;overflow-y:auto}.pn-preview-image{min-height:0}.pn-preview-content{justify-content:flex-start;padding:25px 22px}.pn-preview-content h3{font-size:27px}.pn-preview-close{top:12px;right:12px;padding:9px 11px}}
 .pn-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px}.pn-toolbar-copy h1{margin:0;font-size:20px}.pn-toolbar-copy p{margin:4px 0 0;color:var(--muted);font-size:11px}.pn-gear{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(250,204,21,.35);border-radius:10px;padding:10px 13px;background:rgba(250,204,21,.08);color:#fde047;font-weight:800;cursor:pointer}.pn-gear svg{width:17px;height:17px}.pn-test-card{grid-column:1/-1}.pn-settings-source{display:none}.pn-settings-source.pn-settings-mounted{display:block}.pn-settings-overlay{display:none;position:fixed;inset:0;z-index:11000;background:rgba(2,6,15,.72);backdrop-filter:blur(5px)}.pn-settings-overlay.open{display:block}.pn-settings-panel{position:absolute;top:0;right:0;width:min(760px,100%);height:100%;overflow:auto;background:var(--bg);border-left:1px solid var(--border);box-shadow:-24px 0 70px rgba(0,0,0,.5)}.pn-settings-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);background:var(--bg)}.pn-settings-head h2{margin:0;font-size:17px}.pn-settings-close{border:1px solid var(--border);border-radius:9px;padding:8px 11px;background:var(--bg-card);color:var(--text);cursor:pointer}.pn-settings-body{display:grid;gap:16px;padding:18px}.pn-settings-body .pn-card{margin:0}.pn-icon-row{display:grid;grid-template-columns:76px 1fr;align-items:center;gap:13px;padding:12px;border:1px solid var(--border);border-radius:11px;background:var(--bg)}.pn-icon-preview{width:76px;height:76px;border-radius:18px;object-fit:cover;background:#fff}.pn-icon-copy strong{display:block;font-size:12px}.pn-icon-copy span{display:block;margin-top:5px;color:var(--muted);font-size:10px;line-height:1.5}@media(max-width:600px){.pn-toolbar{align-items:flex-start}.pn-gear span{display:none}.pn-icon-row{grid-template-columns:62px 1fr}.pn-icon-preview{width:62px;height:62px}}
+.pn-flow-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.pn-flow-head h2{margin:0;font-size:15px}.pn-flow-head p{margin:3px 0 0;color:var(--muted);font-size:11px}.pn-flow-list{display:grid;gap:8px}.pn-flow-row{display:grid;grid-template-columns:minmax(220px,1fr) 120px 120px 160px auto;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:11px;background:var(--bg)}.pn-flow-name strong{display:block;font-size:13px}.pn-flow-name span,.pn-flow-meta{color:var(--muted);font-size:10px}.pn-flow-status{display:inline-flex;justify-content:center;padding:4px 8px;border-radius:999px;background:var(--bg-hover);color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase}.pn-flow-status.active{background:var(--success-dim);color:#86efac}.pn-flow-status.paused{background:var(--warning-dim);color:#fcd34d}.pn-flow-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}.pn-flow-actions form{display:inline}.pn-flow-empty{padding:28px;text-align:center;border:1px dashed var(--border-light);border-radius:11px;color:var(--muted);font-size:12px}@media(max-width:1050px){.pn-flow-row{grid-template-columns:1fr 100px auto}.pn-flow-version,.pn-flow-date{display:none}}@media(max-width:650px){.pn-flow-head{align-items:flex-start;flex-direction:column}.pn-flow-row{grid-template-columns:1fr}.pn-flow-actions{justify-content:flex-start}}
 </style>
 <div class="pn">
     <?php if($message):?><div class="pn-status pn-ok"><?=pn_h($message)?></div><?php endif;?>
@@ -196,6 +223,29 @@ include __DIR__ . '/_header.php';
         <div class="pn-kpi"><small><?=pn_h($label)?></small><strong><?=number_format($kpi[$key])?></strong><span><?=pn_pct($kpi[$key],max(1,$kpi['total']))?> dos dispositivos registrados</span></div>
         <?php endforeach;?>
     </div>
+
+    <section class="pn-card">
+        <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p>O editor e o versionamento estão ativos. A execução automática será conectada somente na etapa 3.</p></div><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div>
+        <div class="pn-flow-list">
+            <?php foreach($flows as $flow):?>
+            <div class="pn-flow-row">
+                <div class="pn-flow-name"><strong><?=pn_h($flow['name'])?></strong><span><?=pn_h($flow['description'] ?: 'Sem descrição')?></span></div>
+                <div><span class="pn-flow-status <?=pn_h($flow['status'])?>"><?=pn_h($flow['status']==='active'?'Publicado':($flow['status']==='paused'?'Pausado':'Rascunho'))?></span></div>
+                <div class="pn-flow-version pn-flow-meta"><?=$flow['current_version_number']?'Versão '.(int)$flow['current_version_number']:'Não publicado'?></div>
+                <div class="pn-flow-date pn-flow-meta">Atualizado em <?=pn_h(date('d/m/Y H:i',strtotime($flow['updated_at'])))?></div>
+                <div class="pn-flow-actions">
+                    <a class="btn btn-ghost btn-xs" href="notificacao_fluxo.php?id=<?=(int)$flow['id']?>">Editar</a>
+                    <?php if($canWrite):?>
+                    <?php if(!empty($flow['current_version_id'])):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_toggle"><input type="hidden" name="flow_id" value="<?=(int)$flow['id']?>"><input type="hidden" name="status" value="<?=$flow['status']==='active'?'paused':'active'?>"><button class="btn btn-ghost btn-xs" type="submit"><?=$flow['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif;?>
+                    <form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_clone"><input type="hidden" name="flow_id" value="<?=(int)$flow['id']?>"><button class="btn btn-ghost btn-xs" type="submit">Clonar</button></form>
+                    <form method="post" onsubmit="return confirm('Excluir este fluxo e todas as versões?')"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_delete"><input type="hidden" name="flow_id" value="<?=(int)$flow['id']?>"><button class="btn btn-danger btn-xs" type="submit">Excluir</button></form>
+                    <?php endif;?>
+                </div>
+            </div>
+            <?php endforeach;?>
+            <?php if(!$flows):?><div class="pn-flow-empty">Nenhum fluxo criado. Use “Criar novo fluxo” para abrir o editor visual.</div><?php endif;?>
+        </div>
+    </section>
 
     <div class="pn-cols">
         <section class="pn-card pn-test-card">
