@@ -51,10 +51,13 @@ try {
         user_agent=VALUES(user_agent),notification_permission=VALUES(notification_permission),status='active',uninstalled_at=NULL,
         installed_at=IF(VALUES(installed_at) IS NOT NULL,COALESCE(installed_at,VALUES(installed_at)),installed_at),last_seen_at=NOW(),last_token_at=NOW(),last_error=NULL");
     $stmt->execute(['uid'=>$userId,'client'=>$clientId,'token'=>$token!==''?$token:null,'hash'=>$hash,'platform'=>$platform,'browser'=>$browser,'ua'=>$ua,'permission'=>$permission,'installed'=>$installed?1:0]);
-    $idStmt = $pdo->prepare('SELECT id,installed_at FROM push_devices WHERE client_id=:client LIMIT 1');
+    $idStmt = $pdo->prepare('SELECT id,installed_at,notification_permission FROM push_devices WHERE client_id=:client LIMIT 1');
     $idStmt->execute(['client'=>$clientId]);
     $row = $idStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-    push_api_out(['ok'=>true,'device_id'=>(int)($row['id']??0),'installed'=>!empty($row['installed_at'])]);
+    $deviceId = (int)($row['id'] ?? 0);
+    if ($installed && !empty($row['installed_at'])) push_dispatch_lifecycle_event($pdo, $deviceId, 'APP_INSTALADO');
+    if ($permission === 'granted' && $token !== '') push_dispatch_lifecycle_event($pdo, $deviceId, 'APP_NOTIFICACOES_AUTORIZADAS');
+    push_api_out(['ok'=>true,'device_id'=>$deviceId,'installed'=>!empty($row['installed_at'])]);
 } catch (Throwable $e) {
     error_log('api_push_device: ' . $e->getMessage());
     push_api_out(['ok'=>false,'error'=>'server_error','message'=>'Não foi possível registrar este dispositivo.'], 500);

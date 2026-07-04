@@ -189,6 +189,8 @@ if (isset($_GET['logout'])) {
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
+require_once __DIR__ . '/../app/push_notifications.php';
+push_ensure_schema($pdo);
 
 // ========================
 // 3) FILTROS (datas / turma)
@@ -585,6 +587,24 @@ $dashLineCharts['lesson_views'] = [
     ),
 ];
 
+$dashLineCharts['app_installs'] = [
+    'title' => 'Instalações do aplicativo',
+    'suffix' => ' aluno(s)',
+    'color' => '#facc15',
+    'series' => dash_all_period_series(
+        $pdo,
+        'push_devices pd JOIN users u ON u.id = pd.user_id',
+        'pd.installed_at',
+        'COUNT(*)',
+        'app_installs',
+        $dataDe,
+        $dataAte,
+        $lineTurmaCol,
+        $turmaIds,
+        $codigosTurmaFiltro
+    ),
+];
+
 // ========================
 // 5) DADOS DO DASHBOARD
 // ========================
@@ -933,6 +953,19 @@ try {
     $alunosLogaram = (int)$stmt->fetchColumn();
 } catch (Throwable $e) { /* coluna pode não existir em instâncias antigas */ }
 $pctLogaram = $totalAlunos > 0 ? round($alunosLogaram / $totalAlunos * 100, 1) : 0;
+$alunosComApp = 0;
+$alunosLogaramComApp = 0;
+try {
+    $sqlApp = "SELECT COUNT(DISTINCT u.id) FROM users u JOIN push_devices pd ON pd.user_id=u.id AND pd.installed_at IS NOT NULL";
+    if ($whereUsers) $sqlApp .= ' WHERE ' . implode(' AND ', $whereUsers);
+    $stmt = $pdo->prepare($sqlApp); $stmt->execute($paramsUsers); $alunosComApp = (int)$stmt->fetchColumn();
+
+    $sqlAppLogin = "SELECT COUNT(DISTINCT u.id) FROM users u JOIN push_devices pd ON pd.user_id=u.id AND pd.installed_at IS NOT NULL WHERE u.last_login_at IS NOT NULL";
+    if ($whereUsers) $sqlAppLogin .= ' AND ' . implode(' AND ', $whereUsers);
+    $stmt = $pdo->prepare($sqlAppLogin); $stmt->execute($paramsUsers); $alunosLogaramComApp = (int)$stmt->fetchColumn();
+} catch (Throwable $e) {}
+$pctAlunosComApp = $totalAlunos > 0 ? round($alunosComApp / $totalAlunos * 100, 1) : 0;
+$pctLogaramComApp = $alunosLogaram > 0 ? round($alunosLogaramComApp / $alunosLogaram * 100, 1) : 0;
 
 // ── Métricas de LIVE (acessou / oferta / compra) ──
 // Conta usuários únicos com recebimentos processados em live_events do tipo
@@ -1840,6 +1873,24 @@ dashTurmaRender();
         <div class="kpi-label">Logaram</div>
         <div class="kpi-value"><?= number_format($alunosLogaram) ?></div>
         <div class="kpi-sub"><?= $pctLogaram ?>% acessaram a plataforma</div>
+    </div>
+
+    <div class="kpi" style="border-color:rgba(250,204,21,.3)">
+        <div class="kpi-icon" style="background:rgba(250,204,21,.15);color:#facc15">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 18h6"/></svg>
+        </div>
+        <div class="kpi-label">Alunos com aplicativo</div>
+        <div class="kpi-value"><?= number_format($alunosComApp) ?></div>
+        <div class="kpi-sub"><?= $pctAlunosComApp ?>% dos alunos inscritos</div>
+    </div>
+
+    <div class="kpi" style="border-color:rgba(34,197,94,.3)">
+        <div class="kpi-icon" style="background:rgba(34,197,94,.15);color:#22c55e">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 12l2.5 2.5L16 9"/></svg>
+        </div>
+        <div class="kpi-label">Logaram e instalaram</div>
+        <div class="kpi-value"><?= number_format($alunosLogaramComApp) ?></div>
+        <div class="kpi-sub"><?= $pctLogaramComApp ?>% dos alunos que já logaram</div>
     </div>
 
     <div class="kpi kpi-b">

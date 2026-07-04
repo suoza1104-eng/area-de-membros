@@ -40,6 +40,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: notificacoes.php?saved=1');
             exit;
         }
+        if ($action === 'save_app_settings') {
+            $textFields = [
+                'push_tag_installed'=>'tag_installed','push_tag_authorized'=>'tag_authorized','push_tag_uninstalled'=>'tag_uninstalled',
+                'push_popup_title'=>'popup_title','push_popup_text'=>'popup_text','push_popup_button_label'=>'popup_button_label',
+                'push_popup_image_url'=>'popup_image_url',
+            ];
+            foreach ($textFields as $setting => $postKey) set_setting($setting, trim((string)($_POST[$postKey] ?? '')));
+            foreach ([
+                'push_uninstall_remove_installed_tag'=>'uninstall_remove_installed_tag','push_popup_enabled'=>'popup_enabled',
+                'push_popup_show_installed'=>'popup_show_installed','push_popup_show_non_chrome'=>'popup_show_non_chrome',
+                'push_popup_show_apple'=>'popup_show_apple','push_popup_close_enabled'=>'popup_close_enabled',
+                'push_popup_pulse_enabled'=>'popup_pulse_enabled','push_popup_request_notifications'=>'popup_request_notifications',
+            ] as $setting => $postKey) set_setting($setting, isset($_POST[$postKey]) ? '1' : '0');
+            if (!empty($_FILES['popup_image']['tmp_name'])) {
+                if ((int)($_FILES['popup_image']['size'] ?? 0) > 5 * 1024 * 1024) throw new RuntimeException('A imagem deve ter no máximo 5 MB.');
+                $mime = (new finfo(FILEINFO_MIME_TYPE))->file((string)$_FILES['popup_image']['tmp_name']);
+                $extensions = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'];
+                if (!isset($extensions[$mime])) throw new RuntimeException('Envie uma imagem JPG, PNG ou WebP.');
+                $dir = __DIR__ . '/../public/uploads/pwa';
+                if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) throw new RuntimeException('Não foi possível criar a pasta da imagem.');
+                $filename = 'popup-' . bin2hex(random_bytes(8)) . '.' . $extensions[$mime];
+                if (!move_uploaded_file((string)$_FILES['popup_image']['tmp_name'], $dir . '/' . $filename)) throw new RuntimeException('Não foi possível salvar a imagem.');
+                set_setting('push_popup_image_url', 'uploads/pwa/' . $filename);
+            }
+            header('Location: notificacoes.php?app_saved=1');
+            exit;
+        }
         if ($action === 'send_test') {
             if (!push_is_configured()) throw new RuntimeException('Configure todas as credenciais do Firebase antes do teste.');
             $deviceId = max(0, (int)($_POST['device_id'] ?? 0));
@@ -82,10 +109,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 if (!empty($_GET['saved'])) $message = 'Configuração salva.';
 
+if (!empty($_GET['app_saved'])) $message = 'Configurações do aplicativo salvas.';
+
 $publicConfig = push_public_config();
 $serviceConfigured = trim((string)(get_setting('push_firebase_service_account', '') ?? '')) !== '';
 $configured = push_is_configured();
 $appName = (string)(get_setting('push_app_name', 'Área de Membros') ?? 'Área de Membros');
+$appSettings = [
+    'tag_installed'=>(string)(get_setting('push_tag_installed','')??''),
+    'tag_authorized'=>(string)(get_setting('push_tag_authorized','')??''),
+    'tag_uninstalled'=>(string)(get_setting('push_tag_uninstalled','')??''),
+    'uninstall_remove_installed_tag'=>push_setting_enabled('push_uninstall_remove_installed_tag',true),
+    'popup_enabled'=>push_setting_enabled('push_popup_enabled',true),
+    'popup_show_installed'=>push_setting_enabled('push_popup_show_installed',false),
+    'popup_show_non_chrome'=>push_setting_enabled('push_popup_show_non_chrome',true),
+    'popup_show_apple'=>push_setting_enabled('push_popup_show_apple',false),
+    'popup_close_enabled'=>push_setting_enabled('push_popup_close_enabled',true),
+    'popup_pulse_enabled'=>push_setting_enabled('push_popup_pulse_enabled',true),
+    'popup_request_notifications'=>push_setting_enabled('push_popup_request_notifications',true),
+    'popup_title'=>(string)(get_setting('push_popup_title','Assista às aulas com mais qualidade')??''),
+    'popup_text'=>(string)(get_setting('push_popup_text','Instale o aplicativo para ter reprodução mais estável, acesso rápido e avisos importantes no celular.')??''),
+    'popup_button_label'=>(string)(get_setting('push_popup_button_label','Instalar aplicativo agora')??''),
+    'popup_image_url'=>(string)(get_setting('push_popup_image_url','pwa-install-phone.jpg')??''),
+];
 
 $kpi = ['total'=>0,'installed'=>0,'uninstalled'=>0,'active24'=>0,'receiving'=>0];
 try {
@@ -108,6 +154,7 @@ include __DIR__ . '/_header.php';
 ?>
 <style>
 .pn{display:flex;flex-direction:column;gap:16px}.pn-grid{display:grid;grid-template-columns:repeat(5,minmax(145px,1fr));gap:10px}.pn-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px}.pn-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}.pn-kpi strong{display:block;font-size:24px;margin-top:5px}.pn-kpi span{font-size:11px;color:var(--muted)}.pn-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}.pn-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px}.pn-card h2{font-size:15px;margin:0 0 4px}.pn-card>p{font-size:11px;color:var(--muted);margin:0 0 14px}.pn-form{display:grid;gap:11px}.pn-form label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}.pn-form input,.pn-form textarea,.pn-form select{width:100%;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px;font:inherit}.pn-form textarea{min-height:90px;resize:vertical}.pn-status{padding:11px 13px;border-radius:9px;font-size:12px}.pn-ok{background:var(--success-dim);color:#86efac}.pn-error{background:var(--danger-dim);color:#fca5a5}.pn-table{overflow:auto}.pn-table table{min-width:900px}.pn-pill{display:inline-flex;padding:2px 7px;border-radius:999px;font-size:10px;background:var(--bg-hover);color:var(--muted)}.pn-pill.active,.pn-pill.accepted,.pn-pill.clicked{background:var(--success-dim);color:#86efac}.pn-pill.failed,.pn-pill.uninstalled,.pn-pill.revoked{background:var(--danger-dim);color:#fca5a5}@media(max-width:1000px){.pn-grid{grid-template-columns:repeat(2,1fr)}.pn-cols{grid-template-columns:1fr}}@media(max-width:560px){.pn-grid{grid-template-columns:1fr}}
+.pn-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.pn-check{display:flex!important;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--border);border-radius:9px;color:var(--text)!important;text-transform:none!important;font-size:11px!important}.pn-check input{width:auto!important;margin:1px 0 0!important}.pn-help{font-size:10px;color:var(--muted);line-height:1.45}@media(max-width:700px){.pn-checks{grid-template-columns:1fr}}
 </style>
 <div class="pn">
     <?php if($message):?><div class="pn-status pn-ok"><?=pn_h($message)?></div><?php endif;?>
@@ -154,5 +201,26 @@ include __DIR__ . '/_header.php';
 
     <section class="pn-card"><h2>Dispositivos</h2><p>“Excluído” só pode ser detectado depois que o Firebase rejeitar um novo envio para o token.</p><div class="pn-table"><table><thead><tr><th>ID</th><th>Aluno</th><th>Plataforma</th><th>Instalado</th><th>Permissão</th><th>Status</th><th>Último acesso</th></tr></thead><tbody><?php foreach($devices as $d):?><tr><td>#<?=(int)$d['id']?></td><td><?=pn_h($d['nome']?:('Aluno #'.$d['user_id']))?><div class="text-xs text-muted"><?=pn_h($d['email']??'')?></div></td><td><?=pn_h($d['platform'])?><div class="text-xs text-muted"><?=pn_h($d['browser']??'')?></div></td><td><?=$d['installed_at']?pn_h(date('d/m/Y H:i',strtotime($d['installed_at']))):'Não confirmado'?></td><td><?=pn_h($d['notification_permission'])?></td><td><span class="pn-pill <?=pn_h($d['status'])?>"><?=pn_h($d['status'])?></span></td><td><?=pn_h(date('d/m/Y H:i',strtotime($d['last_seen_at'])))?></td></tr><?php endforeach;?><?php if(!$devices):?><tr><td colspan="7" class="text-muted">Nenhum dispositivo registrado.</td></tr><?php endif;?></tbody></table></div></section>
     <section class="pn-card"><h2>Logs de envio</h2><p>“Aceita” significa que o Firebase aceitou a mensagem; o clique confirma interação do aluno.</p><div class="pn-table"><table><thead><tr><th>Data</th><th>Aluno</th><th>Notificação</th><th>Status</th><th>HTTP</th><th>Clique</th><th>Erro</th></tr></thead><tbody><?php foreach($logs as $l):?><tr><td><?=pn_h(date('d/m/Y H:i:s',strtotime($l['created_at'])))?></td><td><?=pn_h($l['nome']?:('Aluno #'.$l['user_id']))?></td><td><strong><?=pn_h($l['title'])?></strong><div class="text-xs text-muted"><?=pn_h($l['body'])?></div></td><td><span class="pn-pill <?=pn_h($l['status'])?>"><?=pn_h($l['status'])?></span></td><td><?=pn_h($l['http_status']??'-')?></td><td><?=$l['clicked_at']?pn_h(date('d/m/Y H:i:s',strtotime($l['clicked_at']))):'-'?></td><td><?=pn_h($l['error_message']??'')?></td></tr><?php endforeach;?><?php if(!$logs):?><tr><td colspan="7" class="text-muted">Nenhum envio realizado.</td></tr><?php endif;?></tbody></table></div></section>
+    <section class="pn-card">
+        <h2>Eventos, tags e popup de instalação</h2><p>Personalize a instalação e as automações disparadas em cada etapa do aplicativo.</p>
+        <form method="post" enctype="multipart/form-data" class="pn-form">
+            <input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="save_app_settings">
+            <div class="pn-cols"><div class="pn-form">
+                <label>Tag ao instalar<input name="tag_installed" value="<?=pn_h($appSettings['tag_installed'])?>" placeholder="APP_INSTALADO"></label>
+                <label>Tag ao autorizar notificações<input name="tag_authorized" value="<?=pn_h($appSettings['tag_authorized'])?>" placeholder="APP_NOTIFICACOES_ATIVAS"></label>
+                <label>Tag ao detectar desinstalação<input name="tag_uninstalled" value="<?=pn_h($appSettings['tag_uninstalled'])?>" placeholder="APP_DESINSTALADO"></label>
+                <label class="pn-check"><input type="checkbox" name="uninstall_remove_installed_tag" <?=$appSettings['uninstall_remove_installed_tag']?'checked':''?>> Remover a tag de instalado ao detectar desinstalação</label>
+                <div class="pn-help">Eventos: APP_INSTALADO, APP_NOTIFICACOES_AUTORIZADAS e APP_DESINSTALADO_DETECTADO.</div>
+            </div><div class="pn-form">
+                <label>Título do popup<input name="popup_title" maxlength="120" value="<?=pn_h($appSettings['popup_title'])?>"></label>
+                <label>Texto do popup<textarea name="popup_text" maxlength="600"><?=pn_h($appSettings['popup_text'])?></textarea></label>
+                <label>Texto do botão<input name="popup_button_label" maxlength="80" value="<?=pn_h($appSettings['popup_button_label'])?>"></label>
+                <label>URL/caminho da imagem<input name="popup_image_url" value="<?=pn_h($appSettings['popup_image_url'])?>"></label>
+                <label>Enviar nova imagem<input type="file" name="popup_image" accept="image/jpeg,image/png,image/webp"></label>
+            </div></div>
+            <div class="pn-checks"><?php foreach (['popup_enabled'=>'Ativar popup de instalação','popup_show_installed'=>'Exibir também para quem já instalou','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Pedir notificações após instalar'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
+            <button class="btn btn-primary" type="submit" <?=$canWrite?'':'disabled'?>>Salvar eventos e popup</button>
+        </form>
+    </section>
 </div>
 <?php include __DIR__ . '/_footer.php'; ?>

@@ -22,12 +22,26 @@ function push_ensure_schema(PDO $pdo): void
         last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_token_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_error VARCHAR(500) NULL,
+        install_event_sent_at DATETIME NULL,
+        push_authorized_event_sent_at DATETIME NULL,
+        uninstall_event_sent_at DATETIME NULL,
         UNIQUE KEY uk_push_device_client (client_id),
         UNIQUE KEY uk_push_device_token_hash (token_hash),
         KEY idx_push_device_user (user_id),
         KEY idx_push_device_status (status),
         KEY idx_push_device_seen (last_seen_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    foreach ([
+        'install_event_sent_at' => 'DATETIME NULL',
+        'push_authorized_event_sent_at' => 'DATETIME NULL',
+        'uninstall_event_sent_at' => 'DATETIME NULL',
+    ] as $column => $definition) {
+        $check = $pdo->query('SHOW COLUMNS FROM push_devices LIKE ' . $pdo->quote($column));
+        if (!$check || !$check->fetch(PDO::FETCH_ASSOC)) {
+            $pdo->exec("ALTER TABLE push_devices ADD COLUMN {$column} {$definition}");
+        }
+    }
     $pdo->exec("CREATE TABLE IF NOT EXISTS push_notifications (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         title VARCHAR(150) NOT NULL,
@@ -66,6 +80,62 @@ function push_ensure_schema(PDO $pdo): void
         KEY idx_push_delivery_status (status),
         KEY idx_push_delivery_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function push_setting_enabled(string $key, bool $default = false): bool
+{
+    $value = get_setting($key, $default ? '1' : '0');
+    return in_array(strtolower(trim((string)$value)), ['1', 'true', 'yes', 'on'], true);
+}
+
+function push_dispatch_lifecycle_event(PDO $pdo, int $deviceId, string $event): bool
+{
+    $map = [
+        'APP_INSTALADO' => 'install_event_sent_at',
+        'APP_NOTIFICACOES_AUTORIZADAS' => 'push_authorized_event_sent_at',
+        'APP_DESINSTALADO_DETECTADO' => 'uninstall_event_sent_at',
+    ];
+    if ($deviceId <= 0 || !isset($map[$event])) return false;
+
+    $column = $map[$event];
+    $claim = $pdo->prepare("UPDATE push_devices SET {$column}=NOW() WHERE id=:id AND {$column} IS NULL");
+    $claim->execute(['id' => $deviceId]);
+    if ($claim->rowCount() !== 1) return false;
+
+    $stmt = $pdo->prepare('SELECT * FROM push_devices WHERE id=:id LIMIT 1');
+    $stmt->execute(['id' => $deviceId]);
+    $device = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$device || (int)$device['user_id'] <= 0) return false;
+    $userId = (int)$device['user_id'];
+
+    if ($event === 'APP_INSTALADO') {
+        $tag = trim((string)(get_setting('push_tag_installed', '') ?? ''));
+        if ($tag !== '') adicionar_tag($userId, $tag, 'app_instalado', $deviceId);
+    } elseif ($event === 'APP_NOTIFICACOES_AUTORIZADAS') {
+        $tag = trim((string)(get_setting('push_tag_authorized', '') ?? ''));
+        if ($tag !== '') adicionar_tag($userId, $tag, 'app_notificacoes', $deviceId);
+    } else {
+        $tag = trim((string)(get_setting('push_tag_uninstalled', '') ?? ''));
+        if ($tag !== '') adicionar_tag($userId, $tag, 'app_desinstalado', $deviceId);
+        if (push_setting_enabled('push_uninstall_remove_installed_tag', true)) {
+            $installedTag = trim((string)(get_setting('push_tag_installed', '') ?? ''));
+            $other = $pdo->prepare("SELECT COUNT(*) FROM push_devices WHERE user_id=:uid AND id<>:id AND installed_at IS NOT NULL AND status='active'");
+            $other->execute(['uid'=>$userId,'id'=>$deviceId]);
+            if ($installedTag !== '' && (int)$other->fetchColumn() === 0) remover_tag_usuario($userId, $installedTag);
+        }
+    }
+
+    disparar_webhooks($event, $userId, [
+        'device_id' => $deviceId,
+        'client_id' => (string)$device['client_id'],
+        'platform' => (string)$device['platform'],
+        'browser' => (string)($device['browser'] ?? ''),
+        'notification_permission' => (string)$device['notification_permission'],
+        'installed_at' => $device['installed_at'],
+        'uninstalled_at' => $device['uninstalled_at'],
+        'detection' => $event === 'APP_DESINSTALADO_DETECTADO' ? 'firebase_token_unregistered' : 'browser',
+    ]);
+    return true;
 }
 
 function push_public_config(): array
@@ -194,6 +264,7 @@ function push_send_to_device(PDO $pdo, array $device, int $notificationId, int $
     if ($gone) {
         $pdo->prepare("UPDATE push_devices SET status='uninstalled',uninstalled_at=NOW(),last_error=:error WHERE id=:id")
             ->execute(['error'=>$error,'id'=>(int)$device['id']]);
+        push_dispatch_lifecycle_event($pdo, (int)$device['id'], 'APP_DESINSTALADO_DETECTADO');
     } elseif (!$accepted) {
         $pdo->prepare("UPDATE push_devices SET last_error=:error WHERE id=:id")->execute(['error'=>$error,'id'=>(int)$device['id']]);
     }

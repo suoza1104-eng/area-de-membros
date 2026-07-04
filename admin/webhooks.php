@@ -120,6 +120,9 @@ $eventGroups = [
         'ASSISTIU_ALGUMA_AULA' => ['label' => 'Assistiu alguma aula',          'desc' => 'Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.', 'extra' => 'user.id, user.nome, extra.lesson_id'],
         'CONCLUIU_TRILHA'      => ['label' => 'Concluiu a trilha',             'desc' => 'Disparado quando o aluno finaliza todas as aulas obrigatórias.', 'extra' => 'user.id, user.nome'],
         'RETORNO_AGENDADO'     => ['label' => 'Retorno agendado chegou',       'desc' => 'Disparado pelo cron quando um retorno de contato chega na data e hora marcada.', 'extra' => 'extra.agendamento_id, extra.tipo, extra.scheduled_at, extra.assunto, extra.mensagem, extra.mensagem_renderizada, extra.origem'],
+        'APP_INSTALADO' => ['label' => 'Aplicativo instalado', 'desc' => 'Disparado uma vez quando a instalação da PWA é confirmada no dispositivo.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.installed_at'],
+        'APP_NOTIFICACOES_AUTORIZADAS' => ['label' => 'Notificações do aplicativo autorizadas', 'desc' => 'Disparado uma vez quando o aluno autoriza notificações e o token é registrado.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.notification_permission'],
+        'APP_DESINSTALADO_DETECTADO' => ['label' => 'Aplicativo desinstalado/inativo detectado', 'desc' => 'Disparado quando o Firebase rejeita o token como não registrado. A detecção não é imediata.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.uninstalled_at, extra.detection'],
     ],
     'WhatsApp Grupos' => [
         'WHATSAPP_GRUPO_ENTROU' => [
