@@ -306,8 +306,10 @@ function push_flow_render_template(string $template, array $user, array $extra):
 {
     $liveRaw=(string)($extra['data_live']??$extra['live_at']??'');$date='';$time='';
     if($liveRaw!==''){try{$live=new DateTimeImmutable($liveRaw,new DateTimeZone('America/Sao_Paulo'));$date=$live->format('d/m/Y');$time=$live->format('H:i');}catch(Throwable $ignored){}}
+    $name=(string)($user['nome']??'');$email=(string)($user['email']??'');$phone=(string)($user['telefone']??'');
     return strtr($template,[
-        '{{nome}}'=>(string)($user['nome']??''),'{{email}}'=>(string)($user['email']??''),'{{telefone}}'=>(string)($user['telefone']??''),
+        '{{nome}}'=>$name,'{{email}}'=>$email,'{{telefone}}'=>$phone,
+        '{{nome_url}}'=>rawurlencode($name),'{{email_url}}'=>rawurlencode($email),'{{telefone_url}}'=>rawurlencode($phone),
         '{{turma}}'=>(string)($extra['codigo_turma']??$user['codigo_turma']??$user['turma_codigo']??''),'{{codigo_turma}}'=>(string)($extra['codigo_turma']??''),
         '{{data_live}}'=>$date,'{{hora_live}}'=>$time,'{{codigo_live}}'=>(string)($extra['codigo_live']??''),'{{link_live}}'=>(string)($extra['link_live']??'trilha.php'),
     ]);

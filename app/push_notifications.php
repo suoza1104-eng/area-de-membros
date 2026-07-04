@@ -90,10 +90,10 @@ function push_setting_enabled(string $key, bool $default = false): bool
 
 function push_allowed_external_hosts(): array
 {
-    $defaults = ['professoremersonleite.com', 'hotmart.com', 'hotwebinar.com.br', 'firepay.com.br'];
+    $defaults = ['professoremersonleite.com', 'professoremersonleite.applive.com.br', 'hotmart.com', 'hotwebinar.com.br', 'firepay.com.br'];
     $configured = (string)(get_setting('push_allowed_external_hosts', implode("\n", $defaults)) ?? '');
     $baseHost = strtolower((string)parse_url(BASE_URL, PHP_URL_HOST));
-    $hosts = $baseHost !== '' ? [$baseHost] : [];
+    $hosts = $baseHost !== '' ? array_merge([$baseHost], $defaults) : $defaults;
     foreach (preg_split('/[\s,;]+/', strtolower($configured)) ?: [] as $host) {
         $host = trim($host, " \t\n\r\0\x0B.");
         if (preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/', $host)) $hosts[] = $host;

@@ -179,7 +179,7 @@ $appSettings = [
     'popup_text'=>(string)(get_setting('push_popup_text','Instale o aplicativo para ter reprodução mais estável, acesso rápido e avisos importantes no celular.')??''),
     'popup_button_label'=>(string)(get_setting('push_popup_button_label','Instalar aplicativo agora')??''),
     'popup_image_url'=>(string)(get_setting('push_popup_image_url','pwa-install-phone.jpg')??''),
-    'allowed_external_hosts'=>(string)(get_setting('push_allowed_external_hosts',"professoremersonleite.com\nhotmart.com\nhotwebinar.com.br\nfirepay.com.br")??''),
+    'allowed_external_hosts'=>(string)(get_setting('push_allowed_external_hosts',"professoremersonleite.com\nprofessoremersonleite.applive.com.br\nhotmart.com\nhotwebinar.com.br\nfirepay.com.br")??''),
 ];
 
 $kpi = ['total'=>0,'installed'=>0,'uninstalled'=>0,'active24'=>0,'receiving'=>0];
@@ -384,7 +384,7 @@ include __DIR__ . '/_header.php';
                 <label>URL/caminho da imagem<input name="popup_image_url" value="<?=pn_h($appSettings['popup_image_url'])?>"></label>
                 <label>Enviar nova imagem<input type="file" name="popup_image" accept="image/jpeg,image/png,image/webp"></label>
                 <label>Domínios externos autorizados<textarea name="allowed_external_hosts" placeholder="Um domínio por linha"><?=pn_h($appSettings['allowed_external_hosts'])?></textarea></label>
-                <div class="pn-help">Use apenas o domínio, sem https:// nem caminho. Subdomínios também serão aceitos. Exemplos: hotmart.com, hotwebinar.com.br e firepay.com.br.</div>
+                <div class="pn-help">Use apenas o domínio, sem https:// nem caminho. Subdomínios também serão aceitos. Exemplos: professoremersonleite.applive.com.br, hotmart.com, hotwebinar.com.br e firepay.com.br.</div>
             </div></div>
             <div class="pn-checks"><?php foreach (['flow_engine_enabled'=>'Ativar motor dos fluxos publicados (novos eventos)','popup_enabled'=>'Ativar popup de instalação','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Lembrar até o aluno ativar as notificações'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
             <button class="btn btn-primary" type="submit" <?=$canWrite?'':'disabled'?>>Salvar eventos e popup</button>
