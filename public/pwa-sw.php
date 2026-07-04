@@ -5,8 +5,10 @@ require_once __DIR__ . '/../app/push_notifications.php';
 header('Content-Type: application/javascript; charset=UTF-8');
 header('Cache-Control: no-cache, no-store, must-revalidate');
 $config = push_public_config();
+$appIcon = push_app_icon_url();
 ?>
 const FIREBASE_CONFIG = <?= json_encode($config, JSON_UNESCAPED_SLASHES) ?>;
+const APP_ICON = <?= json_encode($appIcon, JSON_UNESCAPED_SLASHES) ?>;
 
 importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
@@ -19,7 +21,7 @@ if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && !firebase.apps.length
     const title = data.title || 'Área de Membros';
     return self.registration.showNotification(title, {
       body: data.body || '',
-      icon: 'pwa-icon.svg',
+      icon: APP_ICON,
       badge: 'pwa-icon.svg',
       tag: data.notification_id ? 'push-' + data.notification_id : undefined,
       data: { click_url: data.click_url || 'trilha.php' }

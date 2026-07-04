@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../app/push_notifications.php';
 $__pwaFirebaseConfig = push_public_config();
 $__pwaVapidKey = push_vapid_key();
+$__pwaAppIcon = push_app_icon_url();
 $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseConfig['projectId'] !== '' && $__pwaVapidKey !== '';
 ?>
 <?php if ($__pwaMessagingReady): ?>
@@ -39,7 +40,7 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
         if (!window.__pushForegroundListener) {
             messaging.onMessage(function(payload){
                 const data=payload&&payload.data?payload.data:{};
-                registration.showNotification(data.title||'Área de Membros',{body:data.body||'',icon:'pwa-icon.svg',badge:'pwa-icon.svg',data:{click_url:data.click_url||'trilha.php'}});
+                registration.showNotification(data.title||'Área de Membros',{body:data.body||'',icon:<?=json_encode($__pwaAppIcon,JSON_UNESCAPED_SLASHES)?>,badge:'pwa-icon.svg',data:{click_url:data.click_url||'trilha.php'}});
             });
             window.__pushForegroundListener = true;
         }
@@ -62,7 +63,7 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
                 }).catch(function(){});
                 messaging.onMessage(function(payload){
                     const data=payload&&payload.data?payload.data:{};
-                    registration.showNotification(data.title||'Área de Membros',{body:data.body||'',icon:'pwa-icon.svg',badge:'pwa-icon.svg',data:{click_url:data.click_url||'trilha.php'}});
+                    registration.showNotification(data.title||'Área de Membros',{body:data.body||'',icon:<?=json_encode($__pwaAppIcon,JSON_UNESCAPED_SLASHES)?>,badge:'pwa-icon.svg',data:{click_url:data.click_url||'trilha.php'}});
                 });
                 window.__pushForegroundListener = true;
             }

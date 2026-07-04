@@ -88,6 +88,12 @@ function push_setting_enabled(string $key, bool $default = false): bool
     return in_array(strtolower(trim((string)$value)), ['1', 'true', 'yes', 'on'], true);
 }
 
+function push_app_icon_url(): string
+{
+    $icon = trim((string)(get_setting('push_app_icon_url', 'pwa-icon.svg') ?? ''));
+    return $icon !== '' ? $icon : 'pwa-icon.svg';
+}
+
 function push_dispatch_lifecycle_event(PDO $pdo, int $deviceId, string $event): bool
 {
     $map = [

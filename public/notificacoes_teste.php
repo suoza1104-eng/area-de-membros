@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/push_notifications.php';
 proteger_aluno();
 $config = push_public_config();
 $vapidKey = push_vapid_key();
+$appIcon = push_app_icon_url();
 $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidKey !== '';
 ?>
 <!doctype html>
@@ -185,7 +186,7 @@ $configured = $config['apiKey'] !== '' && $config['projectId'] !== '' && $vapidK
             if (!window.__pushForegroundListener) {
                 messaging.onMessage(function(payload) {
                     const data = payload && payload.data ? payload.data : {};
-                    registration.showNotification(data.title || 'Área de Membros', {body:data.body || '',icon:'pwa-icon.svg',data:{click_url:data.click_url || 'trilha.php'}});
+                    registration.showNotification(data.title || 'Área de Membros', {body:data.body || '',icon:<?=json_encode($appIcon,JSON_UNESCAPED_SLASHES)?>,badge:'pwa-icon.svg',data:{click_url:data.click_url || 'trilha.php'}});
                 });
                 window.__pushForegroundListener = true;
             }
