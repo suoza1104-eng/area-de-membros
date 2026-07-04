@@ -77,6 +77,41 @@ function push_flow_engine_ensure_schema(PDO $pdo): void
         KEY idx_push_flow_step_status (status),
         KEY idx_push_flow_step_started (started_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS push_flow_live_batches (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        flow_id BIGINT UNSIGNED NOT NULL,
+        version_id BIGINT UNSIGNED NOT NULL,
+        trigger_node_id VARCHAR(80) NOT NULL,
+        turma_codigo VARCHAR(100) NOT NULL,
+        live_at DATETIME NOT NULL,
+        reminder_at DATETIME NOT NULL,
+        advance_value INT UNSIGNED NOT NULL,
+        advance_unit VARCHAR(20) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        cursor_user_id INT UNSIGNED NOT NULL DEFAULT 0,
+        total_candidates INT UNSIGNED NOT NULL DEFAULT 0,
+        enqueued_runs INT UNSIGNED NOT NULL DEFAULT 0,
+        last_error VARCHAR(1000) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME NULL,
+        UNIQUE KEY uk_push_flow_live_batch (flow_id,version_id,trigger_node_id,turma_codigo,live_at,advance_value,advance_unit),
+        KEY idx_push_flow_live_due (status,reminder_at),
+        KEY idx_push_flow_live_at (live_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS push_flow_live_recipients (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        batch_id BIGINT UNSIGNED NOT NULL,
+        flow_id BIGINT UNSIGNED NOT NULL,
+        user_id INT NOT NULL,
+        turma_codigo VARCHAR(100) NOT NULL,
+        live_at DATETIME NOT NULL,
+        advance_value INT UNSIGNED NOT NULL,
+        advance_unit VARCHAR(20) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_push_flow_live_recipient (flow_id,user_id,turma_codigo,live_at,advance_value,advance_unit),
+        KEY idx_push_flow_live_recipient_batch (batch_id),
+        KEY idx_push_flow_live_recipient_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $done = true;
 }
 
@@ -96,10 +131,13 @@ function push_flow_event_source_key(string $event, int $userId, array $extra): s
     return hash('sha256', $event . '|' . $userId . '|' . json_encode($identity, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '|' . $bucket);
 }
 
-function push_flow_trigger_matches(array $node, array $user, array $extra, string $event): bool
+function push_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
 {
     $config = is_array($node['config'] ?? null) ? $node['config'] : [];
     if ((string)($config['event'] ?? '') !== $event) return false;
+    if ($event === 'LIVE_LEMBRETE_AGENDADO' && isset($extra['_scheduled_flow_id'])) {
+        if ((int)$extra['_scheduled_flow_id'] !== $flowId || (int)($extra['_scheduled_version_id'] ?? 0) !== $versionId || (string)($extra['_scheduled_node_id'] ?? '') !== (string)($node['id'] ?? '')) return false;
+    }
     $filter = trim((string)($config['filter'] ?? ''));
     if ($filter === '') return true;
     $candidates = [];
@@ -138,7 +176,7 @@ function push_flow_capture_event(PDO $pdo, string $event, int $userId, array $ex
             try { $graph = push_flow_decode_graph((string)$flow['graph_json']); } catch (Throwable $ignored) { continue; }
             $trigger = null;
             foreach ($graph['nodes'] ?? [] as $node) if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
-            if (!$trigger || !push_flow_trigger_matches($trigger, $user, $extra, $event)) continue;
+            if (!$trigger || !push_flow_trigger_matches($trigger, $user, $extra, $event, (int)$flow['flow_id'], (int)$flow['current_version_id'])) continue;
             $run = $pdo->prepare("INSERT IGNORE INTO push_flow_runs (flow_id,version_id,event_id,user_id,status) VALUES (:flow,:version,:event,:user,'running')");
             $run->execute(['flow'=>(int)$flow['flow_id'],'version'=>(int)$flow['current_version_id'],'event'=>$eventId,'user'=>$userId]);
             if ($run->rowCount() !== 1) continue;
@@ -264,13 +302,25 @@ function push_flow_dispatch_integration(PDO $pdo, array $config, array $user, ar
     return ['provider'=>$provider,'target'=>$target,'event'=>$event];
 }
 
+function push_flow_render_template(string $template, array $user, array $extra): string
+{
+    $liveRaw=(string)($extra['data_live']??$extra['live_at']??'');$date='';$time='';
+    if($liveRaw!==''){try{$live=new DateTimeImmutable($liveRaw,new DateTimeZone('America/Sao_Paulo'));$date=$live->format('d/m/Y');$time=$live->format('H:i');}catch(Throwable $ignored){}}
+    return strtr($template,[
+        '{{nome}}'=>(string)($user['nome']??''),'{{email}}'=>(string)($user['email']??''),'{{telefone}}'=>(string)($user['telefone']??''),
+        '{{turma}}'=>(string)($extra['codigo_turma']??$user['codigo_turma']??$user['turma_codigo']??''),'{{codigo_turma}}'=>(string)($extra['codigo_turma']??''),
+        '{{data_live}}'=>$date,'{{hora_live}}'=>$time,'{{codigo_live}}'=>(string)($extra['codigo_live']??''),'{{link_live}}'=>(string)($extra['link_live']??'trilha.php'),
+    ]);
+}
+
 function push_flow_send_push(PDO $pdo, array $config, int $userId, array $job): array
 {
     if (function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) return ['skipped'=>'user_blocked'];
     push_ensure_schema($pdo);
     $target = 'flow_job:' . (int)$job['id'];
     $st = $pdo->prepare("SELECT id FROM push_notifications WHERE target_type='flow_job' AND target_value=:target ORDER BY id DESC LIMIT 1"); $st->execute(['target'=>$target]); $notificationId = (int)$st->fetchColumn();
-    $title = mb_substr(trim((string)($config['title'] ?? '')), 0, 150); $body = mb_substr(trim((string)($config['body'] ?? '')), 0, 500); $clickUrl = trim((string)($config['clickUrl'] ?? 'trilha.php')) ?: 'trilha.php';
+    $user=buscar_usuario_por_id($userId)?:['id'=>$userId];$extra=json_decode((string)($job['event_payload']??''),true)?:[];
+    $title = mb_substr(trim(push_flow_render_template((string)($config['title'] ?? ''),$user,$extra)), 0, 150); $body = mb_substr(trim(push_flow_render_template((string)($config['body'] ?? ''),$user,$extra)), 0, 500); $clickUrl = trim(push_flow_render_template((string)($config['clickUrl'] ?? 'trilha.php'),$user,$extra)) ?: 'trilha.php';
     $devicesSt = $pdo->prepare("SELECT * FROM push_devices WHERE user_id=:user AND status='active' AND notification_permission='granted' AND token IS NOT NULL AND token<>''"); $devicesSt->execute(['user'=>$userId]); $devices = $devicesSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     if ($notificationId <= 0) {
         $pdo->prepare("INSERT INTO push_notifications (title,body,click_url,target_type,target_value,total_targets,status,created_by) VALUES (:title,:body,:url,'flow_job',:target,:total,'processing','Motor de fluxos')")
@@ -347,6 +397,73 @@ function push_flow_process_job(PDO $pdo, array $job): string
         else { $pdo->prepare("UPDATE push_flow_jobs SET status='failed',last_error=:error,lease_token=NULL,lease_until=NULL WHERE id=:id AND lease_token=:token")->execute(['error'=>$error,'id'=>(int)$job['id'],'token'=>$job['lease_token']]); $pdo->prepare("UPDATE push_flow_runs SET status='failed',last_error=:error,finished_at=NOW() WHERE id=:id")->execute(['error'=>$error,'id'=>(int)$job['run_id']]); $stepStatus='failed'; }
         $pdo->prepare("UPDATE push_flow_steps SET status=:status,error_message=:error,finished_at=NOW() WHERE id=:id")->execute(['status'=>$stepStatus,'error'=>$error,'id'=>$stepId]); return $stepStatus;
     }
+}
+
+function push_flow_engine_column_exists(PDO $pdo, string $table, string $column): bool
+{
+    static $cache = [];
+    $key = $table . '.' . $column;
+    if (!array_key_exists($key, $cache)) {
+        try { $st=$pdo->prepare("SHOW COLUMNS FROM `{$table}` LIKE :column");$st->execute(['column'=>$column]);$cache[$key]=(bool)$st->fetch(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { $cache[$key]=false; }
+    }
+    return $cache[$key];
+}
+
+function push_flow_live_column(PDO $pdo): ?string
+{
+    foreach (['data_live','live_at','turma_live_at'] as $column) if (push_flow_engine_column_exists($pdo,'turmas',$column)) return $column;
+    return null;
+}
+
+function push_flow_live_students(PDO $pdo, string $turma, int $afterUserId, int $limit): array
+{
+    $parts=[];$params=['cursor'=>$afterUserId];
+    $userWhere=[];
+    if(push_flow_engine_column_exists($pdo,'users','codigo_turma')){$userWhere[]='codigo_turma=:user_turma_1';$params['user_turma_1']=$turma;}
+    if(push_flow_engine_column_exists($pdo,'users','turma_codigo')){$userWhere[]='turma_codigo=:user_turma_2';$params['user_turma_2']=$turma;}
+    if($userWhere)$parts[]='SELECT id user_id FROM users WHERE '.implode(' OR ',$userWhere);
+    try{$table=$pdo->query("SHOW TABLES LIKE 'inscricao_logs'");if($table&&$table->fetchColumn()){$parts[]='SELECT user_id FROM inscricao_logs WHERE codigo_turma=:log_turma';$params['log_turma']=$turma;}}catch(Throwable $ignored){}
+    if(!$parts)return [];
+    $limit=max(1,min(1000,$limit));$sql='SELECT DISTINCT user_id FROM ('.implode(' UNION ALL ',$parts).') candidates WHERE user_id>:cursor ORDER BY user_id LIMIT '.$limit;
+    $st=$pdo->prepare($sql);$st->execute($params);return array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN)?:[]);
+}
+
+function push_flow_prepare_live_batches(PDO $pdo): int
+{
+    $liveColumn=push_flow_live_column($pdo);if($liveColumn===null)return 0;
+    $flows=$pdo->query("SELECT f.id flow_id,f.current_version_id,v.graph_json FROM push_flows f JOIN push_flow_versions v ON v.id=f.current_version_id WHERE f.status='active' AND f.current_version_id IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC)?:[];
+    $created=0;$now=new DateTimeImmutable('now',new DateTimeZone('America/Sao_Paulo'));
+    foreach($flows as $flow){
+        try{$graph=push_flow_decode_graph((string)$flow['graph_json']);}catch(Throwable $ignored){continue;}
+        foreach($graph['nodes']??[] as $node){
+            if(($node['type']??'')!=='trigger'||($node['config']['event']??'')!=='LIVE_LEMBRETE_AGENDADO')continue;
+            $config=$node['config'];$turma=trim((string)($config['filter']??''));$value=max(1,(int)($config['advanceDuration']??1));$unit=in_array(($config['advanceUnit']??''),['minutes','hours','days'],true)?(string)$config['advanceUnit']:'hours';if($turma==='')continue;
+            $st=$pdo->prepare("SELECT `{$liveColumn}` FROM turmas WHERE codigo=:codigo LIMIT 1");$st->execute(['codigo'=>$turma]);$liveRaw=trim((string)$st->fetchColumn());if($liveRaw==='')continue;
+            try{$liveAt=new DateTimeImmutable($liveRaw,new DateTimeZone('America/Sao_Paulo'));}catch(Throwable $ignored){continue;}if($liveAt<=$now)continue;
+            $reminderAt=$liveAt->modify('-'.$value.' '.$unit);if($reminderAt>$now)continue;
+            $insert=$pdo->prepare("INSERT IGNORE INTO push_flow_live_batches (flow_id,version_id,trigger_node_id,turma_codigo,live_at,reminder_at,advance_value,advance_unit,status) VALUES (:flow,:version,:node,:turma,:live,:reminder,:advance,:unit,'pending')");
+            $insert->execute(['flow'=>(int)$flow['flow_id'],'version'=>(int)$flow['current_version_id'],'node'=>(string)$node['id'],'turma'=>$turma,'live'=>$liveAt->format('Y-m-d H:i:s'),'reminder'=>$reminderAt->format('Y-m-d H:i:s'),'advance'=>$value,'unit'=>$unit]);$created+=$insert->rowCount();
+        }
+    }
+    return $created;
+}
+
+function push_flow_enqueue_live_reminders(PDO $pdo, int $studentBatch = 500, int $maxBatches = 5): array
+{
+    push_flow_engine_ensure_schema($pdo);
+    if(!push_flow_engine_enabled())return ['created_batches'=>0,'processed_batches'=>0,'candidates'=>0,'enqueued'=>0,'paused'=>true];
+    $created=push_flow_prepare_live_batches($pdo);$pdo->exec("UPDATE push_flow_live_batches SET status='expired',completed_at=NOW() WHERE status='pending' AND live_at<=NOW()");
+    $st=$pdo->prepare("SELECT b.* FROM push_flow_live_batches b JOIN push_flows f ON f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id WHERE b.status='pending' AND b.reminder_at<=NOW() AND b.live_at>NOW() ORDER BY b.reminder_at,b.id LIMIT ".max(1,min(20,$maxBatches)));$st->execute();$batches=$st->fetchAll(PDO::FETCH_ASSOC)?:[];
+    $stats=['created_batches'=>$created,'processed_batches'=>0,'candidates'=>0,'enqueued'=>0];$liveColumn=push_flow_live_column($pdo);
+    foreach($batches as $batch){
+        $codigoLive='';if($liveColumn){$select="`{$liveColumn}` live_value".(push_flow_engine_column_exists($pdo,'turmas','codigo_live')?',codigo_live':'');$live=$pdo->prepare("SELECT {$select} FROM turmas WHERE codigo=:codigo LIMIT 1");$live->execute(['codigo'=>$batch['turma_codigo']]);$liveRow=$live->fetch(PDO::FETCH_ASSOC)?:[];$current=trim((string)($liveRow['live_value']??''));$codigoLive=trim((string)($liveRow['codigo_live']??''));try{$currentAt=$current!==''?new DateTimeImmutable($current,new DateTimeZone('America/Sao_Paulo')):null;}catch(Throwable $ignored){$currentAt=null;}if(!$currentAt||$currentAt->format('Y-m-d H:i:s')!==(string)$batch['live_at']){$pdo->prepare("UPDATE push_flow_live_batches SET status='superseded',completed_at=NOW() WHERE id=:id")->execute(['id'=>$batch['id']]);continue;}}
+        $ids=push_flow_live_students($pdo,(string)$batch['turma_codigo'],(int)$batch['cursor_user_id'],$studentBatch);$last=(int)$batch['cursor_user_id'];$enqueued=0;
+        foreach($ids as $userId){$last=max($last,$userId);$recipient=$pdo->prepare("INSERT IGNORE INTO push_flow_live_recipients (batch_id,flow_id,user_id,turma_codigo,live_at,advance_value,advance_unit) VALUES (:batch,:flow,:user,:turma,:live,:advance,:unit)");$recipient->execute(['batch'=>(int)$batch['id'],'flow'=>(int)$batch['flow_id'],'user'=>$userId,'turma'=>(string)$batch['turma_codigo'],'live'=>(string)$batch['live_at'],'advance'=>(int)$batch['advance_value'],'unit'=>(string)$batch['advance_unit']]);if($recipient->rowCount()!==1)continue;$recipientId=(int)$pdo->lastInsertId();$extra=['event_id'=>'live-reminder-'.(int)$batch['flow_id'].'-'.(int)$recipientId,'codigo_turma'=>(string)$batch['turma_codigo'],'codigo_live'=>$codigoLive,'data_live'=>(string)$batch['live_at'],'live_at'=>(string)$batch['live_at'],'link_live'=>'trilha.php','antecedencia_valor'=>(int)$batch['advance_value'],'antecedencia_unidade'=>(string)$batch['advance_unit'],'_scheduled_flow_id'=>(int)$batch['flow_id'],'_scheduled_version_id'=>(int)$batch['version_id'],'_scheduled_node_id'=>(string)$batch['trigger_node_id']];try{$matched=push_flow_capture_event($pdo,'LIVE_LEMBRETE_AGENDADO',$userId,$extra);}catch(Throwable $e){$pdo->prepare('DELETE FROM push_flow_live_recipients WHERE id=:id')->execute(['id'=>$recipientId]);throw $e;}if($matched===0){$pdo->prepare('DELETE FROM push_flow_live_recipients WHERE id=:id')->execute(['id'=>$recipientId]);}else$enqueued+=$matched;}
+        $complete=count($ids)<$studentBatch;$pdo->prepare("UPDATE push_flow_live_batches SET cursor_user_id=:cursor,total_candidates=total_candidates+:candidates,enqueued_runs=enqueued_runs+:enqueued,status=:status,completed_at=IF(:done=1,NOW(),NULL) WHERE id=:id")->execute(['cursor'=>$last,'candidates'=>count($ids),'enqueued'=>$enqueued,'status'=>$complete?'completed':'pending','done'=>$complete?1:0,'id'=>$batch['id']]);
+        $stats['processed_batches']++;$stats['candidates']+=count($ids);$stats['enqueued']+=$enqueued;
+    }
+    return $stats;
 }
 
 function push_flow_process_due(PDO $pdo, int $batch = 50, int $maxSeconds = 45): array

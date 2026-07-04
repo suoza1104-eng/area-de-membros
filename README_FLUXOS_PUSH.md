@@ -76,6 +76,19 @@ O motor da etapa 3 captura somente eventos novos. A publicação de um fluxo nã
 - Demais eventos já expostos a SuperFuncionário, ManyChat e webhooks.
 - Filtros específicos do gatilho, como turma ou curso.
 
+#### Gatilho “X tempo antes da live”
+
+- Configuração por turma, valor de antecedência e unidade em minutos, horas ou dias.
+- O cron compara a antecedência com `turmas.data_live` a cada minuto.
+- Quando o horário é atingido, todos os alunos associados à turma entram individualmente no fluxo.
+- A entrada considera tanto a turma atual do aluno quanto o histórico de inscrições.
+- Os candidatos são enfileirados em lotes de até 500 para não gerar pico de processamento.
+- A execução é deduplicada por fluxo, turma, data da live, antecedência e aluno, inclusive quando uma nova versão é publicada depois que parte da turma já entrou.
+- Se a data da live mudar, o lote antigo é marcado como substituído e a nova data gera outro lote.
+- Se o fluxo estiver pausado, novos alunos não são enfileirados até sua reativação, desde que a live ainda não tenha começado.
+- O evento disponibiliza `codigo_turma`, `data_live`, `live_at`, `antecedencia_valor` e `antecedencia_unidade` para os blocos seguintes.
+- Títulos, mensagens e links do bloco push aceitam `{{nome}}`, `{{email}}`, `{{telefone}}`, `{{turma}}`, `{{codigo_turma}}`, `{{data_live}}`, `{{hora_live}}`, `{{codigo_live}}` e `{{link_live}}`.
+
 ### Condições
 
 - Possui/não possui tag.
