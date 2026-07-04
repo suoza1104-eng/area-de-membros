@@ -320,7 +320,7 @@ function push_flow_send_push(PDO $pdo, array $config, int $userId, array $job): 
     $target = 'flow_job:' . (int)$job['id'];
     $st = $pdo->prepare("SELECT id FROM push_notifications WHERE target_type='flow_job' AND target_value=:target ORDER BY id DESC LIMIT 1"); $st->execute(['target'=>$target]); $notificationId = (int)$st->fetchColumn();
     $user=buscar_usuario_por_id($userId)?:['id'=>$userId];$extra=json_decode((string)($job['event_payload']??''),true)?:[];
-    $title = mb_substr(trim(push_flow_render_template((string)($config['title'] ?? ''),$user,$extra)), 0, 150); $body = mb_substr(trim(push_flow_render_template((string)($config['body'] ?? ''),$user,$extra)), 0, 500); $clickUrl = trim(push_flow_render_template((string)($config['clickUrl'] ?? 'trilha.php'),$user,$extra)) ?: 'trilha.php';
+    $title = mb_substr(trim(push_flow_render_template((string)($config['title'] ?? ''),$user,$extra)), 0, 150); $body = mb_substr(trim(push_flow_render_template((string)($config['body'] ?? ''),$user,$extra)), 0, 500); $clickUrl = push_normalize_click_url(trim(push_flow_render_template((string)($config['clickUrl'] ?? 'trilha.php'),$user,$extra)) ?: 'trilha.php');
     $devicesSt = $pdo->prepare("SELECT * FROM push_devices WHERE user_id=:user AND status='active' AND notification_permission='granted' AND token IS NOT NULL AND token<>''"); $devicesSt->execute(['user'=>$userId]); $devices = $devicesSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     if ($notificationId <= 0) {
         $pdo->prepare("INSERT INTO push_notifications (title,body,click_url,target_type,target_value,total_targets,status,created_by) VALUES (:title,:body,:url,'flow_job',:target,:total,'processing','Motor de fluxos')")

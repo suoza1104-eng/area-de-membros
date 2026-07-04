@@ -4,8 +4,8 @@ require_once __DIR__ . '/../app/push_notifications.php';
 
 $id = max(0, (int)($_GET['id'] ?? 0));
 $target = trim((string)($_GET['url'] ?? ''));
-if ($target === '' || strpos($target, '://') !== false || str_starts_with($target, '//')) $target = 'trilha.php';
-$target = ltrim($target, '/');
+try { $target = push_normalize_click_url($target); }
+catch (Throwable $e) { $target = 'trilha.php'; }
 try {
     if ($id > 0) {
         $pdo = getPDO();
@@ -18,4 +18,3 @@ try {
 } catch (Throwable $e) {}
 header('Location: ' . ($target ?: 'trilha.php'));
 exit;
-

@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $textFields = [
                 'push_tag_installed'=>'tag_installed','push_tag_authorized'=>'tag_authorized','push_tag_uninstalled'=>'tag_uninstalled',
                 'push_popup_title'=>'popup_title','push_popup_text'=>'popup_text','push_popup_button_label'=>'popup_button_label',
-                'push_popup_image_url'=>'popup_image_url',
+                'push_popup_image_url'=>'popup_image_url','push_allowed_external_hosts'=>'allowed_external_hosts',
             ];
             foreach ($textFields as $setting => $postKey) set_setting($setting, trim((string)($_POST[$postKey] ?? '')));
             foreach ([
@@ -119,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($deviceId <= 0) throw new RuntimeException('Selecione um dispositivo conectado.');
             if ($title === '' || mb_strlen($title) > 150) throw new RuntimeException('Informe um título de até 150 caracteres.');
             if ($body === '' || mb_strlen($body) > 500) throw new RuntimeException('Informe uma mensagem de até 500 caracteres.');
-            if (strpos($clickUrl, '://') !== false || str_starts_with($clickUrl, '//')) throw new RuntimeException('Use um link interno, como trilha.php.');
+            $clickUrl = push_normalize_click_url($clickUrl);
             $st = $pdo->prepare("SELECT d.*,u.nome,u.email FROM push_devices d LEFT JOIN users u ON u.id=d.user_id WHERE d.id=:id AND d.status='active' AND d.notification_permission='granted' LIMIT 1");
             $st->execute(['id'=>$deviceId]);
             $device = $st->fetch(PDO::FETCH_ASSOC);
@@ -179,6 +179,7 @@ $appSettings = [
     'popup_text'=>(string)(get_setting('push_popup_text','Instale o aplicativo para ter reprodução mais estável, acesso rápido e avisos importantes no celular.')??''),
     'popup_button_label'=>(string)(get_setting('push_popup_button_label','Instalar aplicativo agora')??''),
     'popup_image_url'=>(string)(get_setting('push_popup_image_url','pwa-install-phone.jpg')??''),
+    'allowed_external_hosts'=>(string)(get_setting('push_allowed_external_hosts',"professoremersonleite.com\nhotmart.com\nhotwebinar.com.br\nfirepay.com.br")??''),
 ];
 
 $kpi = ['total'=>0,'installed'=>0,'uninstalled'=>0,'active24'=>0,'receiving'=>0];
@@ -317,7 +318,7 @@ include __DIR__ . '/_header.php';
                 <label>Dispositivo<select name="device_id" required><option value="">Selecione</option><?php foreach($activeDevices as $d):?><option value="<?=(int)$d['id']?>"><?=pn_h(($d['nome']?:$d['email']?:('Aluno #'.$d['user_id'])).' · '.($d['platform']?:'web').' · #'.$d['id'])?></option><?php endforeach;?></select></label>
                 <label>Título<input name="title" maxlength="150" value="Nova mensagem na área de membros" required></label>
                 <label>Mensagem<textarea name="body" maxlength="500" required>Este é um teste de notificação do aplicativo.</textarea></label>
-                <label>Link interno ao tocar<input name="click_url" value="trilha.php" placeholder="trilha.php"></label>
+                <label>Link ao tocar<input name="click_url" value="trilha.php" placeholder="trilha.php ou https://pay.hotmart.com/..."></label>
                 <button class="btn btn-primary" type="submit" <?=$canWrite&&$configured&&$activeDevices?'':'disabled'?>>Enviar teste</button>
             </form>
         </section>
@@ -382,6 +383,8 @@ include __DIR__ . '/_header.php';
                 <label>Texto do botão<input name="popup_button_label" maxlength="80" value="<?=pn_h($appSettings['popup_button_label'])?>"></label>
                 <label>URL/caminho da imagem<input name="popup_image_url" value="<?=pn_h($appSettings['popup_image_url'])?>"></label>
                 <label>Enviar nova imagem<input type="file" name="popup_image" accept="image/jpeg,image/png,image/webp"></label>
+                <label>Domínios externos autorizados<textarea name="allowed_external_hosts" placeholder="Um domínio por linha"><?=pn_h($appSettings['allowed_external_hosts'])?></textarea></label>
+                <div class="pn-help">Use apenas o domínio, sem https:// nem caminho. Subdomínios também serão aceitos. Exemplos: hotmart.com, hotwebinar.com.br e firepay.com.br.</div>
             </div></div>
             <div class="pn-checks"><?php foreach (['flow_engine_enabled'=>'Ativar motor dos fluxos publicados (novos eventos)','popup_enabled'=>'Ativar popup de instalação','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Lembrar até o aluno ativar as notificações'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
             <button class="btn btn-primary" type="submit" <?=$canWrite?'':'disabled'?>>Salvar eventos e popup</button>

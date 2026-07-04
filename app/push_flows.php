@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/funcoes.php';
+require_once __DIR__ . '/push_notifications.php';
 
 function push_flows_ensure_schema(PDO $pdo): void
 {
@@ -159,7 +159,8 @@ function push_flow_validate_graph(array $graph, bool $forPublish = false): array
         if ($type === 'push' && (trim((string)($config['title'] ?? '')) === '' || mb_strlen((string)($config['title'] ?? '')) > 150 || trim((string)($config['body'] ?? '')) === '' || mb_strlen((string)($config['body'] ?? '')) > 500)) $errors[] = 'Informe título de até 150 caracteres e mensagem de até 500 caracteres em todos os blocos push.';
         if ($type === 'push') {
             $url = trim((string)($config['clickUrl'] ?? ''));
-            if (mb_strlen($url) > 1000 || ($url !== '' && (str_contains($url, '://') || str_starts_with($url, '//') || str_contains($url, '..')))) $errors[] = 'Use somente links internos seguros de até 1000 caracteres nos blocos push.';
+            try { push_normalize_click_url($url); }
+            catch (Throwable $e) { $errors[] = $e->getMessage(); }
         }
         if ($type === 'condition') {
             if (($outgoing[$id]['yes'] ?? 0) > 1 || ($outgoing[$id]['no'] ?? 0) > 1) $errors[] = 'Cada saída SIM/NÃO de uma condição pode ter apenas uma conexão.';

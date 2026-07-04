@@ -88,6 +88,41 @@ function push_setting_enabled(string $key, bool $default = false): bool
     return in_array(strtolower(trim((string)$value)), ['1', 'true', 'yes', 'on'], true);
 }
 
+function push_allowed_external_hosts(): array
+{
+    $defaults = ['professoremersonleite.com', 'hotmart.com', 'hotwebinar.com.br', 'firepay.com.br'];
+    $configured = (string)(get_setting('push_allowed_external_hosts', implode("\n", $defaults)) ?? '');
+    $baseHost = strtolower((string)parse_url(BASE_URL, PHP_URL_HOST));
+    $hosts = $baseHost !== '' ? [$baseHost] : [];
+    foreach (preg_split('/[\s,;]+/', strtolower($configured)) ?: [] as $host) {
+        $host = trim($host, " \t\n\r\0\x0B.");
+        if (preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/', $host)) $hosts[] = $host;
+    }
+    return array_values(array_unique($hosts));
+}
+
+function push_normalize_click_url(string $url): string
+{
+    $url = trim($url);
+    if ($url === '') return 'trilha.php';
+    if (mb_strlen($url) > 1000 || str_contains($url, "\r") || str_contains($url, "\n") || str_contains($url, '\\') || str_contains($url, '..')) {
+        throw new InvalidArgumentException('O link da notificação é inválido.');
+    }
+    if (!preg_match('~^[a-z][a-z0-9+.-]*://~i', $url)) {
+        if (str_starts_with($url, '//') || str_starts_with($url, '#')) throw new InvalidArgumentException('Use um caminho interno ou uma URL HTTPS autorizada.');
+        return ltrim($url, '/');
+    }
+    $parts = parse_url($url);
+    if (!is_array($parts) || strtolower((string)($parts['scheme'] ?? '')) !== 'https' || empty($parts['host']) || isset($parts['user']) || isset($parts['pass']) || (isset($parts['port']) && (int)$parts['port'] !== 443)) {
+        throw new InvalidArgumentException('Links externos precisam usar HTTPS e não podem conter credenciais.');
+    }
+    $host = strtolower(rtrim((string)$parts['host'], '.'));
+    foreach (push_allowed_external_hosts() as $allowed) {
+        if ($host === $allowed || str_ends_with($host, '.' . $allowed)) return $url;
+    }
+    throw new InvalidArgumentException('O domínio ' . $host . ' não está autorizado nas configurações de notificações.');
+}
+
 function push_app_icon_url(): string
 {
     $icon = trim((string)(get_setting('push_app_icon_url', 'pwa-icon.svg') ?? ''));
@@ -238,7 +273,8 @@ function push_send_to_device(PDO $pdo, array $device, int $notificationId, int $
 {
     $projectId = trim((string)(push_public_config()['projectId'] ?? ''));
     if ($projectId === '') throw new RuntimeException('Project ID do Firebase não configurado.');
-    $trackingUrl = 'push_click.php?id=' . $deliveryLogId;
+    $clickUrl = push_normalize_click_url($clickUrl);
+    $trackingUrl = rtrim(BASE_URL, '/') . '/push_click.php?id=' . $deliveryLogId;
     if ($clickUrl !== '') $trackingUrl .= '&url=' . rawurlencode($clickUrl);
     $payload = [
         'message' => [
