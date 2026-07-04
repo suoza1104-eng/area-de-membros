@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/push_notifications.php';
 require_once __DIR__ . '/../app/push_flows.php';
+require_once __DIR__ . '/../app/push_flow_engine.php';
 proteger_admin();
 $pdo = getPDO();
 push_ensure_schema($pdo);
 push_flows_ensure_schema($pdo);
+push_flow_engine_ensure_schema($pdo);
 
 $canWrite = ($_SESSION['admin_tipo'] ?? 'principal') !== 'equipe';
 if (!$canWrite) {
@@ -193,6 +195,19 @@ try {
 $devices = $pdo->query("SELECT d.*,u.nome,u.email FROM push_devices d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $activeDevices = array_values(array_filter($devices, static fn($d) => ($d['status']??'')==='active' && ($d['notification_permission']??'')==='granted' && !empty($d['token'])));
 $logs = $pdo->query("SELECT l.*,n.title,n.body,u.nome,u.email FROM push_delivery_logs l JOIN push_notifications n ON n.id=l.notification_id LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$flowRuns = $pdo->query("SELECT e.id event_id,e.event_code,e.matched_flows,e.created_at event_at,
+        r.id run_id,r.status run_status,r.last_error,f.name flow_name,u.nome,u.email,
+        COUNT(DISTINCT j.id) job_count,
+        SUM(j.status='completed') completed_jobs,
+        SUM(j.status IN ('queued','retry','scheduled','processing')) pending_jobs,
+        SUM(j.status='failed') failed_jobs
+    FROM push_flow_events e
+    LEFT JOIN users u ON u.id=e.user_id
+    LEFT JOIN push_flow_runs r ON r.event_id=e.id
+    LEFT JOIN push_flows f ON f.id=r.flow_id
+    LEFT JOIN push_flow_jobs j ON j.run_id=r.id
+    GROUP BY e.id,e.event_code,e.matched_flows,e.created_at,r.id,r.status,r.last_error,f.name,u.nome,u.email
+    ORDER BY e.id DESC,r.id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $flows = $pdo->query("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id WHERE f.status<>'deleted' ORDER BY f.updated_at DESC,f.id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $previewImage = trim($appSettings['popup_image_url']);
 if ($previewImage === '') $previewImage = 'pwa-install-phone.jpg';
@@ -282,6 +297,22 @@ include __DIR__ . '/_header.php';
 
     <section class="pn-card"><h2>Dispositivos</h2><p>“Excluído” só pode ser detectado depois que o Firebase rejeitar um novo envio para o token.</p><div class="pn-table"><table><thead><tr><th>ID</th><th>Aluno</th><th>Plataforma</th><th>Instalado</th><th>Permissão</th><th>Status</th><th>Último acesso</th></tr></thead><tbody><?php foreach($devices as $d):?><tr><td>#<?=(int)$d['id']?></td><td><?=pn_h($d['nome']?:('Aluno #'.$d['user_id']))?><div class="text-xs text-muted"><?=pn_h($d['email']??'')?></div></td><td><?=pn_h($d['platform'])?><div class="text-xs text-muted"><?=pn_h($d['browser']??'')?></div></td><td><?=$d['installed_at']?pn_h(date('d/m/Y H:i',strtotime($d['installed_at']))):'Não confirmado'?></td><td><?=pn_h($d['notification_permission'])?></td><td><span class="pn-pill <?=pn_h($d['status'])?>"><?=pn_h($d['status'])?></span></td><td><?=pn_h(date('d/m/Y H:i',strtotime($d['last_seen_at'])))?></td></tr><?php endforeach;?><?php if(!$devices):?><tr><td colspan="7" class="text-muted">Nenhum dispositivo registrado.</td></tr><?php endif;?></tbody></table></div></section>
     <section class="pn-card"><h2>Logs de envio</h2><p>“Aceita” significa que o Firebase aceitou a mensagem; o clique confirma interação do aluno.</p><div class="pn-table"><table><thead><tr><th>Data</th><th>Aluno</th><th>Notificação</th><th>Status</th><th>HTTP</th><th>Clique</th><th>Erro</th></tr></thead><tbody><?php foreach($logs as $l):?><tr><td><?=pn_h(date('d/m/Y H:i:s',strtotime($l['created_at'])))?></td><td><?=pn_h($l['nome']?:('Aluno #'.$l['user_id']))?></td><td><strong><?=pn_h($l['title'])?></strong><div class="text-xs text-muted"><?=pn_h($l['body'])?></div></td><td><span class="pn-pill <?=pn_h($l['status'])?>"><?=pn_h($l['status'])?></span></td><td><?=pn_h($l['http_status']??'-')?></td><td><?=$l['clicked_at']?pn_h(date('d/m/Y H:i:s',strtotime($l['clicked_at']))):'-'?></td><td><?=pn_h($l['error_message']??'')?></td></tr><?php endforeach;?><?php if(!$logs):?><tr><td colspan="7" class="text-muted">Nenhum envio realizado.</td></tr><?php endif;?></tbody></table></div></section>
+    <section class="pn-card">
+        <h2>Rastreabilidade dos fluxos</h2>
+        <p>Mostra o caminho técnico desde a captura do evento até a conclusão ou falha da execução.</p>
+        <div class="pn-table"><table><thead><tr><th>Data</th><th>Aluno</th><th>Evento</th><th>Fluxo</th><th>Execução</th><th>Etapas</th><th>Erro</th></tr></thead><tbody>
+        <?php foreach($flowRuns as $run):?><tr>
+            <td><?=pn_h(date('d/m/Y H:i:s',strtotime($run['event_at'])))?></td>
+            <td><?=pn_h($run['nome']?:'Aluno')?><div class="text-xs text-muted"><?=pn_h($run['email']??'')?></div></td>
+            <td><strong><?=pn_h($run['event_code'])?></strong><div class="text-xs text-muted">Evento #<?=(int)$run['event_id']?> · <?=(int)$run['matched_flows']?> fluxo(s)</div></td>
+            <td><?=pn_h($run['flow_name']?:'Nenhum fluxo compatível')?></td>
+            <td><?php if($run['run_id']):?><span class="pn-pill <?=pn_h($run['run_status'])?>"><?=pn_h($run['run_status'])?></span><div class="text-xs text-muted">#<?=(int)$run['run_id']?></div><?php else:?>-<?php endif;?></td>
+            <td><?=(int)$run['completed_jobs']?> concluída(s) · <?=(int)$run['pending_jobs']?> pendente(s) · <?=(int)$run['failed_jobs']?> falha(s)</td>
+            <td><?=pn_h($run['last_error']??'')?></td>
+        </tr><?php endforeach;?>
+        <?php if(!$flowRuns):?><tr><td colspan="7" class="text-muted">Nenhum evento de fluxo capturado.</td></tr><?php endif;?>
+        </tbody></table></div>
+    </section>
     <section class="pn-card pn-settings-source" id="pnSimulatorSettings">
         <h2>Simulador dos avisos</h2><p>Veja como cada popup aparece para o aluno. A simulação não instala o aplicativo nem solicita permissões reais.</p>
         <div class="pn-preview-actions">

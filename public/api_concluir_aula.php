@@ -100,7 +100,11 @@ try {
 
     try {
         if (function_exists('disparar_webhooks')) {
-            disparar_webhooks($tagNome, $user_id, ['lesson_id' => $lesson_id]);
+            $eventExtra = ['lesson_id' => $lesson_id, 'origem' => 'api_concluir_aula'];
+            disparar_webhooks($tagNome, $user_id, $eventExtra);
+            // Evento genérico usado pelo construtor de fluxos. Mantemos também
+            // VIU_AULA_{id} para integrações que dependem da aula específica.
+            disparar_webhooks('ASSISTIU_ALGUMA_AULA', $user_id, $eventExtra);
         }
     } catch (Throwable $e) {
         if (function_exists('registrar_log')) {
