@@ -2,7 +2,7 @@
 $pwaBool = static fn(string $key, bool $default=false): bool => in_array(strtolower(trim((string)(get_setting($key, $default?'1':'0')??''))), ['1','true','yes','on'], true);
 if (!$pwaBool('push_popup_enabled', true)) return;
 $pwaPopup = [
-    'showInstalled'=>$pwaBool('push_popup_show_installed',false),'showNonChrome'=>$pwaBool('push_popup_show_non_chrome',true),
+    'showInstalled'=>$pwaBool('push_popup_show_installed',true),'showNonChrome'=>$pwaBool('push_popup_show_non_chrome',true),
     'showApple'=>$pwaBool('push_popup_show_apple',false),'closeEnabled'=>$pwaBool('push_popup_close_enabled',true),
     'pulse'=>$pwaBool('push_popup_pulse_enabled',true),'requestPush'=>$pwaBool('push_popup_request_notifications',true),
     'title'=>(string)(get_setting('push_popup_title','Assista às aulas com mais qualidade')??''),
@@ -36,11 +36,13 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
     const title=document.getElementById('pwaPromoTitle');
     const text=document.getElementById('pwaPromoText');
     const status=document.getElementById('pwaPromoStatus');
+    const benefits=promo.querySelectorAll('.pwa-promo-benefits span');
     const ua=navigator.userAgent||'';
     const android=/Android/i.test(ua),apple=/iPhone|iPad|iPod/i.test(ua);
     const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
     const chrome=/Chrome\//i.test(ua)&&!/(?:wv\)|; wv|Version\/4\.0|EdgA|OPR|Opera|SamsungBrowser|FBAN|FBAV|Instagram|WhatsApp)/i.test(ua);
-    let deferredPrompt=null;
+    const reminderKey='push_live_reminder_dismissed_at',reminderInterval=24*60*60*1000;
+    let deferredPrompt=null,reminderMode=false;
     function reportInstall(){
         let clientId=localStorage.getItem('push_client_id');
         if(!clientId){clientId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2));localStorage.setItem('push_client_id',clientId)}
@@ -56,15 +58,20 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
     if(!options.pulse)action.style.animation='none';
 
     function show(){promo.style.display='flex';document.body.classList.add('pwa-modal-open')}
-    function hide(){promo.style.display='none';document.body.classList.remove('pwa-modal-open')}
+    function hide(){if(reminderMode)localStorage.setItem(reminderKey,String(Date.now()));promo.style.display='none';document.body.classList.remove('pwa-modal-open')}
     function message(value,type){status.textContent=value;status.className='pwa-promo-status '+(type||'');status.style.display='block'}
     if(closeButton)closeButton.addEventListener('click',hide);
 
     function activationMode(){
-        title.textContent='Não perca nenhum aviso importante';
-        text.textContent='Ative as notificações para receber lembretes de aulas, liberações e comunicados no seu celular.';
-        action.textContent='Ativar notificações agora';action.disabled=false;
+        reminderMode=true;
+        const blocked='Notification'in window&&Notification.permission==='denied';
+        title.textContent='Receba o aviso da próxima aula ao vivo';
+        text.textContent=blocked?'As notificações estão bloqueadas neste aparelho. Libere a permissão para receber o lembrete antes da aula ao vivo.':'Ative as notificações para avisarmos no seu celular quando a aula ao vivo estiver próxima. Assim você não perde o horário.';
+        if(benefits[0])benefits[0].textContent='Aviso da aula ao vivo';
+        if(benefits[1])benefits[1].textContent='Lembretes no celular';
+        action.textContent=blocked?'Como liberar as notificações':'Quero receber o aviso da aula';action.disabled=false;
         action.onclick=async function(){
+            if(blocked){message('Abra as configurações deste aplicativo ou do Chrome, entre em Notificações e marque Permitir. Depois volte a esta página.','err');return}
             action.disabled=true;action.textContent='Ativando...';
             try{
                 if(typeof window.areaMembrosEnablePush!=='function')throw new Error('Serviço indisponível. Atualize a página e tente novamente.');
@@ -75,9 +82,9 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
     }
 
     if(standalone||localStorage.getItem('pwa_install_confirmed')==='1'){
-        if(options.showInstalled){
+        const lastReminder=parseInt(localStorage.getItem(reminderKey)||'0',10);
+        if(options.showInstalled&&options.requestPush&&Date.now()-lastReminder>=reminderInterval){
             if(!('Notification'in window)||Notification.permission!=='granted')activationMode();
-            else{action.textContent='Continuar para as aulas';action.onclick=hide;show()}
         }
         return;
     }

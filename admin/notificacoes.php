@@ -121,7 +121,7 @@ $appSettings = [
     'tag_uninstalled'=>(string)(get_setting('push_tag_uninstalled','')??''),
     'uninstall_remove_installed_tag'=>push_setting_enabled('push_uninstall_remove_installed_tag',true),
     'popup_enabled'=>push_setting_enabled('push_popup_enabled',true),
-    'popup_show_installed'=>push_setting_enabled('push_popup_show_installed',false),
+    'popup_show_installed'=>push_setting_enabled('push_popup_show_installed',true),
     'popup_show_non_chrome'=>push_setting_enabled('push_popup_show_non_chrome',true),
     'popup_show_apple'=>push_setting_enabled('push_popup_show_apple',false),
     'popup_close_enabled'=>push_setting_enabled('push_popup_close_enabled',true),
@@ -218,7 +218,7 @@ include __DIR__ . '/_header.php';
                 <label>URL/caminho da imagem<input name="popup_image_url" value="<?=pn_h($appSettings['popup_image_url'])?>"></label>
                 <label>Enviar nova imagem<input type="file" name="popup_image" accept="image/jpeg,image/png,image/webp"></label>
             </div></div>
-            <div class="pn-checks"><?php foreach (['popup_enabled'=>'Ativar popup de instalação','popup_show_installed'=>'Exibir também para quem já instalou','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Pedir notificações após instalar'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
+            <div class="pn-checks"><?php foreach (['popup_enabled'=>'Ativar popup de instalação','popup_show_installed'=>'Lembrar quem instalou e ainda não autorizou notificações','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Pedir notificações após instalar'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
             <button class="btn btn-primary" type="submit" <?=$canWrite?'':'disabled'?>>Salvar eventos e popup</button>
         </form>
     </section>
