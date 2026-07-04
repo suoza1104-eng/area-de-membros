@@ -14,7 +14,7 @@ O domínio de produção precisa continuar usando HTTPS. A conta de serviço e s
 ## 2. Ativar o telefone de teste
 
 1. Entre normalmente como aluno no Android usando Google Chrome.
-2. Abra `/area_membros/public/notificacoes_teste.php`.
+2. Abra `/area_membros/public/aplicativo.php`.
 3. Pelo menu do Chrome, escolha **Instalar app** ou **Adicionar à tela inicial**.
 4. Abra o ícone instalado.
 5. Volte à URL de teste e toque em **Ativar notificações neste telefone**.

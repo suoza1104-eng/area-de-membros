@@ -262,7 +262,7 @@ include __DIR__ . '/_header.php';
         <div class="pn-toolbar-copy"><h1>Central de notificações</h1><p>Acompanhe dispositivos, testes e entregas. Os fluxos automatizados serão adicionados na próxima etapa.</p></div>
         <button class="pn-gear" id="pnSettingsOpen" type="button" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.37.34.7.6 1 .3.27.68.4 1.1.4h.09v4h-.09c-.42 0-.8.13-1.1.4-.26.3-.47.63-.6 1.2Z"/></svg><span>Configurações</span></button>
     </div>
-    <div class="pn-status <?=$configured?'pn-ok':'pn-error'?>">Firebase: <strong><?=$configured?'configurado':'configuração incompleta'?></strong>. URL privada para ativação no telefone: <code><?=pn_h(BASE_URL)?>/notificacoes_teste.php</code></div>
+    <div class="pn-status <?=$configured?'pn-ok':'pn-error'?>">Firebase: <strong><?=$configured?'configurado':'configuração incompleta'?></strong>. Link para instalar o aplicativo: <code><?=pn_h(BASE_URL)?>/aplicativo.php</code></div>
 
     <div class="pn-grid">
         <?php foreach([
