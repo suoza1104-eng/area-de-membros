@@ -40,6 +40,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 30,
             'timeout' => 900,
         ],
+        'fluxos_push' => [
+            'label' => 'Fluxos de notificações push',
+            'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',
+            'script' => __DIR__ . '/../cron/processar_fluxos_push.php',
+            'interval' => 1,
+            'timeout' => 120,
+        ],
     ];
 }
 

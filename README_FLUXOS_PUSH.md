@@ -12,10 +12,17 @@ O envio manual de teste continuará disponível durante todas as etapas.
 
 - [x] Etapa 1 — organização da tela, configurações na engrenagem e identidade do aplicativo.
 - [x] Etapa 2 — cadastro, listagem, clonagem, pausa, exclusão, editor visual e publicação versionada.
-- [ ] Etapa 3 — motor assíncrono, condições, esperas e execução das integrações.
+- [x] Etapa 3 — motor assíncrono, condições, esperas e execução das integrações.
 - [ ] Etapa 4 — métricas por bloco, observabilidade e testes de concorrência/volume.
 
-Na etapa 2, o estado `Publicado` indica que existe uma versão imutável pronta. Nenhum fluxo publicado é executado enquanto o motor da etapa 3 não estiver implantado e habilitado.
+O motor da etapa 3 captura somente eventos novos. A publicação de um fluxo não faz processamento retroativo de alunos ou eventos anteriores. Por segurança de implantação, o motor global começa pausado e deve ser habilitado na engrenagem da tela de notificações depois que os fluxos publicados forem revisados.
+
+### Convenção do bloco de integração
+
+- SuperFuncionário e ManyChat: o campo `Destino/regra/fluxo` recebe o código do evento que possui uma regra ativa na integração.
+- Webhook: o campo pode receber o ID numérico de um webhook específico ou um código de evento configurado nos webhooks globais.
+- O campo de payload aceita JSON; quando não for JSON válido, o conteúdo é enviado como texto em `flow_payload`.
+- Cada disparo recebe `push_flow.idempotency_key` para permitir deduplicação no destino quando a integração oferecer esse recurso.
 
 ## Etapa 1 — organização e identidade do aplicativo
 

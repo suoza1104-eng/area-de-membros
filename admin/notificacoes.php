@@ -92,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'push_popup_show_non_chrome'=>'popup_show_non_chrome',
                 'push_popup_show_apple'=>'popup_show_apple','push_popup_close_enabled'=>'popup_close_enabled',
                 'push_popup_pulse_enabled'=>'popup_pulse_enabled','push_popup_request_notifications'=>'popup_request_notifications',
+                'push_flow_engine_enabled'=>'flow_engine_enabled',
             ] as $setting => $postKey) set_setting($setting, isset($_POST[$postKey]) ? '1' : '0');
             if (!empty($_FILES['popup_image']['tmp_name'])) {
                 if ((int)($_FILES['popup_image']['size'] ?? 0) > 5 * 1024 * 1024) throw new RuntimeException('A imagem deve ter no máximo 5 MB.');
@@ -171,6 +172,7 @@ $appSettings = [
     'popup_close_enabled'=>push_setting_enabled('push_popup_close_enabled',true),
     'popup_pulse_enabled'=>push_setting_enabled('push_popup_pulse_enabled',true),
     'popup_request_notifications'=>push_setting_enabled('push_popup_request_notifications',true),
+    'flow_engine_enabled'=>push_setting_enabled('push_flow_engine_enabled',false),
     'popup_title'=>(string)(get_setting('push_popup_title','Assista às aulas com mais qualidade')??''),
     'popup_text'=>(string)(get_setting('push_popup_text','Instale o aplicativo para ter reprodução mais estável, acesso rápido e avisos importantes no celular.')??''),
     'popup_button_label'=>(string)(get_setting('push_popup_button_label','Instalar aplicativo agora')??''),
@@ -191,7 +193,7 @@ try {
 $devices = $pdo->query("SELECT d.*,u.nome,u.email FROM push_devices d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $activeDevices = array_values(array_filter($devices, static fn($d) => ($d['status']??'')==='active' && ($d['notification_permission']??'')==='granted' && !empty($d['token'])));
 $logs = $pdo->query("SELECT l.*,n.title,n.body,u.nome,u.email FROM push_delivery_logs l JOIN push_notifications n ON n.id=l.notification_id LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-$flows = $pdo->query("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id ORDER BY f.updated_at DESC,f.id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$flows = $pdo->query("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id WHERE f.status<>'deleted' ORDER BY f.updated_at DESC,f.id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $previewImage = trim($appSettings['popup_image_url']);
 if ($previewImage === '') $previewImage = 'pwa-install-phone.jpg';
 if (!preg_match('~^(?:https?:)?//|^data:|^/~i', $previewImage)) $previewImage = '../public/' . ltrim($previewImage, '/');
@@ -225,7 +227,7 @@ include __DIR__ . '/_header.php';
     </div>
 
     <section class="pn-card">
-        <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p>O editor e o versionamento estão ativos. A execução automática será conectada somente na etapa 3.</p></div><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div>
+        <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p><?=$appSettings['flow_engine_enabled']?'Motor ativo: fluxos publicados recebem novos eventos e são processados pelo cron.':'Motor global pausado: ative-o nas configurações após revisar os fluxos publicados.'?></p></div><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div>
         <div class="pn-flow-list">
             <?php foreach($flows as $flow):?>
             <div class="pn-flow-row">
@@ -305,7 +307,7 @@ include __DIR__ . '/_header.php';
                 <label>URL/caminho da imagem<input name="popup_image_url" value="<?=pn_h($appSettings['popup_image_url'])?>"></label>
                 <label>Enviar nova imagem<input type="file" name="popup_image" accept="image/jpeg,image/png,image/webp"></label>
             </div></div>
-            <div class="pn-checks"><?php foreach (['popup_enabled'=>'Ativar popup de instalação','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Lembrar até o aluno ativar as notificações'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
+            <div class="pn-checks"><?php foreach (['flow_engine_enabled'=>'Ativar motor dos fluxos publicados (novos eventos)','popup_enabled'=>'Ativar popup de instalação','popup_show_non_chrome'=>'Exibir orientação fora do Chrome','popup_show_apple'=>'Exibir também em aparelhos Apple','popup_close_enabled'=>'Permitir fechar o popup','popup_pulse_enabled'=>'Ativar animação do botão','popup_request_notifications'=>'Lembrar até o aluno ativar as notificações'] as $key=>$label):?><label class="pn-check"><input type="checkbox" name="<?=$key?>" <?=$appSettings[$key]?'checked':''?>> <?=pn_h($label)?></label><?php endforeach;?></div>
             <button class="btn btn-primary" type="submit" <?=$canWrite?'':'disabled'?>>Salvar eventos e popup</button>
         </form>
     </section>

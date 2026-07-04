@@ -143,18 +143,18 @@ function push_flow_validate_graph(array $graph, bool $forPublish = false): array
         $config = $node['config'];
         $type = $node['type'];
         if ($type === 'trigger' && trim((string)($config['event'] ?? '')) === '') $errors[] = 'Configure o evento do gatilho.';
-        if ($type === 'condition' && (trim((string)($config['field'] ?? '')) === '' || trim((string)($config['operator'] ?? '')) === '' || trim((string)($config['value'] ?? '')) === '')) $errors[] = 'Configure campo, operador e valor em todas as condições.';
-        if ($type === 'wait' && ((int)($config['duration'] ?? 0) < 1 || !in_array(($config['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure uma espera válida em minutos, horas ou dias.';
+        if ($type === 'condition' && (!in_array(($config['field'] ?? ''), ['tag','turma','email'], true) || !in_array(($config['operator'] ?? ''), ['has','not_has','equals','not_equals'], true) || trim((string)($config['value'] ?? '')) === '' || mb_strlen((string)($config['value'] ?? '')) > 255)) $errors[] = 'Configure campo, operador e valor válidos em todas as condições.';
+        if ($type === 'wait' && ((int)($config['duration'] ?? 0) < 1 || (int)($config['duration'] ?? 0) > 525600 || !in_array(($config['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure uma espera válida em minutos, horas ou dias.';
         if ($type === 'wait' && !empty($config['limitWindow'])) {
             $start = (string)($config['windowStart'] ?? ''); $end = (string)($config['windowEnd'] ?? '');
             if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $start) || !preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $end) || $start === $end) $errors[] = 'Configure uma faixa de horário válida no bloco de espera.';
         }
-        if ($type === 'action' && (trim((string)($config['action'] ?? '')) === '' || trim((string)($config['tag'] ?? '')) === '')) $errors[] = 'Configure a ação e a tag.';
-        if ($type === 'integration' && (trim((string)($config['provider'] ?? '')) === '' || trim((string)($config['target'] ?? '')) === '')) $errors[] = 'Selecione a integração e informe seu destino/regra.';
-        if ($type === 'push' && (trim((string)($config['title'] ?? '')) === '' || trim((string)($config['body'] ?? '')) === '')) $errors[] = 'Informe título e mensagem em todos os blocos push.';
+        if ($type === 'action' && (!in_array(($config['action'] ?? ''), ['add_tag','remove_tag'], true) || trim((string)($config['tag'] ?? '')) === '' || mb_strlen((string)($config['tag'] ?? '')) > 150)) $errors[] = 'Configure a ação e uma tag de até 150 caracteres.';
+        if ($type === 'integration' && (!in_array(($config['provider'] ?? ''), ['webhook','superfuncionario','manychat'], true) || trim((string)($config['target'] ?? '')) === '' || mb_strlen((string)($config['target'] ?? '')) > 100 || mb_strlen((string)($config['payload'] ?? '')) > 20000)) $errors[] = 'Selecione a integração, informe um destino de até 100 caracteres e limite o payload a 20 mil caracteres.';
+        if ($type === 'push' && (trim((string)($config['title'] ?? '')) === '' || mb_strlen((string)($config['title'] ?? '')) > 150 || trim((string)($config['body'] ?? '')) === '' || mb_strlen((string)($config['body'] ?? '')) > 500)) $errors[] = 'Informe título de até 150 caracteres e mensagem de até 500 caracteres em todos os blocos push.';
         if ($type === 'push') {
             $url = trim((string)($config['clickUrl'] ?? ''));
-            if ($url !== '' && (str_contains($url, '://') || str_starts_with($url, '//') || str_contains($url, '..'))) $errors[] = 'Use somente links internos seguros nos blocos push.';
+            if (mb_strlen($url) > 1000 || ($url !== '' && (str_contains($url, '://') || str_starts_with($url, '//') || str_contains($url, '..')))) $errors[] = 'Use somente links internos seguros de até 1000 caracteres nos blocos push.';
         }
         if ($type === 'condition') {
             if (($outgoing[$id]['yes'] ?? 0) > 1 || ($outgoing[$id]['no'] ?? 0) > 1) $errors[] = 'Cada saída SIM/NÃO de uma condição pode ter apenas uma conexão.';
@@ -184,7 +184,7 @@ function push_flow_validate_graph(array $graph, bool $forPublish = false): array
 
 function push_flow_find(PDO $pdo, int $flowId): ?array
 {
-    $st = $pdo->prepare("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id WHERE f.id=:id LIMIT 1");
+    $st = $pdo->prepare("SELECT f.*,v.version_number current_version_number FROM push_flows f LEFT JOIN push_flow_versions v ON v.id=f.current_version_id WHERE f.id=:id AND f.status<>'deleted' LIMIT 1");
     $st->execute(['id'=>$flowId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
@@ -260,13 +260,17 @@ function push_flow_set_status(PDO $pdo, int $flowId, string $status, string $adm
 
 function push_flow_delete(PDO $pdo, int $flowId): void
 {
-    $pdo->beginTransaction();
+    if ($flowId <= 0) throw new InvalidArgumentException('Fluxo inválido.');
     try {
-        $pdo->prepare('DELETE FROM push_flow_versions WHERE flow_id=:id')->execute(['id'=>$flowId]);
-        $pdo->prepare('DELETE FROM push_flows WHERE id=:id')->execute(['id'=>$flowId]);
-        $pdo->commit();
-    } catch (Throwable $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
-        throw $e;
-    }
+        $table = $pdo->query("SHOW TABLES LIKE 'push_flow_runs'");
+        if ($table && $table->fetchColumn()) {
+            $st = $pdo->prepare("SELECT COUNT(*) FROM push_flow_runs WHERE flow_id=:id AND status='running'");
+            $st->execute(['id'=>$flowId]);
+            if ((int)$st->fetchColumn() > 0) throw new RuntimeException('Pause o fluxo e aguarde as execuções em andamento terminarem antes de excluí-lo.');
+        }
+    } catch (RuntimeException $e) { throw $e; }
+    catch (Throwable $ignored) {}
+    $st = $pdo->prepare("UPDATE push_flows SET status='deleted',updated_at=NOW() WHERE id=:id AND status<>'deleted'");
+    $st->execute(['id'=>$flowId]);
+    if ($st->rowCount() !== 1) throw new RuntimeException('Fluxo não encontrado.');
 }
