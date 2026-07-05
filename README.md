@@ -16,6 +16,7 @@ Voce esta trabalhando em uma area de membros PHP puro, sem framework, com MySQL 
    - funcoes.php: funcoes compartilhadas de autenticacao, busca de usuarios, tags, settings, magic links, disparo de webhooks e SuperFuncionario.
    - webhook_dispatcher.php: monta payloads e envia webhooks de saida configurados no admin.
    - superfuncionario_dispatcher.php: integra com SuperFuncionario, cria tabelas proprias e dispara regras por evento.
+   - integration_hub.php: recebe eventos externos, normaliza payloads e prepara entregas independentes por destino.
    - certificado_pdf.php: gera PDF de certificado.
 
 2. public/
@@ -39,6 +40,7 @@ Voce esta trabalhando em uma area de membros PHP puro, sem framework, com MySQL 
    - webhooks.php: webhooks de saida e configuracao de disparo de live por turma.
    - live_events.php: cadastro de eventos de live e tokens para live_webhook.php.
    - inbound_webhooks.php: cadastro de webhooks de entrada e tokens para inbound_webhook.php.
+   - integration_hub.php: painel de fontes, rotas, mapeamentos e logs do Hub de Integrações.
    - superfuncionario.php: credenciais, regras e configuracoes de live por turma para SuperFuncionario.
    - disparos.php: disparos em lote com filtros de publico e execucao por batch.
    - certificado_config.php/certificado_preview.php: layout, senha, videos, CTA e preview do certificado.

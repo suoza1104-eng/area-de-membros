@@ -23,6 +23,9 @@ if ($__isEquipe && empty($__equipePerms['whatsapp_config']) && !empty($__equipeP
 if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerms['logs'])) {
     $__equipePerms['cron_monitor'] = $__equipePerms['logs'];
 }
+if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipePerms['inbound_webhooks'])) {
+    $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -38,7 +41,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','notificacoes','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','notificacoes','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -61,6 +64,7 @@ $titleMap = [
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
+    'integration_hub'  => 'Hub de Integrações',
     'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
@@ -745,7 +749,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -755,6 +759,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
       </svg>
       Webhooks
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['integration_hub']): ?>
+    <a href="integration_hub.php" class="sb-item <?= $currentMenu === 'integration_hub' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
+      </svg>
+      Hub de Integrações
     </a>
     <?php endif; ?>
 

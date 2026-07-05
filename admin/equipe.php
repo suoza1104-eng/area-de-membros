@@ -48,6 +48,7 @@ $PAGINAS = [
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
+    'integration_hub'  => 'Hub de Integrações',
     'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'   => 'Configurações WhatsApp',
