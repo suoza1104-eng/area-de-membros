@@ -86,6 +86,27 @@ CREATE TABLE IF NOT EXISTS hotmart_webhook_events (
     KEY idx_hotmart_event_received (received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS hotmart_sf_shadow_outbox (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    event_id VARCHAR(100) NOT NULL,
+    event_name VARCHAR(100) NOT NULL,
+    transaction_code VARCHAR(80) DEFAULT NULL,
+    contact_email VARCHAR(255) DEFAULT NULL,
+    contact_phone VARCHAR(30) DEFAULT NULL,
+    payload_json LONGTEXT NOT NULL,
+    status ENUM('shadow','ready','sent','failed','cancelled') NOT NULL DEFAULT 'shadow',
+    attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    last_error TEXT DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    sent_at DATETIME DEFAULT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_hotmart_sf_shadow_event (event_id),
+    KEY idx_hotmart_sf_shadow_status (status),
+    KEY idx_hotmart_sf_shadow_event_name (event_name),
+    KEY idx_hotmart_sf_shadow_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS payment_sales (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     provider VARCHAR(30) NOT NULL,

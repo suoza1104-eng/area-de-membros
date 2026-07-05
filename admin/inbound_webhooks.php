@@ -1,9 +1,16 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/hotmart_sf_shadow.php';
 proteger_admin();
 
 $pdo = getPDO();
+hotmart_sf_shadow_ensure_schema($pdo);
+$hotmartSfShadowConfig = hotmart_sf_shadow_config();
+$hotmartSfShadowStats = ['total'=>0,'today'=>0,'events'=>0];
+try {
+    $hotmartSfShadowStats = $pdo->query("SELECT COUNT(*) total, SUM(DATE(created_at)=CURDATE()) today, COUNT(DISTINCT event_name) events FROM hotmart_sf_shadow_outbox WHERE status='shadow'")->fetch(PDO::FETCH_ASSOC) ?: $hotmartSfShadowStats;
+} catch (Throwable $e) {}
 
 // Tabelas
 $pdo->exec("CREATE TABLE IF NOT EXISTS inbound_webhooks (
@@ -171,6 +178,49 @@ function iw_sync_direct_rules(PDO $pdo, int $id, array $cfg): void {
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 if ($acao !== '') {
     header('Content-Type: application/json; charset=utf-8');
+
+    if ($acao === 'salvar_hotmart_sf_shadow') {
+        $captureEnabled = isset($_POST['capture_enabled']) ? 1 : 0;
+        $fixedTag = trim((string)($_POST['fixed_tag'] ?? ''));
+        $flowId = trim((string)($_POST['flow_id'] ?? ''));
+        $eventPrefix = trim((string)($_POST['event_tag_prefix'] ?? ''));
+        $orderBumpPrefix = trim((string)($_POST['order_bump_prefix'] ?? ''));
+        $fieldsRaw = trim((string)($_POST['fields_json'] ?? ''));
+        $fields = json_decode($fieldsRaw, true);
+        if ($fixedTag === '' || $eventPrefix === '') { echo json_encode(['ok'=>false,'msg'=>'Tag fixa e prefixo do evento sao obrigatorios']); exit; }
+        if ($flowId === '' || !ctype_digit($flowId)) { echo json_encode(['ok'=>false,'msg'=>'O ID do fluxo deve conter apenas numeros']); exit; }
+        if (!is_array($fields)) { echo json_encode(['ok'=>false,'msg'=>'O JSON de campos personalizados e invalido']); exit; }
+        foreach ($fields as $index => $field) {
+            if (!is_array($field) || trim((string)($field['source'] ?? '')) === '' || trim((string)($field['field_name'] ?? '')) === '') {
+                echo json_encode(['ok'=>false,'msg'=>'Campo personalizado invalido na posicao ' . ($index + 1)]); exit;
+            }
+        }
+        set_setting('hotmart_sf_shadow_capture_enabled', (string)$captureEnabled);
+        set_setting('hotmart_sf_shadow_fixed_tag', $fixedTag);
+        set_setting('hotmart_sf_shadow_flow_id', $flowId);
+        set_setting('hotmart_sf_shadow_event_prefix', $eventPrefix);
+        set_setting('hotmart_sf_shadow_order_bump_prefix', $orderBumpPrefix);
+        set_setting('hotmart_sf_shadow_fields_json', json_encode($fields, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        echo json_encode(['ok'=>true,'msg'=>'Configuracao salva em modo sombra. Nenhum envio ao SF foi realizado.']); exit;
+    }
+
+    if ($acao === 'logs_hotmart_sf_shadow') {
+        $eventFilter = mb_strtoupper(trim((string)($_GET['event'] ?? '')), 'UTF-8');
+        $params = [];
+        $where = 'WHERE 1=1';
+        if ($eventFilter !== '') { $where .= ' AND h.event_name = :event'; $params['event'] = $eventFilter; }
+        $sql = "SELECT h.id,h.event_id,h.event_name,h.transaction_code,o.contact_email,o.contact_phone,
+                       o.payload_json AS sf_payload_json,COALESCE(o.status,'not_staged') AS status,
+                       h.received_at AS created_at,COALESCE(o.updated_at,h.processed_at,h.received_at) AS updated_at,
+                       h.payload_json AS hotmart_payload_json
+                  FROM hotmart_webhook_events h
+             LEFT JOIN hotmart_sf_shadow_outbox o ON o.event_id = h.event_id
+                       {$where}
+              ORDER BY h.received_at DESC,h.id DESC LIMIT 100";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        echo json_encode(['ok'=>true,'data'=>$stmt->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); exit;
+    }
 
     if ($acao === 'salvar') {
         $id        = (int)($_POST['id'] ?? 0);
@@ -386,7 +436,15 @@ require_once __DIR__ . '/_header.php';
 .iw-direct-title code { color:#60a5fa; font-size:10px; background:rgba(96,165,250,.08); padding:2px 6px; border-radius:999px; }
 .iw-direct-grid { display:grid; grid-template-columns:1fr 110px 110px; gap:8px; }
 .iw-direct-box textarea { min-height:54px; font-size:12px; }
+.iw-shadow-card { border:1px solid rgba(251,191,36,.38); background:linear-gradient(135deg,rgba(251,191,36,.08),rgba(255,255,255,.02)); border-radius:12px; padding:18px; margin-bottom:20px; }
+.iw-shadow-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:14px; }
+.iw-shadow-badge { color:#fbbf24; border:1px solid rgba(251,191,36,.45); background:rgba(251,191,36,.1); border-radius:999px; padding:4px 10px; font-size:10px; font-weight:800; white-space:nowrap; }
+.iw-shadow-grid { display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:10px; }
+.iw-shadow-grid .form-row { margin-bottom:4px; }
+.iw-shadow-stats { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+.iw-shadow-stat { border:1px solid var(--border); border-radius:8px; padding:7px 10px; font-size:11px; background:rgba(0,0,0,.12); }
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
+@media(max-width:700px){.iw-shadow-grid{grid-template-columns:1fr;}}
 @media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
 </style>
 
@@ -397,6 +455,44 @@ require_once __DIR__ . '/_header.php';
       <p class="page-subtitle">URLs que recebem dados de Hotmart, Kiwify, Eduzz e outras plataformas externas</p>
     </div>
     <button class="btn btn-primary" onclick="iwNovo()">+ Novo webhook</button>
+  </div>
+
+  <div class="iw-shadow-card">
+    <div class="iw-shadow-head">
+      <div>
+        <div style="font-size:16px;font-weight:800;margin-bottom:4px">Hotmart → SuperFuncionário</div>
+        <div style="font-size:12px;color:var(--text-muted)">Monta e armazena o payload final para validação. O envio HTTP está bloqueado por projeto.</div>
+      </div>
+      <span class="iw-shadow-badge">MODO SOMBRA · NÃO DISPARA</span>
+    </div>
+    <div class="iw-shadow-stats">
+      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['total'] ?? 0) ?></strong> payloads preparados</span>
+      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['today'] ?? 0) ?></strong> hoje</span>
+      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['events'] ?? 0) ?></strong> tipos de evento</span>
+    </div>
+    <div class="form-row">
+      <label>URL para cadastrar na Hotmart</label>
+      <div class="iw-webhook-row" style="margin-top:0"><code id="iwHotmartMetricsUrl"><?= htmlspecialchars(rtrim(BASE_URL, '/') . '/hotmart_metrics_webhook.php', ENT_QUOTES) ?></code><button type="button" class="iw-copy-btn" onclick="iwCopiar(document.getElementById('iwHotmartMetricsUrl').textContent,this)">Copiar</button></div>
+    </div>
+    <label class="iw-integration-check" style="margin:10px 0 12px;max-width:390px">
+      <input type="checkbox" id="iwHotmartShadowCapture" <?= (int)$hotmartSfShadowConfig['capture_enabled'] === 1 ? 'checked' : '' ?>>
+      <span>Preparar e guardar payloads recebidos em modo sombra</span>
+    </label>
+    <div class="iw-shadow-grid">
+      <div class="form-row"><label>Tag fixa</label><input type="text" id="iwHotmartShadowTag" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['fixed_tag'], ENT_QUOTES) ?>"></div>
+      <div class="form-row"><label>ID do fluxo</label><input type="text" inputmode="numeric" id="iwHotmartShadowFlow" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['flow_id'], ENT_QUOTES) ?>"></div>
+      <div class="form-row"><label>Prefixo da tag de evento</label><input type="text" id="iwHotmartShadowEventPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['event_tag_prefix'], ENT_QUOTES) ?>"></div>
+      <div class="form-row"><label>Prefixo da tag order bump</label><input type="text" id="iwHotmartShadowOrderPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['order_bump_prefix'], ENT_QUOTES) ?>"></div>
+    </div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#c4b5fd">Campos personalizados RV_* (<?= count($hotmartSfShadowConfig['fields']) ?> configurados)</summary>
+      <div class="form-row" style="margin-top:10px"><textarea id="iwHotmartShadowFields" style="min-height:360px;font-family:monospace;font-size:11px"><?= htmlspecialchars(json_encode($hotmartSfShadowConfig['fields'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES) ?></textarea></div>
+    </details>
+    <div id="iwHotmartShadowMsg" style="font-size:11px;margin:10px 0"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-primary" onclick="iwSalvarHotmartShadow()">Salvar configuração Hotmart/SF</button>
+      <button type="button" class="btn" onclick="iwAbrirHotmartShadowLogs()">Ver logs recebidos</button>
+    </div>
   </div>
 
   <div class="iw-wrap">
@@ -591,6 +687,20 @@ require_once __DIR__ . '/_header.php';
   </div>
 </div>
 
+<div class="iw-recv-modal" id="iwHotmartShadowLogModal">
+  <div class="iw-recv-box" style="width:1100px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
+      <div><h3 style="margin:0">Logs Hotmart → SF</h3><div style="font-size:11px;color:var(--text-muted);margin-top:3px">Somente payloads preparados em modo sombra; nenhum deles foi enviado.</div></div>
+      <button onclick="iwFecharHotmartShadowLogs()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:24px">&times;</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="iwHotmartShadowEventFilter" placeholder="Filtrar evento, ex.: PURCHASE_APPROVED" style="flex:1;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 12px">
+      <button type="button" class="btn" onclick="iwCarregarHotmartShadowLogs()">Filtrar</button>
+    </div>
+    <div class="iw-recv-list" id="iwHotmartShadowLogList">Carregando…</div>
+  </div>
+</div>
+
 <script>
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const EV_CLS = {
@@ -599,6 +709,73 @@ const EV_CLS = {
 };
 
 document.addEventListener('DOMContentLoaded', iwCarregar);
+
+async function iwSalvarHotmartShadow() {
+    const msg = document.getElementById('iwHotmartShadowMsg');
+    const fd = new FormData();
+    fd.append('acao','salvar_hotmart_sf_shadow');
+    if (document.getElementById('iwHotmartShadowCapture').checked) fd.append('capture_enabled','1');
+    fd.append('fixed_tag',document.getElementById('iwHotmartShadowTag').value);
+    fd.append('flow_id',document.getElementById('iwHotmartShadowFlow').value);
+    fd.append('event_tag_prefix',document.getElementById('iwHotmartShadowEventPrefix').value);
+    fd.append('order_bump_prefix',document.getElementById('iwHotmartShadowOrderPrefix').value);
+    fd.append('fields_json',document.getElementById('iwHotmartShadowFields').value);
+    msg.style.color = 'var(--text-muted)';
+    msg.textContent = 'Salvando…';
+    try {
+        const response = await fetch('inbound_webhooks.php',{method:'POST',body:fd});
+        const data = await response.json();
+        msg.style.color = data.ok ? '#4ade80' : '#f87171';
+        msg.textContent = data.msg || (data.ok ? 'Salvo.' : 'Não foi possível salvar.');
+    } catch (error) {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Falha ao salvar: ' + error.message;
+    }
+}
+
+function iwAbrirHotmartShadowLogs() {
+    document.getElementById('iwHotmartShadowLogModal').classList.add('visible');
+    iwCarregarHotmartShadowLogs();
+}
+
+function iwFecharHotmartShadowLogs() {
+    document.getElementById('iwHotmartShadowLogModal').classList.remove('visible');
+}
+
+function iwMascaraContato(value, type) {
+    value = String(value || '');
+    if (!value) return '—';
+    if (type === 'email') {
+        const parts = value.split('@');
+        return (parts[0] ? parts[0].slice(0,2) + '***' : '***') + (parts[1] ? '@' + parts[1] : '');
+    }
+    return value.length > 6 ? value.slice(0,4) + '***' + value.slice(-3) : '***';
+}
+
+function iwJsonBonito(raw) {
+    try { return JSON.stringify(JSON.parse(raw || '{}'), null, 2); } catch (_) { return raw || ''; }
+}
+
+async function iwCarregarHotmartShadowLogs() {
+    const list = document.getElementById('iwHotmartShadowLogList');
+    const event = document.getElementById('iwHotmartShadowEventFilter').value.trim();
+    list.textContent = 'Carregando…';
+    try {
+        const response = await fetch('inbound_webhooks.php?acao=logs_hotmart_sf_shadow&event=' + encodeURIComponent(event));
+        const data = await response.json();
+        if (!data.ok || !data.data.length) { list.innerHTML = '<div class="iw-empty">Nenhum payload preparado encontrado.</div>'; return; }
+        list.innerHTML = data.data.map(row => `<div style="border:1px solid var(--border);border-radius:9px;padding:12px;margin-bottom:9px;background:rgba(255,255,255,.02)">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
+            <div><strong style="color:#c4b5fd">${esc(row.event_name)}</strong> · ${esc(row.transaction_code || 'sem transação')}</div>
+            <div style="color:var(--text-muted)">${esc(row.updated_at)} · ${esc(iwMascaraContato(row.contact_email,'email'))} · ${esc(iwMascaraContato(row.contact_phone,'phone'))}</div>
+          </div>
+          <details><summary style="cursor:pointer;color:#60a5fa;font-size:11px;font-weight:700">Payload original Hotmart</summary><pre style="white-space:pre-wrap;max-height:320px;overflow:auto;background:#0a0a1a;padding:10px;border-radius:6px;font-size:10px">${esc(iwJsonBonito(row.hotmart_payload_json))}</pre></details>
+          ${row.sf_payload_json ? `<details style="margin-top:7px"><summary style="cursor:pointer;color:#fbbf24;font-size:11px;font-weight:700">Payload preparado para SF (não enviado)</summary><pre style="white-space:pre-wrap;max-height:320px;overflow:auto;background:#0a0a1a;padding:10px;border-radius:6px;font-size:10px">${esc(iwJsonBonito(row.sf_payload_json))}</pre></details>` : `<div style="margin-top:7px;color:#f87171;font-size:11px">Payload SF não preparado: captura desativada ou contato sem e-mail/telefone.</div>`}
+        </div>`).join('');
+    } catch (error) {
+        list.innerHTML = '<div class="iw-empty" style="color:#f87171">Falha ao carregar logs: ' + esc(error.message) + '</div>';
+    }
+}
 
 async function iwCarregar() {
     const j = await (await fetch('inbound_webhooks.php?acao=listar')).json();
