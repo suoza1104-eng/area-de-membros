@@ -436,7 +436,6 @@ require_once __DIR__ . '/_header.php';
 .iw-direct-title code { color:#60a5fa; font-size:10px; background:rgba(96,165,250,.08); padding:2px 6px; border-radius:999px; }
 .iw-direct-grid { display:grid; grid-template-columns:1fr 110px 110px; gap:8px; }
 .iw-direct-box textarea { min-height:54px; font-size:12px; }
-.iw-shadow-card { border:1px solid rgba(251,191,36,.38); background:linear-gradient(135deg,rgba(251,191,36,.08),rgba(255,255,255,.02)); border-radius:12px; padding:18px; margin-bottom:20px; }
 .iw-shadow-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:14px; }
 .iw-shadow-badge { color:#fbbf24; border:1px solid rgba(251,191,36,.45); background:rgba(251,191,36,.1); border-radius:999px; padding:4px 10px; font-size:10px; font-weight:800; white-space:nowrap; }
 .iw-shadow-grid { display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:10px; }
@@ -457,44 +456,6 @@ require_once __DIR__ . '/_header.php';
     <button class="btn btn-primary" onclick="iwNovo()">+ Novo webhook</button>
   </div>
 
-  <div class="iw-shadow-card">
-    <div class="iw-shadow-head">
-      <div>
-        <div style="font-size:16px;font-weight:800;margin-bottom:4px">Hotmart → SuperFuncionário</div>
-        <div style="font-size:12px;color:var(--text-muted)">Monta e armazena o payload final para validação. O envio HTTP está bloqueado por projeto.</div>
-      </div>
-      <span class="iw-shadow-badge">MODO SOMBRA · NÃO DISPARA</span>
-    </div>
-    <div class="iw-shadow-stats">
-      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['total'] ?? 0) ?></strong> payloads preparados</span>
-      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['today'] ?? 0) ?></strong> hoje</span>
-      <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['events'] ?? 0) ?></strong> tipos de evento</span>
-    </div>
-    <div class="form-row">
-      <label>URL para cadastrar na Hotmart</label>
-      <div class="iw-webhook-row" style="margin-top:0"><code id="iwHotmartMetricsUrl"><?= htmlspecialchars(rtrim(BASE_URL, '/') . '/hotmart_metrics_webhook.php', ENT_QUOTES) ?></code><button type="button" class="iw-copy-btn" onclick="iwCopiar(document.getElementById('iwHotmartMetricsUrl').textContent,this)">Copiar</button></div>
-    </div>
-    <label class="iw-integration-check" style="margin:10px 0 12px;max-width:390px">
-      <input type="checkbox" id="iwHotmartShadowCapture" <?= (int)$hotmartSfShadowConfig['capture_enabled'] === 1 ? 'checked' : '' ?>>
-      <span>Preparar e guardar payloads recebidos em modo sombra</span>
-    </label>
-    <div class="iw-shadow-grid">
-      <div class="form-row"><label>Tag fixa</label><input type="text" id="iwHotmartShadowTag" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['fixed_tag'], ENT_QUOTES) ?>"></div>
-      <div class="form-row"><label>ID do fluxo</label><input type="text" inputmode="numeric" id="iwHotmartShadowFlow" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['flow_id'], ENT_QUOTES) ?>"></div>
-      <div class="form-row"><label>Prefixo da tag de evento</label><input type="text" id="iwHotmartShadowEventPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['event_tag_prefix'], ENT_QUOTES) ?>"></div>
-      <div class="form-row"><label>Prefixo da tag order bump</label><input type="text" id="iwHotmartShadowOrderPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['order_bump_prefix'], ENT_QUOTES) ?>"></div>
-    </div>
-    <details style="margin-top:12px">
-      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#c4b5fd">Campos personalizados RV_* (<?= count($hotmartSfShadowConfig['fields']) ?> configurados)</summary>
-      <div class="form-row" style="margin-top:10px"><textarea id="iwHotmartShadowFields" style="min-height:360px;font-family:monospace;font-size:11px"><?= htmlspecialchars(json_encode($hotmartSfShadowConfig['fields'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES) ?></textarea></div>
-    </details>
-    <div id="iwHotmartShadowMsg" style="font-size:11px;margin:10px 0"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button type="button" class="btn btn-primary" onclick="iwSalvarHotmartShadow()">Salvar configuração Hotmart/SF</button>
-      <button type="button" class="btn" onclick="iwAbrirHotmartShadowLogs()">Ver logs recebidos</button>
-    </div>
-  </div>
-
   <div class="iw-wrap">
     <div class="iw-list">
       <div id="iwListCont"><div class="iw-empty">Carregando…</div></div>
@@ -507,6 +468,38 @@ require_once __DIR__ . '/_header.php';
       </div>
 
       <input type="hidden" id="iwId" value="0">
+
+      <div class="form-row">
+        <label>Tipo de webhook *</label>
+        <select id="iwTipoOrigem" onchange="iwAtualizaTipoOrigem()">
+          <option value="">Selecione o tipo…</option>
+          <option value="hotmart">Hotmart — vendas e recuperação</option>
+          <option value="custom">Personalizado — Kiwify, Eduzz ou outro</option>
+        </select>
+      </div>
+
+      <div id="iwHotmartConfig" style="display:none">
+        <div class="iw-shadow-head">
+          <div><div style="font-size:14px;font-weight:800">Hotmart → SuperFuncionário</div><div style="font-size:11px;color:var(--text-muted);margin-top:3px">Recebe todos os eventos e prepara o payload para validação.</div></div>
+          <span class="iw-shadow-badge">MODO SOMBRA · NÃO DISPARA</span>
+        </div>
+        <div class="iw-shadow-stats">
+          <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['total'] ?? 0) ?></strong> preparados</span>
+          <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['today'] ?? 0) ?></strong> hoje</span>
+          <span class="iw-shadow-stat"><strong><?= (int)($hotmartSfShadowStats['events'] ?? 0) ?></strong> eventos</span>
+        </div>
+        <div class="form-row"><label>URL para cadastrar na Hotmart</label><div class="iw-webhook-row" style="margin-top:0"><code id="iwHotmartMetricsUrl"><?= htmlspecialchars(rtrim(BASE_URL, '/') . '/hotmart_metrics_webhook.php', ENT_QUOTES) ?></code><button type="button" class="iw-copy-btn" onclick="iwCopiar(document.getElementById('iwHotmartMetricsUrl').textContent,this)">Copiar</button></div></div>
+        <label class="iw-integration-check" style="margin:10px 0 12px"><input type="checkbox" id="iwHotmartShadowCapture" <?= (int)$hotmartSfShadowConfig['capture_enabled'] === 1 ? 'checked' : '' ?>><span>Preparar e guardar payloads em modo sombra</span></label>
+        <div class="form-row"><label>Tag fixa</label><input type="text" id="iwHotmartShadowTag" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['fixed_tag'], ENT_QUOTES) ?>"></div>
+        <div class="form-row"><label>ID do fluxo</label><input type="text" inputmode="numeric" id="iwHotmartShadowFlow" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['flow_id'], ENT_QUOTES) ?>"></div>
+        <div class="form-row"><label>Prefixo da tag de evento</label><input type="text" id="iwHotmartShadowEventPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['event_tag_prefix'], ENT_QUOTES) ?>"></div>
+        <div class="form-row"><label>Prefixo da tag order bump</label><input type="text" id="iwHotmartShadowOrderPrefix" value="<?= htmlspecialchars((string)$hotmartSfShadowConfig['order_bump_prefix'], ENT_QUOTES) ?>"></div>
+        <details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#c4b5fd">Campos personalizados RV_* (<?= count($hotmartSfShadowConfig['fields']) ?> configurados)</summary><div class="form-row" style="margin-top:10px"><textarea id="iwHotmartShadowFields" style="min-height:360px;font-family:monospace;font-size:11px"><?= htmlspecialchars(json_encode($hotmartSfShadowConfig['fields'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES) ?></textarea></div></details>
+        <div id="iwHotmartShadowMsg" style="font-size:11px;margin:10px 0"></div>
+        <div style="display:flex;gap:8px"><button type="button" class="btn btn-primary" style="flex:1" onclick="iwSalvarHotmartShadow()">Salvar Hotmart</button><button type="button" class="btn" onclick="iwAbrirHotmartShadowLogs()">Ver logs</button></div>
+      </div>
+
+      <div id="iwGenericConfig" style="display:none">
 
       <div class="form-row">
         <label>Nome *</label>
@@ -673,6 +666,7 @@ require_once __DIR__ . '/_header.php';
         <button class="btn btn-primary" style="flex:1" onclick="iwSalvar()">Salvar</button>
         <button class="btn" style="flex:1" onclick="iwFechar()">Cancelar</button>
       </div>
+      </div>
     </div>
   </div>
 </div>
@@ -703,6 +697,8 @@ require_once __DIR__ . '/_header.php';
 
 <script>
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
+const IW_HOTMART_STATS = <?= json_encode($hotmartSfShadowStats, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+let IW_HOTMART_CAPTURE_ENABLED = <?= (int)$hotmartSfShadowConfig['capture_enabled'] ?>;
 const EV_CLS = {
     'INSCRITO':'ev-inscrito','INSCRICAO_GRATUITA':'ev-inscrito','INSCRICAO_VITALICIA':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
     'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
@@ -727,6 +723,10 @@ async function iwSalvarHotmartShadow() {
         const data = await response.json();
         msg.style.color = data.ok ? '#4ade80' : '#f87171';
         msg.textContent = data.msg || (data.ok ? 'Salvo.' : 'Não foi possível salvar.');
+        if (data.ok) {
+            IW_HOTMART_CAPTURE_ENABLED = document.getElementById('iwHotmartShadowCapture').checked ? 1 : 0;
+            await iwCarregar();
+        }
     } catch (error) {
         msg.style.color = '#f87171';
         msg.textContent = 'Falha ao salvar: ' + error.message;
@@ -780,11 +780,15 @@ async function iwCarregarHotmartShadowLogs() {
 async function iwCarregar() {
     const j = await (await fetch('inbound_webhooks.php?acao=listar')).json();
     const cont = document.getElementById('iwListCont');
-    if (!j.ok || !j.data.length) {
-        cont.innerHTML = '<div class="iw-empty">Nenhum webhook configurado.<br>Clique em <strong>+ Novo webhook</strong> para criar o primeiro.</div>';
-        return;
-    }
-    cont.innerHTML = j.data.map(w => {
+    const hotmartCard = `<div class="iw-card" style="border-color:rgba(251,191,36,.35)">
+      <div class="iw-card-top"><div class="iw-card-info">
+        <div class="iw-card-nome">Hotmart — vendas e recuperação <span style="font-size:11px;color:${IW_HOTMART_CAPTURE_ENABLED===1?'#fbbf24':'#94a3b8'}">${IW_HOTMART_CAPTURE_ENABLED===1?'● modo sombra':'○ captura pausada'}</span></div>
+        <div class="iw-card-meta"><span class="ev-pill" style="background:rgba(251,191,36,.1);color:#fbbf24">HOTMART</span><span class="iw-shadow-badge">NÃO DISPARA</span><span>${parseInt(IW_HOTMART_STATS.total||0)} preparados</span><span>${parseInt(IW_HOTMART_STATS.today||0)} hoje</span><span>${parseInt(IW_HOTMART_STATS.events||0)} tipos de evento</span></div>
+      </div><div class="iw-card-actions"><button class="btn btn-sm" onclick="iwAbrirHotmartShadowLogs()">Logs</button><button class="btn btn-sm" onclick="iwEditarHotmart()">Editar</button></div></div>
+      <div class="iw-webhook-row"><span style="color:var(--text-muted);font-weight:600">URL:</span><code><?= htmlspecialchars(rtrim(BASE_URL, '/') . '/hotmart_metrics_webhook.php', ENT_QUOTES) ?></code></div>
+    </div>`;
+    if (!j.ok) { cont.innerHTML = hotmartCard; return; }
+    const customCards = j.data.map(w => {
         const url = IW_WEBHOOK_BASE + w.token;
         const evCls = EV_CLS[w.evento] || 'ev-tag';
         return `<div class="iw-card">
@@ -818,10 +822,12 @@ async function iwCarregar() {
             </div>
         </div>`;
     }).join('');
+    cont.innerHTML = hotmartCard + (customCards || '<div class="iw-empty" style="padding:24px">Nenhum webhook personalizado configurado.</div>');
 }
 
 function iwNovo() {
     document.getElementById('iwId').value = 0;
+    document.getElementById('iwTipoOrigem').value = '';
     document.getElementById('iwNome').value = '';
     document.getElementById('iwDescricao').value = '';
     document.getElementById('iwEvento').value = 'INSCRITO';
@@ -851,13 +857,22 @@ function iwNovo() {
     iwAddMap('retorno_data','retorno_data'); iwAddMap('retorno_tipo','retorno_tipo'); iwAddMap('retorno_assunto','retorno_assunto'); iwAddMap('retorno_mensagem','retorno_mensagem');
     document.getElementById('iwFormTitle').textContent = 'Novo webhook';
     document.getElementById('iwFormPanel').style.display = '';
-    iwAtualizaCamposCondicionais();
+    iwAtualizaTipoOrigem();
+}
+
+function iwEditarHotmart() {
+    document.getElementById('iwId').value = 0;
+    document.getElementById('iwTipoOrigem').value = 'hotmart';
+    document.getElementById('iwFormTitle').textContent = 'Editar webhook Hotmart';
+    document.getElementById('iwFormPanel').style.display = '';
+    iwAtualizaTipoOrigem();
 }
 
 async function iwEditar(id) {
     const j = await (await fetch('inbound_webhooks.php?acao=get&id=' + id)).json();
     if (!j.ok) return alert('Erro');
     const d = j.data;
+    document.getElementById('iwTipoOrigem').value = 'custom';
     document.getElementById('iwId').value = d.id;
     document.getElementById('iwNome').value = d.nome || '';
     document.getElementById('iwDescricao').value = d.descricao || '';
@@ -892,10 +907,19 @@ async function iwEditar(id) {
     }
     document.getElementById('iwFormTitle').textContent = 'Editar: ' + d.nome;
     document.getElementById('iwFormPanel').style.display = '';
-    iwAtualizaCamposCondicionais();
+    iwAtualizaTipoOrigem();
 }
 
 function iwFechar() { document.getElementById('iwFormPanel').style.display = 'none'; }
+
+function iwAtualizaTipoOrigem() {
+    const tipo = document.getElementById('iwTipoOrigem').value;
+    document.getElementById('iwHotmartConfig').style.display = tipo === 'hotmart' ? '' : 'none';
+    document.getElementById('iwGenericConfig').style.display = tipo === 'custom' ? '' : 'none';
+    if (tipo === 'hotmart') document.getElementById('iwFormTitle').textContent = 'Configurar webhook Hotmart';
+    if (tipo === 'custom' && parseInt(document.getElementById('iwId').value || '0') === 0) document.getElementById('iwFormTitle').textContent = 'Novo webhook personalizado';
+    if (tipo === 'custom') iwAtualizaCamposCondicionais();
+}
 
 function iwAtualizaCamposCondicionais() {
     const ev = document.getElementById('iwEvento').value;
