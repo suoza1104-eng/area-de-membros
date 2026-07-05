@@ -41,6 +41,7 @@ Voce esta trabalhando em uma area de membros PHP puro, sem framework, com MySQL 
    - live_events.php: cadastro de eventos de live e tokens para live_webhook.php.
    - inbound_webhooks.php: cadastro de webhooks de entrada e tokens para inbound_webhook.php.
    - integration_hub.php: painel de fontes, rotas, mapeamentos e logs do Hub de Integrações.
+   - integration_webhook.php: receptor genérico com URL e segredo exclusivos para cada fonte cadastrada no Hub.
    - superfuncionario.php: credenciais, regras e configuracoes de live por turma para SuperFuncionario.
    - disparos.php: disparos em lote com filtros de publico e execucao por batch.
    - certificado_config.php/certificado_preview.php: layout, senha, videos, CTA e preview do certificado.
