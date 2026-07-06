@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/funcoes.php';
 require_once __DIR__ . '/hotmart_sf_shadow.php';
 
 function hub_ensure_schema(PDO $pdo): void
@@ -58,10 +59,15 @@ function hub_seed_defaults(PDO $pdo): void
     $hotmartMap=json_encode(['name'=>'data.buyer.name|data.subscriber.name','email'=>'data.buyer.email|data.subscriber.email','phone'=>'data.buyer.checkout_phone|data.buyer.phone','event'=>'event','transaction'=>'data.purchase.transaction'],JSON_UNESCAPED_SLASHES);
     $stmt=$pdo->prepare("INSERT IGNORE INTO integration_sources (slug,name,provider,is_active,webhook_key,payload_format,mapping_json,normalize_phone) VALUES ('hotmart','Hotmart','hotmart',1,:key,'json',:mapping,1)");
     $stmt->execute(['key'=>bin2hex(random_bytes(16)),'mapping'=>$hotmartMap]);
+    $stmt=$pdo->prepare("UPDATE integration_sources SET mapping_json=:mapping,payload_format='json',normalize_phone=1,webhook_key=COALESCE(NULLIF(webhook_key,''),:key) WHERE slug='hotmart' AND (mapping_json IS NULL OR TRIM(mapping_json)='' OR TRIM(mapping_json)='{}')");
+    $stmt->execute(['mapping'=>$hotmartMap,'key'=>bin2hex(random_bytes(16))]);
     $pdo->exec("INSERT IGNORE INTO integration_destinations (slug,name,adapter,is_active) VALUES
         ('superfuncionario','SuperFuncionario','superfuncionario',1),('manychat','ManyChat','manychat',1),('webhook','Webhook personalizado','webhook',1)");
     $sourceId=(int)$pdo->query("SELECT id FROM integration_sources WHERE slug='hotmart'")->fetchColumn();
     hub_ensure_routes_for_source($pdo,$sourceId,'hotmart');
+    $sfRoute=$pdo->prepare("SELECT r.id,r.config_json FROM integration_routes r JOIN integration_destinations d ON d.id=r.destination_id WHERE r.source_id=:source AND d.slug='superfuncionario' LIMIT 1");
+    $sfRoute->execute(['source'=>$sourceId]);$row=$sfRoute->fetch(PDO::FETCH_ASSOC)?:[];$current=json_decode((string)($row['config_json']??''),true);
+    if((int)($row['id']??0)>0&&(!is_array($current)||empty($current['fields']))){$config=hub_default_route_config('superfuncionario','hotmart');$update=$pdo->prepare("UPDATE integration_routes SET config_json=:config,is_active=1,mode='shadow' WHERE id=:id");$update->execute(['config'=>json_encode($config,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'id'=>(int)$row['id']]);}
 }
 
 function hub_default_route_config(string $slug, string $provider='generic'): array
