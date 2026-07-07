@@ -353,6 +353,12 @@ function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = 
         } catch (Throwable $e) {
             @error_log('push_flow_capture_event: ' . $e->getMessage());
         }
+        try {
+            require_once __DIR__ . '/email_flow_engine.php';
+            email_flow_capture_event(getPDO(), $evento, $user_id, $extra);
+        } catch (Throwable $e) {
+            @error_log('email_flow_capture_event: ' . $e->getMessage());
+        }
     }
 
     // Em requisições web, adia o envio para DEPOIS de entregar a resposta ao

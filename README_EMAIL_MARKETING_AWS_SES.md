@@ -12,8 +12,12 @@ Documento de arquitetura e implantação do módulo de campanhas e automações 
 - campanhas imediatas ou agendadas, filtros por busca/turma/tag, prévia e congelamento da audiência;
 - nova verificação de supressão imediatamente antes de cada envio;
 - painel de contatos e supressões com bloqueio manual e ingestão automática de bounce, complaint e unsubscribe;
-- editor visual de automações com gatilho, condição, espera, e-mail, tag, integração e encerramento;
+- editor visual de automações no mesmo padrão do push, com canvas, pan, zoom, conexões, gatilho, condição, temporizador, e-mail, tag, integração e encerramento;
+- catálogo único de gatilhos compartilhado por push e e-mail: alterações futuras são feitas em `app/automation_catalog.php`;
+- condições com múltiplas regras combinadas por E/OU e saídas obrigatórias SIM/NÃO;
+- condições por tag, turma, endereço, elegibilidade, entrega, abertura, clique, link específico, bounce, complaint, descadastro e volume de engajamento;
 - versões publicadas de automações separadas do rascunho;
+- motor assíncrono de automações com captura dos eventos da plataforma, runs individuais por aluno, jobs com lease, retentativas, temporizadores e idempotência por bloco de e-mail;
 - worker `cron/processar_emails.php`, registrado no gerenciador de cron;
 - integração direta com SES API v2 assinada por AWS Signature V4, sem expor credenciais no painel;
 - endpoint `public/email_ses_webhook.php` com segredo obrigatório, limite de payload, validação criptográfica da assinatura SNS e confirmação segura da assinatura;
@@ -23,6 +27,8 @@ Documento de arquitetura e implantação do módulo de campanhas e automações 
 ### Arquivos principais
 
 - `app/email_marketing.php`: schema, templates, audiências, campanhas, fila, SES e eventos;
+- `app/automation_catalog.php`: fonte compartilhada dos gatilhos de push e e-mail;
+- `app/email_flow_engine.php`: captura e execução assíncrona das automações;
 - `admin/email_dashboard.php`: indicadores detalhados;
 - `admin/email_campanhas.php`: criação e operação das campanhas;
 - `admin/email_modelos.php` e `admin/email_editor.php`: biblioteca e editor;
@@ -34,7 +40,7 @@ Documento de arquitetura e implantação do módulo de campanhas e automações 
 
 ### Estado desta entrega
 
-As telas, tabelas, fila, envio SES e ingestão de eventos estão operacionais. O motor de automações possui cadastro, editor e publicação versionada; a execução automática dos grafos (entrada por eventos, waits e ramificações) fica para a próxima evolução do motor. Campanhas manuais não dependem dessa evolução.
+As telas, tabelas, campanhas, envio SES, ingestão de eventos e execução automática dos grafos estão operacionais. O motor somente captura novos eventos quando estiver ativo; publicar um fluxo não processa alunos ou eventos retroativamente.
 
 ## Decisão de produto
 
