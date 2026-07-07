@@ -6,6 +6,7 @@ Documento de arquitetura e implantação do módulo de campanhas e automações 
 
 - seção **E-mail Marketing** no menu e permissão própria para membros da equipe;
 - visão geral do canal e resumo exclusivo no dashboard administrativo;
+- gráficos de evolução diária e funil de entrega/engajamento na visão geral, junto aos cards operacionais;
 - biblioteca de modelos com histórico imutável de versões;
 - editor visual/HTML com blocos de título, texto, botão, imagem, divisor, espaço e descadastro;
 - sanitização básica de HTML, geração de texto puro, variáveis de aluno e inclusão obrigatória do descadastro;

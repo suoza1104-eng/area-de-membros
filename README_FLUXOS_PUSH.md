@@ -1,5 +1,18 @@
 # Fluxos de notificações push
 
+## Organização do painel
+
+A central de notificações foi dividida em áreas para evitar mistura entre operação e configuração:
+
+- **Visão geral**: cards de dispositivos e gráficos de evolução/distribuição das entregas;
+- **Campanhas**: disparos imediatos ou agendados e audiência congelada;
+- **Automações**: fluxos, versões, métricas e rastreabilidade por aluno;
+- **Dispositivos**: instalações, permissões, plataforma e último acesso;
+- **Logs**: entregas técnicas, falhas e cliques;
+- **Configurações**: Firebase, identidade do app, eventos, tags e simuladores.
+
+Os gráficos usam os eventos técnicos registrados em `push_delivery_logs`. “Aceita” continua significando aceitação pelo Firebase, não confirmação garantida de visualização no aparelho.
+
 Este documento registra o escopo aprovado para transformar a tela de notificações do aplicativo em um construtor visual de automações. A implementação será incremental para manter o envio atual funcionando e evitar sobrecarga na hospedagem.
 
 ## Objetivo
