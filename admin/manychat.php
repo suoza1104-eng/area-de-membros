@@ -163,6 +163,7 @@ include __DIR__ . '/_header.php';
 
 <style>
 .int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
+    .int-nav{position:sticky;top:60px;z-index:30;background:var(--bg);padding-top:8px}
     :root {
         --bg: #020617;
         --bg-card: #0b1120;
@@ -491,7 +492,7 @@ include __DIR__ . '/_header.php';
 </div>
 
 <script>
-const mcView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=mcView==='overview'?false:(mcView==='settings'?t==='Credenciais globais':mcView==='reference'?t==='Referencias de campos':mcView==='logs'?t==='Ultimos logs Manychat':mcView==='rules'?(t==='Nova regra'||t==='Editar regra'||t==='Regras configuradas'):true);if(!show)card.style.display='none';});
+const mcView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=mcView==='overview'?false:(mcView==='settings'?t==='Credenciais globais':mcView==='reference'?t==='Referencias de campos':mcView==='logs'?t==='Ultimos logs Manychat':mcView==='rules'?(t==='Nova regra'||t==='Editar regra'||t==='Regras configuradas'):true);if(!show)card.style.display='none';});document.querySelectorAll('.mc-grid').forEach(g=>{g.style.gridTemplateColumns='minmax(0,1fr)';Array.from(g.children).forEach(col=>{const cards=Array.from(col.querySelectorAll(':scope > .card'));if(cards.length&&!cards.some(c=>c.style.display!=='none'))col.style.display='none';});});
 function mcAddField() {
     var wrap = document.getElementById('mc-fields');
     var div = document.createElement('div');

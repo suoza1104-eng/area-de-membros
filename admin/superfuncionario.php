@@ -675,6 +675,7 @@ include __DIR__ . '/_header.php';
 
 <style>
 .int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
+    .int-nav{position:sticky;top:60px;z-index:30;background:var(--bg);padding-top:8px}
     :root {
         --bg:      #020617;
         --bg-card: #0b1120;
@@ -917,11 +918,13 @@ include __DIR__ . '/_header.php';
 <?php endforeach; ?>
 </datalist>
 
-<div class="sf-wrap">
+<div class="sf-wrap int-view-<?=h($view)?>">
     <div class="page-header">
         <h1>SuperFuncionário</h1>
         <p>Configure as credenciais globais e crie regras de disparo por evento — tags, fluxos e campos personalizados.</p>
     </div>
+    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','rules'=>'Integrações','reference'=>'Referências','live'=>'Live por turma','logs'=>'Logs','settings'=>'Configurações'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="superfuncionario.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
+    <?php if($view==='overview'):?><div class="int-overview"><div class="int-kpi"><small>Status da integração</small><strong><?=!empty($cfg['is_enabled'])?'Ativa':'Pausada'?></strong></div><div class="int-kpi"><small>Integrações ativas</small><strong><?=count(array_filter($rules,fn($r)=>(int)$r['is_active']===1))?></strong></div><div class="int-kpi"><small>Sucessos recentes</small><strong class="log-ok"><?=(int)$sfLogStats['ok']?></strong></div><div class="int-kpi"><small>Falhas recentes</small><strong class="<?=(int)$sfLogStats['failed']?'log-fail':''?>"><?=(int)$sfLogStats['failed']?></strong></div></div><?php endif;?>
 
     <div class="grid-2">
 
@@ -1578,8 +1581,6 @@ include __DIR__ . '/_header.php';
             </div>
         </div>
     </div>
-    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','rules'=>'Integrações','reference'=>'Referências','live'=>'Live por turma','logs'=>'Logs','settings'=>'Configurações'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="superfuncionario.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
-    <?php if($view==='overview'):?><div class="int-overview"><div class="int-kpi"><small>Status da integração</small><strong><?=!empty($cfg['is_enabled'])?'Ativa':'Pausada'?></strong></div><div class="int-kpi"><small>Integrações ativas</small><strong><?=count(array_filter($rules,fn($r)=>(int)$r['is_active']===1))?></strong></div><div class="int-kpi"><small>Sucessos recentes</small><strong class="log-ok"><?=(int)$sfLogStats['ok']?></strong></div><div class="int-kpi"><small>Falhas recentes</small><strong class="<?=(int)$sfLogStats['failed']?'log-fail':''?>"><?=(int)$sfLogStats['failed']?></strong></div></div><?php endif;?>
 
     <?php
     $liveDispatchLogs = [];
@@ -1747,7 +1748,7 @@ include __DIR__ . '/_header.php';
 </div><!-- /.sf-wrap -->
 
 <script>
-const sfView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=sfView==='overview'?false:(sfView==='settings'?t==='Credenciais globais':sfView==='reference'?t==='Extras por evento':sfView==='rules'?(t==='Nova integração'||t==='Editar integração'||t==='Integrações cadastradas'):sfView==='live'?(t==='Disparo de Live por Turma'||t==='Execucoes do cron de live'):sfView==='logs'?t==='Logs recentes':true);if(!show)card.style.display='none';});
+const sfView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=sfView==='overview'?false:(sfView==='settings'?t==='Credenciais globais':sfView==='reference'?t==='Extras por evento':sfView==='rules'?(t==='Nova integração'||t==='Editar integração'||t==='Integrações cadastradas'):sfView==='live'?(t==='Disparo de Live por Turma'||t==='Execucoes do cron de live'):sfView==='logs'?t==='Logs recentes':true);if(!show)card.style.display='none';});document.querySelectorAll('.grid-2').forEach(g=>{g.style.gridTemplateColumns='minmax(0,1fr)';Array.from(g.children).forEach(col=>{const cards=Array.from(col.querySelectorAll(':scope > .card'));if(cards.length&&!cards.some(c=>c.style.display!=='none'))col.style.display='none';});});
 function removeRow(btn) { btn.closest('.field-row').remove(); }
 function addRow() {
     var c = document.getElementById('fields');
