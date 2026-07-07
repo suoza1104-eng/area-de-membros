@@ -9,6 +9,7 @@ $pdo = getPDO();
 $menu = 'manychat';
 $page_title = 'Manychat';
 $page_subtitle = 'Integracao de eventos com Manychat';
+$view=(string)($_GET['view']??(isset($_GET['edit'])?'rules':'overview'));if(!in_array($view,['overview','rules','reference','logs','settings'],true))$view='overview';
 
 function h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function post_str(string $key): string { return trim((string)($_POST[$key] ?? '')); }
@@ -161,6 +162,7 @@ include __DIR__ . '/_header.php';
 ?>
 
 <style>
+.int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
     :root {
         --bg: #020617;
         --bg-card: #0b1120;
@@ -288,6 +290,8 @@ include __DIR__ . '/_header.php';
         <h1>Manychat</h1>
         <p>Configure as credenciais globais e crie regras de disparo por evento: tags, flows e campos personalizados.</p>
     </div>
+    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','rules'=>'Regras','reference'=>'Referências','logs'=>'Logs','settings'=>'Configurações'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="manychat.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
+    <?php if($view==='overview'):?><?php $mcOk=count(array_filter($recentLogs,fn($l)=>(int)$l['ok']===1));$mcFail=count($recentLogs)-$mcOk;?><div class="int-overview"><div class="int-kpi"><small>Status da integração</small><strong class="<?=!empty($cfg['is_enabled'])?'log-ok':'text-muted'?>"><?=!empty($cfg['is_enabled'])?'Ativa':'Pausada'?></strong></div><div class="int-kpi"><small>Regras ativas</small><strong><?=count(array_filter($rules,fn($r)=>(int)$r['is_active']===1))?></strong></div><div class="int-kpi"><small>Sucessos recentes</small><strong class="log-ok"><?=$mcOk?></strong></div><div class="int-kpi"><small>Falhas recentes</small><strong class="<?=$mcFail?'log-fail':''?>"><?=$mcFail?></strong></div></div><?php endif;?>
 
 <div class="mc-grid">
     <div>
@@ -487,13 +491,14 @@ include __DIR__ . '/_header.php';
 </div>
 
 <script>
+const mcView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=mcView==='overview'?false:(mcView==='settings'?t==='Credenciais globais':mcView==='reference'?t==='Referencias de campos':mcView==='logs'?t==='Ultimos logs Manychat':mcView==='rules'?(t==='Nova regra'||t==='Editar regra'||t==='Regras configuradas'):true);if(!show)card.style.display='none';});
 function mcAddField() {
     var wrap = document.getElementById('mc-fields');
     var div = document.createElement('div');
     div.className = 'mc-field-grid';
     div.innerHTML = '<input list="mc-field-options" name="field_source[]" placeholder="Origem. Ex.: user.email">' +
         '<input name="field_dest[]" placeholder="Campo no Manychat">' +
-        '<button class="btnx" type="button" onclick="this.closest(\\'.mc-field-grid\\').remove()">x</button>';
+        "<button class=\"btnx\" type=\"button\" onclick=\"this.closest('.mc-field-grid').remove()\">x</button>";
     wrap.appendChild(div);
 }
 </script>

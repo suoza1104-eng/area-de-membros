@@ -9,6 +9,7 @@ $pdo = getPDO();
 
 // menu ativo
 $menu = 'superfuncionario';
+$view=(string)($_GET['view']??(isset($_GET['edit'])?'rules':(isset($_GET['sf_edit'])?'live':'overview')));if(!in_array($view,['overview','rules','reference','live','logs','settings'],true))$view='overview';
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function post_str(string $k): string { return trim((string)($_POST[$k] ?? '')); }
@@ -623,6 +624,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
 $cfg = sf_get_config($pdo);
 
 $rules = $pdo->query("SELECT * FROM superfuncionario_rules ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$sfLogStats=['ok'=>0,'failed'=>0];try{$sfLogStats=$pdo->query("SELECT SUM(ok=1) ok,SUM(ok=0) failed FROM (SELECT ok FROM superfuncionario_logs ORDER BY id DESC LIMIT 100) x")->fetch(PDO::FETCH_ASSOC)?:$sfLogStats;}catch(Throwable $e){}
 
 $edit = null;
 if (isset($_GET['edit'])) {
@@ -672,6 +674,7 @@ include __DIR__ . '/_header.php';
 ?>
 
 <style>
+.int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
     :root {
         --bg:      #020617;
         --bg-card: #0b1120;
@@ -1575,6 +1578,8 @@ include __DIR__ . '/_header.php';
             </div>
         </div>
     </div>
+    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','rules'=>'Integrações','reference'=>'Referências','live'=>'Live por turma','logs'=>'Logs','settings'=>'Configurações'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="superfuncionario.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
+    <?php if($view==='overview'):?><div class="int-overview"><div class="int-kpi"><small>Status da integração</small><strong><?=!empty($cfg['is_enabled'])?'Ativa':'Pausada'?></strong></div><div class="int-kpi"><small>Integrações ativas</small><strong><?=count(array_filter($rules,fn($r)=>(int)$r['is_active']===1))?></strong></div><div class="int-kpi"><small>Sucessos recentes</small><strong class="log-ok"><?=(int)$sfLogStats['ok']?></strong></div><div class="int-kpi"><small>Falhas recentes</small><strong class="<?=(int)$sfLogStats['failed']?'log-fail':''?>"><?=(int)$sfLogStats['failed']?></strong></div></div><?php endif;?>
 
     <?php
     $liveDispatchLogs = [];
@@ -1742,6 +1747,7 @@ include __DIR__ . '/_header.php';
 </div><!-- /.sf-wrap -->
 
 <script>
+const sfView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=sfView==='overview'?false:(sfView==='settings'?t==='Credenciais globais':sfView==='reference'?t==='Extras por evento':sfView==='rules'?(t==='Nova integração'||t==='Editar integração'||t==='Integrações cadastradas'):sfView==='live'?(t==='Disparo de Live por Turma'||t==='Execucoes do cron de live'):sfView==='logs'?t==='Logs recentes':true);if(!show)card.style.display='none';});
 function removeRow(btn) { btn.closest('.field-row').remove(); }
 function addRow() {
     var c = document.getElementById('fields');
