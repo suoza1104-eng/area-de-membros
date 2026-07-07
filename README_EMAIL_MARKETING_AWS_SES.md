@@ -319,6 +319,9 @@ Cada campanha, fluxo, bloco de e-mail e revisão de conteúdo mostra seus própr
 ### Fase 2 — modelos e campanhas
 
 - editor, versões, prévia e teste;
+- editor profissional com prévia desktop/celular, biblioteca de blocos, edição HTML/CSS, contadores e verificação rápida de boas práticas;
+- envio de teste direto pelo SES com dados fictícios, prefixo `[TESTE]` e sem contaminar métricas de campanha;
+- revisão opcional com OpenAI reutilizando chave/modelo da configuração WhatsApp, prompt configurável e sugestões estruturadas aceitas individualmente;
 - filtros, congelamento de audiência, agendamento, fila e métricas por campanha/e-mail.
 
 ### Fase 3 — automações
