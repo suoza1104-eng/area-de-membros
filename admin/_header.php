@@ -41,7 +41,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','notificacoes','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -71,6 +71,7 @@ $titleMap = [
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
     'notificacoes'     => 'Notificações do App',
+    'email_marketing'  => 'E-mail Marketing',
     'monitor'          => 'Rastreamento',
     'cron_monitor'     => 'Monitor de Cron',
     'logs'             => 'Logs',
@@ -864,6 +865,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M10 21h4"/>
       </svg>
       Notificações do App
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['email_marketing']): ?>
+    <a href="email_dashboard.php" class="sb-item <?= $currentMenu === 'email_marketing' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
+      </svg>
+      E-mail Marketing
     </a>
     <?php endif; ?>
 

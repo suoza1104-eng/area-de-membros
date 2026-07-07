@@ -1701,6 +1701,13 @@ try {
     $groupRankingHistorico = [];
 }
 
+$emailDashboard = ['sent'=>0,'delivered'=>0,'opened'=>0,'clicked'=>0,'bounced'=>0,'complaints'=>0,'unsubscribed'=>0];
+try {
+    require_once __DIR__ . '/../app/email_marketing.php';
+    email_marketing_ensure_schema($pdo);
+    $emailDashboard = $pdo->query("SELECT COUNT(*) sent,SUM(delivered_at IS NOT NULL) delivered,SUM(first_opened_at IS NOT NULL) opened,SUM(first_clicked_at IS NOT NULL) clicked,SUM(status='bounced') bounced,SUM(status='complaint') complaints,SUM(status='unsubscribed') unsubscribed FROM email_messages")->fetch(PDO::FETCH_ASSOC) ?: $emailDashboard;
+} catch (Throwable $e) {}
+
 ?>
 <?php
 $menu = 'dashboard';
@@ -4122,6 +4129,18 @@ $grEventLabel = static function (string $event): string {
     </div>
 </div>
 <?php endif; ?>
+
+<div class="card mb-4">
+    <div class="d-flex align-center justify-between mb-3">
+        <div><div class="card-title">Indicadores de e-mail</div><div class="text-xs text-muted">Entregabilidade e engajamento registrados pelo Amazon SES.</div></div>
+        <a class="btn btn-ghost btn-sm" href="email_dashboard.php">Abrir E-mail Marketing</a>
+    </div>
+    <div class="stats-grid">
+        <?php foreach ([['sent','Aceitos pelo SES'],['delivered','Entregues'],['opened','Aberturas'],['clicked','Cliques'],['bounced','Bounces'],['complaints','Reclamações'],['unsubscribed','Descadastros']] as [$key,$label]): ?>
+        <div class="stat-card"><div class="stat-label"><?= htmlspecialchars($label) ?></div><div class="stat-value"><?= number_format((int)($emailDashboard[$key] ?? 0),0,',','.') ?></div></div>
+        <?php endforeach; ?>
+    </div>
+</div>
 
 <script>
 function rkToggle(i) {

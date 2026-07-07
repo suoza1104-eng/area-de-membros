@@ -47,6 +47,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 120,
         ],
+        'email_marketing' => [
+            'label' => 'E-mail marketing',
+            'description' => 'Processa campanhas e etapas de e-mail vencidas pelo Amazon SES.',
+            'script' => __DIR__ . '/../cron/processar_emails.php',
+            'interval' => 1,
+            'timeout' => 120,
+        ],
     ];
 }
 

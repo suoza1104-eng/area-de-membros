@@ -62,6 +62,7 @@ try {
     // também solicitar fluxos_push diretamente.
     if ($taskKey === 'agendamentos_retorno') {
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
+        $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);
     }
     cron_manager_heartbeat($pdo, $source, $taskKey, (string)($result['reason'] ?? $result['status'] ?? 'ok'), false);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
