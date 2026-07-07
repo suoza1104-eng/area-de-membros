@@ -296,7 +296,7 @@ if (isset($_GET['edit'])) {
 // Clone pré-preenche como nova turma
 if ($cloneFill) $edit = $cloneFill;
 
-$turmas = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$turmas = $pdo->query("SELECT t.*,(SELECT COUNT(*) FROM users u WHERE u.codigo_turma=t.codigo) AS total_alunos FROM turmas t ORDER BY t.janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $ultimosDisparosLive = [];
 try {
     $stUltimosDisparos = $pdo->query("
@@ -568,6 +568,7 @@ include __DIR__ . '/_header.php';
         <thead>
         <tr>
             <th><button type="button" class="sort-head" data-sort="codigo">Código</button></th>
+            <th><button type="button" class="sort-head" data-sort="alunos">Alunos</button></th>
             <th><button type="button" class="sort-head" data-sort="janela">Janela</button></th>
             <th><button type="button" class="sort-head" data-sort="live">Live</button></th>
             <th><button type="button" class="sort-head" data-sort="senha">Senha</button></th>
@@ -602,6 +603,9 @@ include __DIR__ . '/_header.php';
                     <?php if (!empty($t['codigo_live'])): ?>
                         <br><span style="font-size:10.5px;color:var(--muted);"><?= h((string)$t['codigo_live']) ?></span>
                     <?php endif; ?>
+                </td>
+                <td data-label="Alunos" data-sort-alunos="<?= (int)($t['total_alunos'] ?? 0) ?>">
+                    <strong style="font-size:15px;"><?= number_format((int)($t['total_alunos'] ?? 0), 0, ',', '.') ?></strong>
                 </td>
                 <td data-label="Janela" data-sort-janela="<?= sort_ts($t['janela_inicio'] ?? null) ?>" style="white-space:nowrap;font-size:11px;">
                     <?= h(dt_br_short($t['janela_inicio'] ?? null)) ?><br>
