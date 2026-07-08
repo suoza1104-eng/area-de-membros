@@ -117,11 +117,13 @@ function support_chat_store_upload(array $file): array
     if (($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new RuntimeException('Não foi possível receber o arquivo.');
     if ((int)($file['size']??0)>20*1024*1024) throw new RuntimeException('O arquivo deve ter no máximo 20 MB.');
     $tmp=(string)$file['tmp_name'];$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp)?:'application/octet-stream';
-    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif','audio/webm'=>'webm','audio/ogg'=>'ogg','audio/mpeg'=>'mp3','audio/mp4'=>'m4a','application/pdf'=>'pdf','text/plain'=>'txt','application/zip'=>'zip','application/vnd.openxmlformats-officedocument.wordprocessingml.document'=>'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'=>'xlsx'];
+    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif','audio/webm'=>'webm','audio/ogg'=>'ogg','audio/mpeg'=>'mp3','audio/mp4'=>'m4a','video/webm'=>'webm','video/mp4'=>'mp4','video/quicktime'=>'mov','application/pdf'=>'pdf','text/plain'=>'txt','application/zip'=>'zip','application/vnd.openxmlformats-officedocument.wordprocessingml.document'=>'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'=>'xlsx'];
     if(!isset($allowed[$mime]))throw new RuntimeException('Tipo de arquivo não permitido.');
     $dir=__DIR__.'/../public/uploads/support_chat/'.date('Y/m');if(!is_dir($dir)&&!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Falha ao preparar uploads.');
     $name=bin2hex(random_bytes(16)).'.'.$allowed[$mime];if(!move_uploaded_file($tmp,$dir.'/'.$name))throw new RuntimeException('Falha ao salvar o arquivo.');
-    return ['url'=>'uploads/support_chat/'.date('Y/m').'/'.$name,'name'=>mb_substr((string)($file['name']??'arquivo'),0,255),'mime'=>$mime,'size'=>(int)$file['size'],'type'=>str_starts_with($mime,'image/')?'image':(str_starts_with($mime,'audio/')?'audio':'file')];
+    $original=(string)($file['name']??'arquivo');
+    $type=str_starts_with($mime,'image/')?'image':(str_starts_with($mime,'audio/')||preg_match('/^audio-/i',$original)?'audio':(str_starts_with($mime,'video/')?'video':'file'));
+    return ['url'=>'uploads/support_chat/'.date('Y/m').'/'.$name,'name'=>mb_substr($original,0,255),'mime'=>$mime,'size'=>(int)$file['size'],'type'=>$type];
 }
 
 function support_chat_send(PDO $pdo,int $conversationId,string $senderType,string $senderId,string $senderName,string $body,array $attachment=[]): int
