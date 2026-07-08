@@ -21,6 +21,8 @@ Documento de arquitetura e implantação do módulo de campanhas e automações 
 - motor assíncrono de automações com captura dos eventos da plataforma, runs individuais por aluno, jobs com lease, retentativas, temporizadores e idempotência por bloco de e-mail;
 - worker `cron/processar_emails.php`, registrado no gerenciador de cron;
 - integração direta com SES API v2 assinada por AWS Signature V4, sem expor credenciais no painel;
+- cofre local opcional para cadastrar credenciais IAM pela tela de configurações, gravado em `app/private`, bloqueado para acesso web e ignorado pelo Git;
+- diagnóstico “Testar conexão SES” sem envio, mostrando habilitação e situação sandbox/produção;
 - endpoint `public/email_ses_webhook.php` com segredo obrigatório, limite de payload, validação criptográfica da assinatura SNS e confirmação segura da assinatura;
 - persistência e deduplicação de mensagens/eventos, métricas por campanha e por modelo;
 - motor desativado por padrão até concluir a configuração AWS.
