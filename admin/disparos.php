@@ -899,6 +899,31 @@ try {
     ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 } catch (Throwable $e) {}
 
+$eventosDisparo = [];
+$eventosPorCanal = ['sf' => [], 'manychat' => [], 'webhook' => []];
+foreach ([
+    'sf' => "SELECT DISTINCT evento FROM superfuncionario_rules WHERE is_active = 1 AND evento IS NOT NULL AND evento <> ''",
+    'manychat' => "SELECT DISTINCT evento FROM manychat_rules WHERE is_active = 1 AND evento IS NOT NULL AND evento <> ''",
+    'webhook' => "SELECT DISTINCT evento FROM webhooks WHERE ativo = 1 AND evento IS NOT NULL AND evento <> ''",
+] as $canal => $sqlEventos) {
+    try {
+        foreach ($pdo->query($sqlEventos)->fetchAll(PDO::FETCH_COLUMN) ?: [] as $evRaw) {
+            foreach (array_filter(array_map('trim', explode(',', (string)$evRaw))) as $ev) {
+                if ($ev !== '') {
+                    $eventosDisparo[$ev] = $ev;
+                    $eventosPorCanal[$canal][$ev] = $ev;
+                }
+            }
+        }
+    } catch (Throwable $e) {}
+}
+$eventosDisparo = array_values($eventosDisparo);
+sort($eventosDisparo, SORT_NATURAL | SORT_FLAG_CASE);
+foreach ($eventosPorCanal as $canal => $eventos) {
+    $eventosPorCanal[$canal] = array_values($eventos);
+    sort($eventosPorCanal[$canal], SORT_NATURAL | SORT_FLAG_CASE);
+}
+
 $currentMenu = 'disparos';
 $page_title  = 'Disparos';
 require_once __DIR__ . '/_header.php';
@@ -1185,11 +1210,21 @@ require_once __DIR__ . '/_header.php';
 
       <div class="form-row">
         <label>Canal do disparo</label>
-        <select id="dpProvider">
+        <select id="dpProvider" onchange="dpAtualizarEventoPadrao()">
           <option value="sf">SF</option>
           <option value="manychat">ManyChat</option>
           <option value="webhook">Webhook</option>
         </select>
+      </div>
+
+      <div class="form-row">
+        <label>Evento do disparo</label>
+        <input type="text" id="dpEvento" list="dpEventoSugestoes" value="DISPARO_MANUAL" placeholder="DISPARO_MANUAL">
+        <datalist id="dpEventoSugestoes">
+          <?php foreach ($eventosDisparo as $ev): ?>
+          <option value="<?= h($ev) ?>"></option>
+          <?php endforeach; ?>
+        </datalist>
       </div>
 
       <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -1321,6 +1356,7 @@ require_once __DIR__ . '/_header.php';
 const TURMAS = <?= json_encode($turmas) ?>;
 const TAGS_SF = <?= json_encode(array_values($tagsSf), JSON_UNESCAPED_UNICODE) ?>;
 const TAGS_SISTEMA = <?= json_encode(array_values($tagsSistema), JSON_UNESCAPED_UNICODE) ?>;
+const EVENTOS_POR_CANAL = <?= json_encode($eventosPorCanal, JSON_UNESCAPED_UNICODE) ?>;
 let dpLogica = 'AND';
 let dpPreviewTimer = null;
 let dpPreviewContatosOpen = false;
@@ -1447,6 +1483,7 @@ function dpNovoDisparo() {
     document.getElementById('dpNome').value = '';
     document.getElementById('dpTipo').value = 'instantaneo';
     document.getElementById('dpProvider').value = 'sf';
+    document.getElementById('dpEvento').value = 'DISPARO_MANUAL';
     document.getElementById('dpAgendadoEm').value = '';
     document.getElementById('dpIntervaloMs').value = 0;
     document.getElementById('dpBatchSize').value = 1;
@@ -1490,7 +1527,10 @@ async function dpEditarDisparo(id) {
     const filtros = JSON.parse(d.filtros_json || '{}');
     const acoes   = JSON.parse(d.acoes_json   || '[]');
     const providerAction = acoes.find(a => a && a.tipo === 'provider');
+    const eventoAction = acoes.find(a => a && a.tipo === 'evento');
     document.getElementById('dpProvider').value = providerAction ? (providerAction.valor || 'sf') : 'sf';
+    document.getElementById('dpEvento').value = eventoAction ? (eventoAction.valor || 'DISPARO_MANUAL') : 'DISPARO_MANUAL';
+    if (!eventoAction) dpAtualizarEventoPadrao(true);
     dpLogica = filtros.logica_inclusao || 'AND';
     dpRenderLogica();
     document.getElementById('dpFiltrosInc').innerHTML = '';
@@ -1498,7 +1538,7 @@ async function dpEditarDisparo(id) {
     document.getElementById('dpAcoes').innerHTML = '';
     (filtros.inclusao || []).forEach(f => dpAddFiltroInc(f));
     (filtros.exclusao || []).forEach(f => dpAddFiltroExc(f));
-    acoes.filter(a => !a || a.tipo !== 'provider').forEach(a => dpAddAcao(a));
+    acoes.filter(a => !a || !['provider', 'evento'].includes(a.tipo)).forEach(a => dpAddAcao(a));
     dpAtualizarPreview();
 }
 
@@ -1515,6 +1555,17 @@ function dpToggleTipo() {
 function dpToggleHorario() {
     const on = document.getElementById('dpHorarioAtivo').checked;
     document.getElementById('dpHorarioWrap').style.display = on ? '' : 'none';
+}
+
+function dpAtualizarEventoPadrao(force = false) {
+    const provider = document.getElementById('dpProvider').value || 'sf';
+    const evento = document.getElementById('dpEvento');
+    const sugestoes = EVENTOS_POR_CANAL[provider] || [];
+    if (sugestoes.length && (force || !evento.value.trim() || evento.value.trim() === 'DISPARO_MANUAL')) {
+        evento.value = sugestoes[0];
+    } else if (!evento.value.trim()) {
+        evento.value = 'DISPARO_MANUAL';
+    }
 }
 
 function dpSetLogica(l) {
@@ -1555,7 +1606,6 @@ const EXC_TIPOS = [
     {v:'ja_recebeu',  l:'Já recebeu este disparo (ID)'},
 ];
 const ACAO_TIPOS = [
-    {v:'evento',     l:'Evento do disparo'},
     {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
     {v:'tag_sf',     l:'Inserir tag SF'},
     {v:'tag_sistema',l:'Inserir tag sistema'},
@@ -1729,6 +1779,7 @@ function dpColetarFiltros() {
 function dpColetarAcoes() {
     const acoes = [];
     acoes.push({tipo: 'provider', valor: document.getElementById('dpProvider').value || 'sf'});
+    acoes.push({tipo: 'evento', valor: document.getElementById('dpEvento').value.trim() || 'DISPARO_MANUAL'});
     document.querySelectorAll('#dpAcoes .acao-row').forEach(row => {
         const tipo  = row.querySelector('select')?.value || '';
         const valor = row.querySelector('.acao-valor')?.value || '';
