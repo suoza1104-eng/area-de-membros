@@ -92,15 +92,13 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
         $sum = 0.0; $count = 0;
         foreach ($histWithRevenue as $m) if (isset($m['commission'][$i]) && $m['commission'][$i] !== null) { $sum += (float)$m['commission'][$i]; $count++; }
         $avgCommission[] = $count > 0 ? round($sum / $count, 2) : 0;
-        $sum = 0.0; $count = 0;
-        foreach ($histForRoas as $m) if (isset($m['roas'][$i]) && $m['roas'][$i] !== null && (float)$m['roas'][$i] > 0) { $sum += (float)$m['roas'][$i]; $count++; }
-        $avgRoas[] = $count > 0 ? round($sum / $count, 4) : 0;
     }
     $currentCommissionSeries = $months[0]['commission'];
     $currentRoasSeries = $months[0]['roas'];
     $currentCommission = (float)end($currentCommissionSeries);
     $currentRoas = (float)end($currentRoasSeries);
     $revShareSum = 0.0; $revShareCount = 0; $roasRatioSum = 0.0; $roasRatioCount = 0;
+    $pooledRoasByDay = []; $pooledFullCommission = 0.0; $pooledFullSpend = 0.0; $pooledRoasMonths = 0;
     foreach ($historical as $m) {
         $start = DateTimeImmutable::createFromFormat('Y-m-d', $m['key'] . '-01') ?: $monthStart;
         $fullSeries = md_daily_series($pdo, $start->format('Y-m-d'), $start->modify('last day of this month')->format('Y-m-d'), $filters);
@@ -115,11 +113,21 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
             }
         }
         $fullRoas = $fullSpend > 0 ? $fullCommission / $fullSpend : 0;
+        $useForRoasCurve = $fullSpend > 0 && $fullCommission > 0;
+        if ($useForRoasCurve) {
+            $pooledFullCommission += $fullCommission;
+            $pooledFullSpend += $fullSpend;
+            $pooledRoasMonths++;
+        }
         foreach ($fullSeries as $idx => $row) {
             $cumCommission += (float)($row['producer'] ?? 0);
             $cumSpend += (float)($row['spend'] ?? 0);
             if ($fullCommission > 0) $dayShares[$idx] = $cumCommission / $fullCommission;
             if ($fullRoas > 0 && $cumSpend > 0) $roasRatios[$idx] = ($cumCommission / $cumSpend) / $fullRoas;
+            if ($useForRoasCurve && $cumSpend > 0) {
+                $pooledRoasByDay[$idx]['commission'] = ($pooledRoasByDay[$idx]['commission'] ?? 0) + $cumCommission;
+                $pooledRoasByDay[$idx]['spend'] = ($pooledRoasByDay[$idx]['spend'] ?? 0) + $cumSpend;
+            }
         }
         foreach ($dayShares as $idx => $share) { $avgRevenueShareByDay[$idx]['sum'] = ($avgRevenueShareByDay[$idx]['sum'] ?? 0) + $share; $avgRevenueShareByDay[$idx]['count'] = ($avgRevenueShareByDay[$idx]['count'] ?? 0) + 1; }
         foreach ($roasRatios as $idx => $ratio) { $avgRoasRatioByDay[$idx]['sum'] = ($avgRoasRatioByDay[$idx]['sum'] ?? 0) + $ratio; $avgRoasRatioByDay[$idx]['count'] = ($avgRoasRatioByDay[$idx]['count'] ?? 0) + 1; }
@@ -128,7 +136,17 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
         if ($fullRoas > 0 && $dayRoas > 0) { $roasRatioSum += $dayRoas / $fullRoas; $roasRatioCount++; }
     }
     $avgRevenueShare = $revShareCount > 0 ? $revShareSum / $revShareCount : 0;
-    $avgRoasRatio = $roasRatioCount > 0 ? $roasRatioSum / $roasRatioCount : 0;
+    $pooledFullRoas = $pooledFullSpend > 0 ? $pooledFullCommission / $pooledFullSpend : 0;
+    for ($i = 0; $i < $labelDays; $i++) {
+        $daySpend = (float)($pooledRoasByDay[$i]['spend'] ?? 0);
+        $dayCommission = (float)($pooledRoasByDay[$i]['commission'] ?? 0);
+        $avgRoas[] = $daySpend > 0 ? round($dayCommission / $daySpend, 4) : 0;
+        if ($pooledFullRoas > 0 && $daySpend > 0) {
+            $avgRoasRatioByDay[$i] = ['sum' => ($dayCommission / $daySpend) / $pooledFullRoas, 'count' => 1];
+        }
+    }
+    $todayRoasRatio = $avgRoasRatioByDay[$limitDay - 1]['sum'] ?? 0;
+    $avgRoasRatio = $todayRoasRatio > 0 ? $todayRoasRatio : ($roasRatioCount > 0 ? $roasRatioSum / $roasRatioCount : 0);
     $projectedCommission = $avgRevenueShare > 0 ? $currentCommission / $avgRevenueShare : 0;
     $projectedRoas = $avgRoasRatio > 0 ? $currentRoas / $avgRoasRatio : 0;
     $currentActualCommission = $currentProjectionCommission = $currentActualRoas = $currentProjectionRoas = [];
@@ -155,7 +173,7 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
         'projection' => [
             'commission' => $projectedCommission,
             'roas' => $projectedRoas,
-            'months' => max(count($histWithRevenue), count($histForRoas)),
+            'months' => max(count($histWithRevenue), $pooledRoasMonths),
             'revenue_share' => $avgRevenueShare,
             'roas_ratio' => $avgRoasRatio,
         ],
