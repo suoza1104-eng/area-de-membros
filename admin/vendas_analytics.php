@@ -47,18 +47,22 @@ function va_compare_cell(float $a,float $b,bool $lowerBetter=false,string $forma
     $fmt=static fn(float $v):string=>$format==='money'?va_money($v):va_num($v,2);$delta=$b!=0?(($a-$b)/abs($b))*100:null;$class='neutral';if($delta!==null&&abs($delta)>=.05){$better=$lowerBetter?$delta<0:$delta>0;$class=$better?'good':'bad';}
     return '<div>'.$fmt($a).' <span class="ads-sep">/</span> '.$fmt($b).'</div><span class="trend '.$class.'">'.($delta===null?'Sem base':(($delta>0?'+':'').number_format($delta,1,',','.').'%')).'</span>';
 }
-function va_month_compare_series(PDO $pdo, DateTimeImmutable $monthStart, int $limitDay, array $filters, string $label, bool $visible = false): array {
+function va_month_compare_series(PDO $pdo, DateTimeImmutable $monthStart, int $labelDays, array $filters, string $label, bool $visible = false): array {
     $monthEnd = $monthStart->modify('last day of this month');
     $daysInMonth = (int)$monthEnd->format('j');
-    $endDay = max(1, min($limitDay, $daysInMonth));
-    $series = md_daily_series($pdo, $monthStart->format('Y-m-d'), $monthStart->modify('+' . ($endDay - 1) . ' days')->format('Y-m-d'), $filters);
+    $series = md_daily_series($pdo, $monthStart->format('Y-m-d'), $monthEnd->format('Y-m-d'), $filters);
     $commission = []; $roas = []; $cumCommission = 0.0; $cumSpend = 0.0;
-    for ($i = 1; $i <= $limitDay; $i++) {
+    for ($i = 1; $i <= $labelDays; $i++) {
         $row = $series[$i - 1] ?? ['producer'=>0,'spend'=>0];
-        $cumCommission += (float)($row['producer'] ?? 0);
-        $cumSpend += (float)($row['spend'] ?? 0);
-        $commission[] = round($cumCommission, 2);
-        $roas[] = $cumSpend > 0 ? round($cumCommission / $cumSpend, 4) : 0;
+        if ($i <= $daysInMonth) {
+            $cumCommission += (float)($row['producer'] ?? 0);
+            $cumSpend += (float)($row['spend'] ?? 0);
+            $commission[] = round($cumCommission, 2);
+            $roas[] = $cumSpend > 0 ? round($cumCommission / $cumSpend, 4) : 0;
+        } else {
+            $commission[] = null;
+            $roas[] = null;
+        }
     }
     return [
         'key' => $monthStart->format('Y-m'),
@@ -66,28 +70,30 @@ function va_month_compare_series(PDO $pdo, DateTimeImmutable $monthStart, int $l
         'commission' => $commission,
         'roas' => $roas,
         'visible' => $visible,
+        'days_in_month' => $daysInMonth,
     ];
 }
 function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filters): array {
     $monthStart = $today->modify('first day of this month');
     $limitDay = (int)$today->format('j');
+    $labelDays = (int)$monthStart->modify('last day of this month')->format('j');
     $labels = [];
-    for ($i = 1; $i <= $limitDay; $i++) $labels[] = str_pad((string)$i, 2, '0', STR_PAD_LEFT);
-    $months = [va_month_compare_series($pdo, $monthStart, $limitDay, $filters, 'Mes atual', true)];
+    for ($i = 1; $i <= $labelDays; $i++) $labels[] = str_pad((string)$i, 2, '0', STR_PAD_LEFT);
+    $months = [va_month_compare_series($pdo, $monthStart, $labelDays, $filters, 'Mes atual', true)];
     for ($i = 1; $i <= 12; $i++) {
         $start = $monthStart->modify('-' . $i . ' months');
-        $months[] = va_month_compare_series($pdo, $start, $limitDay, $filters, $start->format('m/Y'), $i === 1);
+        $months[] = va_month_compare_series($pdo, $start, $labelDays, $filters, $start->format('m/Y'), $i === 1);
     }
     $historical = array_slice($months, 1);
     $histWithRevenue = array_values(array_filter($historical, static fn(array $m): bool => max($m['commission'] ?: [0]) > 0));
     $histForRoas = array_values(array_filter($historical, static fn(array $m): bool => max($m['roas'] ?: [0]) > 0));
-    $avgCommission = []; $avgRoas = [];
-    for ($i = 0; $i < $limitDay; $i++) {
+    $avgCommission = []; $avgRoas = []; $avgRevenueShareByDay = []; $avgRoasRatioByDay = [];
+    for ($i = 0; $i < $labelDays; $i++) {
         $sum = 0.0; $count = 0;
-        foreach ($histWithRevenue as $m) if (isset($m['commission'][$i])) { $sum += (float)$m['commission'][$i]; $count++; }
+        foreach ($histWithRevenue as $m) if (isset($m['commission'][$i]) && $m['commission'][$i] !== null) { $sum += (float)$m['commission'][$i]; $count++; }
         $avgCommission[] = $count > 0 ? round($sum / $count, 2) : 0;
         $sum = 0.0; $count = 0;
-        foreach ($histForRoas as $m) if (isset($m['roas'][$i]) && (float)$m['roas'][$i] > 0) { $sum += (float)$m['roas'][$i]; $count++; }
+        foreach ($histForRoas as $m) if (isset($m['roas'][$i]) && $m['roas'][$i] !== null && (float)$m['roas'][$i] > 0) { $sum += (float)$m['roas'][$i]; $count++; }
         $avgRoas[] = $count > 0 ? round($sum / $count, 4) : 0;
     }
     $currentCommissionSeries = $months[0]['commission'];
@@ -99,6 +105,7 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
         $start = DateTimeImmutable::createFromFormat('Y-m-d', $m['key'] . '-01') ?: $monthStart;
         $fullSeries = md_daily_series($pdo, $start->format('Y-m-d'), $start->modify('last day of this month')->format('Y-m-d'), $filters);
         $fullCommission = 0.0; $dayCommission = 0.0; $fullSpend = 0.0; $daySpend = 0.0;
+        $cumCommission = 0.0; $cumSpend = 0.0; $dayShares = []; $roasRatios = [];
         foreach ($fullSeries as $idx => $row) {
             $fullCommission += (float)($row['producer'] ?? 0);
             $fullSpend += (float)($row['spend'] ?? 0);
@@ -107,20 +114,47 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
                 $daySpend += (float)($row['spend'] ?? 0);
             }
         }
-        if ($fullCommission > 0 && $dayCommission > 0) { $revShareSum += $dayCommission / $fullCommission; $revShareCount++; }
         $fullRoas = $fullSpend > 0 ? $fullCommission / $fullSpend : 0;
+        foreach ($fullSeries as $idx => $row) {
+            $cumCommission += (float)($row['producer'] ?? 0);
+            $cumSpend += (float)($row['spend'] ?? 0);
+            if ($fullCommission > 0) $dayShares[$idx] = $cumCommission / $fullCommission;
+            if ($fullRoas > 0 && $cumSpend > 0) $roasRatios[$idx] = ($cumCommission / $cumSpend) / $fullRoas;
+        }
+        foreach ($dayShares as $idx => $share) { $avgRevenueShareByDay[$idx]['sum'] = ($avgRevenueShareByDay[$idx]['sum'] ?? 0) + $share; $avgRevenueShareByDay[$idx]['count'] = ($avgRevenueShareByDay[$idx]['count'] ?? 0) + 1; }
+        foreach ($roasRatios as $idx => $ratio) { $avgRoasRatioByDay[$idx]['sum'] = ($avgRoasRatioByDay[$idx]['sum'] ?? 0) + $ratio; $avgRoasRatioByDay[$idx]['count'] = ($avgRoasRatioByDay[$idx]['count'] ?? 0) + 1; }
+        if ($fullCommission > 0 && $dayCommission > 0) { $revShareSum += $dayCommission / $fullCommission; $revShareCount++; }
         $dayRoas = $daySpend > 0 ? $dayCommission / $daySpend : 0;
         if ($fullRoas > 0 && $dayRoas > 0) { $roasRatioSum += $dayRoas / $fullRoas; $roasRatioCount++; }
     }
     $avgRevenueShare = $revShareCount > 0 ? $revShareSum / $revShareCount : 0;
     $avgRoasRatio = $roasRatioCount > 0 ? $roasRatioSum / $roasRatioCount : 0;
+    $projectedCommission = $avgRevenueShare > 0 ? $currentCommission / $avgRevenueShare : 0;
+    $projectedRoas = $avgRoasRatio > 0 ? $currentRoas / $avgRoasRatio : 0;
+    $currentActualCommission = $currentProjectionCommission = $currentActualRoas = $currentProjectionRoas = [];
+    for ($i = 0; $i < $labelDays; $i++) {
+        $share = !empty($avgRevenueShareByDay[$i]['count']) ? $avgRevenueShareByDay[$i]['sum'] / $avgRevenueShareByDay[$i]['count'] : (($i + 1) / max(1, $labelDays));
+        $ratio = !empty($avgRoasRatioByDay[$i]['count']) ? $avgRoasRatioByDay[$i]['sum'] / $avgRoasRatioByDay[$i]['count'] : 1;
+        $currentActualCommission[] = $i < $limitDay ? $months[0]['commission'][$i] : null;
+        $currentActualRoas[] = $i < $limitDay ? $months[0]['roas'][$i] : null;
+        $currentProjectionCommission[] = $i + 1 >= $limitDay ? round($projectedCommission * $share, 2) : null;
+        $currentProjectionRoas[] = $i + 1 >= $limitDay ? round($projectedRoas * $ratio, 4) : null;
+    }
     return [
         'labels' => $labels,
+        'partial_days' => $limitDay,
+        'full_days' => $labelDays,
         'months' => $months,
+        'current_projected' => [
+            'commission_actual' => $currentActualCommission,
+            'commission_projection' => $currentProjectionCommission,
+            'roas_actual' => $currentActualRoas,
+            'roas_projection' => $currentProjectionRoas,
+        ],
         'average' => ['label'=>'Media 12 meses','commission'=>$avgCommission,'roas'=>$avgRoas,'visible'=>false],
         'projection' => [
-            'commission' => $avgRevenueShare > 0 ? $currentCommission / $avgRevenueShare : 0,
-            'roas' => $avgRoasRatio > 0 ? $currentRoas / $avgRoasRatio : 0,
+            'commission' => $projectedCommission,
+            'roas' => $projectedRoas,
             'months' => max(count($histWithRevenue), count($histForRoas)),
             'revenue_share' => $avgRevenueShare,
             'roas_ratio' => $avgRoasRatio,
@@ -296,7 +330,7 @@ include __DIR__ . '/_header.php';
 .bi-filter{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}.periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.periods a{padding:6px 10px;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:650;text-decoration:none}.periods a:hover,.periods a.active{background:var(--primary-dim);border-color:rgba(250,204,21,.3);color:var(--primary)}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:9px}.fg label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}.fg select,.fg input{width:100%;height:34px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}.fg-actions{display:flex;align-items:flex-end;gap:7px}.fg-actions .btn{height:34px;display:inline-flex;align-items:center;justify-content:center}
 .bi-note{padding:9px 12px;background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.17);border-radius:9px;color:#93c5fd;font-size:11px}.metric-grid{display:grid;grid-template-columns:repeat(6,minmax(145px,1fr));gap:10px}.metric{background:linear-gradient(145deg,var(--bg-card),rgba(13,21,38,.75));border:1px solid var(--border);border-radius:var(--r-lg);padding:13px;min-height:104px;position:relative;overflow:hidden}.metric:after{content:'';position:absolute;width:55px;height:55px;border-radius:50%;right:-24px;top:-24px;background:var(--primary-dim)}.metric-label{font-size:10px;color:var(--muted);min-height:30px}.metric-value{font-size:19px;font-weight:780;letter-spacing:-.03em;color:var(--text);white-space:nowrap}.metric-foot{display:flex;align-items:center;gap:7px;margin-top:7px}.metric-hint{font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trend{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;font-size:9px;font-weight:750}.trend.good{color:#86efac;background:var(--success-dim)}.trend.bad{color:#fca5a5;background:var(--danger-dim)}.trend.neutral{color:var(--muted);background:var(--bg-hover)}
 .section-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px}.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:13px}.section-head h2{font-size:15px;margin:0;color:var(--text)}.section-head p{font-size:10px;color:var(--muted);margin:3px 0 0}.context-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.context{padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}.context small{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.context strong{display:block;font-size:17px;margin:4px 0}.context-line{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted)}
-.chart-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px}.chart-box{height:330px;position:relative}.chart-box.small{height:270px}.mtd-compare{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:13px;align-items:stretch}.mtd-chart{height:305px}.mtd-trend{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:12px;display:flex;flex-direction:column;justify-content:center;gap:8px}.mtd-trend small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.mtd-trend strong{font-size:19px;color:var(--text)}.mtd-trend span{font-size:10px;color:var(--muted);line-height:1.45}.mtd-checks{display:flex;gap:7px;flex-wrap:wrap;margin:2px 0 12px}.mtd-checks label{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid var(--border);border-radius:999px;background:var(--bg);font-size:10px;color:var(--muted);cursor:pointer}.mtd-checks input{accent-color:var(--primary)}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}.three-col{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.four-col{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}.bi-table{width:100%;border-collapse:collapse;min-width:780px}.bi-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:9px;border-bottom:1px solid var(--border)}.bi-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text)}.bi-table tr:last-child td{border-bottom:0}.bi-table tr:hover td{background:var(--bg-hover)}.subtext{font-size:9px;color:var(--muted);margin-top:2px}.resilient{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--success-dim);color:#86efac;font-size:9px;font-weight:700}.watch{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--warning-dim);color:#fcd34d;font-size:9px;font-weight:700}.bar-list{display:flex;flex-direction:column;gap:10px}.bar-row{display:grid;grid-template-columns:minmax(100px,1fr) 2fr auto;gap:9px;align-items:center;font-size:10px}.bar-track{height:7px;background:var(--bg);border-radius:99px;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),#fb923c);border-radius:99px}.empty{padding:28px;text-align:center;color:var(--muted);font-size:11px}
+.chart-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px}.chart-box{height:330px;position:relative}.chart-box.small{height:270px}.mtd-compare{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:13px;align-items:stretch}.mtd-chart{height:305px}.mtd-trend{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:12px;display:flex;flex-direction:column;justify-content:center;gap:8px}.mtd-trend small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.mtd-trend strong{font-size:19px;color:var(--text)}.mtd-trend span{font-size:10px;color:var(--muted);line-height:1.45}.mtd-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 12px}.mtd-menu{position:relative}.mtd-menu-btn{height:32px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;cursor:pointer}.mtd-menu-panel{position:absolute;left:0;top:38px;z-index:30;width:245px;max-height:310px;overflow:auto;padding:8px;border:1px solid var(--border);border-radius:10px;background:#0f172a;box-shadow:var(--shadow);display:none}.mtd-menu.open .mtd-menu-panel{display:grid;gap:5px}.mtd-option{display:flex;align-items:center;gap:8px;padding:7px;border-radius:7px;color:var(--muted);font-size:11px;cursor:pointer}.mtd-option:hover{background:var(--bg-hover);color:var(--text)}.mtd-option input{accent-color:var(--primary)}.mtd-full{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);font-size:11px;color:var(--muted);cursor:pointer}.mtd-full input{accent-color:var(--primary)}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}.three-col{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.four-col{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}.bi-table{width:100%;border-collapse:collapse;min-width:780px}.bi-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:9px;border-bottom:1px solid var(--border)}.bi-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text)}.bi-table tr:last-child td{border-bottom:0}.bi-table tr:hover td{background:var(--bg-hover)}.subtext{font-size:9px;color:var(--muted);margin-top:2px}.resilient{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--success-dim);color:#86efac;font-size:9px;font-weight:700}.watch{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--warning-dim);color:#fcd34d;font-size:9px;font-weight:700}.bar-list{display:flex;flex-direction:column;gap:10px}.bar-row{display:grid;grid-template-columns:minmax(100px,1fr) 2fr auto;gap:9px;align-items:center;font-size:10px}.bar-track{height:7px;background:var(--bg);border-radius:99px;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),#fb923c);border-radius:99px}.empty{padding:28px;text-align:center;color:var(--muted);font-size:11px}
 .sales-tools{display:grid;grid-template-columns:minmax(220px,1fr) 180px auto;gap:8px;align-items:end}.sales-tools input,.sales-tools select{width:100%;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px;font-size:11px}.sales-tools label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase}.sales-table{min-width:1500px}.sales-status{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--bg-hover);color:var(--text);font-size:9px;font-weight:750}.sales-money strong{display:block;color:#bbf7d0}.sales-pagination{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;color:var(--muted);font-size:10px}.sales-pages{display:flex;gap:6px}.sales-pages a,.sales-pages span{padding:6px 9px;border:1px solid var(--border);border-radius:7px;color:var(--text);text-decoration:none}.sales-pages .active{background:var(--primary-dim);color:var(--primary);border-color:rgba(250,204,21,.3)}.utm-stack{max-width:260px;overflow-wrap:anywhere}
 .ads-controls{display:grid;grid-template-columns:repeat(3,minmax(90px,120px)) minmax(210px,1fr) auto;gap:9px;align-items:end;margin-bottom:12px}.ads-controls label{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;margin-bottom:4px}.ads-controls input[type=number]{width:100%;height:35px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px}.ads-source{display:flex;align-items:center;gap:8px;height:35px;padding:0 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}.ads-source label{margin:0;text-transform:none;font-size:11px;color:var(--text)}.ads-scroll{overflow:auto;border:1px solid var(--border);border-radius:10px;max-height:650px}.ads-table{border-collapse:separate;border-spacing:0;min-width:1450px;width:100%}.ads-table th,.ads-table td{padding:9px 10px;border-bottom:1px solid var(--border);background:var(--bg-card);font-size:10px;white-space:nowrap;text-align:right}.ads-table th{position:sticky;top:0;z-index:4;background:#101a2e;color:var(--muted);text-transform:uppercase;font-size:9px}.ads-table th:first-child,.ads-table td:first-child{position:sticky;left:0;z-index:3;text-align:left;min-width:330px;max-width:330px;box-shadow:8px 0 12px -12px #000}.ads-table th:first-child{z-index:5}.ads-table tr:hover td{background:#142039}.ads-table tr:hover td:first-child{background:#142039}.ads-name{display:flex;align-items:center;gap:7px;min-width:0}.ads-toggle{width:19px;height:19px;border:0;background:transparent;color:#60a5fa;cursor:pointer;padding:0}.ads-indent-1{padding-left:25px}.ads-indent-2{padding-left:50px}.ads-level{font-size:8px;color:var(--muted);text-transform:uppercase}.ads-sep{color:#475569;margin:0 2px}.ads-values{font-weight:700}.ads-head-note{font-size:9px;color:var(--muted);margin-top:3px}.eff-table{width:100%;border-collapse:collapse}.eff-table th,.eff-table td{padding:10px;border-bottom:1px solid var(--border);font-size:10px;text-align:left}.eff-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.manual-alert{padding:10px 12px;border-radius:9px;margin-bottom:10px;font-size:11px}.manual-alert.ok{background:var(--success-dim);color:#86efac}.manual-alert.err{background:var(--danger-dim);color:#fca5a5}.unattr-table{min-width:1050px}.lead-picker{position:relative;min-width:290px}.lead-picker input[type=search]{width:100%;height:32px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:0 8px;font-size:10px}.lead-results{position:absolute;left:0;right:0;top:35px;z-index:20;background:#0f172a;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);max-height:220px;overflow:auto;display:none}.lead-option{display:block;width:100%;padding:8px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;font-size:10px;cursor:pointer}.lead-option:hover{background:var(--bg-hover)}.lead-selected{margin:5px 0;color:#86efac;font-size:9px}.manual-form-actions{display:flex;gap:6px;align-items:center}
 @media(max-width:1300px){.metric-grid{grid-template-columns:repeat(4,1fr)}.filter-grid{grid-template-columns:repeat(3,1fr)}.four-col{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.metric-grid{grid-template-columns:repeat(2,1fr)}.chart-grid,.two-col,.three-col,.four-col,.mtd-compare{grid-template-columns:1fr}.context-grid{grid-template-columns:repeat(2,1fr)}.bi-head{flex-direction:column}.sync-pill{white-space:normal}}@media(max-width:600px){.filter-grid{grid-template-columns:1fr 1fr}.fg-actions{grid-column:span 2}.metric-grid{grid-template-columns:1fr 1fr;gap:7px}.metric{padding:11px;min-height:96px}.metric-value{font-size:16px}.context-grid{grid-template-columns:1fr}.chart-box{height:285px}.mtd-chart{height:270px}.section-card{padding:11px}.bi-title h1{font-size:19px}}
@@ -348,12 +382,15 @@ include __DIR__ . '/_header.php';
 
   <div class="two-col">
     <section class="section-card">
-      <div class="section-head"><div><h2>Comissao acumulada por dia do mes</h2><p>Mes atual contra meses anteriores, sempre do dia 01 ate o dia <?=date('d')?>.</p></div></div>
-      <div class="mtd-checks" data-chart="mtdCommissionChart">
-        <?php foreach($mtdComparison['months'] as $idx=>$item): if($idx===0) continue; ?>
-          <label><input type="checkbox" data-dataset="<?= (int)$idx ?>" <?=!empty($item['visible'])?'checked':''?>> <?=va_h((string)$item['label'])?></label>
-        <?php endforeach; ?>
-        <label><input type="checkbox" data-dataset="avg"> Media 12 meses</label>
+      <div class="section-head"><div><h2>Comissao acumulada por dia do mes</h2><p>Mes atual contra meses anteriores, do dia 01 ate hoje ou mes inteiro com projecao.</p></div></div>
+      <div class="mtd-toolbar" data-chart="mtdCommissionChart">
+        <div class="mtd-menu"><button class="mtd-menu-btn" type="button">Comparar meses</button><div class="mtd-menu-panel">
+          <?php foreach($mtdComparison['months'] as $idx=>$item): if($idx===0) continue; ?>
+            <label class="mtd-option"><input type="checkbox" data-dataset="<?= (int)$idx ?>" <?=!empty($item['visible'])?'checked':''?>> <?=va_h((string)$item['label'])?></label>
+          <?php endforeach; ?>
+          <label class="mtd-option"><input type="checkbox" data-dataset="avg"> Media 12 meses</label>
+        </div></div>
+        <label class="mtd-full"><input type="checkbox" data-full-month> Mes inteiro com projecao</label>
       </div>
       <div class="mtd-compare">
         <div class="mtd-chart"><canvas id="mtdCommissionChart"></canvas></div>
@@ -362,11 +399,14 @@ include __DIR__ . '/_header.php';
     </section>
     <section class="section-card">
       <div class="section-head"><div><h2>ROAS acumulado por dia do mes</h2><p>ROAS acumulado com comissao do produtor dividida pelo investimento.</p></div></div>
-      <div class="mtd-checks" data-chart="mtdRoasChart">
-        <?php foreach($mtdComparison['months'] as $idx=>$item): if($idx===0) continue; ?>
-          <label><input type="checkbox" data-dataset="<?= (int)$idx ?>" <?=!empty($item['visible'])?'checked':''?>> <?=va_h((string)$item['label'])?></label>
-        <?php endforeach; ?>
-        <label><input type="checkbox" data-dataset="avg"> Media 12 meses</label>
+      <div class="mtd-toolbar" data-chart="mtdRoasChart">
+        <div class="mtd-menu"><button class="mtd-menu-btn" type="button">Comparar meses</button><div class="mtd-menu-panel">
+          <?php foreach($mtdComparison['months'] as $idx=>$item): if($idx===0) continue; ?>
+            <label class="mtd-option"><input type="checkbox" data-dataset="<?= (int)$idx ?>" <?=!empty($item['visible'])?'checked':''?>> <?=va_h((string)$item['label'])?></label>
+          <?php endforeach; ?>
+          <label class="mtd-option"><input type="checkbox" data-dataset="avg"> Media 12 meses</label>
+        </div></div>
+        <label class="mtd-full"><input type="checkbox" data-full-month> Mes inteiro com projecao</label>
       </div>
       <div class="mtd-compare">
         <div class="mtd-chart"><canvas id="mtdRoasChart"></canvas></div>
@@ -505,27 +545,64 @@ const basis='<?=va_h($filters['basis'])?>'; const revKey=basis==='gross_revenue'
 const mtdColors=['#facc15','#38bdf8','#22c55e','#fb7185','#a78bfa','#f97316','#14b8a6','#e879f9','#84cc16','#60a5fa','#f43f5e','#c084fc','#94a3b8'];
 function buildMtdChart(canvasId, field, isMoney) {
   const canvas=document.getElementById(canvasId); if(!canvas) return null;
-  const datasets=(mtdComparison.months||[]).map((item,idx)=>({
+  const state={field,isMoney,full:false,selected:{}};
+  (mtdComparison.months||[]).forEach((item,idx)=>state.selected[idx]=!!item.visible);
+  state.selected.avg=!!mtdComparison.average.visible;
+  const chart=new Chart(canvas,{data:{labels:[],datasets:[]},options:{...base,plugins:{...base.plugins,tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${isMoney?money(c.raw):Number(c.raw||0).toFixed(2)}`}}},scales:{...base.scales,y:{...base.scales.y,beginAtZero:true,ticks:{color:ticks,callback:v=>isMoney?money(v):Number(v).toFixed(1)}}}}});
+  chart.$mtdState=state;
+  renderMtdChart(chart);
+  return chart;
+}
+function mtdData(values, full) {
+  return full ? (values||[]) : (values||[]).slice(0, mtdComparison.partial_days||0);
+}
+function renderMtdChart(chart) {
+  const state=chart.$mtdState, field=state.field, full=state.full;
+  const labels=full ? (mtdComparison.labels||[]) : (mtdComparison.labels||[]).slice(0, mtdComparison.partial_days||0);
+  const datasets=[];
+  const currentColor=mtdColors[0];
+  datasets.push({
     type:'line',
-    label:item.label,
-    data:item[field]||[],
-    borderColor:mtdColors[idx%mtdColors.length],
-    backgroundColor:mtdColors[idx%mtdColors.length],
+    label:'Mes atual',
+    data:full ? mtdComparison.current_projected[field+'_actual'] : mtdData((mtdComparison.months[0]||{})[field], false),
+    borderColor:currentColor,
+    backgroundColor:currentColor,
     tension:.34,
-    pointRadius:idx<2?2:0,
-    borderWidth:idx===0?3:2,
-    hidden:!item.visible
-  }));
-  datasets.push({type:'line',label:mtdComparison.average.label,data:mtdComparison.average[field]||[],borderColor:'#e2e8f0',backgroundColor:'#e2e8f0',borderDash:[6,5],tension:.34,pointRadius:0,borderWidth:2,hidden:!mtdComparison.average.visible});
-  return new Chart(canvas,{data:{labels:mtdComparison.labels||[],datasets},options:{...base,plugins:{...base.plugins,tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${isMoney?money(c.raw):Number(c.raw||0).toFixed(2)}`}}},scales:{...base.scales,y:{...base.scales.y,beginAtZero:true,ticks:{color:ticks,callback:v=>isMoney?money(v):Number(v).toFixed(1)}}}}});
+    pointRadius:2,
+    borderWidth:3,
+    hidden:!state.selected[0]
+  });
+  if (full) {
+    datasets.push({
+      type:'line',
+      label:'Projecao mes atual',
+      data:mtdComparison.current_projected[field+'_projection']||[],
+      borderColor:currentColor,
+      backgroundColor:currentColor,
+      borderDash:[5,5],
+      tension:.34,
+      pointRadius:0,
+      borderWidth:2,
+      hidden:!state.selected[0]
+    });
+  }
+  (mtdComparison.months||[]).forEach((item,idx)=>{
+    if(idx===0) return;
+    datasets.push({type:'line',label:item.label,data:mtdData(item[field],full),borderColor:mtdColors[idx%mtdColors.length],backgroundColor:mtdColors[idx%mtdColors.length],tension:.34,pointRadius:idx===1?2:0,borderWidth:2,hidden:!state.selected[idx]});
+  });
+  datasets.push({type:'line',label:mtdComparison.average.label,data:mtdData(mtdComparison.average[field],full),borderColor:'#e2e8f0',backgroundColor:'#e2e8f0',borderDash:[6,5],tension:.34,pointRadius:0,borderWidth:2,hidden:!state.selected.avg});
+  chart.data.labels=labels;
+  chart.data.datasets=datasets;
+  chart.update();
 }
 const mtdCharts={mtdCommissionChart:buildMtdChart('mtdCommissionChart','commission',true),mtdRoasChart:buildMtdChart('mtdRoasChart','roas',false)};
-document.querySelectorAll('.mtd-checks input').forEach(input=>input.addEventListener('change',()=>{
-  const chart=mtdCharts[input.closest('.mtd-checks')?.dataset.chart]; if(!chart) return;
-  const key=input.dataset.dataset;
-  const idx=key==='avg'?chart.data.datasets.length-1:Number(key);
-  chart.setDatasetVisibility(idx,input.checked);
-  chart.update();
+document.querySelectorAll('.mtd-menu-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();const menu=btn.closest('.mtd-menu');document.querySelectorAll('.mtd-menu.open').forEach(m=>{if(m!==menu)m.classList.remove('open')});menu.classList.toggle('open');}));
+document.addEventListener('click',e=>{if(!e.target.closest('.mtd-menu'))document.querySelectorAll('.mtd-menu.open').forEach(m=>m.classList.remove('open'));});
+document.querySelectorAll('.mtd-toolbar input').forEach(input=>input.addEventListener('change',()=>{
+  const chart=mtdCharts[input.closest('.mtd-toolbar')?.dataset.chart]; if(!chart) return;
+  if(input.dataset.fullMonth!==undefined) chart.$mtdState.full=input.checked;
+  else chart.$mtdState.selected[input.dataset.dataset]=input.checked;
+  renderMtdChart(chart);
 }));
 new Chart(document.getElementById('financeChart'),{data:{labels:daily.map(x=>x.date.slice(5)),datasets:[{type:'bar',label:'Investimento',data:daily.map(x=>x.spend),backgroundColor:'rgba(56,189,248,.35)',borderColor:'#38bdf8',borderWidth:1,borderRadius:3},{type:'line',label:'Receita',data:daily.map(x=>x[revKey]),borderColor:'#facc15',backgroundColor:'#facc15',tension:.3,pointRadius:2},{type:'line',label:'ROAS',data:daily.map(x=>x.spend>0?x[revKey]/x.spend:0),borderColor:'#22c55e',backgroundColor:'#22c55e',yAxisID:'roas',tension:.3,pointRadius:2}]},options:{...base,plugins:{...base.plugins,tooltip:{callbacks:{label:c=>c.dataset.label==='ROAS'?`ROAS: ${Number(c.raw).toFixed(2)}`:`${c.dataset.label}: ${money(c.raw)}`}}},scales:{...base.scales,roas:{position:'right',ticks:{color:'#22c55e'},grid:{drawOnChartArea:false}}}}});
 new Chart(document.getElementById('volumeChart'),{data:{labels:daily.map(x=>x.date.slice(5)),datasets:[{type:'bar',label:'Leads',data:daily.map(x=>x.leads),backgroundColor:'rgba(168,85,247,.38)',borderRadius:3},{type:'line',label:'Vendas',data:daily.map(x=>x.sales),borderColor:'#fb7185',backgroundColor:'#fb7185',tension:.3,pointRadius:2}]},options:base});
