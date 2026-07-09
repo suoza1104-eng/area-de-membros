@@ -280,6 +280,42 @@ if ($acao !== '') {
         }, $valor);
     }
 
+    function dpNormalizarDataManyChat(string $valor): string {
+        $valor = trim($valor);
+        if ($valor === '') return '';
+
+        $tz = new DateTimeZone('America/Sao_Paulo');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/', $valor)) {
+            return $valor;
+        }
+
+        $formatos = [
+            'd/m/Y H:i:s',
+            'd/m/Y H:i',
+            'd/m/Y',
+            'Y-m-d H:i:s',
+            'Y-m-d H:i',
+            'Y-m-d',
+            'Y-m-d\TH:i:s',
+            'Y-m-d\TH:i',
+        ];
+        foreach ($formatos as $fmt) {
+            $dt = DateTimeImmutable::createFromFormat('!' . $fmt, $valor, $tz);
+            $errors = DateTimeImmutable::getLastErrors();
+            if ($dt instanceof DateTimeImmutable && (($errors['warning_count'] ?? 0) + ($errors['error_count'] ?? 0)) === 0) {
+                return $dt->format('Y-m-d\TH:i:sP');
+            }
+        }
+        return $valor;
+    }
+
+    function dpValorCampoManyChat(string $campo, string $valor): string {
+        if (preg_match('/(^|_)(data|date|inicio|fim|start|end)(_|$)/i', $campo)) {
+            return dpNormalizarDataManyChat($valor);
+        }
+        return $valor;
+    }
+
     function dpEventoDisparo(array $acoes): string {
         foreach ($acoes as $a) {
             if (!is_array($a)) continue;
@@ -370,7 +406,7 @@ if ($acao !== '') {
             } elseif ($tipo === 'custom_field') {
                 $campo = trim((string)($a['campo'] ?? ''));
                 if ($campo === '') continue;
-                $valor = dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''));
+                $valor = dpValorCampoManyChat($campo, dpResolverValorAcao($userRow, (string)($a['valor'] ?? '')));
                 $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', '/fb/subscriber/setCustomFields', [
                     'subscriber_id' => $subscriberId,
                     'fields' => [['field_name' => $campo, 'field_value' => $valor]],
