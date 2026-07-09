@@ -314,10 +314,85 @@ if ($acao !== '') {
         ];
     }
 
+    function enviarManyChatManual(array $usuario, array $acoes, PDO $pdo): array {
+        $mcAcoes = array_values(array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true)));
+        if (!$mcAcoes) return ['ok' => false, 'msg' => 'Nenhuma acao ManyChat manual foi montada'];
+
+        require_once __DIR__ . '/../app/webhook_dispatcher.php';
+        require_once __DIR__ . '/../app/manychat_dispatcher.php';
+
+        $evento = dpEventoDisparo($acoes);
+        $cfg = mc_get_config($pdo);
+        if ((int)$cfg['is_enabled'] !== 1 || trim((string)$cfg['token']) === '') {
+            return ['ok' => false, 'msg' => 'ManyChat desabilitado ou sem token'];
+        }
+
+        $userRow = mc_get_user_row($pdo, $usuario);
+        $subscriberId = mc_get_or_create_subscriber($pdo, $cfg, $evento, null, $userRow);
+        if ($subscriberId === '') {
+            return ['ok' => false, 'msg' => 'ManyChat: subscriber nao encontrado/criado'];
+        }
+
+        $extra = dpExtraDisparo($usuario, $acoes, $evento);
+        $logContext = [
+            'origem' => 'disparo_manual',
+            'user' => [
+                'id' => $userRow['id'] ?? null,
+                'nome' => $userRow['nome'] ?? null,
+                'email' => $userRow['email'] ?? null,
+                'telefone' => $userRow['telefone'] ?? null,
+            ],
+            'extra' => $extra,
+        ];
+
+        $ok = false;
+        $results = [];
+        foreach ($mcAcoes as $a) {
+            $tipo = (string)($a['tipo'] ?? '');
+            if ($tipo === 'tag_sf') {
+                $tag = trim((string)($a['valor'] ?? ''));
+                if ($tag === '') continue;
+                $res = mc_api($pdo, $cfg, $evento, null, 'add_tag_manual', 'POST', '/fb/subscriber/addTagByName', [
+                    'subscriber_id' => $subscriberId,
+                    'tag_name' => $tag,
+                ], $subscriberId, $logContext);
+                $ok = $ok || (bool)$res['ok'];
+                $results[] = ['acao' => 'tag', 'valor' => $tag, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
+            } elseif ($tipo === 'flow') {
+                foreach (array_filter(array_map('trim', explode(',', (string)($a['valor'] ?? '')))) as $flowNs) {
+                    $res = mc_api($pdo, $cfg, $evento, null, 'send_flow_manual', 'POST', '/fb/sending/sendFlow', [
+                        'subscriber_id' => $subscriberId,
+                        'flow_ns' => $flowNs,
+                    ], $subscriberId, $logContext);
+                    $ok = $ok || (bool)$res['ok'];
+                    $results[] = ['acao' => 'flow', 'valor' => $flowNs, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
+                }
+            } elseif ($tipo === 'custom_field') {
+                $campo = trim((string)($a['campo'] ?? ''));
+                if ($campo === '') continue;
+                $valor = dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''));
+                $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', '/fb/subscriber/setCustomFields', [
+                    'subscriber_id' => $subscriberId,
+                    'fields' => [['field_name' => $campo, 'field_value' => $valor]],
+                ], $subscriberId, $logContext);
+                $ok = $ok || (bool)$res['ok'];
+                $results[] = ['acao' => 'custom_field', 'campo' => $campo, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
+            }
+        }
+
+        return [
+            'ok' => $ok,
+            'msg' => json_encode(['provider' => 'manychat', 'subscriber_id' => $subscriberId, 'results' => $results], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ];
+    }
+
     function dpEnviarProvider(array $usuario, array $acoes, PDO $pdo): array {
         $provider = dpProviderDisparo($acoes);
         if ($provider === 'sf' && array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true))) {
             return enviarSF($usuario, $acoes, $pdo);
+        }
+        if ($provider === 'manychat' && array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true))) {
+            return enviarManyChatManual($usuario, $acoes, $pdo);
         }
 
         $uid = (int)($usuario['id'] ?? 0);
@@ -1566,6 +1641,7 @@ function dpAtualizarEventoPadrao(force = false) {
     } else if (!evento.value.trim()) {
         evento.value = 'DISPARO_MANUAL';
     }
+    dpAtualizarAcoesPorCanal();
 }
 
 function dpSetLogica(l) {
@@ -1605,12 +1681,28 @@ const EXC_TIPOS = [
     {v:'evento_webhook',l:'Evento webhook'},
     {v:'ja_recebeu',  l:'Já recebeu este disparo (ID)'},
 ];
-const ACAO_TIPOS = [
-    {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
-    {v:'tag_sf',     l:'Inserir tag SF'},
-    {v:'tag_sistema',l:'Inserir tag sistema'},
-    {v:'custom_field',l:'Atualizar campo personalizado SF'},
-];
+const ACAO_TIPOS_POR_CANAL = {
+    sf: [
+        {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
+        {v:'tag_sf',     l:'Inserir tag SF'},
+        {v:'tag_sistema',l:'Inserir tag sistema'},
+        {v:'custom_field',l:'Atualizar campo personalizado SF'},
+    ],
+    manychat: [
+        {v:'flow',       l:'Enviar fluxo ManyChat (Flow NS, vírgula)'},
+        {v:'tag_sf',     l:'Inserir tag ManyChat'},
+        {v:'tag_sistema',l:'Inserir tag sistema'},
+        {v:'custom_field',l:'Atualizar campo personalizado ManyChat'},
+    ],
+    webhook: [
+        {v:'tag_sistema',l:'Inserir tag sistema'},
+    ],
+};
+
+function dpAcaoTipos() {
+    const provider = document.getElementById('dpProvider')?.value || 'sf';
+    return ACAO_TIPOS_POR_CANAL[provider] || ACAO_TIPOS_POR_CANAL.sf;
+}
 
 function dpBuildSelect(tipos, val) {
     return '<select onchange="dpAtualizarPreview()" style="min-width:160px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
@@ -1684,7 +1776,9 @@ function dpBuildAcaoInputs(tipo, data) {
     const valor = data ? (data.valor || '') : '';
     if (tipo === 'custom_field') {
         const campo = data ? (data.campo || '') : '';
-        return `<input class="acao-campo" type="text" value="${dpEsc(campo)}" placeholder="campo no SF" style="flex:1;min-width:130px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`
+        const provider = document.getElementById('dpProvider')?.value || 'sf';
+        const campoPh = provider === 'manychat' ? 'campo no ManyChat' : 'campo no SF';
+        return `<input class="acao-campo" type="text" value="${dpEsc(campo)}" placeholder="${campoPh}" style="flex:1;min-width:130px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`
             + `<input class="acao-valor" type="text" list="dpCampoValorSugestoes" value="${dpEsc(valor)}" placeholder="valor ou origem ex: user.nome" style="flex:1;min-width:150px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
     }
     return `<input class="acao-valor" type="text" value="${dpEsc(valor)}" placeholder="valor" style="flex:1;min-width:80px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
@@ -1694,15 +1788,29 @@ function dpAddAcao(data) {
     const cont = document.getElementById('dpAcoes');
     const div  = document.createElement('div');
     div.className = 'acao-row';
-    const tipo  = data ? data.tipo  : 'flow';
+    const tipos = dpAcaoTipos();
+    const tipo  = data && tipos.some(t => t.v === data.tipo) ? data.tipo : tipos[0].v;
     div.innerHTML = '<select style="min-width:160px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
-        + ACAO_TIPOS.map(t => `<option value="${t.v}"${tipo===t.v?' selected':''}>${t.l}</option>`).join('')
+        + tipos.map(t => `<option value="${t.v}"${tipo===t.v?' selected':''}>${t.l}</option>`).join('')
         + `</select><span class="acao-inputs" style="display:flex;gap:6px;flex:1">${dpBuildAcaoInputs(tipo, data || {})}</span>`
         + '<button class="btn-rm" onclick="this.parentNode.remove()">×</button>';
     div.querySelector('select').addEventListener('change', function() {
         div.querySelector('.acao-inputs').innerHTML = dpBuildAcaoInputs(this.value, {});
     });
     cont.appendChild(div);
+}
+
+function dpAtualizarAcoesPorCanal() {
+    const tipos = dpAcaoTipos();
+    document.querySelectorAll('#dpAcoes .acao-row').forEach(row => {
+        const select = row.querySelector('select');
+        if (!select) return;
+        const previous = select.value;
+        const next = tipos.some(t => t.v === previous) ? previous : tipos[0].v;
+        select.innerHTML = tipos.map(t => `<option value="${t.v}"${next===t.v?' selected':''}>${t.l}</option>`).join('');
+        select.value = next;
+        row.querySelector('.acao-inputs').innerHTML = dpBuildAcaoInputs(next, {});
+    });
 }
 
 // ── Preview badge + contatos ──────────────────────────────────────────────────
