@@ -101,6 +101,13 @@ if ($acao !== '') {
                         $params[$pk] = $regra['valor'];
                     }
                     break;
+                case 'contato':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $incClauses[] = "(u.nome LIKE $pk OR u.email LIKE $pk OR u.telefone LIKE $pk)";
+                        $params[$pk] = '%' . trim((string)$regra['valor']) . '%';
+                    }
+                    break;
                 case 'tag_sf':
                     if (!empty($regra['valor'])) {
                         $pk = $nextP();
@@ -210,6 +217,13 @@ if ($acao !== '') {
                         $params[$pk] = $regra['valor'];
                     }
                     break;
+                case 'contato':
+                    if (!empty($regra['valor'])) {
+                        $pk = $nextP();
+                        $excClauses[] = "(u.nome LIKE $pk OR u.email LIKE $pk OR u.telefone LIKE $pk)";
+                        $params[$pk] = '%' . trim((string)$regra['valor']) . '%';
+                    }
+                    break;
                 case 'qtd_min':
                     if (isset($regra['valor']) && $regra['valor'] !== '') {
                         $pk = $nextP();
@@ -264,6 +278,73 @@ if ($acao !== '') {
         return preg_replace_callback('/\{\{\s*user\.([a-zA-Z0-9_]+)\s*\}\}/', function($m) use ($usuario) {
             return dpUsuarioValor($usuario, $m[1]);
         }, $valor);
+    }
+
+    function dpEventoDisparo(array $acoes): string {
+        foreach ($acoes as $a) {
+            if (!is_array($a)) continue;
+            if (($a['tipo'] ?? '') === 'evento' && trim((string)($a['valor'] ?? '')) !== '') {
+                return mb_substr(trim((string)$a['valor']), 0, 120);
+            }
+        }
+        return 'DISPARO_MANUAL';
+    }
+
+    function dpProviderDisparo(array $acoes): string {
+        foreach ($acoes as $a) {
+            if (!is_array($a)) continue;
+            if (($a['tipo'] ?? '') === 'provider') {
+                $provider = strtolower(trim((string)($a['valor'] ?? '')));
+                if (in_array($provider, ['sf', 'superfuncionario', 'manychat', 'webhook'], true)) {
+                    return $provider === 'superfuncionario' ? 'sf' : $provider;
+                }
+            }
+        }
+        return 'sf';
+    }
+
+    function dpExtraDisparo(array $usuario, array $acoes, string $evento): array {
+        return [
+            'origem' => 'disparo_manual',
+            'evento' => $evento,
+            'turma' => dpUsuarioValor($usuario, 'turma'),
+            'codigo_turma' => dpUsuarioValor($usuario, 'codigo_turma'),
+            'data_live' => dpUsuarioValor($usuario, 'data_live'),
+            'acoes' => $acoes,
+        ];
+    }
+
+    function dpEnviarProvider(array $usuario, array $acoes, PDO $pdo): array {
+        $provider = dpProviderDisparo($acoes);
+        if ($provider === 'sf' && array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true))) {
+            return enviarSF($usuario, $acoes, $pdo);
+        }
+
+        $uid = (int)($usuario['id'] ?? 0);
+        if ($uid > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
+            return ['ok' => false, 'msg' => 'Aluno bloqueado para disparos'];
+        }
+
+        $evento = dpEventoDisparo($acoes);
+        $extra = dpExtraDisparo($usuario, $acoes, $evento);
+        try {
+            if ($provider === 'sf') {
+                require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
+                $ok = sf_disparar_evento($pdo, $evento, $usuario, $extra);
+                return ['ok' => $ok, 'msg' => $ok ? 'SF: evento disparado' : 'SF: nenhuma regra ativa aceitou o evento'];
+            }
+            if ($provider === 'manychat') {
+                require_once __DIR__ . '/../app/webhook_dispatcher.php';
+                require_once __DIR__ . '/../app/manychat_dispatcher.php';
+                $ok = mc_disparar_evento($pdo, $evento, $usuario, $extra);
+                return ['ok' => $ok, 'msg' => $ok ? 'ManyChat: evento disparado' : 'ManyChat: nenhuma regra ativa aceitou o evento'];
+            }
+            require_once __DIR__ . '/../app/webhook_dispatcher.php';
+            disparar_evento_webhooks($pdo, $evento, $usuario, $extra);
+            return ['ok' => true, 'msg' => 'Webhook: evento disparado'];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'msg' => $provider . ': ' . $e->getMessage()];
+        }
     }
 
     // Helper: envia via SF
@@ -433,7 +514,7 @@ if ($acao !== '') {
         $enviados = 0;
         $erros    = 0;
         foreach ($userList as $usr) {
-            $r = enviarSF($usr, $acoes, $pdo);
+            $r = dpEnviarProvider($usr, $acoes, $pdo);
             aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
             $status = $r['ok'] ? 'ok' : 'erro';
             $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
@@ -757,7 +838,7 @@ if ($acao !== '') {
                 $enviados = 0;
                 $erros    = 0;
                 foreach ($userList as $usr) {
-                    $r = enviarSF($usr, $acoes, $pdo);
+                    $r = dpEnviarProvider($usr, $acoes, $pdo);
                     aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
                     $status = $r['ok'] ? 'ok' : 'erro';
                     $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
@@ -1102,6 +1183,15 @@ require_once __DIR__ . '/_header.php';
         </div>
       </div>
 
+      <div class="form-row">
+        <label>Canal do disparo</label>
+        <select id="dpProvider">
+          <option value="sf">SF</option>
+          <option value="manychat">ManyChat</option>
+          <option value="webhook">Webhook</option>
+        </select>
+      </div>
+
       <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div>
           <label>Intervalo entre lotes (ms) <span style="color:var(--text-muted)">[ex: 2000 = 2s]</span></label>
@@ -1356,6 +1446,7 @@ function dpNovoDisparo() {
     document.getElementById('dpId').value = 0;
     document.getElementById('dpNome').value = '';
     document.getElementById('dpTipo').value = 'instantaneo';
+    document.getElementById('dpProvider').value = 'sf';
     document.getElementById('dpAgendadoEm').value = '';
     document.getElementById('dpIntervaloMs').value = 0;
     document.getElementById('dpBatchSize').value = 1;
@@ -1398,6 +1489,8 @@ async function dpEditarDisparo(id) {
 
     const filtros = JSON.parse(d.filtros_json || '{}');
     const acoes   = JSON.parse(d.acoes_json   || '[]');
+    const providerAction = acoes.find(a => a && a.tipo === 'provider');
+    document.getElementById('dpProvider').value = providerAction ? (providerAction.valor || 'sf') : 'sf';
     dpLogica = filtros.logica_inclusao || 'AND';
     dpRenderLogica();
     document.getElementById('dpFiltrosInc').innerHTML = '';
@@ -1405,7 +1498,7 @@ async function dpEditarDisparo(id) {
     document.getElementById('dpAcoes').innerHTML = '';
     (filtros.inclusao || []).forEach(f => dpAddFiltroInc(f));
     (filtros.exclusao || []).forEach(f => dpAddFiltroExc(f));
-    acoes.forEach(a => dpAddAcao(a));
+    acoes.filter(a => !a || a.tipo !== 'provider').forEach(a => dpAddAcao(a));
     dpAtualizarPreview();
 }
 
@@ -1437,6 +1530,7 @@ function dpRenderLogica() {
 
 // ── Filtros ───────────────────────────────────────────────────────────────────
 const INC_TIPOS = [
+    {v:'contato',     l:'Nome/e-mail/telefone'},
     {v:'turma',       l:'Turma'},
     {v:'tag_sf',      l:'Tag SF'},
     {v:'tag_sistema', l:'Tag sistema'},
@@ -1451,6 +1545,7 @@ const INC_TIPOS = [
     {v:'evento_webhook',l:'Evento webhook'},
 ];
 const EXC_TIPOS = [
+    {v:'contato',     l:'Nome/e-mail/telefone'},
     {v:'tem_cert',    l:'Tem certificado'},
     {v:'tag_sf',      l:'Tag SF'},
     {v:'tag_sistema', l:'Tag sistema'},
@@ -1460,6 +1555,7 @@ const EXC_TIPOS = [
     {v:'ja_recebeu',  l:'Já recebeu este disparo (ID)'},
 ];
 const ACAO_TIPOS = [
+    {v:'evento',     l:'Evento do disparo'},
     {v:'flow',       l:'Enviar fluxo SF (IDs, vírgula)'},
     {v:'tag_sf',     l:'Inserir tag SF'},
     {v:'tag_sistema',l:'Inserir tag sistema'},
@@ -1501,6 +1597,9 @@ function dpBuildValueInput(tipo, valor) {
         return dpBuildTagSelect(tipo, valor);
     }
     if (['tem_cert','nao_tem_cert'].includes(tipo)) return '';
+    if (tipo === 'contato') {
+        return `<input type="text" placeholder="nome, e-mail ou telefone" value="${dpEsc(valor||'')}" oninput="dpAtualizarPreview()" style="flex:1;min-width:120px;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">`;
+    }
     let inputType = (tipo.includes('de') || tipo.includes('ate')) ? 'date' : 'text';
     if (tipo.includes('qtd') || tipo === 'ja_recebeu') inputType = 'number';
     let ph = inputType === 'date' ? 'YYYY-MM-DD' : 'valor';
@@ -1629,6 +1728,7 @@ function dpColetarFiltros() {
 
 function dpColetarAcoes() {
     const acoes = [];
+    acoes.push({tipo: 'provider', valor: document.getElementById('dpProvider').value || 'sf'});
     document.querySelectorAll('#dpAcoes .acao-row').forEach(row => {
         const tipo  = row.querySelector('select')?.value || '';
         const valor = row.querySelector('.acao-valor')?.value || '';
