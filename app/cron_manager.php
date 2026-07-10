@@ -54,6 +54,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 120,
         ],
+        'meta_leads_qualificados' => [
+            'label' => 'Meta leads qualificados',
+            'description' => 'Envia eventos CRM de leads qualificados para a API de Conversoes da Meta.',
+            'script' => __DIR__ . '/../cron/processar_meta_leads_qualificados.php',
+            'interval' => 1,
+            'timeout' => 300,
+        ],
     ];
 }
 

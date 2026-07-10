@@ -49,6 +49,7 @@ $PAGINAS = [
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
     'integration_hub'  => 'Hub de Integrações',
+    'meta_leads'       => 'Meta Leads Qualificados',
     'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'   => 'Configurações WhatsApp',

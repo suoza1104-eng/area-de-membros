@@ -41,7 +41,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -64,6 +64,7 @@ $titleMap = [
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
     'webhooks'         => 'Webhooks',
+    'meta_leads'       => 'Meta Leads Qualificados',
     'integration_hub'  => 'Hub de Integrações',
     'manychat'         => 'Manychat',
     'superfuncionario' => 'SuperFuncionário',
@@ -751,7 +752,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -770,6 +771,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
       </svg>
       Hub de Integrações
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['meta_leads']): ?>
+    <a href="meta_leads_qualificados.php" class="sb-item <?= $currentMenu === 'meta_leads' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/><path d="M17 17l3 3M20 17l-3 3"/>
+      </svg>
+      Meta Leads
     </a>
     <?php endif; ?>
 

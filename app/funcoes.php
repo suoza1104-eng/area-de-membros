@@ -288,6 +288,16 @@ function adicionar_tag(int $user_id, string $tag_nome, string $origem = 'manual'
 
         adicionar_tag_ao_usuario($user_id, $tag_id, $origem, $referencia_id);
 
+        try {
+            $mqlFile = __DIR__ . '/meta_qualified_leads.php';
+            if (is_file($mqlFile)) {
+                require_once $mqlFile;
+                if (function_exists('mql_handle_user_event')) {
+                    mql_handle_user_event($user_id, 'tag_added', ['tag' => $tag_nome, 'origem' => $origem, 'referencia_id' => $referencia_id]);
+                }
+            }
+        } catch (Throwable $e) {}
+
         if ($tagSistema === 'BLOQUEAR') {
             aplicar_tag_sistema_disparo($user_id, $tag_nome);
         }
