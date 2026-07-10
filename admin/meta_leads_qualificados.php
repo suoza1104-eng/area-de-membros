@@ -163,11 +163,21 @@ if (isset($_GET['dataset'])) $editDataset = mql_row($pdo, "SELECT * FROM meta_qu
 $editTrigger = [];
 if (isset($_GET['trigger'])) $editTrigger = mql_row($pdo, "SELECT * FROM meta_qualified_triggers WHERE id=:id", ['id' => (int)$_GET['trigger']]);
 $editConditions = mql_json($editTrigger['conditions_json'] ?? null);
+$allTags = [];
+try {
+    $allTags = $pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {
+    try {
+        $allTags = $pdo->query("SELECT nome FROM tags ORDER BY nome ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    } catch (Throwable $ignored) {
+        $allTags = [];
+    }
+}
 
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.ml-nav a{padding:8px 11px;border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}.ml-nav a.active,.ml-nav a:hover{background:var(--primary-dim);color:var(--primary)}.ml-section{display:none}.ml-section.active{display:block}.ml-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.ml-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:16px}.ml-card h2{font-size:16px;margin:0}.ml-card p{font-size:12px;color:var(--muted);margin:4px 0 0}.ml-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(168,85,247,.15);color:#facc15}.ml-form{display:grid;gap:12px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ml label{display:block;font-size:10px;color:#7c8eb4;text-transform:uppercase;letter-spacing:.07em}.ml input:not([type]),.ml input[type=text],.ml input[type=number],.ml input[type=url],.ml input[type=email],.ml textarea,.ml select{display:block;margin-top:6px;width:100%;background:#081120!important;border:1px solid #1d3355!important;color:#e2e8f0!important;border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:none!important}.ml textarea{min-height:82px}.ml input::placeholder,.ml textarea::placeholder{color:#475569}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}.ml-check input{accent-color:var(--primary)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-help-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#081120;color:#93c5fd;font-weight:800}.ml-help{display:none;margin:0 0 12px;padding:12px;border-left:3px solid rgba(250,204,21,.7);border-radius:9px;background:rgba(250,204,21,.07);color:#bfdbfe;font-size:12px;line-height:1.55}.ml-help.open{display:block}.ml-help code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;color:#e2e8f0}.ml-result{margin-top:14px;display:grid;gap:10px}.ml-result pre{margin:0;max-height:360px;overflow:auto;border:1px solid #1d3355;border-radius:10px;background:#081120;color:#bfdbfe;padding:12px;font-size:11px;white-space:pre-wrap}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:12px;padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
+.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.ml-nav a{padding:8px 11px;border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}.ml-nav a.active,.ml-nav a:hover{background:var(--primary-dim);color:var(--primary)}.ml-section{display:none}.ml-section.active{display:block}.ml-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.ml-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:16px}.ml-card h2{font-size:16px;margin:0}.ml-card p{font-size:12px;color:var(--muted);margin:4px 0 0}.ml-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(168,85,247,.15);color:#facc15}.ml-form{display:grid;gap:12px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ml label{display:block;font-size:10px;color:#7c8eb4;text-transform:uppercase;letter-spacing:.07em}.ml input:not([type]),.ml input[type=text],.ml input[type=number],.ml input[type=url],.ml input[type=email],.ml textarea,.ml select{display:block;margin-top:6px;width:100%;background:#081120!important;border:1px solid #1d3355!important;color:#e2e8f0!important;border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:none!important}.ml textarea{min-height:82px}.ml input::placeholder,.ml textarea::placeholder{color:#475569}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}.ml-check input{accent-color:var(--primary)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-help-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#081120;color:#93c5fd;font-weight:800}.ml-help{display:none;margin:0 0 12px;padding:12px;border-left:3px solid rgba(250,204,21,.7);border-radius:9px;background:rgba(250,204,21,.07);color:#bfdbfe;font-size:12px;line-height:1.55}.ml-help.open{display:block}.ml-help code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;color:#e2e8f0}.ml-tag-picker{position:relative;margin-top:6px}.ml-tag-box{min-height:44px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;background:#081120;border:1px solid #1d3355;border-radius:10px;padding:7px}.ml-tag-chip{display:inline-flex;align-items:center;gap:7px;max-width:100%;background:#16223a;border:1px solid #294467;border-radius:999px;color:#f8fafc;font-size:12px;font-weight:700;letter-spacing:0;padding:5px 9px}.ml-tag-chip button{border:0;background:transparent;color:#94a3b8;font-weight:900;cursor:pointer;padding:0}.ml-tag-add{border:1px dashed #facc15;background:transparent;color:#facc15;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:800;cursor:pointer}.ml-tag-empty{color:#475569;font-size:12px;padding:0 4px;text-transform:none;letter-spacing:0}.ml-tag-dropdown{position:absolute;z-index:40;top:calc(100% + 6px);left:0;right:0;background:#0b0f14;border:1px solid #26364f;border-radius:10px;box-shadow:0 20px 40px rgba(0,0,0,.45);padding:8px;display:none}.ml-tag-dropdown.open{display:block}.ml-tag-dropdown input{margin:0 0 7px!important;border-color:#4a3d12!important}.ml-tag-list{max-height:220px;overflow:auto}.ml-tag-option{padding:9px 10px;border-radius:7px;color:#f8fafc;font-size:12px;font-weight:700;cursor:pointer}.ml-tag-option:hover,.ml-tag-option.is-active{background:#111827}.ml-tag-none{padding:10px;color:#64748b;font-size:12px}.ml-result{margin-top:14px;display:grid;gap:10px}.ml-result pre{margin:0;max-height:360px;overflow:auto;border:1px solid #1d3355;border-radius:10px;background:#081120;color:#bfdbfe;padding:12px;font-size:11px;white-space:pre-wrap}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:12px;padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
 </style>
 <div class="ml">
   <div class="ml-head"><div><h1>Meta Leads Qualificados</h1><p>Configure eventos CRM para enviar leads qualificados para a API de Conversoes da Meta.</p></div><form method="post"><button class="btn btn-primary" name="action" value="process_now">Processar fila agora</button></form></div>
@@ -224,8 +234,20 @@ include __DIR__ . '/_header.php';
         <input type="hidden" name="action" value="save_trigger"><input type="hidden" name="id" value="<?= (int)($editTrigger['id'] ?? 0) ?>">
         <label>Nome do gatilho<input type="text" name="name" required value="<?=ml_h($editTrigger['name'] ?? '')?>" placeholder="Tag LEAD_QUALIFICADO"></label>
         <div class="ml-row"><label>Conjunto<select name="dataset_id" required><option value="">Selecione</option><?php foreach($datasets as $d):?><option value="<?=(int)$d['id']?>"<?=((int)($editTrigger['dataset_id']??0)===(int)$d['id'])?' selected':''?>><?=ml_h($d['name'])?></option><?php endforeach;?></select></label><label>Tipo<select name="event_type"><option value="tag_added"<?=($editTrigger['event_type']??'')==='tag_added'?' selected':''?>>Quando tag for aplicada</option><option value="manual_scan"<?=($editTrigger['event_type']??'')==='manual_scan'?' selected':''?>>Somente varredura manual</option></select></label></div>
-        <label>Tag gatilho<input type="text" name="trigger_tag" value="<?=ml_h($editConditions['trigger_tag'] ?? '')?>" placeholder="LEAD_QUALIFICADO"></label>
-        <div class="ml-row"><label>Tags obrigatorias<textarea name="include_tags" rows="2" placeholder="VIP, QUENTE"><?=ml_h(implode(', ', (array)($editConditions['include_tags'] ?? [])))?></textarea></label><label>Tags de exclusao<textarea name="exclude_tags" rows="2" placeholder="CLIENTE, DESCARTADO"><?=ml_h(implode(', ', (array)($editConditions['exclude_tags'] ?? [])))?></textarea></label></div>
+        <label>Tag gatilho
+          <input type="hidden" name="trigger_tag" id="mlTriggerTagValue" value="<?=ml_h($editConditions['trigger_tag'] ?? '')?>">
+          <div class="ml-tag-picker" data-picker="trigger" data-mode="single" data-target="mlTriggerTagValue"></div>
+        </label>
+        <div class="ml-row">
+          <label>Tags obrigatorias
+            <input type="hidden" name="include_tags" id="mlIncludeTagsValue" value="<?=ml_h(implode(', ', (array)($editConditions['include_tags'] ?? [])))?>">
+            <div class="ml-tag-picker" data-picker="include" data-mode="multi" data-target="mlIncludeTagsValue"></div>
+          </label>
+          <label>Tags de exclusao
+            <input type="hidden" name="exclude_tags" id="mlExcludeTagsValue" value="<?=ml_h(implode(', ', (array)($editConditions['exclude_tags'] ?? [])))?>">
+            <div class="ml-tag-picker" data-picker="exclude" data-mode="multi" data-target="mlExcludeTagsValue"></div>
+          </label>
+        </div>
         <label>Turma especifica<input type="text" name="turma" value="<?=ml_h($editConditions['turma'] ?? '')?>" placeholder="Opcional"></label>
         <div class="ml-row"><label class="ml-check"><input type="checkbox" name="require_email" value="1" <?=!empty($editConditions['require_email'])?'checked':''?>> Exigir e-mail</label><label class="ml-check"><input type="checkbox" name="require_phone" value="1" <?=!empty($editConditions['require_phone'])?'checked':''?>> Exigir telefone</label></div>
         <label class="ml-check"><input type="checkbox" name="active" value="1" <?=((int)($editTrigger['active'] ?? 1)===1)?'checked':''?>> Ativo</label>
@@ -285,6 +307,76 @@ include __DIR__ . '/_header.php';
   </tbody></table></div></section></section>
 </div>
 <script>
-(()=>{document.querySelectorAll('.ml-help-btn').forEach(btn=>btn.addEventListener('click',()=>{const box=document.getElementById('ml-help-'+btn.dataset.help);if(box)box.classList.toggle('open')}));if(!window.Chart)return;const canvas=document.getElementById('mqlChart');if(!canvas)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';new Chart(canvas,{data:{labels:daily.map(x=>String(x.day).slice(5)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
+const ML_ALL_TAGS = <?=json_encode(array_values($allTags), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)?>;
+function mlTagEsc(value){return String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');}
+function mlTagSplit(value){return String(value||'').split(/[,;\r\n]+/).map(v=>v.trim()).filter(Boolean);}
+function mlTagInitPicker(root){
+  const target = document.getElementById(root.dataset.target || '');
+  if(!target) return;
+  const mode = root.dataset.mode === 'single' ? 'single' : 'multi';
+  let selected = mode === 'single' ? mlTagSplit(target.value).slice(0,1) : mlTagSplit(target.value);
+  const uid = 'mltp_' + Math.random().toString(36).slice(2);
+  root.innerHTML = `<div class="ml-tag-box" id="${uid}_box"></div><div class="ml-tag-dropdown" id="${uid}_drop"><input type="text" id="${uid}_search" placeholder="Buscar tag..."><div class="ml-tag-list" id="${uid}_list"></div></div>`;
+  const box = document.getElementById(uid + '_box');
+  const drop = document.getElementById(uid + '_drop');
+  const search = document.getElementById(uid + '_search');
+  const list = document.getElementById(uid + '_list');
+  const sync = () => { target.value = selected.join(', '); };
+  const closeOthers = () => document.querySelectorAll('.ml-tag-dropdown.open').forEach(el => { if(el !== drop) el.classList.remove('open'); });
+  const renderBox = () => {
+    const chips = selected.map((tag, index) => `<span class="ml-tag-chip"><span>${mlTagEsc(tag)}</span><button type="button" data-remove="${index}" title="Remover">x</button></span>`).join('');
+    const empty = selected.length ? '' : `<span class="ml-tag-empty">${mode === 'single' ? 'Selecione uma tag' : 'Nenhuma tag selecionada'}</span>`;
+    box.innerHTML = chips + empty + `<button type="button" class="ml-tag-add">${selected.length ? '+ Adicionar tag' : '+ Selecionar tag'}</button>`;
+    box.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      selected.splice(Number(btn.dataset.remove), 1);
+      sync();
+      renderBox();
+      renderList();
+    }));
+    box.querySelector('.ml-tag-add').addEventListener('click', ev => {
+      ev.stopPropagation();
+      closeOthers();
+      drop.classList.toggle('open');
+      if(drop.classList.contains('open')){
+        search.value = '';
+        renderList();
+        setTimeout(() => search.focus(), 20);
+      }
+    });
+  };
+  const addTag = tag => {
+    if(mode === 'single') selected = [tag];
+    else if(!selected.map(v => v.toLowerCase()).includes(tag.toLowerCase())) selected.push(tag);
+    sync();
+    renderBox();
+    renderList();
+    if(mode === 'single') drop.classList.remove('open');
+    else setTimeout(() => search.focus(), 20);
+  };
+  const renderList = () => {
+    const q = search.value.trim().toLowerCase();
+    const taken = selected.map(v => v.toLowerCase());
+    const options = ML_ALL_TAGS.filter(tag => (!q || tag.toLowerCase().includes(q)) && (mode === 'single' || !taken.includes(tag.toLowerCase())));
+    if(!options.length){
+      list.innerHTML = `<div class="ml-tag-none">${q ? 'Nenhuma tag encontrada' : 'Todas as tags ja foram selecionadas'}</div>`;
+      return;
+    }
+    list.innerHTML = options.map(tag => `<div class="ml-tag-option" data-tag="${mlTagEsc(tag)}">${mlTagEsc(tag)}</div>`).join('');
+    list.querySelectorAll('.ml-tag-option').forEach(item => item.addEventListener('click', () => addTag(item.dataset.tag || '')));
+  };
+  search.addEventListener('input', renderList);
+  search.addEventListener('keydown', ev => {
+    if(ev.key === 'Escape') drop.classList.remove('open');
+    if(ev.key === 'Enter'){
+      ev.preventDefault();
+      const first = list.querySelector('.ml-tag-option');
+      if(first) addTag(first.dataset.tag || '');
+    }
+  });
+  renderBox();
+  sync();
+}
+(()=>{document.querySelectorAll('.ml-help-btn').forEach(btn=>btn.addEventListener('click',()=>{const box=document.getElementById('ml-help-'+btn.dataset.help);if(box)box.classList.toggle('open')}));document.querySelectorAll('.ml-tag-picker').forEach(mlTagInitPicker);document.addEventListener('click',ev=>{if(!ev.target.closest('.ml-tag-picker'))document.querySelectorAll('.ml-tag-dropdown.open').forEach(el=>el.classList.remove('open'));});if(!window.Chart)return;const canvas=document.getElementById('mqlChart');if(!canvas)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';new Chart(canvas,{data:{labels:daily.map(x=>String(x.day).slice(5)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
 </script>
 <?php include __DIR__ . '/_footer.php'; ?>
