@@ -69,10 +69,17 @@ try {
             $message = 'Conjunto atualizado.';
         } elseif ($action === 'save_trigger') {
             $id = (int)($_POST['id'] ?? 0);
+            $triggerTags = ml_csv((string)($_POST['trigger_tags'] ?? ($_POST['trigger_tag'] ?? '')));
             $conditions = [
-                'trigger_tag' => trim((string)($_POST['trigger_tag'] ?? '')),
+                'trigger_tag' => $triggerTags[0] ?? '',
+                'trigger_tags' => $triggerTags,
+                'criteria_match_mode' => (string)($_POST['criteria_match_mode'] ?? 'all') === 'any' ? 'any' : 'all',
                 'include_tags' => ml_csv((string)($_POST['include_tags'] ?? '')),
+                'include_tags_logic' => (string)($_POST['include_tags_logic'] ?? 'all') === 'any' ? 'any' : 'all',
                 'exclude_tags' => ml_csv((string)($_POST['exclude_tags'] ?? '')),
+                'progress_status' => in_array((string)($_POST['progress_status'] ?? ''), ['','no_lesson','any_lesson','completed_trail'], true) ? (string)($_POST['progress_status'] ?? '') : '',
+                'min_progress' => max(0, min(100, (int)($_POST['min_progress'] ?? 0))),
+                'certificate_status' => in_array((string)($_POST['certificate_status'] ?? ''), ['','issued','not_issued'], true) ? (string)($_POST['certificate_status'] ?? '') : '',
                 'turma' => trim((string)($_POST['turma'] ?? '')),
                 'require_email' => !empty($_POST['require_email']),
                 'require_phone' => !empty($_POST['require_phone']),
@@ -163,6 +170,10 @@ if (isset($_GET['dataset'])) $editDataset = mql_row($pdo, "SELECT * FROM meta_qu
 $editTrigger = [];
 if (isset($_GET['trigger'])) $editTrigger = mql_row($pdo, "SELECT * FROM meta_qualified_triggers WHERE id=:id", ['id' => (int)$_GET['trigger']]);
 $editConditions = mql_json($editTrigger['conditions_json'] ?? null);
+$editTriggerTags = array_values(array_filter(array_map('trim', (array)($editConditions['trigger_tags'] ?? []))));
+if (!$editTriggerTags && trim((string)($editConditions['trigger_tag'] ?? '')) !== '') {
+    $editTriggerTags = [trim((string)$editConditions['trigger_tag'])];
+}
 $allTags = [];
 try {
     $allTags = $pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
@@ -229,23 +240,57 @@ include __DIR__ . '/_header.php';
   <section class="ml-section <?=$view==='triggers'?'active':''?>"><div class="ml-grid">
     <section class="ml-card">
       <div class="ml-card-head"><div class="ml-icon">✓</div><div><h2><?= $editTrigger ? 'Editar gatilho' : 'Novo gatilho de qualificacao' ?></h2><p>Define quando um lead deve entrar na fila de envio.</p></div><button type="button" class="ml-help-btn" data-help="trigger">?</button></div>
-      <div class="ml-help" id="ml-help-trigger">Para automacao, escolha <b>Quando tag for aplicada</b> e preencha a <b>Tag gatilho</b>, por exemplo <code>LEAD_QUALIFICADO</code>. Tags obrigatorias funcionam como filtros extras; tags de exclusao impedem envio. A varredura manual avalia leads ja existentes e enfileira quem cumprir a regra.</div>
+      <div class="ml-help" id="ml-help-trigger">Para automacao por tag, escolha <b>Quando tag for aplicada</b> e selecione uma ou mais <b>tags gatilho</b>. Use <b>Qualquer criterio</b> para regras como "viu alguma aula OU tem tag Y OU tem tag Z". Tags de exclusao, turma, e-mail e telefone continuam funcionando como filtros obrigatorios.</div>
       <form method="post" class="ml-form">
         <input type="hidden" name="action" value="save_trigger"><input type="hidden" name="id" value="<?= (int)($editTrigger['id'] ?? 0) ?>">
         <label>Nome do gatilho<input type="text" name="name" required value="<?=ml_h($editTrigger['name'] ?? '')?>" placeholder="Tag LEAD_QUALIFICADO"></label>
         <div class="ml-row"><label>Conjunto<select name="dataset_id" required><option value="">Selecione</option><?php foreach($datasets as $d):?><option value="<?=(int)$d['id']?>"<?=((int)($editTrigger['dataset_id']??0)===(int)$d['id'])?' selected':''?>><?=ml_h($d['name'])?></option><?php endforeach;?></select></label><label>Tipo<select name="event_type"><option value="tag_added"<?=($editTrigger['event_type']??'')==='tag_added'?' selected':''?>>Quando tag for aplicada</option><option value="manual_scan"<?=($editTrigger['event_type']??'')==='manual_scan'?' selected':''?>>Somente varredura manual</option></select></label></div>
-        <label>Tag gatilho
-          <input type="hidden" name="trigger_tag" id="mlTriggerTagValue" value="<?=ml_h($editConditions['trigger_tag'] ?? '')?>">
-          <div class="ml-tag-picker" data-picker="trigger" data-mode="single" data-target="mlTriggerTagValue"></div>
+        <label>Como combinar criterios principais
+          <select name="criteria_match_mode">
+            <option value="all"<?=($editConditions['criteria_match_mode']??'all')==='all'?' selected':''?>>Todos os criterios selecionados</option>
+            <option value="any"<?=($editConditions['criteria_match_mode']??'all')==='any'?' selected':''?>>Qualquer criterio selecionado</option>
+          </select>
+        </label>
+        <label>Tags gatilho (OR)
+          <input type="hidden" name="trigger_tags" id="mlTriggerTagValue" value="<?=ml_h(implode(', ', $editTriggerTags))?>">
+          <div class="ml-tag-picker" data-picker="trigger" data-mode="multi" data-target="mlTriggerTagValue"></div>
         </label>
         <div class="ml-row">
           <label>Tags obrigatorias
             <input type="hidden" name="include_tags" id="mlIncludeTagsValue" value="<?=ml_h(implode(', ', (array)($editConditions['include_tags'] ?? [])))?>">
             <div class="ml-tag-picker" data-picker="include" data-mode="multi" data-target="mlIncludeTagsValue"></div>
           </label>
+          <label>Logica das tags obrigatorias
+            <select name="include_tags_logic">
+              <option value="all"<?=($editConditions['include_tags_logic']??'all')==='all'?' selected':''?>>Todas as tags</option>
+              <option value="any"<?=($editConditions['include_tags_logic']??'all')==='any'?' selected':''?>>Qualquer tag</option>
+            </select>
+          </label>
+        </div>
+        <div class="ml-row">
           <label>Tags de exclusao
             <input type="hidden" name="exclude_tags" id="mlExcludeTagsValue" value="<?=ml_h(implode(', ', (array)($editConditions['exclude_tags'] ?? [])))?>">
             <div class="ml-tag-picker" data-picker="exclude" data-mode="multi" data-target="mlExcludeTagsValue"></div>
+          </label>
+          <label>Progresso nas aulas
+            <select name="progress_status">
+              <option value=""<?=($editConditions['progress_status']??'')===''?' selected':''?>>Ignorar progresso</option>
+              <option value="no_lesson"<?=($editConditions['progress_status']??'')==='no_lesson'?' selected':''?>>Nao viu nenhuma aula</option>
+              <option value="any_lesson"<?=($editConditions['progress_status']??'')==='any_lesson'?' selected':''?>>Viu alguma aula</option>
+              <option value="completed_trail"<?=($editConditions['progress_status']??'')==='completed_trail'?' selected':''?>>Concluiu trilha</option>
+            </select>
+          </label>
+        </div>
+        <div class="ml-row">
+          <label>Andamento minimo (%)
+            <input type="number" name="min_progress" min="0" max="100" value="<?=ml_h((string)($editConditions['min_progress'] ?? '0'))?>" placeholder="Ex.: 40">
+          </label>
+          <label>Certificado
+            <select name="certificate_status">
+              <option value=""<?=($editConditions['certificate_status']??'')===''?' selected':''?>>Ignorar certificado</option>
+              <option value="issued"<?=($editConditions['certificate_status']??'')==='issued'?' selected':''?>>Emitiu certificado</option>
+              <option value="not_issued"<?=($editConditions['certificate_status']??'')==='not_issued'?' selected':''?>>Nao emitiu certificado</option>
+            </select>
           </label>
         </div>
         <label>Turma especifica<input type="text" name="turma" value="<?=ml_h($editConditions['turma'] ?? '')?>" placeholder="Opcional"></label>

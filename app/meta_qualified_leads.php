@@ -125,21 +125,75 @@ function mql_user_tags(PDO $pdo, int $userId): array {
     }
 }
 
+function mql_table_exists(PDO $pdo, string $table): bool {
+    try {
+        $st = $pdo->prepare("SHOW TABLES LIKE :table");
+        $st->execute([':table' => $table]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function mql_user_progress(PDO $pdo, int $userId): array {
+    $out = ['any_lesson' => false, 'completed_trail' => false, 'percent' => 0, 'done' => 0, 'required' => 0];
+    try {
+        if (!mql_table_exists($pdo, 'lesson_progress') || !mql_table_exists($pdo, 'lessons')) return $out;
+        $lessonFilter = "l.ativo=1 AND l.conta_para_conclusao=1";
+        $out['required'] = (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo=1 AND conta_para_conclusao=1")->fetchColumn();
+        if ($out['required'] <= 0) {
+            $out['required'] = (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo=1")->fetchColumn();
+            $lessonFilter = "l.ativo=1";
+        }
+        $stAny = $pdo->prepare("SELECT COUNT(*) FROM lesson_progress WHERE user_id=:u AND status='completed'");
+        $stAny->execute([':u' => $userId]);
+        $out['any_lesson'] = (int)$stAny->fetchColumn() > 0;
+        if ($out['required'] > 0) {
+            $stDone = $pdo->prepare("
+                SELECT COUNT(DISTINCT lp.lesson_id)
+                  FROM lesson_progress lp
+                  JOIN lessons l ON l.id=lp.lesson_id
+                 WHERE lp.user_id=:u
+                   AND lp.status='completed'
+                   AND {$lessonFilter}
+            ");
+            $stDone->execute([':u' => $userId]);
+            $out['done'] = (int)$stDone->fetchColumn();
+            $out['percent'] = min(100, (int)floor(($out['done'] / max(1, $out['required'])) * 100));
+            $out['completed_trail'] = $out['done'] >= $out['required'];
+        }
+    } catch (Throwable $e) {
+        return $out;
+    }
+    return $out;
+}
+
+function mql_user_has_certificate(PDO $pdo, int $userId, array $tagSet = []): bool {
+    if (!empty($tagSet['cert_emitido'])) return true;
+    try {
+        if (!mql_table_exists($pdo, 'certificates')) return false;
+        $st = $pdo->prepare("SELECT 1 FROM certificates WHERE user_id=:u AND status='emitido' LIMIT 1");
+        $st->execute([':u' => $userId]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 function mql_user_matches_conditions(PDO $pdo, array $user, array $conditions, array $event = []): bool {
     $userId = (int)($user['id'] ?? 0);
     if ($userId <= 0) return false;
 
+    $triggerTags = array_values(array_filter(array_map('trim', (array)($conditions['trigger_tags'] ?? []))));
+    if (!$triggerTags && trim((string)($conditions['trigger_tag'] ?? '')) !== '') {
+        $triggerTags = [trim((string)$conditions['trigger_tag'])];
+    }
     $includeTags = array_values(array_filter(array_map('trim', (array)($conditions['include_tags'] ?? []))));
     $excludeTags = array_values(array_filter(array_map('trim', (array)($conditions['exclude_tags'] ?? []))));
-    $tags = $includeTags || $excludeTags ? mql_user_tags($pdo, $userId) : [];
+    $needsTags = $triggerTags || $includeTags || $excludeTags || (string)($conditions['certificate_status'] ?? '') !== '';
+    $tags = $needsTags ? mql_user_tags($pdo, $userId) : [];
     $tagSet = array_fill_keys(array_map('mb_strtolower', $tags), true);
 
-    if (($conditions['trigger_tag'] ?? '') !== '') {
-        $triggerTag = mb_strtolower(trim((string)$conditions['trigger_tag']));
-        $eventTag = mb_strtolower(trim((string)($event['tag'] ?? '')));
-        if ($eventTag !== $triggerTag) return false;
-    }
-    foreach ($includeTags as $tag) if (empty($tagSet[mb_strtolower($tag)])) return false;
     foreach ($excludeTags as $tag) if (!empty($tagSet[mb_strtolower($tag)])) return false;
 
     $turma = trim((string)($conditions['turma'] ?? ''));
@@ -147,7 +201,43 @@ function mql_user_matches_conditions(PDO $pdo, array $user, array $conditions, a
     if (!empty($conditions['require_email']) && trim((string)($user['email'] ?? '')) === '') return false;
     if (!empty($conditions['require_phone']) && trim((string)($user['telefone'] ?? '')) === '') return false;
 
-    return true;
+    $criteria = [];
+    if ($triggerTags) {
+        $eventTag = mb_strtolower(trim((string)($event['tag'] ?? '')));
+        if ($eventTag !== '') {
+            $criteria[] = in_array($eventTag, array_map('mb_strtolower', $triggerTags), true);
+        } else {
+            $criteria[] = (bool)array_intersect(array_map('mb_strtolower', $triggerTags), array_keys($tagSet));
+        }
+    }
+
+    if ($includeTags) {
+        $logic = (string)($conditions['include_tags_logic'] ?? 'all') === 'any' ? 'any' : 'all';
+        $matches = 0;
+        foreach ($includeTags as $tag) if (!empty($tagSet[mb_strtolower($tag)])) $matches++;
+        $criteria[] = $logic === 'any' ? $matches > 0 : $matches === count($includeTags);
+    }
+
+    $progressStatus = (string)($conditions['progress_status'] ?? '');
+    $minProgress = max(0, min(100, (int)($conditions['min_progress'] ?? 0)));
+    if ($progressStatus !== '' || $minProgress > 0) {
+        $progress = mql_user_progress($pdo, $userId);
+        if ($progressStatus === 'any_lesson') $criteria[] = $progress['any_lesson'];
+        elseif ($progressStatus === 'completed_trail') $criteria[] = $progress['completed_trail'];
+        elseif ($progressStatus === 'no_lesson') $criteria[] = !$progress['any_lesson'];
+        if ($minProgress > 0) $criteria[] = $progress['percent'] >= $minProgress;
+    }
+
+    $certificateStatus = (string)($conditions['certificate_status'] ?? '');
+    if ($certificateStatus !== '') {
+        $hasCertificate = mql_user_has_certificate($pdo, $userId, $tagSet);
+        if ($certificateStatus === 'issued') $criteria[] = $hasCertificate;
+        elseif ($certificateStatus === 'not_issued') $criteria[] = !$hasCertificate;
+    }
+
+    if (!$criteria) return true;
+    $matchMode = (string)($conditions['criteria_match_mode'] ?? 'all') === 'any' ? 'any' : 'all';
+    return $matchMode === 'any' ? in_array(true, $criteria, true) : !in_array(false, $criteria, true);
 }
 
 function mql_build_payload(PDO $pdo, array $dataset, array $user): array {
