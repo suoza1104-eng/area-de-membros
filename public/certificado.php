@@ -245,6 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cert       = $certExist;
                     $codigoCert = $certExist['codigo_uid'];
                     $emitidoEm  = $certExist['emitido_em'];
+                    $pdfUrl     = trim((string)($certExist['pdf_url'] ?? '')) ?: null;
                 } else {
                     $codigoCert = gerar_codigo_certificado();
                     $emitidoEm  = date('Y-m-d H:i:s');
@@ -259,12 +260,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cert = $stCert2->fetch() ?: null;
                 }
 
-                if ($cert) {
+                if ($cert && !$pdfUrl) {
                     $pdfUrl = gerar_pdf_certificado($user, $cert, $certCfg);
                     $stUpd  = $pdo->prepare("UPDATE certificates SET pdf_url = :pdf_url WHERE id = :id");
                     $stUpd->execute(['pdf_url' => $pdfUrl, 'id' => $cert['id']]);
                     $cert['pdf_url'] = $pdfUrl;
-                } else {
+                } elseif (!$cert) {
                     $pdfUrl = null;
                 }
 
