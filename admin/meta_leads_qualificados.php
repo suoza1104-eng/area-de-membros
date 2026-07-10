@@ -19,6 +19,18 @@ function ml_badge(string $status): string {
 function ml_csv(string $value): array {
     return array_values(array_filter(array_map('trim', preg_split('/[,;\r\n]+/', $value) ?: [])));
 }
+function ml_meta_error_summary(?string $response): array {
+    $json = json_decode((string)$response, true);
+    $error = is_array($json) && isset($json['error']) && is_array($json['error']) ? $json['error'] : [];
+    $fields = ['message','type','code','error_subcode','error_user_title','error_user_msg','fbtrace_id'];
+    $out = [];
+    foreach ($fields as $field) {
+        if (array_key_exists($field, $error) && $error[$field] !== null && $error[$field] !== '') {
+            $out[$field] = is_scalar($error[$field]) ? (string)$error[$field] : json_encode($error[$field], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+    }
+    return $out;
+}
 
 $message = $error = '';
 $testResult = null;
@@ -121,7 +133,7 @@ try {
                         'lead_event_source' => (string)($dataset['lead_event_source'] ?: 'Area de Membros CRM'),
                     ],
                     'user_data' => [
-                        'lead_id' => $leadId,
+                        'lead_id' => (int)$leadId,
                         'em' => [$emailHash],
                         'ph' => [$phoneHash],
                     ],
@@ -246,9 +258,13 @@ include __DIR__ . '/_header.php';
       <div class="ml-card-head"><div><h2>Resultado do teste</h2><p>Payload enviado e retorno integral da Meta.</p></div></div>
       <?php if($testResult): ?>
         <div class="alert <?=$testResult['ok']?'alert-ok':'alert-error'?>"><?=$testResult['ok']?'Envio aceito pela Meta.':'Envio retornou erro.'?></div>
+        <?php $metaError = ml_meta_error_summary((string)$testResult['response']); ?>
         <div class="ml-result">
           <div><strong>Status HTTP:</strong> <?=ml_h($testResult['status'] ?: '-')?></div>
           <?php if(!empty($testResult['error'])):?><div><strong>Erro local:</strong> <?=ml_h($testResult['error'])?></div><?php endif; ?>
+          <?php if($metaError): ?>
+            <div><strong>Erro da Meta</strong><pre><?php foreach($metaError as $k=>$v): ?><?=ml_h($k)?>: <?=ml_h($v) . "\n"?><?php endforeach; ?></pre></div>
+          <?php endif; ?>
           <div><strong>Payload enviado</strong><pre><?=ml_h(json_encode($testResult['payload'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))?></pre></div>
           <div><strong>Resposta da Meta</strong><pre><?=ml_h((string)$testResult['response'])?></pre></div>
         </div>
