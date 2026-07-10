@@ -9,7 +9,7 @@ mql_ensure_schema($pdo);
 $menu = 'meta_leads';
 $page_title = 'Meta Leads Qualificados';
 $view = (string)($_GET['view'] ?? (isset($_GET['dataset']) ? 'settings' : (isset($_GET['trigger']) ? 'triggers' : 'overview')));
-if (!in_array($view, ['overview','settings','triggers','queue','logs'], true)) $view = 'overview';
+if (!in_array($view, ['overview','settings','triggers','test','queue','logs'], true)) $view = 'overview';
 
 function ml_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function ml_badge(string $status): string {
@@ -21,6 +21,7 @@ function ml_csv(string $value): array {
 }
 
 $message = $error = '';
+$testResult = null;
 try {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = (string)($_POST['action'] ?? '');
@@ -37,10 +38,14 @@ try {
                 'mode' => (string)($_POST['mode'] ?? 'production') === 'test' ? 'test' : 'production',
                 'active' => !empty($_POST['active']) ? 1 : 0,
             ];
-            if ($data['name'] === '' || $data['dataset_id'] === '' || $data['access_token'] === '') throw new RuntimeException('Nome, dataset ID e token sao obrigatorios.');
+            if ($data['name'] === '' || $data['dataset_id'] === '') throw new RuntimeException('Nome e dataset ID sao obrigatorios.');
+            if ($id === 0 && $data['access_token'] === '') throw new RuntimeException('Token e obrigatorio para criar um conjunto.');
             if ($id > 0) {
-                $pdo->prepare("UPDATE meta_qualified_datasets SET name=:name,dataset_id=:dataset_id,access_token=:access_token,api_version=:api_version,event_name=:event_name,lead_event_source=:lead_event_source,test_event_code=:test_event_code,mode=:mode,active=:active WHERE id=:id")
-                    ->execute($data + ['id' => $id]);
+                $sql = "UPDATE meta_qualified_datasets SET name=:name,dataset_id=:dataset_id,api_version=:api_version,event_name=:event_name,lead_event_source=:lead_event_source,test_event_code=:test_event_code,mode=:mode,active=:active";
+                $params = $data + ['id' => $id];
+                if ($data['access_token'] !== '') $sql .= ",access_token=:access_token"; else unset($params['access_token']);
+                $sql .= " WHERE id=:id";
+                $pdo->prepare($sql)->execute($params);
                 $message = 'Conjunto atualizado.';
             } else {
                 $pdo->prepare("INSERT INTO meta_qualified_datasets (name,dataset_id,access_token,api_version,event_name,lead_event_source,test_event_code,mode,active) VALUES (:name,:dataset_id,:access_token,:api_version,:event_name,:lead_event_source,:test_event_code,:mode,:active)")
@@ -89,6 +94,46 @@ try {
         } elseif ($action === 'retry_queue') {
             $pdo->prepare("UPDATE meta_qualified_queue SET status='retry', next_attempt_at=NOW(), last_error=NULL WHERE id=:id AND status='failed'")->execute(['id' => (int)$_POST['id']]);
             $message = 'Item marcado para reenvio.';
+        } elseif ($action === 'send_test_lead') {
+            $view = 'test';
+            $datasetId = (int)($_POST['dataset_id'] ?? 0);
+            $leadId = preg_replace('/\D+/', '', (string)($_POST['meta_lead_id'] ?? '')) ?: '';
+            $name = trim((string)($_POST['test_name'] ?? ''));
+            $email = mb_strtolower(trim((string)($_POST['test_email'] ?? '')));
+            $phone = preg_replace('/\D+/', '', (string)($_POST['test_phone'] ?? '')) ?: '';
+            if ($datasetId <= 0) throw new RuntimeException('Selecione um dataset configurado.');
+            if ($leadId === '') throw new RuntimeException('Informe o Lead ID da Meta.');
+            if ($name === '') throw new RuntimeException('Informe o nome do lead de teste.');
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Informe um e-mail valido.');
+            if (strlen($phone) < 8) throw new RuntimeException('Informe um telefone valido.');
+            $dataset = mql_row($pdo, "SELECT * FROM meta_qualified_datasets WHERE id=:id AND active=1", ['id' => $datasetId]);
+            if (!$dataset) throw new RuntimeException('Dataset nao encontrado ou inativo.');
+            $emailHash = mql_hash_email($email);
+            $phoneHash = mql_hash_phone($phone);
+            if (!$emailHash || !$phoneHash) throw new RuntimeException('Nao foi possivel gerar hash de e-mail ou telefone.');
+            $payload = [
+                'data' => [[
+                    'action_source' => 'system_generated',
+                    'event_name' => (string)($dataset['event_name'] ?: 'Lead'),
+                    'event_time' => time(),
+                    'custom_data' => [
+                        'event_source' => 'crm',
+                        'lead_event_source' => (string)($dataset['lead_event_source'] ?: 'Area de Membros CRM'),
+                    ],
+                    'user_data' => [
+                        'lead_id' => $leadId,
+                        'em' => [$emailHash],
+                        'ph' => [$phoneHash],
+                    ],
+                ]],
+            ];
+            if (trim((string)($dataset['test_event_code'] ?? '')) !== '') $payload['test_event_code'] = trim((string)$dataset['test_event_code']);
+            $url = 'https://graph.facebook.com/' . rawurlencode((string)$dataset['api_version']) . '/' . rawurlencode((string)$dataset['dataset_id']) . '/events?access_token=' . rawurlencode((string)$dataset['access_token']);
+            $res = mql_http_post_json($url, $payload);
+            $ok = $res['status'] >= 200 && $res['status'] < 300 && !$res['error'];
+            mql_log($pdo, null, (int)$dataset['id'], null, null, $ok ? 'info' : 'error', $ok ? 'Teste manual enviado para a Meta' : 'Falha no teste manual da Meta', $res['status'] ?: null, $payload, $res['body'], $res['error']);
+            $testResult = ['ok' => $ok, 'payload' => $payload, 'status' => $res['status'], 'response' => $res['body'], 'error' => $res['error']];
+            $message = $ok ? 'Lead de teste enviado com sucesso.' : 'A Meta retornou erro no envio de teste.';
         }
     }
 } catch (Throwable $e) {
@@ -110,7 +155,7 @@ $editConditions = mql_json($editTrigger['conditions_json'] ?? null);
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.ml-nav a{padding:8px 11px;border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}.ml-nav a.active,.ml-nav a:hover{background:var(--primary-dim);color:var(--primary)}.ml-section{display:none}.ml-section.active{display:block}.ml-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.ml-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:16px}.ml-card h2{font-size:16px;margin:0}.ml-card p{font-size:12px;color:var(--muted);margin:4px 0 0}.ml-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(168,85,247,.15);color:#facc15}.ml-form{display:grid;gap:12px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ml label{display:block;font-size:10px;color:#7c8eb4;text-transform:uppercase;letter-spacing:.07em}.ml input:not([type]),.ml input[type=text],.ml input[type=number],.ml input[type=url],.ml input[type=email],.ml textarea,.ml select{display:block;margin-top:6px;width:100%;background:#081120!important;border:1px solid #1d3355!important;color:#e2e8f0!important;border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:none!important}.ml textarea{min-height:82px}.ml input::placeholder,.ml textarea::placeholder{color:#475569}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}.ml-check input{accent-color:var(--primary)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-help-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#081120;color:#93c5fd;font-weight:800}.ml-help{display:none;margin:0 0 12px;padding:12px;border-left:3px solid rgba(250,204,21,.7);border-radius:9px;background:rgba(250,204,21,.07);color:#bfdbfe;font-size:12px;line-height:1.55}.ml-help.open{display:block}.ml-help code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;color:#e2e8f0}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:12px;padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
+.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.ml-nav a{padding:8px 11px;border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}.ml-nav a.active,.ml-nav a:hover{background:var(--primary-dim);color:var(--primary)}.ml-section{display:none}.ml-section.active{display:block}.ml-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.ml-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:16px}.ml-card h2{font-size:16px;margin:0}.ml-card p{font-size:12px;color:var(--muted);margin:4px 0 0}.ml-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(168,85,247,.15);color:#facc15}.ml-form{display:grid;gap:12px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ml label{display:block;font-size:10px;color:#7c8eb4;text-transform:uppercase;letter-spacing:.07em}.ml input:not([type]),.ml input[type=text],.ml input[type=number],.ml input[type=url],.ml input[type=email],.ml textarea,.ml select{display:block;margin-top:6px;width:100%;background:#081120!important;border:1px solid #1d3355!important;color:#e2e8f0!important;border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:none!important}.ml textarea{min-height:82px}.ml input::placeholder,.ml textarea::placeholder{color:#475569}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}.ml-check input{accent-color:var(--primary)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-help-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#081120;color:#93c5fd;font-weight:800}.ml-help{display:none;margin:0 0 12px;padding:12px;border-left:3px solid rgba(250,204,21,.7);border-radius:9px;background:rgba(250,204,21,.07);color:#bfdbfe;font-size:12px;line-height:1.55}.ml-help.open{display:block}.ml-help code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;color:#e2e8f0}.ml-result{margin-top:14px;display:grid;gap:10px}.ml-result pre{margin:0;max-height:360px;overflow:auto;border:1px solid #1d3355;border-radius:10px;background:#081120;color:#bfdbfe;padding:12px;font-size:11px;white-space:pre-wrap}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:12px;padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
 </style>
 <div class="ml">
   <div class="ml-head"><div><h1>Meta Leads Qualificados</h1><p>Configure eventos CRM para enviar leads qualificados para a API de Conversoes da Meta.</p></div><form method="post"><button class="btn btn-primary" name="action" value="process_now">Processar fila agora</button></form></div>
@@ -118,6 +163,7 @@ include __DIR__ . '/_header.php';
     <a class="<?=$view==='overview'?'active':''?>" href="?view=overview">Visao geral</a>
     <a class="<?=$view==='settings'?'active':''?>" href="?view=settings">Configuracoes</a>
     <a class="<?=$view==='triggers'?'active':''?>" href="?view=triggers">Gatilhos</a>
+    <a class="<?=$view==='test'?'active':''?>" href="?view=test">Teste manual</a>
     <a class="<?=$view==='queue'?'active':''?>" href="?view=queue">Fila</a>
     <a class="<?=$view==='logs'?'active':''?>" href="?view=logs">Logs</a>
   </nav>
@@ -142,7 +188,7 @@ include __DIR__ . '/_header.php';
         <input type="hidden" name="action" value="save_dataset"><input type="hidden" name="id" value="<?= (int)($editDataset['id'] ?? 0) ?>">
         <label>Nome interno<input type="text" name="name" required value="<?=ml_h($editDataset['name'] ?? '')?>" placeholder="Lead Qualificado - CRM"></label>
         <div class="ml-row"><label>Dataset ID<input type="text" name="dataset_id" required value="<?=ml_h($editDataset['dataset_id'] ?? '')?>" placeholder="1182793990703954"></label><label>API version<input type="text" name="api_version" value="<?=ml_h($editDataset['api_version'] ?? 'v25.0')?>"></label></div>
-        <label>Access token<textarea name="access_token" required rows="3" placeholder="EAAB..."><?=ml_h($editDataset['access_token'] ?? '')?></textarea></label>
+        <label>Access token<textarea name="access_token" <?= $editDataset ? '' : 'required' ?> rows="3" placeholder="<?= $editDataset ? 'Deixe vazio para manter o token atual' : 'EAAB...' ?>"></textarea></label>
         <div class="ml-row"><label>Event name<input type="text" name="event_name" value="<?=ml_h($editDataset['event_name'] ?? 'Lead')?>"></label><label>Lead event source<input type="text" name="lead_event_source" value="<?=ml_h($editDataset['lead_event_source'] ?? 'Area de Membros CRM')?>"></label></div>
         <div class="ml-row"><label>Test event code<input type="text" name="test_event_code" value="<?=ml_h($editDataset['test_event_code'] ?? '')?>"></label><label>Modo<select name="mode"><option value="production"<?=($editDataset['mode']??'')==='production'?' selected':''?>>Producao</option><option value="test"<?=($editDataset['mode']??'')==='test'?' selected':''?>>Teste</option></select></label></div>
         <label class="ml-check"><input type="checkbox" name="active" value="1" <?=((int)($editDataset['active'] ?? 1)===1)?'checked':''?>> Ativo</label>
@@ -180,6 +226,35 @@ include __DIR__ . '/_header.php';
         <?php foreach($triggers as $t): $c=mql_json($t['conditions_json']??null); ?><tr><td><strong><?=ml_h($t['name'])?></strong></td><td><?=ml_h($t['dataset_name'] ?: '-')?></td><td><?=ml_h($t['event_type'])?></td><td class="ml-code">Tag: <?=ml_h($c['trigger_tag'] ?? '-')?> · inclui <?=ml_h(implode(', ', (array)($c['include_tags'] ?? [])))?></td><td><?=((int)$t['active']===1)?'<span class="badge badge-success">ativo</span>':'<span class="badge badge-neutral">inativo</span>'?></td><td class="ml-actions"><a class="btn btn-xs btn-ghost" href="?trigger=<?=(int)$t['id']?>">Editar</a><form method="post"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="scan_trigger">Varrer</button></form><form method="post"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="toggle_trigger">Ativar/inativar</button></form></td></tr><?php endforeach; ?>
         <?php if(!$triggers):?><tr><td colspan="6">Nenhum gatilho cadastrado.</td></tr><?php endif; ?>
       </tbody></table></div>
+    </section>
+  </div></section>
+
+  <section class="ml-section <?=$view==='test'?'active':''?>"><div class="ml-grid">
+    <section class="ml-card">
+      <div class="ml-card-head"><div class="ml-icon">T</div><div><h2>Enviar lead de teste</h2><p>Envia um evento direto para o dataset selecionado sem salvar lead local.</p></div><button type="button" class="ml-help-btn" data-help="test">?</button></div>
+      <div class="ml-help" id="ml-help-test">Informe o Lead ID exibido pela Meta e os dados de contato. O sistema normaliza e converte e-mail/telefone em SHA-256, usa o token salvo apenas no servidor e mostra payload, HTTP e resposta completa.</div>
+      <form method="post" class="ml-form">
+        <input type="hidden" name="action" value="send_test_lead">
+        <label>Dataset configurado<select name="dataset_id" required><option value="">Selecione</option><?php foreach($datasets as $d): if((int)$d['active']!==1) continue; ?><option value="<?=(int)$d['id']?>"<?=((int)($_POST['dataset_id']??0)===(int)$d['id'])?' selected':''?>><?=ml_h($d['name'])?> · <?=ml_h($d['dataset_id'])?></option><?php endforeach;?></select></label>
+        <label>Lead ID da Meta<input type="text" name="meta_lead_id" required value="<?=ml_h($_POST['meta_lead_id'] ?? '')?>" placeholder="1793287691659425"></label>
+        <label>Nome<input type="text" name="test_name" required value="<?=ml_h($_POST['test_name'] ?? '')?>" placeholder="Nome do lead"></label>
+        <div class="ml-row"><label>E-mail<input type="email" name="test_email" required value="<?=ml_h($_POST['test_email'] ?? '')?>" placeholder="lead@email.com"></label><label>Telefone<input type="text" name="test_phone" required value="<?=ml_h($_POST['test_phone'] ?? '')?>" placeholder="5522999999999"></label></div>
+        <div class="ml-actions"><button class="btn btn-primary">Enviar lead de teste</button></div>
+      </form>
+    </section>
+    <section class="ml-card">
+      <div class="ml-card-head"><div><h2>Resultado do teste</h2><p>Payload enviado e retorno integral da Meta.</p></div></div>
+      <?php if($testResult): ?>
+        <div class="alert <?=$testResult['ok']?'alert-ok':'alert-error'?>"><?=$testResult['ok']?'Envio aceito pela Meta.':'Envio retornou erro.'?></div>
+        <div class="ml-result">
+          <div><strong>Status HTTP:</strong> <?=ml_h($testResult['status'] ?: '-')?></div>
+          <?php if(!empty($testResult['error'])):?><div><strong>Erro local:</strong> <?=ml_h($testResult['error'])?></div><?php endif; ?>
+          <div><strong>Payload enviado</strong><pre><?=ml_h(json_encode($testResult['payload'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))?></pre></div>
+          <div><strong>Resposta da Meta</strong><pre><?=ml_h((string)$testResult['response'])?></pre></div>
+        </div>
+      <?php else: ?>
+        <div class="text-muted text-sm">Nenhum teste enviado nesta sessao.</div>
+      <?php endif; ?>
     </section>
   </div></section>
 
