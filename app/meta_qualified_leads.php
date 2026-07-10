@@ -429,14 +429,38 @@ function mql_process_queue(PDO $pdo, int $limit = 50): array {
 function mql_scan_trigger(PDO $pdo, int $triggerId, int $limit = 1000): array {
     mql_ensure_schema($pdo);
     $trigger = mql_row($pdo, "SELECT * FROM meta_qualified_triggers WHERE id=:id AND active=1", ['id' => $triggerId]);
-    if (!$trigger) return ['checked' => 0, 'queued' => 0];
+    if (!$trigger) return ['checked' => 0, 'matched' => 0, 'queued' => 0, 'already_queued' => 0];
     $conditions = mql_json($trigger['conditions_json'] ?? null);
-    $users = mql_rows($pdo, "SELECT * FROM users ORDER BY id DESC LIMIT " . max(1, min(5000, $limit)));
-    $checked = 0; $queued = 0;
-    foreach ($users as $user) {
-        $checked++;
-        if (!mql_user_matches_conditions($pdo, $user, $conditions, ['manual_scan' => true])) continue;
-        if (mql_queue_user($pdo, (int)$trigger['dataset_id'], (int)$trigger['id'], (int)$user['id'], 'manual_scan')) $queued++;
+    $max = max(1, min(100000, $limit));
+    $batchSize = 500;
+    $lastId = 0;
+    $checked = 0; $matched = 0; $queued = 0; $alreadyQueued = 0;
+
+    while ($checked < $max) {
+        $rows = mql_rows($pdo, "
+            SELECT *
+              FROM users
+             WHERE id > :last_id
+             ORDER BY id ASC
+             LIMIT " . min($batchSize, $max - $checked),
+            ['last_id' => $lastId]
+        );
+        if (!$rows) break;
+        foreach ($rows as $user) {
+            $lastId = max($lastId, (int)($user['id'] ?? 0));
+            $checked++;
+            if (!mql_user_matches_conditions($pdo, $user, $conditions, ['manual_scan' => true])) continue;
+            $matched++;
+            if (mql_queue_user($pdo, (int)$trigger['dataset_id'], (int)$trigger['id'], (int)$user['id'], 'manual_scan')) $queued++;
+            else $alreadyQueued++;
+            if ($checked >= $max) break;
+        }
     }
-    return ['checked' => $checked, 'queued' => $queued];
+    mql_log($pdo, null, (int)$trigger['dataset_id'], (int)$trigger['id'], null, 'info', 'Varredura manual concluida', null, [
+        'checked' => $checked,
+        'matched' => $matched,
+        'queued' => $queued,
+        'already_queued' => $alreadyQueued,
+    ]);
+    return ['checked' => $checked, 'matched' => $matched, 'queued' => $queued, 'already_queued' => $alreadyQueued];
 }

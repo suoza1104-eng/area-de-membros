@@ -105,8 +105,10 @@ try {
             $pdo->prepare("UPDATE meta_qualified_triggers SET active=1-active WHERE id=:id")->execute(['id' => (int)$_POST['id']]);
             $message = 'Gatilho atualizado.';
         } elseif ($action === 'scan_trigger') {
-            $res = mql_scan_trigger($pdo, (int)($_POST['id'] ?? 0), 3000);
-            $message = 'Varredura concluida: ' . (int)$res['checked'] . ' leads avaliados, ' . (int)$res['queued'] . ' enfileirados.';
+            $res = mql_scan_trigger($pdo, (int)($_POST['id'] ?? 0), 100000);
+            $message = 'Varredura concluida: ' . (int)$res['checked'] . ' leads avaliados, ' . (int)($res['matched'] ?? 0) . ' elegiveis, ' . (int)$res['queued'] . ' enfileirados';
+            if ((int)($res['already_queued'] ?? 0) > 0) $message .= ', ' . (int)$res['already_queued'] . ' ja estavam na fila.';
+            else $message .= '.';
         } elseif ($action === 'process_now') {
             $res = mql_process_queue($pdo, 80);
             $message = 'Fila processada: ' . (int)$res['sent'] . ' enviados, ' . (int)$res['retry'] . ' para tentar novamente, ' . (int)$res['failed'] . ' falhas.';
@@ -302,7 +304,7 @@ include __DIR__ . '/_header.php';
     <section class="ml-card">
       <h2>Gatilhos cadastrados</h2>
       <div class="ml-scroll"><table class="ml-table"><thead><tr><th>Gatilho</th><th>Conjunto</th><th>Tipo</th><th>Condicoes</th><th>Status</th><th></th></tr></thead><tbody>
-        <?php foreach($triggers as $t): $c=mql_json($t['conditions_json']??null); ?><tr><td><strong><?=ml_h($t['name'])?></strong></td><td><?=ml_h($t['dataset_name'] ?: '-')?></td><td><?=ml_h($t['event_type'])?></td><td class="ml-code">Tag: <?=ml_h($c['trigger_tag'] ?? '-')?> · inclui <?=ml_h(implode(', ', (array)($c['include_tags'] ?? [])))?></td><td><?=((int)$t['active']===1)?'<span class="badge badge-success">ativo</span>':'<span class="badge badge-neutral">inativo</span>'?></td><td class="ml-actions"><a class="btn btn-xs btn-ghost" href="?trigger=<?=(int)$t['id']?>">Editar</a><form method="post"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="scan_trigger">Varrer</button></form><form method="post"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="toggle_trigger">Ativar/inativar</button></form></td></tr><?php endforeach; ?>
+        <?php foreach($triggers as $t): $c=mql_json($t['conditions_json']??null); ?><tr><td><strong><?=ml_h($t['name'])?></strong></td><td><?=ml_h($t['dataset_name'] ?: '-')?></td><td><?=ml_h($t['event_type'])?></td><td class="ml-code">Tag: <?=ml_h($c['trigger_tag'] ?? '-')?> · inclui <?=ml_h(implode(', ', (array)($c['include_tags'] ?? [])))?></td><td><?=((int)$t['active']===1)?'<span class="badge badge-success">ativo</span>':'<span class="badge badge-neutral">inativo</span>'?></td><td class="ml-actions"><a class="btn btn-xs btn-ghost" href="?trigger=<?=(int)$t['id']?>">Editar</a><form method="post" onsubmit="return confirm('Varrer o banco e enfileirar todos os leads que atendem este gatilho?')"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="scan_trigger">Varrer e enfileirar</button></form><form method="post"><input type="hidden" name="id" value="<?=(int)$t['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="toggle_trigger">Ativar/inativar</button></form></td></tr><?php endforeach; ?>
         <?php if(!$triggers):?><tr><td colspan="6">Nenhum gatilho cadastrado.</td></tr><?php endif; ?>
       </tbody></table></div>
     </section>
