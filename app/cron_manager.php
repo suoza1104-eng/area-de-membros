@@ -209,6 +209,16 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         ");
     } catch (Throwable $e) {}
 
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET interval_minutes = 1,
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'meta_leads_qualificados'
+               AND interval_minutes > 1
+        ");
+    } catch (Throwable $e) {}
+
     cron_manager_recover_expired_runs($pdo);
 
     if (cron_manager_token($pdo) === '') {
