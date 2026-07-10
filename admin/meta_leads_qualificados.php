@@ -8,6 +8,8 @@ $pdo = getPDO();
 mql_ensure_schema($pdo);
 $menu = 'meta_leads';
 $page_title = 'Meta Leads Qualificados';
+$view = (string)($_GET['view'] ?? (isset($_GET['dataset']) ? 'settings' : (isset($_GET['trigger']) ? 'triggers' : 'overview')));
+if (!in_array($view, ['overview','settings','triggers','queue','logs'], true)) $view = 'overview';
 
 function ml_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function ml_badge(string $status): string {
@@ -108,24 +110,34 @@ $editConditions = mql_json($editTrigger['conditions_json'] ?? null);
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-grid{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-xl);padding:16px}.ml-card h2{font-size:15px;margin:0 0 12px}.ml-form{display:grid;gap:10px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:9px}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
+.ml{display:flex;flex-direction:column;gap:16px}.ml-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.ml-head h1{font-size:22px;margin:0}.ml-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ml-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.ml-nav a{padding:8px 11px;border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}.ml-nav a.active,.ml-nav a:hover{background:var(--primary-dim);color:var(--primary)}.ml-section{display:none}.ml-section.active{display:block}.ml-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(0,1.4fr);gap:14px}.ml-card{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.ml-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:16px}.ml-card h2{font-size:16px;margin:0}.ml-card p{font-size:12px;color:var(--muted);margin:4px 0 0}.ml-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(168,85,247,.15);color:#facc15}.ml-form{display:grid;gap:12px}.ml-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ml label{font-size:10px;color:#7c8eb4;text-transform:uppercase;letter-spacing:.07em}.ml input[type=text],.ml input[type=number],.ml input[type=url],.ml input[type=email],.ml textarea,.ml select{margin-top:6px;width:100%;background:#081120!important;border:1px solid #1d3355!important;color:#e2e8f0!important;border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:none!important}.ml textarea{min-height:82px}.ml input::placeholder,.ml textarea::placeholder{color:#475569}.ml-check{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}.ml-check input{accent-color:var(--primary)}.ml-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.ml-help-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#081120;color:#93c5fd;font-weight:800}.ml-help{display:none;margin:0 0 12px;padding:12px;border-left:3px solid rgba(250,204,21,.7);border-radius:9px;background:rgba(250,204,21,.07);color:#bfdbfe;font-size:12px;line-height:1.55}.ml-help.open{display:block}.ml-help code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;color:#e2e8f0}.ml-table{width:100%;border-collapse:collapse;min-width:900px}.ml-table th,.ml-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}.ml-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-scroll{overflow:auto}.ml-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.ml-kpi{background:#0b1120;border:1px solid rgba(96,165,250,.18);border-radius:12px;padding:14px}.ml-kpi small{color:var(--muted);text-transform:uppercase;font-size:9px}.ml-kpi strong{display:block;font-size:24px}.ml-chart{height:250px}.ml-code{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}@media(max-width:1000px){.ml-grid{grid-template-columns:1fr}.ml-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.ml-row{grid-template-columns:1fr}.ml-kpis{grid-template-columns:1fr}}
 </style>
 <div class="ml">
   <div class="ml-head"><div><h1>Meta Leads Qualificados</h1><p>Configure eventos CRM para enviar leads qualificados para a API de Conversoes da Meta.</p></div><form method="post"><button class="btn btn-primary" name="action" value="process_now">Processar fila agora</button></form></div>
+  <nav class="ml-nav">
+    <a class="<?=$view==='overview'?'active':''?>" href="?view=overview">Visao geral</a>
+    <a class="<?=$view==='settings'?'active':''?>" href="?view=settings">Configuracoes</a>
+    <a class="<?=$view==='triggers'?'active':''?>" href="?view=triggers">Gatilhos</a>
+    <a class="<?=$view==='queue'?'active':''?>" href="?view=queue">Fila</a>
+    <a class="<?=$view==='logs'?'active':''?>" href="?view=logs">Logs</a>
+  </nav>
   <?php if($message):?><div class="alert alert-ok"><?=ml_h($message)?></div><?php endif; ?>
   <?php if($error):?><div class="alert alert-error"><?=ml_h($error)?></div><?php endif; ?>
 
-  <div class="ml-kpis">
-    <div class="ml-kpi"><small>Total na fila</small><strong><?=number_format((float)($totals['total']??0),0,',','.')?></strong></div>
-    <div class="ml-kpi"><small>Enviados</small><strong><?=number_format((float)($totals['sent']??0),0,',','.')?></strong></div>
-    <div class="ml-kpi"><small>Pendentes</small><strong><?=number_format((float)($totals['pending']??0),0,',','.')?></strong></div>
-    <div class="ml-kpi"><small>Falhas</small><strong><?=number_format((float)($totals['failed']??0),0,',','.')?></strong></div>
-  </div>
-  <section class="ml-card"><h2>Indicadores dos ultimos 30 dias</h2><div class="ml-chart"><canvas id="mqlChart"></canvas></div></section>
+  <section class="ml-section <?=$view==='overview'?'active':''?>">
+    <div class="ml-kpis">
+      <div class="ml-kpi"><small>Total na fila</small><strong><?=number_format((float)($totals['total']??0),0,',','.')?></strong></div>
+      <div class="ml-kpi"><small>Enviados</small><strong><?=number_format((float)($totals['sent']??0),0,',','.')?></strong></div>
+      <div class="ml-kpi"><small>Pendentes</small><strong><?=number_format((float)($totals['pending']??0),0,',','.')?></strong></div>
+      <div class="ml-kpi"><small>Falhas</small><strong><?=number_format((float)($totals['failed']??0),0,',','.')?></strong></div>
+    </div>
+    <section class="ml-card" style="margin-top:14px"><div class="ml-card-head"><div><h2>Indicadores dos ultimos 30 dias</h2><p>Eventos criados, enviados e falhas de integracao.</p></div></div><div class="ml-chart"><canvas id="mqlChart"></canvas></div></section>
+  </section>
 
-  <div class="ml-grid">
+  <section class="ml-section <?=$view==='settings'?'active':''?>"><div class="ml-grid">
     <section class="ml-card">
-      <h2><?= $editDataset ? 'Editar conjunto de dados' : 'Novo conjunto de dados' ?></h2>
+      <div class="ml-card-head"><div class="ml-icon">⚡</div><div><h2><?= $editDataset ? 'Editar conjunto de dados' : 'Novo conjunto de dados' ?></h2><p>Credenciais e parametros do endpoint da Meta.</p></div><button type="button" class="ml-help-btn" data-help="dataset">?</button></div>
+      <div class="ml-help" id="ml-help-dataset">Use o <b>Dataset ID</b> exibido pela Meta, cole o <b>Access Token</b> gerado no Gerenciador de Eventos e mantenha <code>event_name=Lead</code> para o evento padrao de lead qualificado. Em modo teste, informe o <code>test_event_code</code> para aparecer na aba Eventos de teste da Meta.</div>
       <form method="post" class="ml-form">
         <input type="hidden" name="action" value="save_dataset"><input type="hidden" name="id" value="<?= (int)($editDataset['id'] ?? 0) ?>">
         <label>Nome interno<input name="name" required value="<?=ml_h($editDataset['name'] ?? '')?>" placeholder="Lead Qualificado - CRM"></label>
@@ -144,11 +156,12 @@ include __DIR__ . '/_header.php';
         <?php if(!$datasets):?><tr><td colspan="6">Nenhum conjunto cadastrado.</td></tr><?php endif; ?>
       </tbody></table></div>
     </section>
-  </div>
+  </div></section>
 
-  <div class="ml-grid">
+  <section class="ml-section <?=$view==='triggers'?'active':''?>"><div class="ml-grid">
     <section class="ml-card">
-      <h2><?= $editTrigger ? 'Editar gatilho' : 'Novo gatilho de qualificacao' ?></h2>
+      <div class="ml-card-head"><div class="ml-icon">✓</div><div><h2><?= $editTrigger ? 'Editar gatilho' : 'Novo gatilho de qualificacao' ?></h2><p>Define quando um lead deve entrar na fila de envio.</p></div><button type="button" class="ml-help-btn" data-help="trigger">?</button></div>
+      <div class="ml-help" id="ml-help-trigger">Para automacao, escolha <b>Quando tag for aplicada</b> e preencha a <b>Tag gatilho</b>, por exemplo <code>LEAD_QUALIFICADO</code>. Tags obrigatorias funcionam como filtros extras; tags de exclusao impedem envio. A varredura manual avalia leads ja existentes e enfileira quem cumprir a regra.</div>
       <form method="post" class="ml-form">
         <input type="hidden" name="action" value="save_trigger"><input type="hidden" name="id" value="<?= (int)($editTrigger['id'] ?? 0) ?>">
         <label>Nome do gatilho<input name="name" required value="<?=ml_h($editTrigger['name'] ?? '')?>" placeholder="Tag LEAD_QUALIFICADO"></label>
@@ -168,19 +181,19 @@ include __DIR__ . '/_header.php';
         <?php if(!$triggers):?><tr><td colspan="6">Nenhum gatilho cadastrado.</td></tr><?php endif; ?>
       </tbody></table></div>
     </section>
-  </div>
+  </div></section>
 
-  <section class="ml-card"><h2>Fila de envios</h2><div class="ml-scroll"><table class="ml-table"><thead><tr><th>Data</th><th>Lead</th><th>Conjunto</th><th>Gatilho</th><th>Status</th><th>HTTP</th><th>Erro/resposta</th><th></th></tr></thead><tbody>
+  <section class="ml-section <?=$view==='queue'?'active':''?>"><section class="ml-card"><div class="ml-card-head"><div><h2>Fila de envios</h2><p>Eventos pendentes, enviados, retentativas e falhas.</p></div><button type="button" class="ml-help-btn" data-help="queue">?</button></div><div class="ml-help" id="ml-help-queue">A fila evita lentidao no cadastro do lead. O cron <code>meta_leads_qualificados</code> envia em lote para a Meta, registra HTTP/status e tenta novamente falhas temporarias.</div><div class="ml-scroll"><table class="ml-table"><thead><tr><th>Data</th><th>Lead</th><th>Conjunto</th><th>Gatilho</th><th>Status</th><th>HTTP</th><th>Erro/resposta</th><th></th></tr></thead><tbody>
     <?php foreach($queue as $q):?><tr><td><?=ml_h(date('d/m/Y H:i',strtotime((string)$q['created_at'])))?></td><td><strong><?=ml_h($q['nome'] ?: ('#'.$q['user_id']))?></strong><div class="text-muted text-xs"><?=ml_h($q['email'] ?? '')?></div></td><td><?=ml_h($q['dataset_name'] ?: '-')?></td><td><?=ml_h($q['trigger_name'] ?: '-')?></td><td><?=ml_badge((string)$q['status'])?></td><td><?=ml_h($q['last_http_status'] ?: '-')?></td><td class="ml-code"><?=ml_h($q['last_error'] ?: $q['last_response'])?></td><td><?php if($q['status']==='failed'):?><form method="post"><input type="hidden" name="id" value="<?=(int)$q['id']?>"><button class="btn btn-xs btn-ghost" name="action" value="retry_queue">Reenviar</button></form><?php endif;?></td></tr><?php endforeach; ?>
     <?php if(!$queue):?><tr><td colspan="8">Fila vazia.</td></tr><?php endif; ?>
-  </tbody></table></div></section>
+  </tbody></table></div></section></section>
 
-  <section class="ml-card"><h2>Logs</h2><div class="ml-scroll"><table class="ml-table"><thead><tr><th>Data</th><th>Nivel</th><th>Mensagem</th><th>Lead</th><th>Conjunto</th><th>HTTP</th><th>Detalhe</th></tr></thead><tbody>
+  <section class="ml-section <?=$view==='logs'?'active':''?>"><section class="ml-card"><div class="ml-card-head"><div><h2>Logs</h2><p>Historico tecnico dos envios para diagnostico.</p></div><button type="button" class="ml-help-btn" data-help="logs">?</button></div><div class="ml-help" id="ml-help-logs">Os logs mostram payload/resposta e erros da Meta. Tokens nao ficam expostos aqui; o payload usa e-mail e telefone convertidos em SHA-256.</div><div class="ml-scroll"><table class="ml-table"><thead><tr><th>Data</th><th>Nivel</th><th>Mensagem</th><th>Lead</th><th>Conjunto</th><th>HTTP</th><th>Detalhe</th></tr></thead><tbody>
     <?php foreach($logs as $l):?><tr><td><?=ml_h(date('d/m/Y H:i:s',strtotime((string)$l['created_at'])))?></td><td><?=ml_h($l['level'])?></td><td><?=ml_h($l['message'])?></td><td><?=ml_h($l['nome'] ?: ($l['user_id'] ?: '-'))?></td><td><?=ml_h($l['dataset_name'] ?: '-')?></td><td><?=ml_h($l['http_status'] ?: '-')?></td><td class="ml-code"><?=ml_h($l['error_message'] ?: $l['response_json'])?></td></tr><?php endforeach; ?>
     <?php if(!$logs):?><tr><td colspan="7">Nenhum log.</td></tr><?php endif; ?>
-  </tbody></table></div></section>
+  </tbody></table></div></section></section>
 </div>
 <script>
-(()=>{if(!window.Chart)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';new Chart(document.getElementById('mqlChart'),{data:{labels:daily.map(x=>String(x.day).slice(5)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
+(()=>{document.querySelectorAll('.ml-help-btn').forEach(btn=>btn.addEventListener('click',()=>{const box=document.getElementById('ml-help-'+btn.dataset.help);if(box)box.classList.toggle('open')}));if(!window.Chart)return;const canvas=document.getElementById('mqlChart');if(!canvas)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';new Chart(canvas,{data:{labels:daily.map(x=>String(x.day).slice(5)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
 </script>
 <?php include __DIR__ . '/_footer.php'; ?>
