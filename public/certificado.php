@@ -93,16 +93,47 @@ function send_cert_webhook(PDO $pdo, ?string $url, string $evento, array $user, 
     if (!$url) return;
     $payload     = ['evento' => $evento, 'user' => ['id' => $user['id'] ?? null, 'nome' => $user['nome'] ?? null, 'email' => $user['email'] ?? null, 'telefone' => $user['telefone'] ?? null], 'extra' => $extra, 'timestamp' => date('c')];
     $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_POSTFIELDS => $payloadJson, CURLOPT_TIMEOUT => 10]);
-    $responseBody = curl_exec($ch);
-    $httpCode     = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError    = curl_error($ch);
-    curl_close($ch);
+    $responseBody = '';
+    $httpCode     = 0;
+    $curlError    = '';
+    if (!function_exists('curl_init')) {
+        $curlError = 'curl indisponivel';
+    } else {
+        try {
+            $ch = curl_init($url);
+            if ($ch === false) {
+                $curlError = 'curl_init falhou';
+            } else {
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST => true,
+                    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                    CURLOPT_POSTFIELDS => $payloadJson,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                    CURLOPT_TIMEOUT => 10,
+                    CURLOPT_NOSIGNAL => 1,
+                ]);
+                $responseBody = (string)curl_exec($ch);
+                $httpCode     = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError    = (string)curl_error($ch);
+                curl_close($ch);
+            }
+        } catch (Throwable $e) {
+            $curlError = $e->getMessage();
+        }
+    }
     try {
         $st = $pdo->prepare("INSERT INTO webhook_logs (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at) VALUES (NULL, :uid, :evento, :payload, :status, :body, :err, NOW())");
         $st->execute(['uid' => $user['id'] ?? null, 'evento' => $evento, 'payload' => $payloadJson, 'status' => $httpCode, 'body' => (string)$responseBody, 'err' => $curlError]);
     } catch (Throwable $e) {}
+}
+
+function cert_log_erro(PDO $pdo, string $mensagem, array $contexto = []): void {
+    try {
+        log_sistema('error', 'certificado', $mensagem, $contexto);
+    } catch (Throwable $e) {
+        @error_log('certificado: ' . $mensagem . ' | ' . $e->getMessage());
+    }
 }
 
 function gerar_codigo_certificado(): string {
@@ -177,7 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $etapa        = 'erro';
             $mensagemErro = $errorHtml;
             if (!empty($certCfg['webhook_error_url'])) {
-                send_cert_webhook($pdo, $certCfg['webhook_error_url'], 'CERT_SENHA_ERRADA', $user, ['motivo' => 'senha_incorreta']);
+                try {
+                    send_cert_webhook($pdo, $certCfg['webhook_error_url'], 'CERT_SENHA_ERRADA', $user, ['motivo' => 'senha_incorreta']);
+                } catch (Throwable $e) {
+                    cert_log_erro($pdo, 'Falha no webhook de senha incorreta', ['exception' => $e->getMessage(), 'user_id' => $userId]);
+                }
             }
             try { disparar_webhooks('CERT_SENHA_ERRADA', (int)($user['id'] ?? 0), ['motivo' => 'senha_incorreta']); } catch (Throwable $e) {}
         } else {
@@ -237,18 +272,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
 
                 if (!empty($certCfg['webhook_emitido_url'])) {
-                    send_cert_webhook($pdo, $certCfg['webhook_emitido_url'], 'CERT_EMITIDO', $user, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                    try {
+                        send_cert_webhook($pdo, $certCfg['webhook_emitido_url'], 'CERT_EMITIDO', $user, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                    } catch (Throwable $e) {
+                        cert_log_erro($pdo, 'Falha no webhook direto de certificado emitido', ['exception' => $e->getMessage(), 'user_id' => $userId, 'codigo_certificado' => $codigoCert]);
+                    }
                 }
-                try { disparar_webhooks('CERT_EMITIDO', (int)$userId, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]); } catch (Throwable $e) {}
+                try {
+                    disparar_webhooks('CERT_EMITIDO', (int)$userId, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                } catch (Throwable $e) {
+                    cert_log_erro($pdo, 'Falha ao capturar evento de certificado emitido', ['exception' => $e->getMessage(), 'user_id' => $userId, 'codigo_certificado' => $codigoCert]);
+                }
 
                 $etapa = 'sucesso';
                 unset($_SESSION['cert_senha_ok_user_id'], $_SESSION['cert_senha_ok_until']);
             } catch (Throwable $e) {
-                $pdo->rollBack();
+                if ($pdo->inTransaction()) $pdo->rollBack();
                 $erroSenha    = true;
                 $etapa        = 'erro';
                 $mensagemErro = 'Ocorreu um erro ao emitir seu certificado. Tente novamente mais tarde.';
-                log_sistema('error', 'certificado', 'Erro ao emitir certificado', ['exception' => $e->getMessage()]);
+                cert_log_erro($pdo, 'Erro ao emitir certificado', ['exception' => $e->getMessage(), 'user_id' => $userId]);
             }
                 }
             }
@@ -663,6 +706,7 @@ function normalizar_video_url(string $url): string {
 <div class="name-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="nameModalTitle">
     <form method="post" action="" class="name-modal" id="nameConfirmForm">
         <input type="hidden" name="acao" value="confirmar_nome">
+        <input type="hidden" name="senha_certificado" value="<?= h($senhaConfirmada) ?>">
         <h2 id="nameModalTitle">Confira seu nome</h2>
         <p>Este será o nome impresso no certificado. Corrija se necessário antes de confirmar.</p>
         <?php if ($mensagemErro): ?>
