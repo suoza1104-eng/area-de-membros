@@ -362,16 +362,22 @@ function mlTagInitPicker(root){
       list.innerHTML = `<div class="ml-tag-none">${q ? 'Nenhuma tag encontrada' : 'Todas as tags ja foram selecionadas'}</div>`;
       return;
     }
-    list.innerHTML = options.map(tag => `<div class="ml-tag-option" data-tag="${mlTagEsc(tag)}">${mlTagEsc(tag)}</div>`).join('');
-    list.querySelectorAll('.ml-tag-option').forEach(item => item.addEventListener('click', () => addTag(item.dataset.tag || '')));
+    list.innerHTML = options.map(tag => `<div class="ml-tag-option">${mlTagEsc(tag)}</div>`).join('');
   };
+  list.addEventListener('pointerdown', ev => {
+    const item = ev.target.closest('.ml-tag-option');
+    if(!item) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    addTag(item.textContent.trim());
+  });
   search.addEventListener('input', renderList);
   search.addEventListener('keydown', ev => {
     if(ev.key === 'Escape') drop.classList.remove('open');
     if(ev.key === 'Enter'){
       ev.preventDefault();
       const first = list.querySelector('.ml-tag-option');
-      if(first) addTag(first.dataset.tag || '');
+      if(first) addTag(first.textContent.trim());
     }
   });
   renderBox();
