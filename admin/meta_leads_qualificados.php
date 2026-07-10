@@ -166,7 +166,29 @@ $triggers = mql_rows($pdo, "SELECT t.*, d.name dataset_name FROM meta_qualified_
 $queue = mql_rows($pdo, "SELECT q.*, d.name dataset_name, t.name trigger_name, u.nome, u.email FROM meta_qualified_queue q LEFT JOIN meta_qualified_datasets d ON d.id=q.dataset_id LEFT JOIN meta_qualified_triggers t ON t.id=q.trigger_id LEFT JOIN users u ON u.id=q.user_id ORDER BY q.id DESC LIMIT 120");
 $logs = mql_rows($pdo, "SELECT l.*, d.name dataset_name, u.nome FROM meta_qualified_logs l LEFT JOIN meta_qualified_datasets d ON d.id=l.dataset_id LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 120");
 $totals = mql_row($pdo, "SELECT COUNT(*) total, SUM(status='sent') sent, SUM(status IN ('pending','retry')) pending, SUM(status='failed') failed FROM meta_qualified_queue");
-$daily = mql_rows($pdo, "SELECT DATE(created_at) day, COUNT(*) total, SUM(status='sent') sent, SUM(status='failed') failed FROM meta_qualified_queue WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) GROUP BY DATE(created_at) ORDER BY day");
+$daily = mql_rows($pdo, "
+    SELECT day, SUM(total) total, SUM(sent) sent, SUM(failed) failed
+      FROM (
+            SELECT DATE(created_at) day, COUNT(*) total, 0 sent, 0 failed
+              FROM meta_qualified_queue
+             WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+             GROUP BY DATE(created_at)
+            UNION ALL
+            SELECT DATE(sent_at) day, 0 total, COUNT(*) sent, 0 failed
+              FROM meta_qualified_queue
+             WHERE sent_at IS NOT NULL
+               AND sent_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+             GROUP BY DATE(sent_at)
+            UNION ALL
+            SELECT DATE(updated_at) day, 0 total, 0 sent, COUNT(*) failed
+              FROM meta_qualified_queue
+             WHERE status='failed'
+               AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+             GROUP BY DATE(updated_at)
+           ) daily_events
+     GROUP BY day
+     ORDER BY day
+");
 $editDataset = [];
 if (isset($_GET['dataset'])) $editDataset = mql_row($pdo, "SELECT * FROM meta_qualified_datasets WHERE id=:id", ['id' => (int)$_GET['dataset']]);
 $editTrigger = [];
@@ -430,6 +452,6 @@ function mlTagInitPicker(root){
   renderBox();
   sync();
 }
-(()=>{document.querySelectorAll('.ml-help-btn').forEach(btn=>btn.addEventListener('click',()=>{const box=document.getElementById('ml-help-'+btn.dataset.help);if(box)box.classList.toggle('open')}));document.querySelectorAll('.ml-tag-picker').forEach(mlTagInitPicker);document.addEventListener('click',ev=>{if(!ev.target.closest('.ml-tag-picker'))document.querySelectorAll('.ml-tag-dropdown.open').forEach(el=>el.classList.remove('open'));});if(!window.Chart)return;const canvas=document.getElementById('mqlChart');if(!canvas)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';new Chart(canvas,{data:{labels:daily.map(x=>String(x.day).slice(5)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
+(()=>{document.querySelectorAll('.ml-help-btn').forEach(btn=>btn.addEventListener('click',()=>{const box=document.getElementById('ml-help-'+btn.dataset.help);if(box)box.classList.toggle('open')}));document.querySelectorAll('.ml-tag-picker').forEach(mlTagInitPicker);document.addEventListener('click',ev=>{if(!ev.target.closest('.ml-tag-picker'))document.querySelectorAll('.ml-tag-dropdown.open').forEach(el=>el.classList.remove('open'));});if(!window.Chart)return;const canvas=document.getElementById('mqlChart');if(!canvas)return;const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,ticks='#64748b';const fmtDate=value=>{const m=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1].slice(2)}`:String(value||'')};new Chart(canvas,{data:{labels:daily.map(x=>fmtDate(x.day)),datasets:[{type:'bar',label:'Total',data:daily.map(x=>+x.total||0),backgroundColor:'rgba(56,189,248,.35)'},{type:'line',label:'Enviados',data:daily.map(x=>+x.sent||0),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Falhas',data:daily.map(x=>+x.failed||0),borderColor:'#ef4444',backgroundColor:'#ef4444',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:ticks,boxWidth:10}}},scales:{x:{ticks:{color:ticks},grid:{display:false}},y:{beginAtZero:true,ticks:{color:ticks,precision:0},grid:{color:'rgba(255,255,255,.06)'}}}}});})();
 </script>
 <?php include __DIR__ . '/_footer.php'; ?>
