@@ -134,6 +134,12 @@ try {
     $utm_campaign = trim((string)($data[$mapUCamp] ?? ''));
     $utm_term     = trim((string)($data[$mapUTerm] ?? ''));
     $utm_content  = trim((string)($data[$mapUCont] ?? ''));
+    $meta_lead_id = preg_replace('/\D+/', '', (string)($data['meta_lead_id'] ?? $data['lead_id'] ?? $data['facebook_lead_id'] ?? '')) ?: '';
+    $fbclid       = trim((string)($data['fbclid'] ?? ''));
+    $fbc          = trim((string)($data['fbc'] ?? $data['_fbc'] ?? ''));
+    $fbp          = trim((string)($data['fbp'] ?? $data['_fbp'] ?? ''));
+    $clientIp     = trim((string)($data['client_ip_address'] ?? $data['ip_address'] ?? $_SERVER['REMOTE_ADDR'] ?? ''));
+    $clientUa     = trim((string)($data['client_user_agent'] ?? $data['user_agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? ''));
 
     if ($email === '' || $tel === '') {
         api_safe_log('warning', 'api_inscrever', 'Dados obrigatórios ausentes', [
@@ -147,6 +153,16 @@ try {
 
     $pdo = getPDO();
     enrollment_ensure_schema($pdo);
+    foreach ([
+        "ALTER TABLE users ADD COLUMN meta_lead_id VARCHAR(40) NULL",
+        "ALTER TABLE users ADD COLUMN fbclid VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN fbc VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN fbp VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN client_ip_address VARCHAR(64) NULL",
+        "ALTER TABLE users ADD COLUMN client_user_agent VARCHAR(500) NULL",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
 
     // Garante existência da tabela de histórico de inscrições
     try {
@@ -211,7 +227,13 @@ try {
                    utm_medium = :um,
                    utm_campaign = :uc,
                    utm_term = :ut,
-                   utm_content = :uco
+                   utm_content = :uco,
+                   meta_lead_id = COALESCE(NULLIF(:meta_lead_id, ''), meta_lead_id),
+                   fbclid = COALESCE(NULLIF(:fbclid, ''), fbclid),
+                   fbc = COALESCE(NULLIF(:fbc, ''), fbc),
+                   fbp = COALESCE(NULLIF(:fbp, ''), fbp),
+                   client_ip_address = COALESCE(NULLIF(:client_ip, ''), client_ip_address),
+                   client_user_agent = COALESCE(NULLIF(:client_ua, ''), client_user_agent)
              WHERE id = :id
         ");
         $upd->execute([
@@ -224,6 +246,12 @@ try {
             ':uc'  => $utm_campaign,
             ':ut'  => $utm_term,
             ':uco' => $utm_content,
+            ':meta_lead_id' => $meta_lead_id,
+            ':fbclid' => $fbclid,
+            ':fbc' => $fbc,
+            ':fbp' => $fbp,
+            ':client_ip' => $clientIp,
+            ':client_ua' => mb_substr($clientUa, 0, 500),
             ':id'  => (int)$user['id'],
         ]);
 
@@ -235,9 +263,11 @@ try {
         $ins = $pdo->prepare("
             INSERT INTO users
                 (nome, email, telefone, senha_hash, codigo_turma, data_live,
-                 utm_source, utm_medium, utm_campaign, utm_term, utm_content, created_at)
+                 utm_source, utm_medium, utm_campaign, utm_term, utm_content,
+                 meta_lead_id, fbclid, fbc, fbp, client_ip_address, client_user_agent, created_at)
             VALUES
-                (:n, :e, :t, :sh, :ct, :dl, :us, :um, :uc, :ut, :uco, NOW())
+                (:n, :e, :t, :sh, :ct, :dl, :us, :um, :uc, :ut, :uco,
+                 NULLIF(:meta_lead_id, ''), NULLIF(:fbclid, ''), NULLIF(:fbc, ''), NULLIF(:fbp, ''), NULLIF(:client_ip, ''), NULLIF(:client_ua, ''), NOW())
         ");
         $ins->execute([
             ':n'   => $nome !== '' ? $nome : $email,
@@ -251,6 +281,12 @@ try {
             ':uc'  => $utm_campaign,
             ':ut'  => $utm_term,
             ':uco' => $utm_content,
+            ':meta_lead_id' => $meta_lead_id,
+            ':fbclid' => $fbclid,
+            ':fbc' => $fbc,
+            ':fbp' => $fbp,
+            ':client_ip' => $clientIp,
+            ':client_ua' => mb_substr($clientUa, 0, 500),
         ]);
 
         $user_id = (int)$pdo->lastInsertId();

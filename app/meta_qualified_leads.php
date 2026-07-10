@@ -109,6 +109,27 @@ function mql_hash_phone(?string $phone): ?string {
     return strlen($digits) >= 10 ? mql_sha256($digits) : null;
 }
 
+function mql_hash_plain(?string $value): ?string {
+    $value = mb_strtolower(trim(preg_replace('/\s+/', ' ', (string)$value) ?? ''));
+    return $value !== '' ? mql_sha256($value) : null;
+}
+
+function mql_user_name_parts(?string $name): array {
+    $name = trim(preg_replace('/\s+/', ' ', (string)$name) ?? '');
+    if ($name === '') return ['', ''];
+    $parts = explode(' ', $name);
+    $first = array_shift($parts) ?: '';
+    $last = trim(implode(' ', $parts));
+    return [$first, $last];
+}
+
+function mql_first_present(array $row, array $keys): string {
+    foreach ($keys as $key) {
+        if (array_key_exists($key, $row) && trim((string)$row[$key]) !== '') return trim((string)$row[$key]);
+    }
+    return '';
+}
+
 function mql_user(PDO $pdo, int $userId): array {
     $st = $pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");
     $st->execute([':id' => $userId]);
@@ -243,9 +264,27 @@ function mql_user_matches_conditions(PDO $pdo, array $user, array $conditions, a
 function mql_build_payload(PDO $pdo, array $dataset, array $user): array {
     $emailHash = mql_hash_email($user['email'] ?? null);
     $phoneHash = mql_hash_phone($user['telefone'] ?? null);
-    $userData = ['lead_id' => (int)($user['id'] ?? 0), 'external_id' => [mql_sha256((string)((int)($user['id'] ?? 0)))]];
+    [$firstName, $lastName] = mql_user_name_parts($user['nome'] ?? '');
+    $userId = (int)($user['id'] ?? 0);
+    $metaLeadId = preg_replace('/\D+/', '', mql_first_present($user, ['meta_lead_id', 'lead_id', 'facebook_lead_id'])) ?: '';
+    $userData = ['external_id' => [mql_sha256((string)$userId)]];
+    if ($metaLeadId !== '') $userData['lead_id'] = (int)$metaLeadId;
     if ($emailHash) $userData['em'] = [$emailHash];
     if ($phoneHash) $userData['ph'] = [$phoneHash];
+    if ($firstHash = mql_hash_plain($firstName)) $userData['fn'] = [$firstHash];
+    if ($lastHash = mql_hash_plain($lastName)) $userData['ln'] = [$lastHash];
+
+    $ip = mql_first_present($user, ['client_ip_address', 'ip_address', 'ip']);
+    if ($ip !== '') $userData['client_ip_address'] = $ip;
+    $userAgent = mql_first_present($user, ['client_user_agent', 'user_agent']);
+    if ($userAgent !== '') $userData['client_user_agent'] = $userAgent;
+    $fbc = mql_first_present($user, ['fbc', '_fbc']);
+    if ($fbc === '' && trim((string)($user['fbclid'] ?? '')) !== '') {
+        $fbc = 'fb.1.' . time() . '.' . trim((string)$user['fbclid']);
+    }
+    if ($fbc !== '') $userData['fbc'] = $fbc;
+    $fbp = mql_first_present($user, ['fbp', '_fbp']);
+    if ($fbp !== '') $userData['fbp'] = $fbp;
 
     return [
         'data' => [[
@@ -381,7 +420,8 @@ function mql_http_post_json(string $url, array $payload, int $timeout = 20): arr
 function mql_process_queue(PDO $pdo, int $limit = 50): array {
     mql_ensure_schema($pdo);
     $rows = mql_rows($pdo, "
-        SELECT q.*, d.dataset_id meta_dataset_id, d.access_token, d.api_version, d.test_event_code, d.mode
+        SELECT q.*, d.dataset_id meta_dataset_id, d.access_token, d.api_version, d.event_name dataset_event_name,
+               d.lead_event_source, d.test_event_code, d.mode
           FROM meta_qualified_queue q
           JOIN meta_qualified_datasets d ON d.id=q.dataset_id
          WHERE q.status IN ('pending','retry')
@@ -395,6 +435,18 @@ function mql_process_queue(PDO $pdo, int $limit = 50): array {
         $queueId = (int)$row['id'];
         $stats['processed']++;
         $payload = mql_json($row['payload_json'] ?? null);
+        $user = mql_user($pdo, (int)$row['user_id']);
+        if ($user) {
+            $payload = mql_build_payload($pdo, [
+                'event_name' => (string)($row['dataset_event_name'] ?: $row['event_name'] ?: 'Lead'),
+                'lead_event_source' => (string)($row['lead_event_source'] ?: 'Area de Membros CRM'),
+            ], $user);
+            $pdo->prepare("UPDATE meta_qualified_queue SET payload_json=:payload WHERE id=:id")
+                ->execute([
+                    'payload' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'id' => $queueId,
+                ]);
+        }
         if ((string)($row['mode'] ?? '') === 'test' && trim((string)($row['test_event_code'] ?? '')) !== '') {
             $payload['test_event_code'] = trim((string)$row['test_event_code']);
         }

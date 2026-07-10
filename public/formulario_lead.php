@@ -167,12 +167,17 @@ try {
         'utm_campaign' => trim((string)($data['utm_campaign'] ?? '')),
         'utm_term' => trim((string)($data['utm_term'] ?? '')),
         'utm_content' => trim((string)($data['utm_content'] ?? '')),
+        'fbclid' => trim((string)($data['fbclid'] ?? '')),
+        'fbc' => trim((string)($data['fbc'] ?? $data['_fbc'] ?? $_COOKIE['_fbc'] ?? '')),
+        'fbp' => trim((string)($data['fbp'] ?? $data['_fbp'] ?? $_COOKIE['_fbp'] ?? '')),
+        'meta_lead_id' => trim((string)($data['meta_lead_id'] ?? $data['lead_id'] ?? $data['facebook_lead_id'] ?? '')),
     ];
 
     form_lead_log('info', 'Lead recebido do formulário', [
         'event_id' => $eventId,
         'source' => $source,
         'origin' => $origin,
+        'nome' => $nome,
         'email' => $email,
         'telefone' => $telefone,
         'gclid' => trim((string)($data['gclid'] ?? '')),
@@ -189,6 +194,9 @@ try {
         'event_id' => $eventId,
         'source' => $source,
         'user_id' => (int)($resultBody['user_id'] ?? 0),
+        'nome' => $nome,
+        'email' => $email,
+        'telefone' => $telefone,
         'cadastrado' => (bool)($resultBody['cadastrado'] ?? false),
         'codigo_turma' => $resultBody['codigo_turma'] ?? null,
     ]);
