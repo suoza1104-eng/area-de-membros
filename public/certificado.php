@@ -268,8 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdfUrl = null;
                 }
 
-                try { adicionar_tag($userId, 'CERT_EMITIDO', 'certificado'); } catch (Throwable $e) {}
                 $pdo->commit();
+
+                try { adicionar_tag($userId, 'CERT_EMITIDO', 'certificado'); } catch (Throwable $e) {}
 
                 if (!empty($certCfg['webhook_emitido_url'])) {
                     try {

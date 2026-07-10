@@ -95,8 +95,9 @@ function al_gerar_certificado_manual(PDO $pdo, int $userId): array {
         $upd->execute([':pdf_url' => $pdfUrl, ':id' => (int)$cert['id']]);
         $cert['pdf_url'] = $pdfUrl;
 
-        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin_manual'); } catch (Throwable $e) {}
         $pdo->commit();
+
+        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin_manual'); } catch (Throwable $e) {}
         return $cert;
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
