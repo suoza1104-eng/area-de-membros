@@ -201,6 +201,19 @@ $activeDevices = array_values(array_filter($devices, static fn($d) => ($d['statu
 $logs = $pdo->query("SELECT l.*,n.title,n.body,u.nome,u.email FROM push_delivery_logs l JOIN push_notifications n ON n.id=l.notification_id LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $pushDaily = $pdo->query("SELECT DATE(created_at) day,COUNT(*) total,SUM(status='accepted') accepted,SUM(status IN ('failed','uninstalled')) failed,SUM(clicked_at IS NOT NULL) clicked FROM push_delivery_logs WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 29 DAY) GROUP BY DATE(created_at) ORDER BY day")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $pushStatus = $pdo->query("SELECT status,COUNT(*) total FROM push_delivery_logs GROUP BY status ORDER BY total DESC")->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+$pushTurmaStats = [];
+try {
+    $pushTurmaStats = $pdo->query("SELECT COALESCE(NULLIF(TRIM(u.codigo_turma),''),'Sem turma') turma,
+            COUNT(DISTINCT CASE WHEN d.installed_at IS NOT NULL THEN d.user_id END) installed,
+            COUNT(DISTINCT CASE WHEN d.status='active' AND d.notification_permission='granted' AND d.token IS NOT NULL THEN d.user_id END) authorized,
+            COUNT(DISTINCT CASE WHEN d.status='uninstalled' OR d.uninstalled_at IS NOT NULL THEN d.user_id END) uninstalled
+        FROM push_devices d
+        JOIN users u ON u.id=d.user_id
+        GROUP BY COALESCE(NULLIF(TRIM(u.codigo_turma),''),'Sem turma')
+        HAVING installed>0 OR authorized>0 OR uninstalled>0
+        ORDER BY installed DESC, authorized DESC, turma ASC
+        LIMIT 40")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 $flowRuns = $pdo->query("SELECT e.id event_id,e.event_code,e.matched_flows,e.created_at event_at,
         r.id run_id,r.status run_status,r.last_error,f.name flow_name,u.nome,u.email,
         COUNT(DISTINCT j.id) job_count,
@@ -278,7 +291,8 @@ include __DIR__ . '/_header.php';
         <div class="pn-kpi"><small><?=pn_h($label)?></small><strong><?=number_format($kpi[$key])?></strong><span><?=pn_pct($kpi[$key],max(1,$kpi['total']))?> dos dispositivos registrados</span></div>
         <?php endforeach;?>
     </div>
-    <div class="pn-charts"><section class="pn-card"><h2>Evolução dos últimos 30 dias</h2><p>Aceites, falhas e cliques registrados por dia.</p><div class="pn-chart"><canvas id="pushEvolutionChart"></canvas></div></section><section class="pn-card"><h2>Distribuição das entregas</h2><p>Status técnicos retornados pelo Firebase.</p><div class="pn-chart"><canvas id="pushStatusChart"></canvas></div></section></div><?php endif;?>
+    <div class="pn-charts"><section class="pn-card"><h2>Evolução dos últimos 30 dias</h2><p>Aceites, falhas e cliques registrados por dia.</p><div class="pn-chart"><canvas id="pushEvolutionChart"></canvas></div></section><section class="pn-card"><h2>Distribuição das entregas</h2><p>Status técnicos retornados pelo Firebase.</p><div class="pn-chart"><canvas id="pushStatusChart"></canvas></div></section></div>
+    <section class="pn-card"><h2>Instalação do app por turma</h2><p>Pessoas únicas por turma que instalaram o app, ativaram as notificações e tiveram desinstalação detectada.</p><?php if($pushTurmaStats):?><div class="pn-chart pn-chart-turma" style="height:<?=max(300, min(760, 90 + count($pushTurmaStats) * 34))?>px"><canvas id="pushTurmaChart"></canvas></div><?php else:?><div class="text-muted">Nenhuma instalação do aplicativo registrada por turma.</div><?php endif;?></section><?php endif;?>
 
     <?php if($view==='flows'):?><section class="pn-card">
         <div class="pn-flow-head"><div><h2>Fluxos de automação</h2><p><?=$appSettings['flow_engine_enabled']?'Motor ativo: fluxos publicados recebem novos eventos e são processados pelo cron.':'Motor global pausado: ative-o nas configurações após revisar os fluxos publicados.'?></p></div><div class="pn-flow-actions"><a class="btn btn-ghost" href="push_campanhas.php">Campanhas Push</a><?php if($canWrite):?><form method="post"><input type="hidden" name="csrf" value="<?=pn_h($csrf)?>"><input type="hidden" name="action" value="flow_create"><button class="btn btn-primary" type="submit">+ Criar novo fluxo</button></form><?php endif;?></div></div>
@@ -422,8 +436,8 @@ include __DIR__ . '/_header.php';
 (function(){
     const currentView=<?=json_encode($view)?>;
     document.querySelectorAll('.pn-card>h2').forEach(function(h){const title=h.textContent.trim(),section=h.closest('.pn-card');if((title==='Dispositivos'&&currentView!=='devices')||(title==='Logs de envio'&&currentView!=='logs')||(title==='Rastreabilidade dos fluxos'&&currentView!=='flows'))section.style.display='none';});
-    const daily=<?=json_encode($pushDaily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,status=<?=json_encode($pushStatus,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
-    if(currentView==='overview'&&window.Chart){const line=document.getElementById('pushEvolutionChart'),pie=document.getElementById('pushStatusChart');if(line)new Chart(line,{type:'bar',data:{labels:daily.map(x=>x.day.split('-').reverse().slice(0,2).join('/')),datasets:[{label:'Aceitas',data:daily.map(x=>+x.accepted),backgroundColor:'#22c55e'},{label:'Falhas',data:daily.map(x=>+x.failed),backgroundColor:'#ef4444'},{label:'Cliques',data:daily.map(x=>+x.clicked),backgroundColor:'#facc15'}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:false,ticks:{color:'#64748b'}},y:{beginAtZero:true,ticks:{precision:0,color:'#64748b'}}},plugins:{legend:{labels:{color:'#94a3b8'}}}}});if(pie)new Chart(pie,{type:'doughnut',data:{labels:Object.keys(status),datasets:[{data:Object.values(status).map(Number),backgroundColor:['#22c55e','#facc15','#ef4444','#38bdf8','#a78bfa','#64748b']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#94a3b8'}}}}});}
+    const daily=<?=json_encode($pushDaily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,status=<?=json_encode($pushStatus,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>,turmaStats=<?=json_encode($pushTurmaStats,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
+    if(currentView==='overview'&&window.Chart){const line=document.getElementById('pushEvolutionChart'),pie=document.getElementById('pushStatusChart'),turma=document.getElementById('pushTurmaChart');if(line)new Chart(line,{type:'bar',data:{labels:daily.map(x=>x.day.split('-').reverse().slice(0,2).join('/')),datasets:[{label:'Aceitas',data:daily.map(x=>+x.accepted),backgroundColor:'#22c55e'},{label:'Falhas',data:daily.map(x=>+x.failed),backgroundColor:'#ef4444'},{label:'Cliques',data:daily.map(x=>+x.clicked),backgroundColor:'#facc15'}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:false,ticks:{color:'#64748b'}},y:{beginAtZero:true,ticks:{precision:0,color:'#64748b'}}},plugins:{legend:{labels:{color:'#94a3b8'}}}}});if(pie)new Chart(pie,{type:'doughnut',data:{labels:Object.keys(status),datasets:[{data:Object.values(status).map(Number),backgroundColor:['#22c55e','#facc15','#ef4444','#38bdf8','#a78bfa','#64748b']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#94a3b8'}}}}});if(turma)new Chart(turma,{type:'bar',data:{labels:turmaStats.map(x=>x.turma),datasets:[{label:'Instalaram o app',data:turmaStats.map(x=>+x.installed),backgroundColor:'#38bdf8'},{label:'Ativaram notificações',data:turmaStats.map(x=>+x.authorized),backgroundColor:'#22c55e'},{label:'Desinstalaram o app',data:turmaStats.map(x=>+x.uninstalled),backgroundColor:'#ef4444'}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,scales:{x:{beginAtZero:true,ticks:{precision:0,color:'#64748b'},grid:{color:'rgba(100,116,139,.18)'}},y:{ticks:{color:'#94a3b8'},grid:{display:false}}},plugins:{legend:{position:'bottom',labels:{color:'#94a3b8'}}}}});}
     document.querySelectorAll('.pn-flow-item').forEach(function(item){
         const toggle=item.querySelector('.pn-flow-toggle'),details=item.querySelector('.pn-flow-details');
         if(!toggle||!details)return;
