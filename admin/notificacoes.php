@@ -213,7 +213,7 @@ try {
             FROM push_devices d
             JOIN users u ON u.id=d.user_id
             GROUP BY COALESCE(NULLIF(TRIM(u.codigo_turma),''),'Sem turma')
-            HAVING installed>0 OR authorized>0 OR uninstalled>0
+            HAVING turma<>'Sem turma' AND (installed>0 OR authorized>0 OR uninstalled>0)
         ) ds
         LEFT JOIN (
             SELECT COALESCE(NULLIF(TRIM(codigo_turma),''),'Sem turma') turma, COUNT(*) total_enrolled
