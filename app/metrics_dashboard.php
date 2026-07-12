@@ -224,8 +224,43 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
             'cpl'=>(int)$r['leads']>0?$spend/(int)$r['leads']:0,
         ];
     }
-    $params=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59','model'=>($filters['model']??'last_touch')==='first_touch'?'first_touch':'last_touch'];
-    $rows=md_rows($pdo,"SELECT COALESCE(NULLIF(al.turma_codigo,''),'Sem turma') turma,COUNT(DISTINCT hs.transaction_code) sales,SUM(hs.gross_revenue) gross,SUM(hs.producer_net) producer FROM attribution_matches am JOIN attribution_sales axs ON axs.id=am.sale_id JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code JOIN attribution_leads al ON al.id=am.lead_id WHERE am.attribution_model=:model AND ".md_approved_sql('hs')." AND COALESCE(hs.transaction_date,hs.payment_confirmed_at) BETWEEN :start AND :end GROUP BY turma ORDER BY producer DESC LIMIT 30",$params);
+    $saleParams=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59'];
+    $saleExtra='';
+    if(!empty($filters['product'])){$saleExtra.=' AND s.product_name=:product';$saleParams['product']=$filters['product'];}
+    $sales=md_rows($pdo,"SELECT s.transaction_code,s.gross_revenue,s.producer_net,s.matched_user_id,s.buyer_email,s.buyer_phone_norm,COALESCE(s.transaction_date,s.payment_confirmed_at) sale_date FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$saleExtra}",$saleParams);
+    $userIds=[];$emails=[];$phones=[];
+    foreach($sales as $s){
+        $uid=(int)($s['matched_user_id']??0); if($uid>0)$userIds[$uid]=$uid;
+        $email=normalize_email_value($s['buyer_email']??''); if($uid<=0&&$email!=='')$emails[$email]=$email;
+        $phone=normalize_phone_value($s['buyer_phone_norm']??''); if($uid<=0&&$phone!=='')$phones[$phone]=$phone;
+    }
+    $emailToUsers=[];$phoneToUsers=[];
+    if($emails){$params=[];$in=[];$i=0;foreach($emails as $email){$k='e'.$i++;$in[]=':'.$k;$params[$k]=$email;}foreach(md_rows($pdo,"SELECT id,LOWER(TRIM(email)) email_norm FROM users WHERE LOWER(TRIM(email)) IN (".implode(',',$in).") ORDER BY id DESC",$params) as $u){$e=(string)$u['email_norm'];if($e!=='')$emailToUsers[$e][(int)$u['id']]=(int)$u['id'];}}
+    if($phones){$params=[];$in=[];$i=0;foreach($phones as $phone){$k='p'.$i++;$in[]=':'.$k;$params[$k]=$phone;}foreach(md_rows($pdo,"SELECT id,RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''),' ',''),'-',''),'(',''),')',''),'+',''),11) phone_norm FROM users WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''),' ',''),'-',''),'(',''),')',''),'+',''),11) IN (".implode(',',$in).") ORDER BY id DESC",$params) as $u){$p=(string)$u['phone_norm'];if($p!=='')$phoneToUsers[$p][(int)$u['id']]=(int)$u['id'];}}
+    foreach($sales as $s){$email=normalize_email_value($s['buyer_email']??'');$phone=normalize_phone_value($s['buyer_phone_norm']??'');$ids=[];$uid=(int)($s['matched_user_id']??0);if($uid>0)$ids[$uid]=$uid;foreach(($emailToUsers[$email]??[]) as $id)$ids[$id]=$id;foreach(($phoneToUsers[$phone]??[]) as $id)$ids[$id]=$id;foreach($ids as $id)$userIds[$id]=$id;}
+    $logsByUser=[];
+    if($userIds){$params=[];$in=[];$i=0;foreach($userIds as $uid){$k='u'.$i++;$in[]=':'.$k;$params[$k]=$uid;}foreach(md_rows($pdo,"SELECT user_id,codigo_turma,created_at FROM inscricao_logs WHERE user_id IN (".implode(',',$in).") AND codigo_turma IS NOT NULL AND codigo_turma<>'' ORDER BY user_id,created_at DESC",$params) as $log)$logsByUser[(int)$log['user_id']][]=$log;}
+    $rowsByTurma=[];
+    foreach($sales as $s){
+        $email=normalize_email_value($s['buyer_email']??'');$phone=normalize_phone_value($s['buyer_phone_norm']??'');$ids=[];$uid=(int)($s['matched_user_id']??0);if($uid>0)$ids[$uid]=$uid;foreach(($emailToUsers[$email]??[]) as $id)$ids[$id]=$id;foreach(($phoneToUsers[$phone]??[]) as $id)$ids[$id]=$id;
+        if(!$ids)continue;
+        $saleTurmas=[];
+        foreach($ids as $id)foreach(($logsByUser[$id]??[]) as $log){$tc=trim((string)($log['codigo_turma']??''));if($tc!==''&&($turma===''||$tc===$turma))$saleTurmas[$tc]=$tc;}
+        if(!$saleTurmas)continue;
+        $tx=(string)$s['transaction_code'];
+        foreach($saleTurmas as $saleTurma){
+            if(!isset($rowsByTurma[$saleTurma]))$rowsByTurma[$saleTurma]=['turma'=>$saleTurma,'sales'=>0,'gross'=>0.0,'producer'=>0.0,'transactions'=>[]];
+            if($tx!==''&&isset($rowsByTurma[$saleTurma]['transactions'][$tx]))continue;
+            if($tx!=='')$rowsByTurma[$saleTurma]['transactions'][$tx]=true;
+            $rowsByTurma[$saleTurma]['sales']++;
+            $rowsByTurma[$saleTurma]['gross']+=(float)$s['gross_revenue'];
+            $rowsByTurma[$saleTurma]['producer']+=(float)$s['producer_net'];
+        }
+    }
+    foreach($leadMap as $leadTurma=>$leadData)if($leadTurma!==''&&!isset($rowsByTurma[$leadTurma]))$rowsByTurma[$leadTurma]=['turma'=>$leadTurma,'sales'=>0,'gross'=>0.0,'producer'=>0.0,'transactions'=>[]];
+    $rows=array_values($rowsByTurma);
+    usort($rows,static function(array $a,array $b):int{$parse=static function(string $t):int{$dt=DateTimeImmutable::createFromFormat('dmy',$t);return $dt?$dt->getTimestamp():0;};return ($parse((string)$b['turma'])<=>$parse((string)$a['turma']))?:strcmp((string)$b['turma'],(string)$a['turma']);});
+    $rows=array_slice($rows,0,50);
     foreach($rows as &$r){
         $leadData=$leadMap[$r['turma']]??['leads'=>0,'entry_start'=>'','entry_end'=>'','traffic_cost'=>0,'cpl'=>0];
         $r['leads']=(int)$leadData['leads'];
