@@ -193,11 +193,11 @@ function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): ar
 function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
 {
     $useInscricaoLogs=metrics_table_exists($pdo,'inscricao_logs')&&trim((string)($filters['campaign']??''))===''&&trim((string)($filters['adset']??''))==='';
-    $turma=trim((string)($filters['turma']??''));
+    $filterTurma=trim((string)($filters['turma']??''));
     $leadParams=[];
     if($useInscricaoLogs){
         $leadWhere=["il.codigo_turma IS NOT NULL AND il.codigo_turma<>''"];
-        if($turma!==''){$leadWhere[]="il.codigo_turma=:turma";$leadParams['turma']=$turma;}
+        if($filterTurma!==''){$leadWhere[]="il.codigo_turma=:turma";$leadParams['turma']=$filterTurma;}
         $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(il.codigo_turma,''),'Sem turma') turma,COUNT(DISTINCT il.user_id) leads,DATE(MIN(il.created_at)) entry_start,DATE(MAX(il.created_at)) entry_end FROM inscricao_logs il WHERE ".implode(' AND ',$leadWhere)." GROUP BY turma",$leadParams);
         $dailyRows=md_rows($pdo,"SELECT DATE(il.created_at) entry_date,COALESCE(NULLIF(il.codigo_turma,''),'Sem turma') turma,COUNT(DISTINCT il.user_id) leads FROM inscricao_logs il WHERE ".implode(' AND ',$leadWhere)." GROUP BY DATE(il.created_at),turma",$leadParams);
     }else{
@@ -214,9 +214,9 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     foreach($dailyByTurma as $d=>$items){$daySpend=$spendByDate[$d]??0.0;$dayTotal=$dailyTotals[$d]??0;if($daySpend<=0||$dayTotal<=0)continue;foreach($items as $t=>$q)$spendByTurma[$t]=($spendByTurma[$t]??0)+($daySpend*((int)$q/$dayTotal));}
     $leadMap=[];
     foreach($leads as $r){
-        $turma=(string)$r['turma'];
-        $spend=(float)($spendByTurma[$turma]??0);
-        $leadMap[$turma]=[
+        $leadTurma=(string)$r['turma'];
+        $spend=(float)($spendByTurma[$leadTurma]??0);
+        $leadMap[$leadTurma]=[
             'leads'=>(int)$r['leads'],
             'entry_start'=>(string)($r['entry_start']??''),
             'entry_end'=>(string)($r['entry_end']??''),
@@ -227,7 +227,7 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     $saleParams=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59'];
     $saleExtra='';
     if(!empty($filters['product'])){$saleExtra.=' AND s.product_name=:product';$saleParams['product']=$filters['product'];}
-    $sales=md_rows($pdo,"SELECT s.transaction_code,s.gross_revenue,s.producer_net,s.matched_user_id,s.buyer_email,s.buyer_phone_norm,COALESCE(s.transaction_date,s.payment_confirmed_at) sale_date FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$saleExtra}",$saleParams);
+    $sales=md_rows($pdo,"SELECT s.transaction_code,s.gross_revenue,s.producer_net,s.matched_user_id,s.buyer_email,s.buyer_phone_norm,COALESCE(s.transaction_date,s.payment_confirmed_at) sale_date,COALESCE(NULLIF(u.codigo_turma,''),NULLIF(u.turma_codigo,'')) matched_turma FROM hotmart_sales_live s LEFT JOIN users u ON u.id=s.matched_user_id WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end{$saleExtra}",$saleParams);
     $userIds=[];$emails=[];$phones=[];
     foreach($sales as $s){
         $uid=(int)($s['matched_user_id']??0); if($uid>0)$userIds[$uid]=$uid;
@@ -242,10 +242,22 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     if($userIds){$params=[];$in=[];$i=0;foreach($userIds as $uid){$k='u'.$i++;$in[]=':'.$k;$params[$k]=$uid;}foreach(md_rows($pdo,"SELECT user_id,codigo_turma,created_at FROM inscricao_logs WHERE user_id IN (".implode(',',$in).") AND codigo_turma IS NOT NULL AND codigo_turma<>'' ORDER BY user_id,created_at DESC",$params) as $log)$logsByUser[(int)$log['user_id']][]=$log;}
     $rowsByTurma=[];
     foreach($sales as $s){
+        $matchedTurma=trim((string)($s['matched_turma']??''));
+        if($matchedTurma!==''&&($filterTurma===''||$matchedTurma===$filterTurma)){
+            $tx=(string)$s['transaction_code'];
+            if(!isset($rowsByTurma[$matchedTurma]))$rowsByTurma[$matchedTurma]=['turma'=>$matchedTurma,'sales'=>0,'gross'=>0.0,'producer'=>0.0,'transactions'=>[]];
+            if($tx===''||!isset($rowsByTurma[$matchedTurma]['transactions'][$tx])){
+                if($tx!=='')$rowsByTurma[$matchedTurma]['transactions'][$tx]=true;
+                $rowsByTurma[$matchedTurma]['sales']++;
+                $rowsByTurma[$matchedTurma]['gross']+=(float)$s['gross_revenue'];
+                $rowsByTurma[$matchedTurma]['producer']+=(float)$s['producer_net'];
+            }
+            continue;
+        }
         $email=normalize_email_value($s['buyer_email']??'');$phone=normalize_phone_value($s['buyer_phone_norm']??'');$ids=[];$uid=(int)($s['matched_user_id']??0);if($uid>0)$ids[$uid]=$uid;foreach(($emailToUsers[$email]??[]) as $id)$ids[$id]=$id;foreach(($phoneToUsers[$phone]??[]) as $id)$ids[$id]=$id;
         if(!$ids)continue;
         $saleTurmas=[];
-        foreach($ids as $id)foreach(($logsByUser[$id]??[]) as $log){$tc=trim((string)($log['codigo_turma']??''));if($tc!==''&&($turma===''||$tc===$turma))$saleTurmas[$tc]=$tc;}
+        foreach($ids as $id)foreach(($logsByUser[$id]??[]) as $log){$tc=trim((string)($log['codigo_turma']??''));if($tc!==''&&($filterTurma===''||$tc===$filterTurma))$saleTurmas[$tc]=$tc;}
         if(!$saleTurmas)continue;
         $tx=(string)$s['transaction_code'];
         foreach($saleTurmas as $saleTurma){
