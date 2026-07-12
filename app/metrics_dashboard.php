@@ -192,18 +192,30 @@ function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): ar
 
 function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
 {
+    $useInscricaoLogs=metrics_table_exists($pdo,'inscricao_logs')&&trim((string)($filters['campaign']??''))===''&&trim((string)($filters['adset']??''))==='';
+    $turma=trim((string)($filters['turma']??''));
     $leadParams=[];
-    $leadFilter=md_filter_sql($filters,'lead',$leadParams);
-    $leadFilter=$leadFilter!==''?' WHERE '.substr($leadFilter,5):'';
-    $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads,DATE(MIN(l.created_at)) entry_start,DATE(MAX(l.created_at)) entry_end FROM attribution_leads l{$leadFilter} GROUP BY turma",$leadParams);
+    if($useInscricaoLogs){
+        $leadWhere=["il.codigo_turma IS NOT NULL AND il.codigo_turma<>''"];
+        if($turma!==''){$leadWhere[]="il.codigo_turma=:turma";$leadParams['turma']=$turma;}
+        $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(il.codigo_turma,''),'Sem turma') turma,COUNT(DISTINCT il.user_id) leads,DATE(MIN(il.created_at)) entry_start,DATE(MAX(il.created_at)) entry_end FROM inscricao_logs il WHERE ".implode(' AND ',$leadWhere)." GROUP BY turma",$leadParams);
+        $dailyRows=md_rows($pdo,"SELECT DATE(il.created_at) entry_date,COALESCE(NULLIF(il.codigo_turma,''),'Sem turma') turma,COUNT(DISTINCT il.user_id) leads FROM inscricao_logs il WHERE ".implode(' AND ',$leadWhere)." GROUP BY DATE(il.created_at),turma",$leadParams);
+    }else{
+        $leadFilter=md_filter_sql($filters,'lead',$leadParams);
+        $leadFilter=$leadFilter!==''?' WHERE '.substr($leadFilter,5):'';
+        $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads,DATE(MIN(l.created_at)) entry_start,DATE(MAX(l.created_at)) entry_end FROM attribution_leads l{$leadFilter} GROUP BY turma",$leadParams);
+        $dailyRows=md_rows($pdo,"SELECT DATE(l.created_at) entry_date,COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads FROM attribution_leads l{$leadFilter} GROUP BY DATE(l.created_at),turma",$leadParams);
+    }
+    $dailyTotals=[];$dailyByTurma=[];
+    foreach($dailyRows as $r){$d=(string)$r['entry_date'];$t=(string)$r['turma'];$q=(int)$r['leads'];$dailyTotals[$d]=($dailyTotals[$d]??0)+$q;$dailyByTurma[$d][$t]=($dailyByTurma[$d][$t]??0)+$q;}
+    $spendByDate=[];
+    if($dailyTotals){$dates=array_keys($dailyTotals);$spendRows=md_rows($pdo,"SELECT report_date,SUM(spend) spend FROM meta_account_daily WHERE report_date BETWEEN :start AND :end GROUP BY report_date",['start'=>min($dates),'end'=>max($dates)]);foreach($spendRows as $r)$spendByDate[(string)$r['report_date']]=(float)$r['spend'];}
+    $spendByTurma=[];
+    foreach($dailyByTurma as $d=>$items){$daySpend=$spendByDate[$d]??0.0;$dayTotal=$dailyTotals[$d]??0;if($daySpend<=0||$dayTotal<=0)continue;foreach($items as $t=>$q)$spendByTurma[$t]=($spendByTurma[$t]??0)+($daySpend*((int)$q/$dayTotal));}
     $leadMap=[];
     foreach($leads as $r){
         $turma=(string)$r['turma'];
-        $spend=0.0;
-        if(!empty($r['entry_start'])&&!empty($r['entry_end'])){
-            $spendRow=md_row($pdo,"SELECT COALESCE(SUM(spend),0) spend FROM meta_account_daily WHERE report_date BETWEEN :entry_start AND :entry_end",['entry_start'=>$r['entry_start'],'entry_end'=>$r['entry_end']]);
-            $spend=(float)($spendRow['spend']??0);
-        }
+        $spend=(float)($spendByTurma[$turma]??0);
         $leadMap[$turma]=[
             'leads'=>(int)$r['leads'],
             'entry_start'=>(string)($r['entry_start']??''),
