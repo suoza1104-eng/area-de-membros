@@ -195,11 +195,35 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     $leadParams=[];
     $leadFilter=md_filter_sql($filters,'lead',$leadParams);
     $leadFilter=$leadFilter!==''?' WHERE '.substr($leadFilter,5):'';
-    $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads FROM attribution_leads l{$leadFilter} GROUP BY turma",$leadParams);
-    $leadMap=[]; foreach($leads as $r)$leadMap[$r['turma']]=(int)$r['leads'];
+    $leads=md_rows($pdo,"SELECT COALESCE(NULLIF(l.turma_codigo,''),'Sem turma') turma,COUNT(*) leads,DATE(MIN(l.created_at)) entry_start,DATE(MAX(l.created_at)) entry_end FROM attribution_leads l{$leadFilter} GROUP BY turma",$leadParams);
+    $leadMap=[];
+    foreach($leads as $r){
+        $turma=(string)$r['turma'];
+        $spend=0.0;
+        if(!empty($r['entry_start'])&&!empty($r['entry_end'])){
+            $spendRow=md_row($pdo,"SELECT COALESCE(SUM(spend),0) spend FROM meta_account_daily WHERE report_date BETWEEN :entry_start AND :entry_end",['entry_start'=>$r['entry_start'],'entry_end'=>$r['entry_end']]);
+            $spend=(float)($spendRow['spend']??0);
+        }
+        $leadMap[$turma]=[
+            'leads'=>(int)$r['leads'],
+            'entry_start'=>(string)($r['entry_start']??''),
+            'entry_end'=>(string)($r['entry_end']??''),
+            'traffic_cost'=>$spend,
+            'cpl'=>(int)$r['leads']>0?$spend/(int)$r['leads']:0,
+        ];
+    }
     $params=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59','model'=>($filters['model']??'last_touch')==='first_touch'?'first_touch':'last_touch'];
     $rows=md_rows($pdo,"SELECT COALESCE(NULLIF(al.turma_codigo,''),'Sem turma') turma,COUNT(DISTINCT hs.transaction_code) sales,SUM(hs.gross_revenue) gross,SUM(hs.producer_net) producer FROM attribution_matches am JOIN attribution_sales axs ON axs.id=am.sale_id JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code JOIN attribution_leads al ON al.id=am.lead_id WHERE am.attribution_model=:model AND ".md_approved_sql('hs')." AND COALESCE(hs.transaction_date,hs.payment_confirmed_at) BETWEEN :start AND :end GROUP BY turma ORDER BY producer DESC LIMIT 30",$params);
-    foreach($rows as &$r){$r['leads']=$leadMap[$r['turma']]??0;$r['conversion']=$r['leads']>0?(int)$r['sales']/(int)$r['leads']*100:0;} unset($r);
+    foreach($rows as &$r){
+        $leadData=$leadMap[$r['turma']]??['leads'=>0,'entry_start'=>'','entry_end'=>'','traffic_cost'=>0,'cpl'=>0];
+        $r['leads']=(int)$leadData['leads'];
+        $r['entry_start']=(string)$leadData['entry_start'];
+        $r['entry_end']=(string)$leadData['entry_end'];
+        $r['traffic_cost']=(float)$leadData['traffic_cost'];
+        $r['cpl']=(float)$leadData['cpl'];
+        $r['conversion']=$r['leads']>0?(int)$r['sales']/(int)$r['leads']*100:0;
+        $r['roas']=$r['traffic_cost']>0?(float)$r['producer']/$r['traffic_cost']:0;
+    } unset($r);
     return $rows;
 }
 

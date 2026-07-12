@@ -296,7 +296,7 @@ img { max-width: 100%; display: block; }
 #main-wrapper {
   margin-left: var(--sidebar-w);
   flex: 1; display: flex; flex-direction: column; min-height: 100vh;
-  overflow-x: hidden; min-width: 0;
+  overflow-x: clip; min-width: 0;
 }
 
 /* ===== TOPBAR ===== */
