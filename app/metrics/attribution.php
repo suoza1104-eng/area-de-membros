@@ -73,7 +73,7 @@ function safe_string($value, int $maxLen = 255) {
 }
 
 function sale_date_value($row) {
-    $value = $row['transaction_date'] ?? $row['payment_confirmed_at'] ?? null;
+    $value = $row['payment_confirmed_at'] ?? $row['transaction_date'] ?? null;
     if (!$value) {
         return date('Y-m-d H:i:s');
     }

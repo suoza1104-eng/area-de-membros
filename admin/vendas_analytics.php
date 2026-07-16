@@ -266,7 +266,9 @@ $salesParams = [
     'detail_model' => $filters['model'],
 ];
 $salesFilter = md_filter_sql($filters, 'sale', $salesParams);
-$salesWhere = ["COALESCE(s.transaction_date,s.payment_confirmed_at,s.imported_at) BETWEEN :sales_start AND :sales_end"];
+$salesDateExpr = md_sale_revenue_date_sql('s');
+$salesDateWithImportExpr = "COALESCE(s.payment_confirmed_at,s.transaction_date,s.imported_at)";
+$salesWhere = ["{$salesDateWithImportExpr} BETWEEN :sales_start AND :sales_end"];
 if ($salesStatus === 'approved') $salesWhere[] = md_approved_sql('s');
 if ($salesStatus === 'refunded') $salesWhere[] = md_refund_sql('s');
 if ($salesQuery !== '') {
@@ -303,7 +305,7 @@ $salesSql = "
            COALESCE(NULLIF(s.utm_content,''), NULLIF(u_detail.utm_content,'')) AS detail_utm_content
       {$salesFromSql}
      WHERE {$salesWhereSql}
-  ORDER BY COALESCE(s.transaction_date,s.payment_confirmed_at,s.imported_at) DESC, s.id DESC
+  ORDER BY {$salesDateWithImportExpr} DESC, s.id DESC
      LIMIT {$salesPerPage} OFFSET {$salesOffset}
 ";
 $salesStmt = $pdo->prepare($salesSql);
@@ -312,7 +314,7 @@ $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $unattributedParams=['model'=>$filters['model'],'start'=>$period['start'].' 00:00:00','end'=>$period['end'].' 23:59:59'];
 $unattributedProduct='';
 if($filters['product']!==''){$unattributedProduct=' AND s.product_name=:product';$unattributedParams['product']=$filters['product'];}
-$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND COALESCE(s.transaction_date,s.payment_confirmed_at) BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY COALESCE(s.transaction_date,s.payment_confirmed_at) DESC LIMIT 50",$unattributedParams);
+$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND {$salesDateExpr} BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY {$salesDateExpr} DESC LIMIT 50",$unattributedParams);
 $manualReturn=$_GET;unset($manualReturn['manual_ok'],$manualReturn['manual_err']);$manualReturnQuery=http_build_query($manualReturn);
 
 $metricCards = [
@@ -521,7 +523,7 @@ include __DIR__ . '/_header.php';
         <thead><tr><th>Data / transação</th><th>Comprador</th><th>Produto / pagamento</th><th>Valores</th><th>Status</th><th>Turma / jornada</th><th>UTMs</th><th>Atribuição</th></tr></thead>
         <tbody>
         <?php foreach ($salesRows as $sale): ?>
-          <?php $saleDate=(string)($sale['transaction_date'] ?: $sale['payment_confirmed_at'] ?: $sale['imported_at']); ?>
+          <?php $saleDate=(string)($sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: $sale['imported_at']); ?>
           <tr>
             <td><strong><?=va_h($saleDate ? date('d/m/Y H:i',strtotime($saleDate)) : '-')?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div><div class="subtext"><?=va_h((string)($sale['sales_channel'] ?: 'hotmart'))?></div></td>
             <td><strong><?=va_h((string)($sale['buyer_name'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)($sale['buyer_phone_raw'] ?: $sale['buyer_phone_norm']))?></div></td>
