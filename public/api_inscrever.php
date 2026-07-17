@@ -91,6 +91,8 @@ $user_id = 0;
 $foi_cadastrado = false;
 $codigo_turma = null;
 $data_live = null;
+$webhooksDisparados = false;
+$effectiveAccess = [];
 
 try {
     $raw = file_get_contents('php://input') ?: '';
@@ -343,7 +345,78 @@ try {
     }
 
     // COMMIT DO CADASTRO PRINCIPAL
-    $pdo->commit();
+    if ($pdo->inTransaction()) {
+        $pdo->commit();
+    } else {
+        api_safe_log('warning', 'api_inscrever', 'Transacao ja estava encerrada antes do commit', [
+            'user_id' => $user_id,
+            'email' => $email,
+        ]);
+    }
+
+    // Captura os eventos antes de responder ao hub. O envio continua assincrono
+    // pelo cron, mas o registro do evento nao depende do trabalho pos-resposta.
+    $qtdInscricoes     = 0;
+    $primeiraInscricao = null;
+    $dataInscAnterior  = null;
+    $turmaAnterior     = null;
+    try {
+        $qtdSt = $pdo->prepare("SELECT COUNT(*), MIN(created_at) FROM inscricao_logs WHERE user_id = :uid");
+        $qtdSt->execute([':uid' => $user_id]);
+        $row = $qtdSt->fetch(PDO::FETCH_NUM);
+        if ($row) {
+            $qtdInscricoes     = (int)$row[0];
+            $primeiraInscricao = $row[1] ?: null;
+        }
+        if ($qtdInscricoes > 1) {
+            $antSt = $pdo->prepare("
+                SELECT created_at, codigo_turma
+                FROM inscricao_logs
+                WHERE user_id = :uid
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            ");
+            $antSt->execute([':uid' => $user_id]);
+            $ant = $antSt->fetch(PDO::FETCH_ASSOC);
+            if ($ant) {
+                $dataInscAnterior = $ant['created_at'] ?: null;
+                $turmaAnterior    = $ant['codigo_turma'] ?: null;
+            }
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao enriquecer extras antes da resposta', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
+    $extras = [
+        'codigo_turma'             => $codigo_turma,
+        'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
+        'data_live'                => $data_live,
+        'qtd_inscricoes'           => $qtdInscricoes,
+        'primeira_inscricao'       => $primeiraInscricao,
+        'data_inscricao_anterior'  => $dataInscAnterior,
+        'turma_anterior'           => $turmaAnterior,
+        'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
+    ];
+    $effectiveAccess = course_access_status($pdo, $user_id);
+    $extras['tipo_inscricao'] = !empty($effectiveAccess['lifetime']) ? 'vitalicia' : 'gratuita';
+    $extras['tipo_inscricao_solicitada'] = 'gratuita';
+    $extras['acesso_vitalicio'] = !empty($effectiveAccess['lifetime']);
+    $extras['acesso_pago'] = !empty($effectiveAccess['is_paid']);
+    $extras['reinscricao_renovou_prazo'] = $renovouPrazo;
+    try {
+        if (function_exists('disparar_webhooks')) {
+            disparar_webhooks($foi_cadastrado ? 'INSCRITO' : 'REINSCRITO', $user_id, $extras);
+            if (empty($effectiveAccess['lifetime']) && $renovouPrazo) {
+                disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+            }
+            $webhooksDisparados = true;
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao capturar eventos antes da resposta', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
 
     // RESPONDE IMEDIATAMENTE PARA O HUB
     api_json_response_no_exit(200, [
@@ -442,7 +515,7 @@ try {
         ]);
 
         try {
-            if (function_exists('disparar_webhooks')) {
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) {
                 disparar_webhooks('INSCRITO', $user_id, $extras);
             }
         } catch (Throwable $e) {
@@ -483,7 +556,7 @@ try {
         ]);
 
         try {
-            if (function_exists('disparar_webhooks')) {
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) {
                 disparar_webhooks('REINSCRITO', $user_id, $extras);
             }
         } catch (Throwable $e) {
@@ -496,7 +569,7 @@ try {
     if (empty($effectiveAccess['lifetime']) && $renovouPrazo) {
         try {
             if (function_exists('adicionar_tag')) adicionar_tag($user_id, 'INSCRICAO_GRATUITA', 'inscricao', null);
-            if (function_exists('disparar_webhooks')) disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao disparar INSCRICAO_GRATUITA', [
                 'user_id' => $user_id, 'erro' => $e->getMessage(),

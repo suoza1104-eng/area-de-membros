@@ -3,6 +3,12 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/email_marketing.php';
 
+function email_flow_error_text(Throwable $e): string
+{
+    $message = $e->getMessage();
+    return function_exists('mb_substr') ? mb_substr($message, 0, 1000) : substr($message, 0, 1000);
+}
+
 function email_flow_engine_ensure_schema(PDO $pdo): void
 {
     email_marketing_ensure_schema($pdo);
@@ -284,11 +290,12 @@ function email_flow_process_job(PDO $pdo, array $job): string
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         $retry = (int)$job['attempts'] < (int)$job['max_attempts'];
+        $error = email_flow_error_text($e);
         $pdo->prepare("UPDATE email_flow_jobs SET status=:s,available_at=DATE_ADD(NOW(),INTERVAL 5 MINUTE),last_error=:e,lease_token=NULL,lease_until=NULL WHERE id=:id")
-            ->execute(['s' => $retry ? 'retry' : 'failed', 'e' => mb_substr($e->getMessage(), 0, 1000), 'id' => $job['id']]);
+            ->execute(['s' => $retry ? 'retry' : 'failed', 'e' => $error, 'id' => $job['id']]);
         if (!$retry) {
             $pdo->prepare("UPDATE email_flow_runs SET status='failed',last_error=:e,finished_at=NOW() WHERE id=:id")
-                ->execute(['e' => mb_substr($e->getMessage(), 0, 1000), 'id' => $job['run_id']]);
+                ->execute(['e' => $error, 'id' => $job['run_id']]);
         }
         return $retry ? 'retry' : 'failed';
     }
