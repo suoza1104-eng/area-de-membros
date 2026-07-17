@@ -70,6 +70,7 @@ echo email_admin_styles();
 .em-bars{display:grid;gap:7px}.em-bar-line{display:grid;grid-template-columns:78px minmax(120px,1fr) 44px;gap:8px;align-items:center;font-size:10px;color:var(--muted)}.em-bar-track{height:9px;border-radius:999px;background:#0f172a;overflow:hidden}.em-bar-fill{height:100%;border-radius:999px;min-width:2px}.em-bar-fill.zero{min-width:0}.em-bar-sent{background:#64748b}.em-bar-delivered{background:#22c55e}.em-bar-opened{background:#38bdf8}.em-bar-clicked{background:#facc15}.em-bar-bounced{background:#ef4444}
 .em-rate-cards{display:grid;grid-template-columns:repeat(4,minmax(74px,1fr));gap:8px}.em-rate-card{padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);min-height:62px}.em-rate-card small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.em-rate-card strong{display:block;margin-top:6px;font-size:18px}.em-rate-card.good strong{color:#86efac}.em-rate-card.info strong{color:#7dd3fc}.em-rate-card.warn strong{color:#fde68a}.em-rate-card.bad strong{color:#fca5a5}
 .em-sortable th[data-sort]{cursor:pointer;user-select:none}.em-sortable th[data-sort]::after{content:'↕';font-size:9px;margin-left:5px;color:#64748b}.em-sortable th.sorted-asc::after{content:'↑';color:var(--primary)}.em-sortable th.sorted-desc::after{content:'↓';color:var(--primary)}
+.em{display:flex;flex-direction:column;gap:16px}.em-dashboard-filters{order:2}.em>.em-card.em-ok,.em>.em-card.em-bad{order:3}.em>.em-grid{order:4}.em>.em-charts{order:5}.em>section.em-card:not(.em-dashboard-filters){order:6}
 @media(max-width:1100px){.em-template-row{grid-template-columns:1fr}.em-rate-cards{grid-template-columns:repeat(2,minmax(120px,1fr))}}@media(max-width:850px){.em-charts,.em-global-filters{grid-template-columns:1fr}}
 </style>
 <div class="em">
@@ -79,7 +80,7 @@ echo email_admin_styles();
 
   <div class="em-grid"><?php foreach([['sent','Aceitos pelo provedor'],['delivered','Entregues'],['opened','Aberturas únicas'],['clicked','Cliques únicos'],['bounced','Bounces'],['complaints','Reclamações'],['unsubscribed','Descadastros']] as [$k,$l]):?><div class="em-card em-kpi"><small><?=email_h($l)?></small><strong><?=number_format((int)($totals[$k]??0),0,',','.')?></strong><span class="text-muted"><?=in_array($k,['delivered','bounced'],true)?em_pct((int)($totals[$k]??0),(int)($totals['sent']??0)):em_pct((int)($totals[$k]??0),(int)($totals['delivered']??0))?></span></div><?php endforeach?><div class="em-card em-kpi"><small>Suprimidos ativos</small><strong><?=number_format($supp,0,',','.')?></strong><a href="email_contatos.php">Ver lista</a></div></div>
 
-  <section class="em-card">
+  <section class="em-card em-dashboard-filters">
     <h2>Filtros do dashboard</h2>
     <form method="get" class="em-global-filters">
       <label>Data inicial<input type="date" name="date_from" value="<?=email_h($filters['date_from'])?>"></label>
