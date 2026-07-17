@@ -10,6 +10,10 @@ function em_pct($a,$b):string{return $b>0?number_format(100*$a/$b,1,',','.').'%'
 function em_width($value,$max):string{return number_format(max(0,min(100,100*((int)$value)/max(1,(int)$max))),2,'.','').'%';}
 function em_fetch_all(PDO $pdo,string $sql,array $params=[]):array{$st=$pdo->prepare($sql);$st->execute($params);return$st->fetchAll(PDO::FETCH_ASSOC)?:[];}
 function em_fetch_one(PDO $pdo,string $sql,array $params=[]):array{$st=$pdo->prepare($sql);$st->execute($params);return$st->fetch(PDO::FETCH_ASSOC)?:[];}
+function em_table_exists(PDO $pdo,string $table):bool{if(!preg_match('/^[A-Za-z0-9_]+$/',$table))return false;try{$st=$pdo->prepare('SHOW TABLES LIKE :table');$st->execute(['table'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+function em_column_exists(PDO $pdo,string $table,string $column):bool{if(!preg_match('/^[A-Za-z0-9_]+$/',$table.$column))return false;try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :column");$st->execute(['column'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+function em_query_column(PDO $pdo,string $sql):array{try{return$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[];}catch(Throwable $e){return[];}}
+function em_query_assoc(PDO $pdo,string $sql):array{try{return$pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $e){return[];}}
 
 $filters=[
     'date_from'=>trim((string)($_GET['date_from']??date('Y-m-d',strtotime('-29 days')))),
@@ -24,15 +28,16 @@ $filters=[
 if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$filters['date_from']))$filters['date_from']=date('Y-m-d',strtotime('-29 days'));
 if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$filters['date_to']))$filters['date_to']=date('Y-m-d');
 if(!in_array($filters['metric'],['','delivered','opened','clicked','bounced'],true))$filters['metric']='';
+$hasTags=em_table_exists($pdo,'tags')&&em_table_exists($pdo,'user_tags')&&em_column_exists($pdo,'tags','nome');
 
 $from="email_messages m LEFT JOIN users u ON u.id=m.user_id LEFT JOIN email_template_versions v ON v.id=m.template_version_id LEFT JOIN email_templates t ON t.id=v.template_id";
 $where=['m.created_at>=:date_from','m.created_at<=:date_to'];
 $params=['date_from'=>$filters['date_from'].' 00:00:00','date_to'=>$filters['date_to'].' 23:59:59'];
 if($filters['turma']!==''){$where[]='u.codigo_turma=:turma';$params['turma']=$filters['turma'];}
-if($filters['tag']!==''){$where[]="EXISTS(SELECT 1 FROM user_tags ut JOIN tags tg ON tg.id=ut.tag_id WHERE ut.user_id=m.user_id AND tg.nome=:tag)";$params['tag']=$filters['tag'];}
+if($hasTags&&$filters['tag']!==''){$where[]="EXISTS(SELECT 1 FROM user_tags ut JOIN tags tg ON tg.id=ut.tag_id WHERE ut.user_id=m.user_id AND tg.nome=:tag)";$params['tag']=$filters['tag'];}
 if($filters['template_id']>0){$where[]='t.id=:template_id';$params['template_id']=$filters['template_id'];}
 if($filters['status']!==''){$where[]='m.status=:status';$params['status']=$filters['status'];}
-if($filters['q']!==''){$where[]='(u.nome LIKE :q OR m.recipient_email LIKE :q OR m.subject LIKE :q)';$params['q']='%'.$filters['q'].'%';}
+if($filters['q']!==''){$where[]='(u.nome LIKE :q_nome OR m.recipient_email LIKE :q_email OR m.subject LIKE :q_subject)';$params['q_nome']=$params['q_email']=$params['q_subject']='%'.$filters['q'].'%';}
 if($filters['metric']==='delivered')$where[]='m.delivered_at IS NOT NULL';
 if($filters['metric']==='opened')$where[]='m.first_opened_at IS NOT NULL';
 if($filters['metric']==='clicked')$where[]='m.first_clicked_at IS NOT NULL';
@@ -43,14 +48,14 @@ $totals=em_fetch_one($pdo,"SELECT COUNT(*) total,SUM(m.status IN ('sent','delive
 $supp=(int)$pdo->query('SELECT COUNT(DISTINCT email) FROM email_suppressions WHERE active=1')->fetchColumn();
 $recent=em_fetch_all($pdo,"SELECT m.*,u.nome,t.name template_name FROM $from WHERE $whereSql ORDER BY m.id DESC LIMIT 300",$params);
 $daily=em_fetch_all($pdo,"SELECT DATE(m.created_at) day,COUNT(*) sent,SUM(m.delivered_at IS NOT NULL) delivered,SUM(m.first_opened_at IS NOT NULL) opened,SUM(m.first_clicked_at IS NOT NULL) clicked,SUM(m.status='bounced') bounced FROM $from WHERE $whereSql GROUP BY DATE(m.created_at) ORDER BY day",$params);
-$templateRows=em_fetch_all($pdo,"SELECT t.id,t.name,t.subject,COUNT(m.id) sent,SUM(m.delivered_at IS NOT NULL) delivered,SUM(m.first_opened_at IS NOT NULL) opened,SUM(m.first_clicked_at IS NOT NULL) clicked,SUM(m.status='bounced') bounced FROM $from WHERE $whereSql AND t.id IS NOT NULL GROUP BY t.id,t.name,t.subject HAVING sent>0 ORDER BY (opened/NULLIF(sent,0)) DESC,sent DESC",$params);
+$templateRows=em_fetch_all($pdo,"SELECT t.id,t.name,t.subject,COUNT(m.id) sent,SUM(m.delivered_at IS NOT NULL) delivered,SUM(m.first_opened_at IS NOT NULL) opened,SUM(m.first_clicked_at IS NOT NULL) clicked,SUM(m.status='bounced') bounced FROM $from WHERE $whereSql AND t.id IS NOT NULL GROUP BY t.id,t.name,t.subject HAVING COUNT(m.id)>0 ORDER BY (SUM(m.first_opened_at IS NOT NULL)/NULLIF(COUNT(m.id),0)) DESC,COUNT(m.id) DESC",$params);
 $maxTemplateValue=1;
 foreach($templateRows as $r)foreach(['sent','delivered','opened','clicked','bounced'] as $k)$maxTemplateValue=max($maxTemplateValue,(int)($r[$k]??0));
 
-$turmas=$pdo->query("SELECT DISTINCT codigo_turma FROM users WHERE codigo_turma IS NOT NULL AND codigo_turma<>'' ORDER BY codigo_turma")->fetchAll(PDO::FETCH_COLUMN)?:[];
-$tags=$pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_COLUMN)?:[];
-$templates=$pdo->query("SELECT id,name FROM email_templates WHERE status<>'deleted' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC)?:[];
-$statuses=$pdo->query("SELECT DISTINCT status FROM email_messages WHERE status IS NOT NULL AND status<>'' ORDER BY status")->fetchAll(PDO::FETCH_COLUMN)?:[];
+$turmas=em_query_column($pdo,"SELECT DISTINCT codigo_turma FROM users WHERE codigo_turma IS NOT NULL AND codigo_turma<>'' ORDER BY codigo_turma");
+$tags=$hasTags?em_query_column($pdo,'SELECT nome FROM tags'.(em_column_exists($pdo,'tags','ativo')?' WHERE ativo=1':'').' ORDER BY nome'):[];
+$templates=em_query_assoc($pdo,"SELECT id,name FROM email_templates WHERE status<>'deleted' ORDER BY name");
+$statuses=em_query_column($pdo,"SELECT DISTINCT status FROM email_messages WHERE status IS NOT NULL AND status<>'' ORDER BY status");
 
 $menu='email_marketing';
 $page_title='E-mail marketing';
