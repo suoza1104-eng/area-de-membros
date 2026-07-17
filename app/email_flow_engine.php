@@ -9,6 +9,19 @@ function email_flow_error_text(Throwable $e): string
     return function_exists('mb_substr') ? mb_substr($message, 0, 1000) : substr($message, 0, 1000);
 }
 
+function email_flow_render_user(array $user, array $job): array
+{
+    $extra = json_decode((string)($job['payload_json'] ?? ''), true);
+    if (!is_array($extra)) $extra = [];
+    foreach ($extra as $key => $value) {
+        if (is_scalar($value) || $value === null) {
+            $user[$key] = $value;
+        }
+    }
+    $user['id'] = (int)($job['user_id'] ?? ($user['id'] ?? 0));
+    return $user;
+}
+
 function email_flow_engine_ensure_schema(PDO $pdo): void
 {
     email_marketing_ensure_schema($pdo);
@@ -177,7 +190,7 @@ function email_flow_send(PDO $pdo, array $settings, array $job, array $config, a
     $v = $st->fetch(PDO::FETCH_ASSOC);
     if (!$v) throw new RuntimeException('Modelo do bloco de e-mail nao encontrado.');
     if (email_is_suppressed($pdo, (string)$user['email'])) return ['skipped' => 'suppressed'];
-    $user['id'] = (int)$job['user_id'];
+    $user = email_flow_render_user($user, $job);
     $key = hash('sha256', 'flow|' . $job['run_id'] . '|' . $job['node_id'] . '|' . $job['user_id']);
     $messageId = email_send_rendered_message($pdo, $settings, ['flow_id' => (int)$job['flow_id'], 'flow_run_id' => (int)$job['run_id']], $user, $v, $key, ['flow_id' => (string)$job['flow_id'], 'flow_run_id' => (string)$job['run_id']]);
     return ['message_id' => $messageId];
@@ -217,7 +230,7 @@ function email_flow_send_ab_test(PDO $pdo, array $settings, array $job, array $c
     if (!$v) throw new RuntimeException('Modelo da variante A/B/n nao encontrado.');
     $variantId = (string)($variant['id'] ?? ('v' . (($variant['_index'] ?? 0) + 1)));
     if (email_is_suppressed($pdo, (string)$user['email'])) return ['skipped' => 'suppressed', 'variant_id' => $variantId, 'template_version_id' => $version];
-    $user['id'] = (int)$job['user_id'];
+    $user = email_flow_render_user($user, $job);
     $key = hash('sha256', 'flow_ab|' . $job['run_id'] . '|' . $job['node_id'] . '|' . $job['user_id'] . '|' . $variantId);
     $messageId = email_send_rendered_message(
         $pdo,

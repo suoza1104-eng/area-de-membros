@@ -119,7 +119,7 @@ echo email_admin_styles();
                 </div>
                 <h2 style="margin-top:20px">Variáveis</h2>
                 <div class="ee-variable">
-                    <?php foreach(['{{nome}}','{{email}}','{{turma}}','{{link_area_membros}}','{{link_descadastro}}','{{curso}}','{{data_aula}}'] as $var):?>
+                    <?php foreach(email_template_variables() as $var):?>
                         <button type="button" data-var="<?=email_h($var)?>"><?=email_h($var)?></button>
                     <?php endforeach?>
                 </div>
