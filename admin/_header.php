@@ -26,6 +26,9 @@ if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerm
 if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipePerms['inbound_webhooks'])) {
     $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
 }
+if ($__isEquipe && empty($__equipePerms['hotmart_import']) && !empty($__equipePerms['vendas_analytics'])) {
+    $__equipePerms['hotmart_import'] = $__equipePerms['vendas_analytics'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -40,7 +43,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
+foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
           'webhooks','integration_hub','meta_leads','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
@@ -55,6 +58,7 @@ $__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
+    'hotmart_import'   => 'Conciliar Hotmart',
     'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
@@ -635,7 +639,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -659,6 +663,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <line x1="6" y1="20" x2="6" y2="16"/>
       </svg>
       Vendas
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['hotmart_import']): ?>
+    <a href="import_vendas_hotmart.php" class="sb-item <?= $currentMenu === 'hotmart_import' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 3v12"/>
+        <path d="m7 10 5 5 5-5"/>
+        <path d="M5 21h14"/>
+      </svg>
+      Conciliar Hotmart
     </a>
     <?php endif; ?>
 

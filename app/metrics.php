@@ -55,6 +55,13 @@ if (!function_exists('normalize_account_id')) {
     }
 }
 
+if (!function_exists('mb_strtolower')) {
+    function mb_strtolower(string $string, ?string $encoding = null): string
+    {
+        return strtolower($string);
+    }
+}
+
 if (!function_exists('extract_action_value')) {
     function extract_action_value($actions, array $types): int
     {
