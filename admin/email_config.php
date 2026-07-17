@@ -74,7 +74,7 @@ $aws=email_aws_credentials();
 $resend=email_resend_credentials();
 $resendWebhook=email_resend_webhook_secret();
 $hasOpenAI=trim((string)get_setting('whatsapp_ai_openai_api_key',''))!=='';
-$sourceLabels=['environment'=>'Variáveis do servidor','private_file'=>'Cofre privado do painel','none'=>'Não configuradas'];
+$sourceLabels=['environment'=>'Variáveis do servidor','private_file'=>'Cofre privado do painel','database'=>'Banco de dados do painel','none'=>'Não configuradas'];
 $menu='email_marketing';
 $page_title='Configurações de e-mail';
 include __DIR__.'/_header.php';
@@ -157,7 +157,7 @@ echo email_admin_styles();
         <input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="test_connection"><input type="hidden" name="region" value="<?=email_h($s['region']??'sa-east-1')?>">
         <button class="btn btn-ghost" type="submit" <?=$aws['configured']?'':'disabled'?>>Testar SES</button>
       </form>
-      <?php if($aws['source']==='private_file'):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover as credenciais AWS salvas pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_credentials"><button class="btn btn-danger" type="submit">Remover credenciais AWS</button></form><?php endif?>
+      <?php if(in_array($aws['source'],['private_file','database'],true)):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover as credenciais AWS salvas pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_credentials"><button class="btn btn-danger" type="submit">Remover credenciais AWS</button></form><?php endif?>
       <?php if($connectionResult):?><div class="result" style="margin-top:10px"><div><small>Envio</small><strong><?=$connectionResult['sending_enabled']?'Habilitado':'Desabilitado'?></strong></div><div><small>Acesso</small><strong><?=$connectionResult['production_access']?'Produção':'Sandbox'?></strong></div><div><small>Status</small><strong><?=email_h($connectionResult['enforcement_status']?:'Normal')?></strong></div></div><?php endif?>
     </section>
 
@@ -174,7 +174,7 @@ echo email_admin_styles();
         <label>E-mail de teste<input type="email" name="resend_test_email" placeholder="voce@dominio.com"></label>
         <button class="btn btn-ghost" type="submit" <?=$resend['configured']?'':'disabled'?>>Enviar teste Resend</button>
       </form>
-      <?php if($resend['source']==='private_file'):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover a API key Resend salva pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_credentials"><button class="btn btn-danger" type="submit">Remover API key Resend</button></form><?php endif?>
+      <?php if(in_array($resend['source'],['private_file','database'],true)):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover a API key Resend salva pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_credentials"><button class="btn btn-danger" type="submit">Remover API key Resend</button></form><?php endif?>
       <?php if(!empty($s['resend_last_test_status'])):?><p class="text-muted" style="margin-top:10px">Último teste: <?=email_h($s['resend_last_test_status'])?> <?=email_h($s['resend_last_success_at']??'')?> <?=email_h($s['resend_last_error']??'')?></p><?php endif?>
       <form method="post" class="em-form" style="margin-top:14px">
         <input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="save_resend_webhook_secret">
@@ -182,7 +182,7 @@ echo email_admin_styles();
         <div class="secret-note">Use o Signing Secret do endpoint no painel Resend. O valor não é exibido no HTML nem salvo em logs.</div>
         <button class="btn btn-primary" type="submit">Salvar signing secret</button>
       </form>
-      <?php if($resendWebhook['source']==='private_file'):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover o signing secret Resend salvo pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_webhook_secret"><button class="btn btn-danger" type="submit">Remover signing secret</button></form><?php endif?>
+      <?php if(in_array($resendWebhook['source'],['private_file','database'],true)):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover o signing secret Resend salvo pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_webhook_secret"><button class="btn btn-danger" type="submit">Remover signing secret</button></form><?php endif?>
     </section>
   </div>
 </div>
