@@ -122,11 +122,19 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
 {
     $field = (string)($r['field'] ?? '');
     $op = (string)($r['operator'] ?? 'has');
-    $value = (string)($r['value'] ?? '');
+    $rawValue = $r['value'] ?? '';
+    $value = is_array($rawValue) ? '' : (string)$rawValue;
     $negative = in_array($op, ['not_has', 'not_equals'], true);
     $match = false;
     if ($field === 'tag') {
-        $match = email_flow_has_tag($pdo, $userId, $value);
+        $tags = is_array($rawValue) ? $rawValue : [$value];
+        $tags = array_values(array_filter(array_map(static fn($tag) => trim((string)$tag), $tags), static fn($tag) => $tag !== ''));
+        foreach ($tags as $tag) {
+            if (email_flow_has_tag($pdo, $userId, $tag)) {
+                $match = true;
+                break;
+            }
+        }
     } elseif ($field === 'turma') {
         $match = strcasecmp((string)($user['codigo_turma'] ?? ''), $value) === 0;
     } elseif ($field === 'email') {
