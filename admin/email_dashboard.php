@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);require_once __DIR__.'/../app/email_marketing.php';proteger_admin();$pdo=getPDO();email_marketing_ensure_schema($pdo);$s=email_settings($pdo);
-$totals=$pdo->query("SELECT COUNT(*) total,SUM(status IN ('sent','delivered')) sent,SUM(delivered_at IS NOT NULL) delivered,SUM(status='bounced') bounced,SUM(status='complaint') complaints,SUM(first_opened_at IS NOT NULL) opened,SUM(first_clicked_at IS NOT NULL) clicked,SUM(status='unsubscribed') unsubscribed FROM email_messages")->fetch(PDO::FETCH_ASSOC)?:[];
+$totals=$pdo->query("SELECT COUNT(*) total,SUM(status IN ('sent','delivered')) sent,SUM(delivered_at IS NOT NULL) delivered,SUM(status='bounced') bounced,SUM(status IN ('complaint','complained')) complaints,SUM(first_opened_at IS NOT NULL) opened,SUM(first_clicked_at IS NOT NULL) clicked,SUM(status IN ('unsubscribed','suppressed')) unsubscribed FROM email_messages")->fetch(PDO::FETCH_ASSOC)?:[];
 $supp=(int)$pdo->query('SELECT COUNT(DISTINCT email) FROM email_suppressions WHERE active=1')->fetchColumn();
 $recent=$pdo->query("SELECT m.*,u.nome FROM email_messages m LEFT JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC)?:[];
 $daily=$pdo->query("SELECT DATE(created_at) day,COUNT(*) sent,SUM(delivered_at IS NOT NULL) delivered,SUM(first_opened_at IS NOT NULL) opened,SUM(first_clicked_at IS NOT NULL) clicked,SUM(status='bounced') bounced FROM email_messages WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 29 DAY) GROUP BY DATE(created_at) ORDER BY day")->fetchAll(PDO::FETCH_ASSOC)?:[];

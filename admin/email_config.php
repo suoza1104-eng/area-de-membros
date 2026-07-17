@@ -28,6 +28,12 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         }elseif($action==='delete_resend_credentials'){
             email_delete_resend_credentials();
             $message='API key Resend local removida.';
+        }elseif($action==='save_resend_webhook_secret'){
+            email_save_resend_webhook_secret((string)($_POST['resend_webhook_secret']??''));
+            $message='Signing secret do webhook Resend salvo no cofre privado.';
+        }elseif($action==='delete_resend_webhook_secret'){
+            email_delete_resend_webhook_secret();
+            $message='Signing secret do webhook Resend removido.';
         }elseif($action==='test_resend_send'){
             $s=email_settings($pdo);
             $s['provider_active']='resend';
@@ -51,7 +57,6 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 'resend_from_name'=>$_POST['resend_from_name']??'',
                 'resend_from_email'=>$_POST['resend_from_email']??'',
                 'resend_reply_to'=>$_POST['resend_reply_to']??'',
-                'resend_webhook_secret'=>$_POST['resend_webhook_secret']??'',
                 'resend_rate_limit_per_minute'=>(string)max(1,(int)($_POST['resend_rate_limit_per_minute']??5)),
                 'resend_batch_size'=>(string)max(1,min(100,(int)($_POST['resend_batch_size']??25))),
                 'review_prompt'=>$_POST['review_prompt']??''
@@ -67,6 +72,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 $s=email_settings($pdo);
 $aws=email_aws_credentials();
 $resend=email_resend_credentials();
+$resendWebhook=email_resend_webhook_secret();
 $hasOpenAI=trim((string)get_setting('whatsapp_ai_openai_api_key',''))!=='';
 $sourceLabels=['environment'=>'Variáveis do servidor','private_file'=>'Cofre privado do painel','none'=>'Não configuradas'];
 $menu='email_marketing';
@@ -122,8 +128,9 @@ echo email_admin_styles();
         <label>Responder para<input type="email" name="resend_reply_to" value="<?=email_h($s['resend_reply_to']??'marketingemersonleite@gmail.com')?>"></label>
         <label>Limite por minuto<input type="number" min="1" name="resend_rate_limit_per_minute" value="<?=email_h($s['resend_rate_limit_per_minute']??'5')?>"></label>
         <label>Tamanho do lote<input type="number" min="1" max="100" name="resend_batch_size" value="<?=email_h($s['resend_batch_size']??'25')?>"></label>
-        <label>Segredo do webhook<input name="resend_webhook_secret" autocomplete="off" value="<?=email_h($s['resend_webhook_secret']??'')?>"></label>
         <p class="text-muted">Webhook Resend:</p><code class="code-line"><?=email_h(BASE_URL)?>/email_resend_webhook.php</code>
+        <p class="text-muted">Signing secret: <strong class="<?=$resendWebhook['configured']?'em-ok':'em-bad'?>"><?=$resendWebhook['configured']?'configurado':'não configurado'?></strong> <?=!empty($resendWebhook['masked'])?'('.email_h($resendWebhook['masked']).')':''?></p>
+        <p class="text-muted">Último webhook: <?=email_h($s['resend_last_webhook_at']??'-')?> <?=email_h($s['resend_last_webhook_event']??'')?> <?=!empty($s['resend_last_webhook_error'])?'Erro: '.email_h($s['resend_last_webhook_error']):''?></p>
       </section>
     </div>
 
@@ -169,6 +176,13 @@ echo email_admin_styles();
       </form>
       <?php if($resend['source']==='private_file'):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover a API key Resend salva pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_credentials"><button class="btn btn-danger" type="submit">Remover API key Resend</button></form><?php endif?>
       <?php if(!empty($s['resend_last_test_status'])):?><p class="text-muted" style="margin-top:10px">Último teste: <?=email_h($s['resend_last_test_status'])?> <?=email_h($s['resend_last_success_at']??'')?> <?=email_h($s['resend_last_error']??'')?></p><?php endif?>
+      <form method="post" class="em-form" style="margin-top:14px">
+        <input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="save_resend_webhook_secret">
+        <label>Signing secret do webhook<input type="password" name="resend_webhook_secret" autocomplete="new-password" placeholder="<?=$resendWebhook['configured']?'Configurado - informe para substituir':'whsec_...'?>"></label>
+        <div class="secret-note">Use o Signing Secret do endpoint no painel Resend. O valor não é exibido no HTML nem salvo em logs.</div>
+        <button class="btn btn-primary" type="submit">Salvar signing secret</button>
+      </form>
+      <?php if($resendWebhook['source']==='private_file'):?><form method="post" style="margin-top:10px" onsubmit="return confirm('Remover o signing secret Resend salvo pelo painel?')"><input type="hidden" name="csrf" value="<?=email_h($csrf)?>"><input type="hidden" name="action" value="delete_resend_webhook_secret"><button class="btn btn-danger" type="submit">Remover signing secret</button></form><?php endif?>
     </section>
   </div>
 </div>
