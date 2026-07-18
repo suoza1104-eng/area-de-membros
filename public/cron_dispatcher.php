@@ -62,6 +62,7 @@ try {
     // também solicitar fluxos_push diretamente.
     if ($taskKey === 'agendamentos_retorno') {
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
+        $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
         $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);
         $result['companion_meta_leads_qualificados'] = cron_manager_execute($pdo, 'meta_leads_qualificados', $source, false);
     }

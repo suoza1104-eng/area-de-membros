@@ -1,0 +1,181 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../app/automation_flows.php';
+proteger_admin();
+$pdo = getPDO();
+automation_flows_ensure_schema($pdo);
+email_marketing_ensure_schema($pdo);
+
+if (empty($_SESSION['automation_admin_csrf'])) $_SESSION['automation_admin_csrf'] = bin2hex(random_bytes(24));
+$csrf = (string)$_SESSION['automation_admin_csrf'];
+$error = '';
+$message = '';
+$canWrite = ($_SESSION['admin_tipo'] ?? 'principal') !== 'equipe';
+if (!$canWrite) {
+    $perms = json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [];
+    $canWrite = !empty($perms['automacoes']['escrever']);
+}
+function af_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+function af_check_csrf(string $csrf): void { if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) throw new RuntimeException('Sessao expirada. Recarregue a pagina.'); }
+
+$editId = max(0, (int)($_GET['id'] ?? $_POST['id'] ?? 0));
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        if (!$canWrite) throw new RuntimeException('Sem permissao de escrita.');
+        af_check_csrf($csrf);
+        $action = (string)($_POST['action'] ?? '');
+        if ($action === 'create') {
+            $id = automation_flow_create($pdo, trim((string)($_POST['name'] ?? '')) ?: 'Novo fluxo', (string)($_SESSION['equipe_nome'] ?? 'Administrador'));
+            header('Location: automacoes.php?id=' . $id);
+            exit;
+        }
+        if ($action === 'toggle') {
+            $id = (int)($_POST['id'] ?? 0);
+            $pdo->prepare("UPDATE automation_flows SET status=IF(status='active','paused','active') WHERE id=:id AND current_version_id IS NOT NULL AND status<>'deleted'")->execute(['id'=>$id]);
+            header('Location: automacoes.php?saved=1');
+            exit;
+        }
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            $pdo->prepare("UPDATE automation_flows SET status='deleted' WHERE id=:id")->execute(['id'=>$id]);
+            header('Location: automacoes.php?deleted=1');
+            exit;
+        }
+        if (in_array($action, ['save','publish'], true)) {
+            $flow = automation_flow_find($pdo, (int)$_POST['id']);
+            if (!$flow) throw new RuntimeException('Fluxo nao encontrado.');
+            $graph = automation_flow_decode_graph((string)($_POST['graph_json'] ?? ''));
+            $name = trim((string)($_POST['name'] ?? ''));
+            $description = trim((string)($_POST['description'] ?? ''));
+            $admin = (string)($_SESSION['equipe_nome'] ?? 'Administrador');
+            if ($action === 'publish') automation_flow_publish($pdo, (int)$flow['id'], $name, $description, $graph, (int)$_POST['lock_version'], $admin);
+            else automation_flow_save($pdo, (int)$flow['id'], $name, $description, $graph, (int)$_POST['lock_version'], $admin);
+            header('Location: automacoes.php?id=' . (int)$flow['id'] . '&saved=1');
+            exit;
+        }
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $error = $e->getMessage();
+    }
+}
+
+$view = $editId > 0 ? 'editor' : (string)($_GET['view'] ?? 'overview');
+$menu = 'automacoes';
+$page_title = 'Automações';
+
+$flow = $editId > 0 ? automation_flow_find($pdo, $editId) : null;
+if ($editId > 0 && !$flow) { http_response_code(404); exit('Fluxo nao encontrado.'); }
+
+$kpis = ['flows'=>0,'active'=>0,'runs'=>0,'completed'=>0,'failed'=>0,'queued'=>0];
+try {
+    $kpis['flows'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flows WHERE status<>'deleted'")->fetchColumn();
+    $kpis['active'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flows WHERE status='active'")->fetchColumn();
+    $kpis['runs'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flow_runs")->fetchColumn();
+    $kpis['completed'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flow_runs WHERE status='completed'")->fetchColumn();
+    $kpis['failed'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flow_runs WHERE status='failed'")->fetchColumn();
+    $kpis['queued'] = (int)$pdo->query("SELECT COUNT(*) FROM automation_flow_jobs WHERE status IN ('queued','retry','scheduled')")->fetchColumn();
+} catch (Throwable $e) {}
+
+$flows = $pdo->query("SELECT f.*,v.version_number,
+    (SELECT COUNT(*) FROM automation_flow_runs r WHERE r.flow_id=f.id) runs,
+    (SELECT COUNT(*) FROM automation_flow_runs r WHERE r.flow_id=f.id AND r.status='completed') completed,
+    (SELECT COUNT(*) FROM automation_flow_runs r WHERE r.flow_id=f.id AND r.status='failed') failed,
+    (SELECT COUNT(*) FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id WHERE r.flow_id=f.id AND j.status IN ('queued','retry','scheduled')) pending
+    FROM automation_flows f LEFT JOIN automation_flow_versions v ON v.id=f.current_version_id
+    WHERE f.status<>'deleted' ORDER BY f.updated_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$logs = $pdo->query("SELECT s.*,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
+    FROM automation_flow_steps s
+    JOIN automation_flow_runs r ON r.id=s.run_id
+    JOIN automation_flows f ON f.id=r.flow_id
+    LEFT JOIN users u ON u.id=r.user_id
+    ORDER BY s.id DESC LIMIT 300")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$eventsByDay = $pdo->query("SELECT DATE(created_at) d,COUNT(*) c FROM automation_flow_events WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$statusRows = $pdo->query("SELECT status,COUNT(*) c FROM automation_flow_runs GROUP BY status")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+$templates = $pdo->query("SELECT v.id,t.name,v.version_number,v.subject FROM email_templates t JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.status='active' ORDER BY t.name")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$triggers = automation_trigger_options() + [
+    'TAG_ADICIONADA'=>'Recebeu tag',
+    'TAG_REMOVIDA'=>'Perdeu tag',
+    'BOTAO_SUPORTE_CLICADO'=>'Clicou no suporte',
+    'AVANCO_CURSO'=>'Alcancou avanco no curso',
+];
+$turmas = $pdo->query("SELECT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' ORDER BY codigo")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+$tags = $pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+include __DIR__ . '/_header.php';
+?>
+<style>
+.af{display:grid;gap:14px}.af-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.af-head h1{font-size:22px}.af-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.af-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.af-nav a.active,.af-nav a:hover{background:var(--primary-dim);color:var(--primary)}.af-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px}.af-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.af-kpi small{color:var(--muted);font-size:10px;text-transform:uppercase}.af-kpi strong{display:block;font-size:26px}.af-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.af-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.af-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.af-table{overflow:auto}.af-table table{width:100%;border-collapse:collapse}.af-table th,.af-table td{padding:9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.af-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.af-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.af-form{display:flex;gap:8px;flex-wrap:wrap}.af-form input{min-width:260px;flex:1}
+.afe{display:flex;flex-direction:column;gap:12px}.afe-top{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.afe-id{display:grid;grid-template-columns:minmax(180px,320px) minmax(220px,1fr);gap:8px;flex:1}.afe-id input{width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}.afe-note{padding:9px 12px;border:1px solid #38bdf844;border-radius:9px;background:var(--info-dim);color:#bae6fd;font-size:11px}.afe-editor{height:calc(100vh - 190px);min-height:600px;display:grid;grid-template-columns:190px minmax(440px,1fr) 330px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#070d18}.afe-palette,.afe-inspector{overflow:auto;background:var(--bg-card);padding:14px}.afe-palette{border-right:1px solid var(--border)}.afe-inspector{border-left:1px solid var(--border)}.afe-title{font-size:12px;font-weight:800;margin-bottom:4px}.afe-copy{font-size:10px;color:var(--muted);margin-bottom:12px;line-height:1.45}.afe-list{display:grid;gap:8px}.afe-item{display:flex;gap:8px;align-items:center;width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;font-weight:700;text-align:left;cursor:grab}.afe-dot{width:9px;height:9px;border-radius:50%;background:var(--c)}.afe-canvas{position:relative;overflow:hidden;touch-action:none;background-color:#090f1b;background-image:radial-gradient(circle,#94a3b82e 1px,transparent 1px);background-size:22px 22px}.afe-view{position:absolute;width:3200px;height:2200px;transform-origin:0 0}.afe-edges,.afe-nodes{position:absolute;inset:0;width:3200px;height:2200px}.afe-edge{fill:none;stroke:#64748b;stroke-width:2}.afe-edge-hit{fill:none;stroke:transparent;stroke-width:16;cursor:pointer}.afe-edge-g:hover .afe-edge{stroke:#facc15;stroke-width:3}.afe-node{position:absolute;width:210px;min-height:92px;border:1px solid var(--c);border-radius:12px;background:#0d1526;box-shadow:0 10px 28px #0006;user-select:none}.afe-node.selected{box-shadow:0 0 0 3px #facc1544}.afe-node-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:move}.afe-node-body{padding:10px 12px;color:#94a3b8;font-size:10px}.afe-port{position:absolute;width:14px;height:14px;border:2px solid #e2e8f0;border-radius:50%;background:var(--c);cursor:crosshair;z-index:3}.afe-port.in{left:-8px;top:40px}.afe-port.out{right:-8px;bottom:12px}.afe-port.yes{bottom:34px;background:#22c55e}.afe-port.no{bottom:8px;background:#ef4444}.afe-port.pending{box-shadow:0 0 0 5px #facc1544}.afe-port-label{position:absolute;right:13px;font-size:8px;font-weight:800;color:#94a3b8}.afe-port-label.yes{bottom:35px}.afe-port-label.no{bottom:9px}.afe-tools{position:absolute;right:12px;bottom:12px;z-index:5;display:flex;gap:5px;padding:5px;border:1px solid var(--border);border-radius:10px;background:#080e1ae8}.afe-tools button{min-width:32px;height:30px;border-radius:7px;background:var(--bg-card);color:var(--text)}.afe-fields{display:grid;gap:11px}.afe-field label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase}.afe-field input,.afe-field select,.afe-field textarea{width:100%;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:11px}.afe-rule{padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg);display:grid;gap:6px}.afe-rule-head{display:flex;justify-content:space-between;gap:5px}.afe-rule-remove{background:transparent;color:#f87171}.afe-check{display:flex;gap:7px;font-size:10px}.afe-check input{width:auto}.afe-empty{padding:30px 5px;text-align:center;color:var(--muted);font-size:11px}@media(max-width:900px){.afe-top{flex-wrap:wrap}.afe-id{order:3;flex-basis:100%;grid-template-columns:1fr}.afe-editor{height:auto;grid-template-columns:1fr}.afe-canvas{height:620px}.afe-list{grid-template-columns:repeat(3,1fr)}}
+</style>
+<div class="af">
+  <div class="af-head"><div><h1>Automações</h1><p class="text-muted">Central única para fluxos com e-mail, push, tags, webhooks, SuperFuncionário e Manychat.</p></div></div>
+  <nav class="af-nav">
+    <a class="<?=$view==='overview'?'active':''?>" href="automacoes.php">Visão geral</a>
+    <a class="<?=$view==='logs'?'active':''?>" href="automacoes.php?view=logs">Logs detalhados</a>
+    <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
+  </nav>
+  <?php if($error): ?><div class="af-error"><?=af_h($error)?></div><?php endif; ?>
+  <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva.</div><?php endif; ?>
+  <?php if(isset($_GET['deleted'])): ?><div class="af-msg">Fluxo removido.</div><?php endif; ?>
+
+<?php if($flow):
+    $graph = json_decode((string)$flow['draft_graph_json'], true) ?: automation_flow_blank_graph();
+?>
+  <form method="post" id="afeForm" class="afe">
+    <input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="id" value="<?=(int)$flow['id']?>"><input type="hidden" name="lock_version" value="<?=(int)$flow['lock_version']?>"><input type="hidden" name="graph_json" id="afeGraph"><input type="hidden" name="action" id="afeAction" value="save">
+    <div class="afe-top"><a class="btn btn-ghost" href="automacoes.php">← Voltar</a><div class="afe-id"><input name="name" maxlength="180" value="<?=af_h($flow['name'])?>" required><input name="description" maxlength="500" value="<?=af_h($flow['description'] ?? '')?>" placeholder="Descrição opcional"></div><div class="af-actions"><button class="btn btn-ghost" type="submit" data-action="save" <?=$canWrite?'':'disabled'?>>Salvar rascunho</button><button class="btn btn-primary" type="submit" data-action="publish" <?=$canWrite?'':'disabled'?>>Publicar versão</button></div></div>
+    <div class="afe-note">Esta central não desmonta as automações antigas. Fluxos publicados aqui passam a receber eventos novos pela captura central.</div>
+    <div class="afe-editor">
+      <aside class="afe-palette"><div class="afe-title">Blocos</div><div class="afe-copy">Arraste para o canvas ou clique.</div><div class="afe-list" id="afePalette"></div></aside>
+      <main class="afe-canvas" id="afeCanvas"><div class="afe-view" id="afeView"><svg class="afe-edges" id="afeEdges"></svg><div class="afe-nodes" id="afeNodes"></div></div><div class="afe-tools"><button type="button" id="afeFit">◎</button><button type="button" id="afeOut">−</button><button type="button" id="afeZoom">100%</button><button type="button" id="afeIn">+</button></div></main>
+      <aside class="afe-inspector"><div class="afe-title">Configuração do bloco</div><div class="afe-copy">Selecione um bloco para editar.</div><div id="afeInspector"></div></aside>
+    </div>
+  </form>
+  <script>
+(()=>{const canWrite=<?= $canWrite ? 'true':'false' ?>,triggers=<?=json_encode($triggers,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,templates=<?=json_encode($templates,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,turmas=<?=json_encode($turmas,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,tags=<?=json_encode($tags,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>;let graph=<?=json_encode($graph,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_HEX_TAG)?>;if(!Array.isArray(graph.nodes)||!Array.isArray(graph.edges))graph={schemaVersion:3,nodes:[],edges:[],viewport:{x:80,y:60,zoom:1}};graph.schemaVersion=3;graph.nodes.forEach(n=>{n.config=n.config||{};if(n.type==='condition'&&!Array.isArray(n.config.rules))n.config.rules=[{field:n.config.field||'tag',operator:n.config.operator||'has',value:n.config.value||''}]});
+const types={trigger:{label:'Gatilho inicial',color:'#38bdf8'},condition:{label:'Condição',color:'#10b981'},wait:{label:'Temporizador',color:'#fb7185'},email:{label:'Enviar e-mail',color:'#facc15'},push:{label:'Enviar push',color:'#22d3ee'},action:{label:'Ação de tag',color:'#f59e0b'},integration:{label:'Integração',color:'#a78bfa'},end:{label:'Encerrar',color:'#64748b'}};
+const canvas=afeCanvas,viewEl=afeView,nodesEl=afeNodes,edgesEl=afeEdges,inspector=afeInspector;let view=Object.assign({x:80,y:60,zoom:1},graph.viewport||{}),selected=null,pending=null,drag=null,pan=null;const uid=p=>p+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7),esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));const opts=(obj,val='')=>Object.entries(obj).map(([k,v])=>`<option value="${esc(k)}" ${String(k)===String(val)?'selected':''}>${esc(v)}</option>`).join('');
+function defs(t){return {trigger:{label:'Início do fluxo',event:'INSCRITO',filter:'',advanceDuration:1,advanceUnit:'hours'},condition:{label:'Nova condição',logic:'and',rules:[{field:'tag',operator:'has',value:''}]},wait:{label:'Aguardar',duration:1,unit:'hours',limitWindow:false,windowStart:'08:00',windowEnd:'20:00'},email:{label:'Enviar e-mail',templateVersionId:0,templateLabel:''},push:{label:'Enviar push',title:'',body:'',clickUrl:'trilha.php'},action:{label:'Alterar tag',action:'add_tag',tag:''},integration:{label:'Enviar integração',provider:'webhook',target:'',payload:''},end:{label:'Encerrar fluxo'}}[t]||{}}
+function sum(n){const c=n.config||{};if(n.type==='trigger')return triggers[c.event]||c.event||'Evento';if(n.type==='condition')return `${(c.rules||[]).length} regra(s) · ${(c.logic||'and').toUpperCase()}`;if(n.type==='wait')return `${c.duration||1} ${{minutes:'minuto(s)',hours:'hora(s)',days:'dia(s)'}[c.unit]||''}`;if(n.type==='email')return c.templateLabel||'Selecione o modelo';if(n.type==='push')return c.title||'Configure a mensagem';if(n.type==='action')return `${c.action==='remove_tag'?'Remover':'Adicionar'} ${c.tag||'tag'}`;if(n.type==='integration')return `${c.provider||'integração'} ${c.target||''}`;return c.label||types[n.type].label}
+function apply(){view.zoom=Math.max(.35,Math.min(1.8,+view.zoom||1));viewEl.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.zoom})`;afeZoom.textContent=Math.round(view.zoom*100)+'%';graph.viewport={...view}}
+function render(){nodesEl.innerHTML='';graph.nodes.forEach(n=>{const m=types[n.type];if(!m)return;const e=document.createElement('div');e.className='afe-node'+(selected===n.id?' selected':'');e.style.cssText=`left:${+n.x||0}px;top:${+n.y||0}px;--c:${m.color}`;e.innerHTML=`${n.type!=='trigger'?'<span class="afe-port in" data-port="in"></span>':''}<div class="afe-node-head"><span class="afe-dot"></span><strong>${esc(n.config?.label||m.label)}</strong></div><div class="afe-node-body">${esc(sum(n))}</div>${n.type==='condition'?'<span class="afe-port-label yes">SIM</span><span class="afe-port out yes" data-port="out" data-handle="yes"></span><span class="afe-port-label no">NÃO</span><span class="afe-port out no" data-port="out" data-handle="no"></span>':n.type!=='end'?'<span class="afe-port out" data-port="out" data-handle="default"></span>':''}`;e.onclick=x=>{if(x.target.closest('.afe-port'))return;selected=n.id;render();inspect()};e.querySelector('.afe-node-head').onpointerdown=x=>{if(!canWrite)return;x.stopPropagation();drag={n,sx:x.clientX,sy:x.clientY,ox:+n.x||0,oy:+n.y||0};canvas.setPointerCapture(x.pointerId)};e.querySelectorAll('.afe-port').forEach(p=>p.onclick=x=>port(x,n,p));nodesEl.appendChild(e)});requestAnimationFrame(edges);apply()}
+function port(e,n,p){e.stopPropagation();if(!canWrite)return;if(p.dataset.port==='out'){pending={source:n.id,handle:p.dataset.handle||'default'};document.querySelectorAll('.afe-port.pending').forEach(x=>x.classList.remove('pending'));p.classList.add('pending');return}if(pending&&pending.source!==n.id){graph.edges=graph.edges.filter(x=>!(x.source===pending.source&&x.sourceHandle===pending.handle));graph.edges.push({id:uid('edge'),source:pending.source,target:n.id,sourceHandle:pending.handle});pending=null;render()}}
+function edges(){edgesEl.innerHTML='';graph.edges.forEach(x=>{const s=graph.nodes.find(n=>n.id===x.source),t=graph.nodes.find(n=>n.id===x.target);if(!s||!t)return;const x1=(+s.x||0)+210,y1=(+s.y||0)+(s.type==='condition'?(x.sourceHandle==='yes'?58:84):80),x2=+t.x||0,y2=(+t.y||0)+40,b=Math.max(55,Math.abs(x2-x1)*.45),d=`M ${x1} ${y1} C ${x1+b} ${y1},${x2-b} ${y2},${x2} ${y2}`;const g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','afe-edge-g');g.innerHTML=`<path class="afe-edge" d="${d}"/><path class="afe-edge-hit" d="${d}"/>`;g.querySelector('.afe-edge-hit').onclick=()=>{if(canWrite&&confirm('Excluir esta conexão?')){graph.edges=graph.edges.filter(e=>e.id!==x.id);render()}};edgesEl.appendChild(g)})}
+function add(t,x,y){if(!canWrite)return;if(t==='trigger'&&graph.nodes.some(n=>n.type==='trigger'))return alert('O fluxo aceita apenas um gatilho.');const n={id:uid(t),type:t,x,y,config:defs(t)};graph.nodes.push(n);selected=n.id;render();inspect()}
+function field(label,html){return `<div class="afe-field"><label>${label}</label>${html}</div>`}function bind(id,fn,event='input'){const e=document.getElementById(id);if(e)e.addEventListener(event,fn)}
+const ruleFields={tag:'Possui tag',turma:'Está na turma',email:'E-mail contém',marketing_eligible:'Elegível para marketing',email_opened:'Abriu e-mail específico',email_clicked:'Clicou e-mail específico',any_email_opened:'Abriu qualquer e-mail',any_email_clicked:'Clicou qualquer e-mail',engagement_count:'Engajamentos'};
+function templateOptions(value){return `<option value="">Selecione</option>${templates.map(t=>`<option value="${t.id}" ${String(value)===String(t.id)?'selected':''}>${esc(t.name)} · v${t.version_number} · ${esc(t.subject)}</option>`).join('')}`}
+function ruleHtml(r,i){let val='';if(r.field==='tag')val=`<select data-r="${i}" data-k="value" multiple size="7">${tags.map(x=>`<option ${Array.isArray(r.value)&&r.value.includes(x)?'selected':''}>${esc(x)}</option>`).join('')}</select><div class="afe-copy">Use Ctrl/Cmd ou Shift para selecionar várias tags.</div>`;else if(String(r.field||'').startsWith('email_'))val=`<select data-r="${i}" data-k="value">${templateOptions(r.value)}</select>`;else if(r.field!=='marketing_eligible')val=`<input data-r="${i}" data-k="value" value="${esc(r.value||'')}">`;return `<div class="afe-rule"><div class="afe-rule-head"><strong>Regra ${i+1}</strong><button type="button" class="afe-rule-remove" data-remove="${i}">Excluir</button></div><select data-r="${i}" data-k="field">${opts(ruleFields,r.field)}</select><select data-r="${i}" data-k="operator">${opts({has:'ocorreu / possui',not_has:'não ocorreu / não possui',equals:'é igual',not_equals:'é diferente',gte:'maior ou igual',lte:'menor ou igual'},r.operator)}</select>${val}</div>`}
+function inspect(){const n=graph.nodes.find(x=>x.id===selected);if(!n){inspector.innerHTML='<div class="afe-empty">Selecione um bloco no canvas.</div>';return}const c=n.config||(n.config={});let html=field('Rótulo',`<input id="iLabel" value="${esc(c.label||'')}">`);if(n.type==='trigger'){html+=field('Evento',`<select id="iEvent">${opts(triggers,c.event)}</select>`)+field('Filtro de turma',`<select id="iFilter"><option value="">Todas</option>${turmas.map(x=>`<option ${x===c.filter?'selected':''}>${esc(x)}</option>`).join('')}</select>`);if(c.event==='LIVE_LEMBRETE_AGENDADO')html+=field('Antecedência',`<input id="iAdvance" type="number" min="1" value="${c.advanceDuration||1}"><select id="iAdvanceUnit">${opts({minutes:'minutos',hours:'horas',days:'dias'},c.advanceUnit)}</select>`)}if(n.type==='condition'){c.rules=Array.isArray(c.rules)&&c.rules.length?c.rules:[{field:'tag',operator:'has',value:''}];html+=field('Combinação',`<select id="iLogic">${opts({and:'Todas as regras (E)',or:'Qualquer regra (OU)'},c.logic)}</select>`)+`<div id="rules">${c.rules.map(ruleHtml).join('')}</div><button type="button" class="btn btn-ghost btn-xs" id="addRule">+ Adicionar regra</button>`}if(n.type==='wait')html+=field('Duração',`<input id="iDuration" type="number" min="1" value="${c.duration||1}">`)+field('Unidade',`<select id="iUnit">${opts({minutes:'minutos',hours:'horas',days:'dias'},c.unit)}</select>`)+`<label class="afe-check"><input id="iWindow" type="checkbox" ${c.limitWindow?'checked':''}> Retomar só em faixa de horário</label>`+field('Faixa',`<input id="iStart" type="time" value="${c.windowStart||'08:00'}"><input id="iEnd" type="time" value="${c.windowEnd||'20:00'}">`);if(n.type==='email')html+=field('Modelo publicado',`<select id="iTemplate">${templateOptions(c.templateVersionId)}</select>`);if(n.type==='push')html+=field('Título',`<input id="iPushTitle" maxlength="150" value="${esc(c.title||'')}">`)+field('Mensagem',`<textarea id="iPushBody">${esc(c.body||'')}</textarea>`)+field('Link ao clicar',`<input id="iPushUrl" value="${esc(c.clickUrl||'trilha.php')}">`);if(n.type==='action')html+=field('Ação',`<select id="iTagAction">${opts({add_tag:'Adicionar tag',remove_tag:'Remover tag'},c.action)}</select>`)+field('Tag',`<select id="iTag"><option value="">Selecione</option>${tags.map(x=>`<option ${x===c.tag?'selected':''}>${esc(x)}</option>`).join('')}</select>`);if(n.type==='integration')html+=field('Canal',`<select id="iProvider">${opts({webhook:'Webhook',superfuncionario:'SuperFuncionário',manychat:'ManyChat'},c.provider)}</select>`)+field('Evento ou ID',`<input id="iTarget" value="${esc(c.target||'')}">`)+field('Payload JSON opcional',`<textarea id="iPayload">${esc(c.payload||'')}</textarea>`);if(n.type!=='trigger')html+='<button type="button" class="btn btn-danger btn-sm" id="removeNode">Excluir bloco</button>';inspector.innerHTML='<div class="afe-fields">'+html+'</div>';
+bind('iLabel',e=>{c.label=e.target.value;render()});bind('iEvent',e=>{c.event=e.target.value;render();inspect()},'change');bind('iFilter',e=>c.filter=e.target.value,'change');bind('iAdvance',e=>c.advanceDuration=+e.target.value);bind('iAdvanceUnit',e=>c.advanceUnit=e.target.value,'change');bind('iLogic',e=>c.logic=e.target.value,'change');bind('iDuration',e=>{c.duration=+e.target.value;render()});bind('iUnit',e=>{c.unit=e.target.value;render()},'change');bind('iWindow',e=>c.limitWindow=e.target.checked,'change');bind('iStart',e=>c.windowStart=e.target.value);bind('iEnd',e=>c.windowEnd=e.target.value);bind('iTemplate',e=>{c.templateVersionId=+e.target.value;c.templateLabel=e.target.options[e.target.selectedIndex].text;render()},'change');bind('iPushTitle',e=>{c.title=e.target.value;render()});bind('iPushBody',e=>c.body=e.target.value);bind('iPushUrl',e=>c.clickUrl=e.target.value);bind('iTagAction',e=>{c.action=e.target.value;render()},'change');bind('iTag',e=>{c.tag=e.target.value;render()},'change');bind('iProvider',e=>{c.provider=e.target.value;render()},'change');bind('iTarget',e=>{c.target=e.target.value;render()});bind('iPayload',e=>c.payload=e.target.value);document.querySelectorAll('[data-r]').forEach(e=>e.onchange=e.oninput=x=>{const i=+x.target.dataset.r,k=x.target.dataset.k;c.rules[i][k]=x.target.multiple?[...x.target.selectedOptions].map(o=>o.value).filter(Boolean):x.target.value;if(k==='field')inspect();render()});document.querySelectorAll('[data-remove]').forEach(e=>e.onclick=()=>{c.rules.splice(+e.dataset.remove,1);if(!c.rules.length)c.rules.push({field:'tag',operator:'has',value:''});inspect();render()});if(window.addRule)addRule.onclick=()=>{c.rules.push({field:'tag',operator:'has',value:''});inspect();render()};if(window.removeNode)removeNode.onclick=()=>{graph.nodes=graph.nodes.filter(x=>x.id!==n.id);graph.edges=graph.edges.filter(x=>x.source!==n.id&&x.target!==n.id);selected=null;render();inspect()}}
+Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button');b.type='button';b.className='afe-item';b.draggable=canWrite;b.style.setProperty('--c',m.color);b.innerHTML='<span class="afe-dot"></span>'+esc(m.label);b.onclick=()=>add(t,220+graph.nodes.length*22,120+graph.nodes.length*18);b.ondragstart=e=>e.dataTransfer.setData('application/x-af-node',t);afePalette.appendChild(b)});canvas.ondragover=e=>e.preventDefault();canvas.ondrop=e=>{e.preventDefault();const t=e.dataTransfer.getData('application/x-af-node'),r=canvas.getBoundingClientRect();if(t)add(t,(e.clientX-r.left-view.x)/view.zoom,(e.clientY-r.top-view.y)/view.zoom)};canvas.onpointermove=e=>{if(drag){drag.n.x=Math.max(0,drag.ox+(e.clientX-drag.sx)/view.zoom);drag.n.y=Math.max(0,drag.oy+(e.clientY-drag.sy)/view.zoom);render()}else if(pan){view.x=pan.ox+e.clientX-pan.x;view.y=pan.oy+e.clientY-pan.y;apply()}};canvas.onpointerup=()=>{drag=pan=null};canvas.onpointerdown=e=>{if(e.target===canvas)pan={x:e.clientX,y:e.clientY,ox:view.x,oy:view.y}};canvas.onwheel=e=>{e.preventDefault();view.zoom*=e.deltaY<0?1.1:.9;apply()};afeIn.onclick=()=>{view.zoom*=1.15;apply()};afeOut.onclick=()=>{view.zoom*=.85;apply()};afeZoom.onclick=()=>{view.zoom=1;apply()};afeFit.onclick=()=>{view={x:60,y:50,zoom:1};apply()};document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>afeAction.value=b.dataset.action);afeForm.onsubmit=()=>{graph.viewport={...view};afeGraph.value=JSON.stringify(graph)};render();inspect()})();
+  </script>
+<?php elseif($view === 'logs'): ?>
+  <section class="af-card"><div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="6">Nenhum log registrado.</td></tr><?php endif; ?></tbody></table></div></section>
+<?php else: ?>
+  <section class="af-grid">
+    <div class="af-card af-kpi"><small>Fluxos</small><strong><?=$kpis['flows']?></strong><span class="text-muted text-xs">total criado</span></div>
+    <div class="af-card af-kpi"><small>Ativos</small><strong><?=$kpis['active']?></strong><span class="text-muted text-xs">recebendo eventos</span></div>
+    <div class="af-card af-kpi"><small>Execuções</small><strong><?=$kpis['runs']?></strong><span class="text-muted text-xs">inícios</span></div>
+    <div class="af-card af-kpi"><small>Finalizadas</small><strong><?=$kpis['completed']?></strong><span class="text-muted text-xs">com sucesso</span></div>
+    <div class="af-card af-kpi"><small>Erros</small><strong><?=$kpis['failed']?></strong><span class="text-muted text-xs">execuções falhas</span></div>
+    <div class="af-card af-kpi"><small>Pendentes</small><strong><?=$kpis['queued']?></strong><span class="text-muted text-xs">fila/temporizador</span></div>
+  </section>
+  <section class="grid-2">
+    <div class="af-card"><div class="panel-title">Eventos capturados</div><canvas id="afEventsChart"></canvas></div>
+    <div class="af-card"><div class="panel-title">Status das execuções</div><canvas id="afStatusChart"></canvas></div>
+  </section>
+  <section class="af-card">
+    <form method="post" class="af-form"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar fluxo central</button></form>
+  </section>
+  <section class="af-card"><div class="af-table"><table><thead><tr><th>Fluxo</th><th>Status</th><th>Versão</th><th>Inícios</th><th>Finalizações</th><th>Erros</th><th>Pendentes</th><th>Atualização</th><th></th></tr></thead><tbody><?php foreach($flows as $f): ?><tr><td><strong><?=af_h($f['name'])?></strong><div class="text-muted"><?=af_h($f['description'] ?? '')?></div></td><td><span class="af-pill"><?=af_h($f['status'])?></span></td><td><?=$f['version_number']?'v'.(int)$f['version_number']:'-'?></td><td><?=(int)$f['runs']?></td><td><?=(int)$f['completed']?></td><td><?=(int)$f['failed']?></td><td><?=(int)$f['pending']?></td><td><?=af_h(date('d/m/Y H:i', strtotime((string)$f['updated_at'])))?></td><td class="af-actions"><a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a><?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?></td></tr><?php endforeach; ?><?php if(!$flows): ?><tr><td colspan="9">Nenhum fluxo central criado.</td></tr><?php endif; ?></tbody></table></div></section>
+  <script>
+  const evLabels=<?=json_encode(array_column($eventsByDay,'d'),JSON_UNESCAPED_UNICODE)?>,evData=<?=json_encode(array_map('intval',array_column($eventsByDay,'c')))?>,stRows=<?=json_encode($statusRows,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>;
+  if(window.Chart){new Chart(afEventsChart,{type:'line',data:{labels:evLabels,datasets:[{label:'Eventos',data:evData,borderColor:'#38bdf8',backgroundColor:'rgba(56,189,248,.15)',fill:true,tension:.35}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}}}}});new Chart(afStatusChart,{type:'doughnut',data:{labels:stRows.map(x=>x.status),datasets:[{data:stRows.map(x=>+x.c),backgroundColor:['#22c55e','#ef4444','#facc15','#38bdf8','#a78bfa']}]},options:{plugins:{legend:{labels:{color:'#cbd5e1'}}}}})}
+  </script>
+<?php endif; ?>
+</div>
+<?php include __DIR__ . '/_footer.php'; ?>

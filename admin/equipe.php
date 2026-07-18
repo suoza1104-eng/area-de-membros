@@ -57,6 +57,7 @@ $PAGINAS = [
     'whatsapp_ai'       => 'IA WhatsApp',
     'notificacoes'      => 'Notificações do App',
     'suporte_chat'      => 'Central de Suporte',
+    'automacoes'        => 'Automações',
     'email_marketing'   => 'E-mail Marketing',
     'monitor'          => 'Rastreamento',
     'cron_monitor'     => 'Monitor de Cron',

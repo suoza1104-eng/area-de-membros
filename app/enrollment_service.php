@@ -223,6 +223,7 @@ function enrollment_register(PDO $pdo, array $input): array
     $effectiveGrant = course_access_lifetime_entitlement($pdo, $userId);
     $effectiveLifetime = $effectiveGrant !== null;
     $effectivePaid = $effectiveGrant && (int)($effectiveGrant['is_paid'] ?? 0) === 1;
+    $eventId = 'enrollment:' . $source . ':' . $userId . ':' . bin2hex(random_bytes(8));
     $accessEvent = null;
     if ($accessType === 'lifetime') {
         $accessEvent = 'INSCRICAO_VITALICIA';
@@ -240,6 +241,7 @@ function enrollment_register(PDO $pdo, array $input): array
     $st->execute([':uid'=>$userId]);
     $history = $st->fetch(PDO::FETCH_ASSOC) ?: [];
     $extras = [
+        'event_id'=>$eventId,
         'codigo_turma'=>$codigoTurma,
         'codigo_live'=>$codigoLive !== '' ? $codigoLive : $codigoTurma,
         'data_live'=>$dataLive,
@@ -254,6 +256,14 @@ function enrollment_register(PDO $pdo, array $input): array
         'reinscricao_renovou_prazo'=>$renewedAccess,
         'origem'=>$source,
     ];
+    if (function_exists('capturar_fluxos_automacao')) {
+        try {
+            capturar_fluxos_automacao($isNew ? 'INSCRITO' : 'REINSCRITO', $userId, $extras);
+            if ($accessEvent !== null) capturar_fluxos_automacao($accessEvent, $userId, $extras);
+        } catch (Throwable $e) {
+            @error_log('enrollment_register capture: ' . $e->getMessage());
+        }
+    }
     return [
         'user_id'=>$userId, 'is_new'=>$isNew, 'event'=>$isNew ? 'INSCRITO' : 'REINSCRITO',
         'access_event'=>$accessEvent,

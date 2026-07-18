@@ -26,6 +26,15 @@ if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerm
 if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipePerms['inbound_webhooks'])) {
     $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
 }
+if ($__isEquipe && empty($__equipePerms['automacoes'])) {
+    foreach (['email_marketing', 'notificacoes', 'webhooks', 'manychat', 'superfuncionario'] as $__autoPermKey) {
+        if (!empty($__equipePerms[$__autoPermKey])) {
+            $__equipePerms['automacoes'] = $__equipePerms[$__autoPermKey];
+            break;
+        }
+    }
+    unset($__autoPermKey);
+}
 if ($__isEquipe && empty($__equipePerms['hotmart_import']) && !empty($__equipePerms['vendas_analytics'])) {
     $__equipePerms['hotmart_import'] = $__equipePerms['vendas_analytics'];
 }
@@ -44,7 +53,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -76,6 +85,7 @@ $titleMap = [
     'whatsapp_monitor' => 'WhatsApp Monitor',
     'whatsapp_ai'      => 'IA WhatsApp',
     'suporte_chat'     => 'Central de Suporte',
+    'automacoes'       => 'Automações',
     'notificacoes'     => 'Notificações do App',
     'email_marketing'  => 'E-mail Marketing',
     'monitor'          => 'Rastreamento',
@@ -880,7 +890,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['suporte_chat'] || $__sbV['notificacoes'] || $__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
+    <?php if ($__sbV['suporte_chat'] || $__sbV['automacoes'] || $__sbV['notificacoes'] || $__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
     <?php endif; ?>
 
@@ -890,6 +900,16 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/><path d="M8 9h8M8 13h5"/>
       </svg>
       Central de Suporte
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['automacoes']): ?>
+    <a href="automacoes.php" class="sb-item <?= $currentMenu === 'automacoes' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 6h5v5H4zM15 3h5v5h-5zM15 16h5v5h-5z"/>
+        <path d="M9 8h2a4 4 0 014 4v1M15 18h-2a4 4 0 01-4-4v-1"/>
+      </svg>
+      Automações
     </a>
     <?php endif; ?>
 

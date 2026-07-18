@@ -191,6 +191,9 @@ function iw_disparar_integracoes(PDO $pdo, array $ihw, string $evento, int $user
 
     $extra['origem'] = $extra['origem'] ?? 'inbound_webhook';
     $extra['inbound_id'] = $extra['inbound_id'] ?? (int)($ihw['id'] ?? 0);
+    if (function_exists('capturar_fluxos_automacao')) {
+        try { capturar_fluxos_automacao($evento, $userId, $extra); } catch (Throwable $e) {}
+    }
     $ok = false;
     if ((int)($ihw['disparar_webhook'] ?? 1) === 1 && function_exists('disparar_evento_webhooks')) {
         try { disparar_evento_webhooks($pdo, $evento, $user, $extra); $ok = true; } catch (Throwable $e) {}

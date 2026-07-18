@@ -353,9 +353,7 @@ function definir_tag_estado_reagendamento(int $user_id, string $estado, string $
  * $user_id - id do usuário (opcional)
  * $extra   - dados extras específicos do evento
  */
-function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = []): void {
-    // Captura o evento rapidamente para o motor assíncrono. O processamento
-    // dos blocos ocorre pelo cron e nunca durante a requisição do aluno.
+function capturar_fluxos_automacao(string $evento, ?int $user_id = null, array $extra = []): void {
     if ($user_id !== null && $user_id > 0) {
         try {
             require_once __DIR__ . '/push_flow_engine.php';
@@ -369,7 +367,19 @@ function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = 
         } catch (Throwable $e) {
             @error_log('email_flow_capture_event: ' . $e->getMessage());
         }
+        try {
+            require_once __DIR__ . '/automation_flows.php';
+            automation_flow_capture_event(getPDO(), $evento, $user_id, $extra);
+        } catch (Throwable $e) {
+            @error_log('automation_flow_capture_event: ' . $e->getMessage());
+        }
     }
+}
+
+function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = []): void {
+    // Captura o evento rapidamente para o motor assíncrono. O processamento
+    // dos blocos ocorre pelo cron e nunca durante a requisição do aluno.
+    capturar_fluxos_automacao($evento, $user_id, $extra);
 
     // Em requisições web, adia o envio para DEPOIS de entregar a resposta ao
     // usuário. Assim o aluno nunca espera a resposta de APIs externas

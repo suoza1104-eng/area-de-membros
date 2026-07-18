@@ -47,6 +47,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 120,
         ],
+        'automacoes' => [
+            'label' => 'Automacoes centralizadas',
+            'description' => 'Processa etapas vencidas dos fluxos unificados de email, push e integracoes.',
+            'script' => __DIR__ . '/../cron/processar_automacoes.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
         'email_marketing' => [
             'label' => 'E-mail marketing',
             'description' => 'Processa campanhas e etapas de e-mail vencidas pelo Amazon SES.',

@@ -495,6 +495,12 @@ function automation_live_reminder_flows(PDO $pdo): array
         $rows = $pdo->query("SELECT 'email' flow_kind,f.id flow_id,f.current_version_id version_id,v.graph_json FROM email_flows f JOIN email_flow_versions v ON v.id=f.current_version_id WHERE f.status='active' AND f.current_version_id IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC) ?: [];
         foreach ($rows as $row) $flows[] = $row;
     } catch (Throwable $e) {}
+    try {
+        require_once __DIR__ . '/automation_flows.php';
+        automation_flows_ensure_schema($pdo);
+        $rows = $pdo->query("SELECT 'automation' flow_kind,f.id flow_id,f.current_version_id version_id,v.graph_json FROM automation_flows f JOIN automation_flow_versions v ON v.id=f.current_version_id WHERE f.status='active' AND f.current_version_id IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($rows as $row) $flows[] = $row;
+    } catch (Throwable $e) {}
     return $flows;
 }
 
@@ -556,10 +562,10 @@ function push_flow_enqueue_live_reminders(PDO $pdo, int $studentBatch = 500, int
     $created = push_flow_prepare_live_batches($pdo);
     $pdo->exec("UPDATE automation_live_reminder_batches SET status='expired',completed_at=NOW() WHERE status='pending' AND live_at<=NOW()");
     $limit = max(1, min(20, $maxBatches));
-    $st = $pdo->prepare("SELECT b.* FROM automation_live_reminder_batches b WHERE b.status='pending' AND b.reminder_at<=NOW() AND b.live_at>NOW() AND ((b.flow_kind='push' AND EXISTS(SELECT 1 FROM push_flows f WHERE f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id)) OR (b.flow_kind='email' AND EXISTS(SELECT 1 FROM email_flows f WHERE f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id))) ORDER BY b.reminder_at,b.id LIMIT {$limit}");
+    $st = $pdo->prepare("SELECT b.* FROM automation_live_reminder_batches b WHERE b.status='pending' AND b.reminder_at<=NOW() AND b.live_at>NOW() AND ((b.flow_kind='push' AND EXISTS(SELECT 1 FROM push_flows f WHERE f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id)) OR (b.flow_kind='email' AND EXISTS(SELECT 1 FROM email_flows f WHERE f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id)) OR (b.flow_kind='automation' AND EXISTS(SELECT 1 FROM automation_flows f WHERE f.id=b.flow_id AND f.status='active' AND f.current_version_id=b.version_id))) ORDER BY b.reminder_at,b.id LIMIT {$limit}");
     $st->execute();
     $batches = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    $stats = ['created_batches' => $created, 'processed_batches' => 0, 'candidates' => 0, 'enqueued' => 0, 'push_enqueued' => 0, 'email_enqueued' => 0];
+    $stats = ['created_batches' => $created, 'processed_batches' => 0, 'candidates' => 0, 'enqueued' => 0, 'push_enqueued' => 0, 'email_enqueued' => 0, 'automation_enqueued' => 0];
     $liveColumn = push_flow_live_column($pdo);
     foreach ($batches as $batch) {
         $codigoLive = '';
@@ -612,6 +618,9 @@ function push_flow_enqueue_live_reminders(PDO $pdo, int $studentBatch = 500, int
                 if ((string)$batch['flow_kind'] === 'email') {
                     require_once __DIR__ . '/email_flow_engine.php';
                     $matched = email_flow_capture_event($pdo, 'LIVE_LEMBRETE_AGENDADO', $userId, $extra);
+                } elseif ((string)$batch['flow_kind'] === 'automation') {
+                    require_once __DIR__ . '/automation_flows.php';
+                    $matched = automation_flow_capture_event($pdo, 'LIVE_LEMBRETE_AGENDADO', $userId, $extra);
                 } else {
                     $matched = push_flow_capture_event($pdo, 'LIVE_LEMBRETE_AGENDADO', $userId, $extra);
                 }
