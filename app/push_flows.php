@@ -127,7 +127,7 @@ function push_flow_validate_graph(array $graph, bool $forPublish = false): array
         $type = $node['type'];
         if ($type === 'trigger' && trim((string)($config['event'] ?? '')) === '') $errors[] = 'Configure o evento do gatilho.';
         if ($type === 'trigger' && ($config['event'] ?? '') === 'LIVE_LEMBRETE_AGENDADO') {
-            if (trim((string)($config['filter'] ?? '')) === '' || mb_strlen((string)($config['filter'] ?? '')) > 100) $errors[] = 'Selecione a turma do lembrete de live.';
+            if (mb_strlen((string)($config['filter'] ?? '')) > 100) $errors[] = 'Selecione uma turma valida ou deixe em branco para todas as turmas.';
             if ((int)($config['advanceDuration'] ?? 0) < 1 || (int)($config['advanceDuration'] ?? 0) > 525600 || !in_array(($config['advanceUnit'] ?? ''), ['minutes','hours','days'], true)) $errors[] = 'Configure uma antecedência válida para o lembrete de live.';
         }
         if ($type === 'condition') {

@@ -30,10 +30,14 @@ function email_flow_engine_ensure_schema(PDO $pdo): void
     $pdo->exec("CREATE TABLE IF NOT EXISTS email_flow_jobs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,run_id BIGINT UNSIGNED NOT NULL,node_id VARCHAR(80) NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'queued',available_at DATETIME NOT NULL,attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 3,lease_token VARCHAR(64) NULL,lease_until DATETIME NULL,input_json LONGTEXT NULL,output_json LONGTEXT NULL,last_error VARCHAR(1000) NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uk_email_flow_job(run_id,node_id),KEY idx_email_flow_job_due(status,available_at),KEY idx_email_flow_job_lease(lease_until)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 
-function email_flow_trigger_matches(array $node, array $user, array $extra, string $event): bool
+function email_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
 {
     $c = $node['config'] ?? [];
     if (strtoupper((string)($c['event'] ?? '')) !== strtoupper($event)) return false;
+    if ($event === 'LIVE_LEMBRETE_AGENDADO' && isset($extra['_scheduled_flow_id'])) {
+        $kind = (string)($extra['_scheduled_flow_kind'] ?? 'email');
+        if ($kind !== 'email' || (int)$extra['_scheduled_flow_id'] !== $flowId || (int)($extra['_scheduled_version_id'] ?? 0) !== $versionId || (string)($extra['_scheduled_node_id'] ?? '') !== (string)($node['id'] ?? '')) return false;
+    }
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $extra['codigo_turma'] ?? '', $extra['turma']['codigo'] ?? ''] as $v) {
@@ -71,7 +75,7 @@ function email_flow_capture_event(PDO $pdo, string $event, int $userId, array $e
                     break;
                 }
             }
-            if (!$trigger || !email_flow_trigger_matches($trigger, $user, $extra, $event)) continue;
+            if (!$trigger || !email_flow_trigger_matches($trigger, $user, $extra, $event, (int)$f['flow_id'], (int)$f['current_version_id'])) continue;
             $st = $pdo->prepare("INSERT IGNORE INTO email_flow_runs(flow_id,version_id,event_id,user_id,status) VALUES(:f,:v,:e,:u,'running')");
             $st->execute(['f' => $f['flow_id'], 'v' => $f['current_version_id'], 'e' => $eventId, 'u' => $userId]);
             if (!$st->rowCount()) continue;
