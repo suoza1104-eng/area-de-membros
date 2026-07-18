@@ -54,6 +54,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 180,
         ],
+        'torpedo_voz' => [
+            'label' => 'Torpedo de Voz',
+            'description' => 'Processa fila de chamadas de voz, campanhas e eventos pendentes.',
+            'script' => __DIR__ . '/../cron/processar_torpedo_voz.php',
+            'interval' => 1,
+            'timeout' => 300,
+        ],
         'email_marketing' => [
             'label' => 'E-mail marketing',
             'description' => 'Processa campanhas e etapas de e-mail vencidas pelo Amazon SES.',

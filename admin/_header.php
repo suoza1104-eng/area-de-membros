@@ -27,7 +27,7 @@ if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipeP
     $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
 }
 if ($__isEquipe && empty($__equipePerms['automacoes'])) {
-    foreach (['email_marketing', 'notificacoes', 'webhooks', 'manychat', 'superfuncionario'] as $__autoPermKey) {
+    foreach (['email_marketing', 'notificacoes', 'webhooks', 'manychat', 'superfuncionario', 'torpedo_voz'] as $__autoPermKey) {
         if (!empty($__equipePerms[$__autoPermKey])) {
             $__equipePerms['automacoes'] = $__equipePerms[$__autoPermKey];
             break;
@@ -53,7 +53,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','torpedo_voz','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -80,6 +80,7 @@ $titleMap = [
     'meta_leads'       => 'Meta Leads Qualificados',
     'integration_hub'  => 'Hub de Integrações',
     'manychat'         => 'Manychat',
+    'torpedo_voz'      => 'Torpedo de Voz',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
@@ -777,7 +778,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['torpedo_voz'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -825,6 +826,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M8 9h8M8 13h5"/>
       </svg>
       Manychat
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['torpedo_voz']): ?>
+    <a href="torpedo_voz.php" class="sb-item <?= $currentMenu === 'torpedo_voz' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.8 19.8 0 012.08 4.18 2 2 0 014.06 2h3a2 2 0 012 1.72c.12.9.32 1.77.59 2.61a2 2 0 01-.45 2.11L7.91 9.73a16 16 0 006.36 6.36l1.29-1.29a2 2 0 012.11-.45c.84.27 1.71.47 2.61.59A2 2 0 0122 16.92z"/>
+      </svg>
+      Torpedo de Voz
     </a>
     <?php endif; ?>
 

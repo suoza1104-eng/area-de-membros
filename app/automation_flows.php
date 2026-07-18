@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/email_marketing.php';
 require_once __DIR__ . '/email_flow_engine.php';
 require_once __DIR__ . '/push_flow_engine.php';
+require_once __DIR__ . '/voice_torpedo.php';
 
 function automation_flows_ensure_schema(PDO $pdo): void
 {
@@ -115,7 +116,7 @@ function automation_flow_validate_graph(array $graph, bool $publish = false): ar
     $errors = [];
     $nodes = is_array($graph['nodes'] ?? null) ? $graph['nodes'] : [];
     $edges = is_array($graph['edges'] ?? null) ? $graph['edges'] : [];
-    $allowed = ['trigger','condition','wait','email','ab_test','push','action','integration','end'];
+    $allowed = ['trigger','condition','wait','email','ab_test','push','voice','action','integration','end'];
     $ids = []; $triggers = [];
     foreach ($nodes as $node) {
         $id = (string)($node['id'] ?? ''); $type = (string)($node['type'] ?? '');
@@ -128,6 +129,8 @@ function automation_flow_validate_graph(array $graph, bool $publish = false): ar
         if ($type === 'wait' && ((int)($c['duration'] ?? 0) < 1 || !in_array(($c['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure o temporizador.';
         if ($type === 'email' && (int)($c['templateVersionId'] ?? 0) < 1) $errors[] = 'Selecione um modelo no bloco de e-mail.';
         if ($type === 'push' && (trim((string)($c['title'] ?? '')) === '' || trim((string)($c['body'] ?? '')) === '')) $errors[] = 'Configure titulo e mensagem no bloco push.';
+        if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') === 'audio_url' && trim((string)($c['audioUrl'] ?? '')) === '') $errors[] = 'Configure a URL de audio no bloco de voz.';
+        if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') !== 'audio_url' && trim((string)($c['message'] ?? '')) === '') $errors[] = 'Configure a mensagem TTS no bloco de voz.';
         if ($type === 'action' && trim((string)($c['tag'] ?? '')) === '') $errors[] = 'Configure a tag no bloco de acao.';
         if ($type === 'integration' && !in_array(($c['provider'] ?? ''), ['webhook','superfuncionario','manychat'], true)) $errors[] = 'Configure a integracao.';
         if ($type === 'condition' && empty($c['rules'])) $errors[] = 'Adicione pelo menos uma regra na condicao.';
@@ -295,6 +298,7 @@ function automation_flow_process_job(PDO $pdo, array $job): string
             }
         } elseif ($type === 'email') $output=automation_flow_send_email($pdo,$job,$config,$user);
         elseif ($type === 'push') $output=push_flow_send_push($pdo,$config,(int)$job['user_id'],$job);
+        elseif ($type === 'voice') $output=voice_automation_start_call($pdo,$config,$user,$job,$extra);
         elseif ($type === 'action') { (($config['action'] ?? '') === 'remove_tag' ? remover_tag_usuario((int)$job['user_id'], (string)$config['tag']) : adicionar_tag((int)$job['user_id'], (string)$config['tag'], 'automation_flow', (int)$job['run_id'])); $output=['tag'=>$config['tag'] ?? '']; }
         elseif ($type === 'integration') $output=push_flow_dispatch_integration($pdo,$config,$user,$extra,$job);
         elseif ($type === 'trigger') $output=['event'=>$job['event_code']];

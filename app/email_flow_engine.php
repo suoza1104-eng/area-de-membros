@@ -175,6 +175,22 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
         $actual = (int)$st->fetchColumn();
         $wanted = (int)$value;
         $match = $op === 'gte' ? $actual >= $wanted : ($op === 'lte' ? $actual <= $wanted : $actual === $wanted);
+    } elseif (str_starts_with($field, 'voice_')) {
+        $exists = function (string $sql) use ($pdo, $userId): bool {
+            try {
+                $st = $pdo->prepare($sql . ' LIMIT 1');
+                $st->execute(['u' => $userId]);
+                return (bool)$st->fetchColumn();
+            } catch (Throwable $e) {
+                return false;
+            }
+        };
+        if ($field === 'voice_answered') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND (answered_at IS NOT NULL OR answered_by IS NOT NULL)");
+        elseif ($field === 'voice_human') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND answered_by='human'");
+        elseif ($field === 'voice_machine') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND answered_by='machine'");
+        elseif ($field === 'voice_not_answered') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND hangup_cause LIKE '%timeout%'");
+        elseif ($field === 'voice_audio_completed') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND audio_ended_at IS NOT NULL");
+        elseif ($field === 'voice_dtmf') $match = $exists("SELECT 1 FROM voice_events WHERE user_id=:u AND normalized_event='interacted'");
     }
     return $negative ? !$match : $match;
 }

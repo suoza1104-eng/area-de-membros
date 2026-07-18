@@ -51,6 +51,7 @@ $PAGINAS = [
     'integration_hub'  => 'Hub de Integrações',
     'meta_leads'       => 'Meta Leads Qualificados',
     'manychat'         => 'Manychat',
+    'torpedo_voz'      => 'Torpedo de Voz',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'   => 'Configurações WhatsApp',
     'whatsapp_monitor'  => 'WhatsApp Monitor',
