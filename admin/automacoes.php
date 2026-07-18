@@ -34,13 +34,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'toggle') {
             $id = (int)($_POST['id'] ?? 0);
             $pdo->prepare("UPDATE automation_flows SET status=IF(status='active','paused','active') WHERE id=:id AND current_version_id IS NOT NULL AND status<>'deleted'")->execute(['id'=>$id]);
-            header('Location: automacoes.php?saved=1');
+            header('Location: automacoes.php?view=flows&saved=1');
+            exit;
+        }
+        if ($action === 'clone') {
+            $id = (int)($_POST['id'] ?? 0);
+            $st = $pdo->prepare("SELECT * FROM automation_flows WHERE id=:id AND status<>'deleted' LIMIT 1");
+            $st->execute(['id'=>$id]);
+            $source = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$source) throw new RuntimeException('Fluxo original nao encontrado.');
+            $name = trim((string)$source['name']);
+            $pdo->prepare("INSERT INTO automation_flows(name,description,status,draft_graph_json,created_by,updated_by) VALUES(:n,:d,'draft',:g,:a,:a)")
+                ->execute([
+                    'n' => 'Copia de ' . $name,
+                    'd' => $source['description'] ?? null,
+                    'g' => (string)$source['draft_graph_json'],
+                    'a' => (string)($_SESSION['equipe_nome'] ?? 'Administrador'),
+                ]);
+            header('Location: automacoes.php?id=' . (int)$pdo->lastInsertId() . '&cloned=1');
             exit;
         }
         if ($action === 'delete') {
             $id = (int)($_POST['id'] ?? 0);
             $pdo->prepare("UPDATE automation_flows SET status='deleted' WHERE id=:id")->execute(['id'=>$id]);
-            header('Location: automacoes.php?deleted=1');
+            header('Location: automacoes.php?view=flows&deleted=1');
             exit;
         }
         if (in_array($action, ['save','publish'], true)) {
@@ -114,12 +131,14 @@ include __DIR__ . '/_header.php';
   <div class="af-head"><div><h1>Automações</h1><p class="text-muted">Central única para fluxos com e-mail, push, tags, webhooks, SuperFuncionário e Manychat.</p></div></div>
   <nav class="af-nav">
     <a class="<?=$view==='overview'?'active':''?>" href="automacoes.php">Visão geral</a>
+    <a class="<?=$view==='flows'?'active':''?>" href="automacoes.php?view=flows">Fluxos</a>
     <a class="<?=$view==='logs'?'active':''?>" href="automacoes.php?view=logs">Logs detalhados</a>
     <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
   </nav>
   <?php if($error): ?><div class="af-error"><?=af_h($error)?></div><?php endif; ?>
   <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva.</div><?php endif; ?>
   <?php if(isset($_GET['deleted'])): ?><div class="af-msg">Fluxo removido.</div><?php endif; ?>
+  <?php if(isset($_GET['cloned'])): ?><div class="af-msg">Fluxo clonado como rascunho.</div><?php endif; ?>
 
 <?php if($flow):
     $graph = json_decode((string)$flow['draft_graph_json'], true) ?: automation_flow_blank_graph();
@@ -155,6 +174,15 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
   </script>
 <?php elseif($view === 'logs'): ?>
   <section class="af-card"><div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="6">Nenhum log registrado.</td></tr><?php endif; ?></tbody></table></div></section>
+<?php elseif($view === 'flows'): ?>
+  <section class="af-card">
+    <div class="card-header"><div><div class="card-header-title">Criar fluxo</div><p class="text-muted text-xs">Crie um rascunho central para editar e publicar quando estiver pronto.</p></div></div>
+    <form method="post" class="af-form"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar fluxo central</button></form>
+  </section>
+  <section class="af-card">
+    <div class="card-header"><div><div class="card-header-title">Gerenciar fluxos</div><p class="text-muted text-xs">Edite, clone, pause, ative ou exclua fluxos centrais.</p></div></div>
+    <div class="af-table"><table><thead><tr><th>Fluxo</th><th>Status</th><th>Versão</th><th>Inícios</th><th>Finalizações</th><th>Erros</th><th>Pendentes</th><th>Atualização</th><th></th></tr></thead><tbody><?php foreach($flows as $f): ?><tr><td><strong><?=af_h($f['name'])?></strong><div class="text-muted"><?=af_h($f['description'] ?? '')?></div></td><td><span class="af-pill"><?=af_h($f['status'])?></span></td><td><?=$f['version_number']?'v'.(int)$f['version_number']:'-'?></td><td><?=(int)$f['runs']?></td><td><?=(int)$f['completed']?></td><td><?=(int)$f['failed']?></td><td><?=(int)$f['pending']?></td><td><?=af_h(date('d/m/Y H:i', strtotime((string)$f['updated_at'])))?></td><td class="af-actions"><a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form><?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?><form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form></td></tr><?php endforeach; ?><?php if(!$flows): ?><tr><td colspan="9">Nenhum fluxo central criado.</td></tr><?php endif; ?></tbody></table></div>
+  </section>
 <?php else: ?>
   <section class="af-grid">
     <div class="af-card af-kpi"><small>Fluxos</small><strong><?=$kpis['flows']?></strong><span class="text-muted text-xs">total criado</span></div>
@@ -168,10 +196,6 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
     <div class="af-card"><div class="panel-title">Eventos capturados</div><canvas id="afEventsChart"></canvas></div>
     <div class="af-card"><div class="panel-title">Status das execuções</div><canvas id="afStatusChart"></canvas></div>
   </section>
-  <section class="af-card">
-    <form method="post" class="af-form"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar fluxo central</button></form>
-  </section>
-  <section class="af-card"><div class="af-table"><table><thead><tr><th>Fluxo</th><th>Status</th><th>Versão</th><th>Inícios</th><th>Finalizações</th><th>Erros</th><th>Pendentes</th><th>Atualização</th><th></th></tr></thead><tbody><?php foreach($flows as $f): ?><tr><td><strong><?=af_h($f['name'])?></strong><div class="text-muted"><?=af_h($f['description'] ?? '')?></div></td><td><span class="af-pill"><?=af_h($f['status'])?></span></td><td><?=$f['version_number']?'v'.(int)$f['version_number']:'-'?></td><td><?=(int)$f['runs']?></td><td><?=(int)$f['completed']?></td><td><?=(int)$f['failed']?></td><td><?=(int)$f['pending']?></td><td><?=af_h(date('d/m/Y H:i', strtotime((string)$f['updated_at'])))?></td><td class="af-actions"><a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a><?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?></td></tr><?php endforeach; ?><?php if(!$flows): ?><tr><td colspan="9">Nenhum fluxo central criado.</td></tr><?php endif; ?></tbody></table></div></section>
   <script>
   const evLabels=<?=json_encode(array_column($eventsByDay,'d'),JSON_UNESCAPED_UNICODE)?>,evData=<?=json_encode(array_map('intval',array_column($eventsByDay,'c')))?>,stRows=<?=json_encode($statusRows,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>;
   if(window.Chart){new Chart(afEventsChart,{type:'line',data:{labels:evLabels,datasets:[{label:'Eventos',data:evData,borderColor:'#38bdf8',backgroundColor:'rgba(56,189,248,.15)',fill:true,tension:.35}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}}}}});new Chart(afStatusChart,{type:'doughnut',data:{labels:stRows.map(x=>x.status),datasets:[{data:stRows.map(x=>+x.c),backgroundColor:['#22c55e','#ef4444','#facc15','#38bdf8','#a78bfa']}]},options:{plugins:{legend:{labels:{color:'#cbd5e1'}}}}})}
