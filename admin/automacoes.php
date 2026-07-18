@@ -112,38 +112,8 @@ $eventsByDay = $pdo->query("SELECT DATE(created_at) d,COUNT(*) c FROM automation
 $statusRows = $pdo->query("SELECT status,COUNT(*) c FROM automation_flow_runs GROUP BY status")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 $templates = $pdo->query("SELECT v.id,t.name,v.version_number,v.subject FROM email_templates t JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.status='active' ORDER BY t.name")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-$triggers = automation_trigger_options() + [
-    'TAG_ADICIONADA'=>'Recebeu tag',
-    'TAG_REMOVIDA'=>'Perdeu tag',
-    'BOTAO_SUPORTE_CLICADO'=>'Clicou no suporte',
-    'AVANCO_CURSO'=>'Alcancou avanco no curso',
-];
-$triggerGroups = [
-    ['label'=>'Aluno', 'items'=>[
-        ['code'=>'INSCRITO', 'label'=>$triggers['INSCRITO'] ?? 'Aluno inscrito', 'tag'=>'ALUNO', 'desc'=>'Aluno entrou na base ou concluiu uma nova inscricao.'],
-        ['code'=>'REINSCRITO', 'label'=>$triggers['REINSCRITO'] ?? 'Aluno reinscrito', 'tag'=>'ALUNO', 'desc'=>'Aluno voltou a se inscrever em uma turma ou oferta.'],
-    ]],
-    ['label'=>'Live', 'items'=>[
-        ['code'=>'LIVE_LEMBRETE_AGENDADO', 'label'=>$triggers['LIVE_LEMBRETE_AGENDADO'] ?? 'X tempo antes da live', 'tag'=>'LIVE', 'desc'=>'Agenda o inicio do fluxo com antecedencia em relacao a live da turma.'],
-        ['code'=>'LIVE_EVENTO', 'label'=>'Evento de live', 'tag'=>'LIVE', 'desc'=>'Evento customizado vindo do modulo de lives.'],
-        ['code'=>'LIVE_COMPRA', 'label'=>'Clique de compra na live', 'tag'=>'LIVE', 'desc'=>'Aluno clicou no botao de compra durante a live.'],
-    ]],
-    ['label'=>'Aulas e curso', 'items'=>[
-        ['code'=>'VIU_AULA', 'label'=>'Assistiu aula especifica', 'tag'=>'AULA', 'desc'=>'Dispara quando o aluno assiste uma aula configurada.'],
-        ['code'=>'VIU_QUALQUER_AULA', 'label'=>'Assistiu qualquer aula', 'tag'=>'AULA', 'desc'=>'Dispara para qualquer aula assistida dentro do curso.'],
-        ['code'=>'AVANCO_CURSO', 'label'=>$triggers['AVANCO_CURSO'], 'tag'=>'CURSO', 'desc'=>'Aluno alcancou um percentual minimo de avanco no curso.'],
-        ['code'=>'CERTIFICADO_GERADO', 'label'=>$triggers['CERTIFICADO_GERADO'] ?? 'Gerou certificado', 'tag'=>'CURSO', 'desc'=>'Aluno gerou ou recebeu certificado.'],
-    ]],
-    ['label'=>'Tags e grupos', 'items'=>[
-        ['code'=>'TAG_ADICIONADA', 'label'=>$triggers['TAG_ADICIONADA'], 'tag'=>'TAG', 'desc'=>'Aluno recebeu uma tag configurada.'],
-        ['code'=>'TAG_REMOVIDA', 'label'=>$triggers['TAG_REMOVIDA'], 'tag'=>'TAG', 'desc'=>'Aluno perdeu uma tag configurada.'],
-        ['code'=>'ENTROU_GRUPO', 'label'=>'Entrou no grupo', 'tag'=>'GRUPO', 'desc'=>'Aluno entrou em um grupo, comunidade ou segmentacao.'],
-    ]],
-    ['label'=>'Interacoes', 'items'=>[
-        ['code'=>'BOTAO_SUPORTE_CLICADO', 'label'=>$triggers['BOTAO_SUPORTE_CLICADO'], 'tag'=>'SUPORTE', 'desc'=>'Aluno clicou no botao de suporte.'],
-        ['code'=>'WEBHOOK_RECEBIDO', 'label'=>'Webhook recebido', 'tag'=>'API', 'desc'=>'Evento externo recebido pela central de automacoes.'],
-    ]],
-];
+$triggers = automation_trigger_options($pdo);
+$triggerGroups = automation_trigger_groups($pdo);
 $turmas = $pdo->query("SELECT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' ORDER BY codigo")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 $tags = $pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 

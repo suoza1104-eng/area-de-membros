@@ -17,29 +17,7 @@ function post_int(string $key): int { return (int)($_POST[$key] ?? 0); }
 
 mc_ensure_tables($pdo);
 
-$eventOptions = [
-    'INSCRITO',
-    'INSCRICAO_GRATUITA',
-    'INSCRICAO_VITALICIA',
-    'ACESSO_VITALICIO_LIBERADO',
-    'REINSCRITO',
-    'PRIMEIRO_LOGIN',
-    'ASSISTIU_ALGUMA_AULA',
-    'CONCLUIU_TRILHA',
-    'APP_INSTALADO',
-    'APP_NOTIFICACOES_AUTORIZADAS',
-    'APP_DESINSTALADO_DETECTADO',
-    'CERT_EMITIDO',
-    'REENVIO_CERTIFICADO',
-    'LIVE_TURMA',
-    'LIVE_REAGENDADA',
-    'LIVE_REAGENDAMENTO_LEMBRETE',
-    'LIVE_REAGENDAMENTO_EXPIRADO',
-    'WHATSAPP_GRUPO_ENTROU',
-    'WHATSAPP_GRUPO_SAIU',
-    'WHATSAPP_GRUPO_REMOVIDO_ADMIN',
-    'WHATSAPP_BLACKLIST_DETECTADO',
-];
+$eventOptions = automation_trigger_options($pdo);
 
 $fieldOptions = [
     'user.id' => 'ID do aluno',
@@ -376,7 +354,7 @@ include __DIR__ . '/_header.php';
                     <label class="lbl">Evento</label>
                     <input list="mc-events" name="evento" value="<?= h($edit['evento'] ?? '') ?>" placeholder="INSCRITO ou LIVE_TURMA_300526" required>
                     <datalist id="mc-events">
-                        <?php foreach ($eventOptions as $event): ?><option value="<?= h($event) ?>"></option><?php endforeach; ?>
+                        <?php foreach ($eventOptions as $event => $label): ?><option value="<?= h($event) ?>"><?= h($label) ?></option><?php endforeach; ?>
                     </datalist>
                     <div class="note">Para turma especifica, use o evento completo, como <code>LIVE_TURMA_300526</code>.</div>
                 </div>

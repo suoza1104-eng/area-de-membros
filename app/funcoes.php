@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/automation_catalog.php';
 require_once __DIR__ . '/webhook_dispatcher.php';
 require_once __DIR__ . '/superfuncionario_dispatcher.php';
 require_once __DIR__ . '/manychat_dispatcher.php';

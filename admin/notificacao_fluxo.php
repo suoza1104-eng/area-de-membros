@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 function pf_h($value): string { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 $menu = 'notificacoes';
 $page_title = 'Editor de fluxo push';
-$triggerOptions = push_flow_trigger_options();
+$triggerOptions = push_flow_trigger_options($pdo);
 $turmaOptions = [''=>'Selecione a turma'];
 try { foreach ($pdo->query("SELECT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' ORDER BY codigo")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $codigo) $turmaOptions[(string)$codigo] = (string)$codigo; } catch (Throwable $ignored) {}
 $pushPreviewIcon=push_app_icon_url();if(!preg_match('~^(?:https?:)?//|^data:|^/~i',$pushPreviewIcon))$pushPreviewIcon='../public/'.ltrim($pushPreviewIcon,'/');

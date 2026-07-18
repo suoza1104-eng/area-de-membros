@@ -263,49 +263,9 @@ function sf_admin_skipped_summary(?string $json): string {
 sf_ensure_tables($pdo);
 sf_admin_ensure_live_dispatch_logs($pdo);
 
-// ===== eventos (mesmos do Webhooks) =====
-$eventOptions = [
-    'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
-    'INSCRICAO_GRATUITA'    => 'Aluno recebeu inscricao gratuita com prazo da turma',
-    'INSCRICAO_VITALICIA'   => 'Aluno recebeu acesso vitalicio pago ou concedido',
-    'ACESSO_VITALICIO_LIBERADO' => 'Acesso vitalicio foi liberado para o aluno',
-    'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
-    'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
-    'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
-    'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
-    'RETORNO_AGENDADO'      => 'Retorno de contato agendado chegou',
-    'APP_INSTALADO'         => 'Aplicativo instalado pelo aluno',
-    'APP_NOTIFICACOES_AUTORIZADAS' => 'Aluno autorizou notificações do aplicativo',
-    'APP_DESINSTALADO_DETECTADO' => 'Aplicativo desinstalado/inativo detectado',
-    'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
-    'REENVIO_CERTIFICADO'   => 'Reenvio de certificado',
-    'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
-    'LIVE_TURMA'            => 'Disparo de live por turma (regra global)',
-    'LIVE_REAGENDADA'       => 'Live reagendada',
-    'LIVE_REAGENDAMENTO_LEMBRETE' => 'Lembrete de live reagendada',
-    'LIVE_REAGENDAMENTO_EXPIRADO' => 'Reagendamento expirado',
-    'LIVE_ACESSOU'          => 'Live — aluno acessou (via webhook externo)',
-    'LIVE_OFERTA'           => 'Live — ficou até a oferta',
-    'LIVE_COMPRA'           => 'Live — clicou na compra',
-    'LIVE_EVENTO'           => 'Live — evento customizado',
-    'WHATSAPP_GRUPO_ENTROU' => 'WhatsApp - aluno entrou no grupo',
-    'WHATSAPP_GRUPO_SAIU'   => 'WhatsApp - aluno saiu por conta propria',
-    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'WhatsApp - aluno removido por admin',
-    'WHATSAPP_BLACKLIST_DETECTADO' => 'WhatsApp - blacklist detectada',
-];
-
-// dinâmico por aula
-try {
-    $stLessons = $pdo->query("SELECT id, titulo FROM lessons ORDER BY ordem ASC, id ASC");
-    while ($ls = $stLessons->fetch(PDO::FETCH_ASSOC)) {
-        $lessonId   = (int)($ls['id'] ?? 0);
-        $lessonName = trim((string)($ls['titulo'] ?? 'Aula sem título'));
-        if ($lessonId > 0) {
-            $code = 'VIU_AULA_' . $lessonId;
-            $eventOptions[$code] = $code . ' – ' . $lessonName;
-        }
-    }
-} catch (Throwable $e) { /* ignora */ }
+// ===== eventos centralizados =====
+$eventOptions = automation_trigger_options($pdo);
+$eventGroups = automation_trigger_groups($pdo);
 
 // ===== opções de campos (origem) =====
 $fieldOptions = [
@@ -1058,6 +1018,19 @@ include __DIR__ . '/_header.php';
                                     <button type="button" class="evento-toggle-btn" id="sf-btn-ev-toggle">▼ Ver eventos</button>
                                 </div>
                                 <div class="evento-dropdown" id="sf-ev-dropdown">
+                                    <?php foreach ($eventGroups as $group): ?>
+                                        <div class="ev-group-label"><?= h((string)$group['label']) ?></div>
+                                        <?php foreach (($group['items'] ?? []) as $item):
+                                            $badge = strtolower((string)($item['tag'] ?? 'evento'));
+                                            $pill = str_contains($badge, 'live') ? 'live' : (str_contains($badge, 'cert') ? 'cert' : (str_contains($badge, 'aula') ? 'aula' : 'aluno'));
+                                        ?>
+                                            <div class="evento-opcao" data-value="<?= h((string)$item['code']) ?>">
+                                                <strong><?= h((string)$item['code']) ?> <span class="ev-pill <?= h($pill) ?>"><?= h((string)($item['tag'] ?? 'Evento')) ?></span></strong>
+                                                <em><?= h((string)($item['desc'] ?? $item['label'] ?? $item['code'])) ?></em>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php endforeach; ?>
+                                    <?php if (false): ?>
                                     <div class="ev-group-label">Aluno</div>
                                     <div class="evento-opcao" data-value="INSCRITO">
                                         <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
@@ -1172,6 +1145,7 @@ include __DIR__ . '/_header.php';
                                         echo '</div>';
                                     }
                                     ?>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                             <div class="note" style="margin-top:5px;">Clique para selecionar o evento. Apenas um evento por regra.</div>

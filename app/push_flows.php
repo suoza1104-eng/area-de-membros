@@ -54,9 +54,9 @@ function push_flow_blank_graph(): array
     ];
 }
 
-function push_flow_trigger_options(): array
+function push_flow_trigger_options(?PDO $pdo = null): array
 {
-    return automation_trigger_options();
+    return automation_trigger_options($pdo);
 }
 
 function push_flow_decode_graph(string $json): array
