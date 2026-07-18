@@ -482,6 +482,13 @@ function mc_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
     $cfg = mc_get_config($pdo);
     if ((int)$cfg['is_enabled'] !== 1 || $cfg['token'] === '') return false;
     $rules = mc_get_rules_for_event($pdo, $evento);
+    if (!empty($extra['_integration_rule']) && is_array($extra['_integration_rule'])) {
+        $inlineRule = $extra['_integration_rule'];
+        if (($inlineRule['evento'] ?? $evento) === $evento) {
+            $inlineRule['id'] = 0;
+            $rules[] = $inlineRule;
+        }
+    }
     if (!$rules) return false;
 
     $userRow = mc_get_user_row($pdo, $user);

@@ -334,6 +334,20 @@ function push_flow_dispatch_integration(PDO $pdo, array $config, array $user, ar
     $provider = (string)($config['provider'] ?? ''); $target = trim((string)($config['target'] ?? ''));
     $event = $target !== '' ? $target : ('PUSH_FLOW_' . (int)$job['flow_id']);
     $extra['push_flow'] = ['flow_id'=>(int)$job['flow_id'],'run_id'=>(int)$job['run_id'],'node_id'=>(string)$job['node_id'],'idempotency_key'=>'flow-job-'.(int)$job['id']];
+    $inlineTags = trim((string)($config['tagsText'] ?? ''));
+    $inlineFlows = trim((string)($config['flowsText'] ?? ''));
+    $inlineFields = is_array($config['fields'] ?? null) ? array_values($config['fields']) : [];
+    if ($inlineTags !== '' || $inlineFlows !== '' || $inlineFields) {
+        $extra['_integration_rule'] = [
+            'id' => 0,
+            'evento' => $event,
+            'tags_text' => preg_replace('/\s*,\s*/', "\n", $inlineTags),
+            'flows_text' => $inlineFlows,
+            'fields_json' => json_encode($inlineFields, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'custom_fields_json' => json_encode($inlineFields, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'endpoint_override' => '',
+        ];
+    }
     $payloadRaw = trim((string)($config['payload'] ?? ''));
     if ($payloadRaw !== '') { $decoded = json_decode($payloadRaw, true); $extra['flow_payload'] = is_array($decoded) ? $decoded : $payloadRaw; }
     if ($provider === 'superfuncionario') {
