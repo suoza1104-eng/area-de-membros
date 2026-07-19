@@ -433,6 +433,92 @@ $campaignMessageCountsRows = $pdo->query("
      WHERE campaign_id IS NOT NULL
      GROUP BY campaign_id
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$overviewDateTo = preg_replace('/[^0-9-]/', '', (string)($_GET['date_to'] ?? date('Y-m-d'))) ?: date('Y-m-d');
+$overviewDateFrom = preg_replace('/[^0-9-]/', '', (string)($_GET['date_from'] ?? date('Y-m-d', strtotime('-13 days')))) ?: date('Y-m-d', strtotime('-13 days'));
+if (strtotime($overviewDateFrom) === false) $overviewDateFrom = date('Y-m-d', strtotime('-13 days'));
+if (strtotime($overviewDateTo) === false) $overviewDateTo = date('Y-m-d');
+$overviewCampaignId = $selectedCampaignId;
+$overviewGroupIds = [];
+if ($overviewCampaignId > 0) {
+    $st = $pdo->prepare("SELECT group_id FROM whatsapp_group_campaign_groups WHERE campaign_id=:cid AND is_active=1");
+    $st->execute([':cid' => $overviewCampaignId]);
+    $overviewGroupIds = array_values(array_filter(array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN) ?: [])));
+}
+$overviewGroupSql = '';
+$overviewGroupParams = [];
+if ($overviewCampaignId > 0) {
+    if ($overviewGroupIds) {
+        $placeholders = [];
+        foreach ($overviewGroupIds as $idx => $groupId) {
+            $key = ':og' . $idx;
+            $placeholders[] = $key;
+            $overviewGroupParams[$key] = $groupId;
+        }
+        $overviewGroupSql = ' AND group_id IN (' . implode(',', $placeholders) . ')';
+    } else {
+        $overviewGroupSql = ' AND 1=0';
+    }
+}
+$overviewEventParams = array_merge([
+    ':date_from' => $overviewDateFrom . ' 00:00:00',
+    ':date_to' => $overviewDateTo . ' 23:59:59',
+], $overviewGroupParams);
+$overviewEventsByDay = [];
+$periodStart = new DateTime($overviewDateFrom);
+$periodEnd = new DateTime($overviewDateTo);
+if ($periodEnd < $periodStart) {
+    [$periodStart, $periodEnd] = [$periodEnd, $periodStart];
+    $overviewDateFrom = $periodStart->format('Y-m-d');
+    $overviewDateTo = $periodEnd->format('Y-m-d');
+    $overviewEventParams[':date_from'] = $overviewDateFrom . ' 00:00:00';
+    $overviewEventParams[':date_to'] = $overviewDateTo . ' 23:59:59';
+}
+$cursor = clone $periodStart;
+while ($cursor <= $periodEnd) {
+    $key = $cursor->format('Y-m-d');
+    $overviewEventsByDay[$key] = ['label' => $cursor->format('d/m'), 'entries' => 0, 'exits' => 0, 'removed' => 0];
+    $cursor->modify('+1 day');
+}
+try {
+    $st = $pdo->prepare("
+        SELECT DATE(created_at) AS event_day, interpreted_event, COUNT(*) AS total
+          FROM whatsapp_group_events
+         WHERE created_at BETWEEN :date_from AND :date_to
+           {$overviewGroupSql}
+         GROUP BY DATE(created_at), interpreted_event
+         ORDER BY event_day ASC
+    ");
+    $st->execute($overviewEventParams);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $day = (string)$row['event_day'];
+        if (!isset($overviewEventsByDay[$day])) continue;
+        $event = (string)$row['interpreted_event'];
+        if ($event === 'WHATSAPP_GRUPO_ENTROU') $overviewEventsByDay[$day]['entries'] += (int)$row['total'];
+        elseif ($event === 'WHATSAPP_GRUPO_SAIU') $overviewEventsByDay[$day]['exits'] += (int)$row['total'];
+        elseif ($event === 'WHATSAPP_GRUPO_REMOVIDO_ADMIN') $overviewEventsByDay[$day]['removed'] += (int)$row['total'];
+    }
+} catch (Throwable $e) {}
+$overviewTotals = ['entries' => 0, 'exits' => 0, 'removed' => 0, 'net' => 0, 'current_members' => 0, 'groups' => 0];
+foreach ($overviewEventsByDay as $day) {
+    $overviewTotals['entries'] += (int)$day['entries'];
+    $overviewTotals['exits'] += (int)$day['exits'];
+    $overviewTotals['removed'] += (int)$day['removed'];
+}
+$overviewTotals['net'] = $overviewTotals['entries'] - $overviewTotals['exits'] - $overviewTotals['removed'];
+$overviewGroupRows = [];
+try {
+    $groupWhere = $overviewCampaignId > 0 ? ('WHERE cg.campaign_id=:cid') : '';
+    $groupSql = $overviewCampaignId > 0
+        ? "SELECT cg.group_id, COALESCE(cg.group_name,wg.group_name,cg.group_id) AS group_name, cg.current_members, cg.max_members, cg.is_active FROM whatsapp_group_campaign_groups cg LEFT JOIN whatsapp_groups wg ON wg.group_id=cg.group_id {$groupWhere} ORDER BY cg.is_current DESC, cg.id ASC"
+        : "SELECT wg.group_id, COALESCE(wg.group_name,wg.group_id) AS group_name, COALESCE((SELECT current_members FROM whatsapp_group_campaign_groups cg WHERE cg.group_id=wg.group_id ORDER BY cg.updated_at DESC LIMIT 1),0) AS current_members, COALESCE((SELECT max_members FROM whatsapp_group_campaign_groups cg WHERE cg.group_id=wg.group_id ORDER BY cg.updated_at DESC LIMIT 1),0) AS max_members, wg.is_active FROM whatsapp_groups wg ORDER BY wg.last_seen_at DESC LIMIT 30";
+    $st = $pdo->prepare($groupSql);
+    $st->execute($overviewCampaignId > 0 ? [':cid' => $overviewCampaignId] : []);
+    $overviewGroupRows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+foreach ($overviewGroupRows as $row) {
+    $overviewTotals['current_members'] += (int)($row['current_members'] ?? 0);
+    $overviewTotals['groups']++;
+}
 $actions = $pdo->query("
     SELECT a.*, c.name AS campaign_name, COALESCE(wg.group_name, a.group_id) AS resolved_group_name
       FROM whatsapp_group_scheduled_actions a
@@ -441,6 +527,9 @@ $actions = $pdo->query("
      ORDER BY FIELD(a.status,'processing','scheduled','error','sent','cancelled'), a.scheduled_at DESC
      LIMIT 80
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$overviewActions = $overviewCampaignId > 0
+    ? array_values(array_filter($actions, fn($a) => (int)($a['campaign_id'] ?? 0) === $overviewCampaignId))
+    : $actions;
 $selectedCampaign = null;
 foreach ($campaigns as $campaignRow) {
     if ((int)$campaignRow['id'] === $selectedCampaignId) {
@@ -499,6 +588,10 @@ require __DIR__ . '/_header.php';
 .wg-tab.active{background:var(--primary-dim);border-color:rgba(250,204,21,.35);color:var(--primary);font-weight:700}
 .wg-section{display:none;scroll-margin-top:80px}
 .wg-section.active{display:block}
+.wg-section input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),.wg-section select,.wg-section textarea{width:100%;background:#07101f!important;border:1px solid rgba(148,163,184,.24)!important;border-radius:8px!important;color:#e2e8f0!important;padding:10px 12px!important;outline:none;box-shadow:none!important}
+.wg-section input[type="file"]{width:100%;background:#07101f;border:1px dashed rgba(148,163,184,.32);border-radius:8px;color:#94a3b8;padding:10px}
+.wg-section input:focus,.wg-section select:focus,.wg-section textarea:focus{border-color:rgba(250,204,21,.62)!important;box-shadow:0 0 0 3px rgba(250,204,21,.12)!important}
+.wg-section ::placeholder{color:#475569!important}
 .wg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
 .wg-title{font-size:16px;font-weight:800;margin-bottom:4px}
 .wg-sub{color:var(--muted);font-size:12px;margin-bottom:14px}
@@ -524,14 +617,14 @@ require __DIR__ . '/_header.php';
 .wg-card-tile{position:relative;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:22px 18px 16px;min-height:268px;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,.16)}
 .wg-card-tile:hover{border-color:var(--border-light);transform:translateY(-1px)}
 .wg-tile-menu{position:absolute;top:16px;right:14px;color:var(--muted);font-weight:800;letter-spacing:2px}
-.wg-tile-icon{width:52px;height:52px;margin:4px auto 18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);color:var(--muted);font-size:30px}
+.wg-tile-icon{width:52px;height:52px;margin:4px auto 18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(250,204,21,.08);color:#facc15;font-size:30px}
 .wg-tile-name{font-size:16px;font-weight:800;color:var(--text);line-height:1.25;margin-bottom:8px}
 .wg-tile-meta{font-size:12px;color:var(--muted);line-height:1.55;word-break:break-word}
 .wg-tile-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;margin:18px 0 8px}
-.wg-tile-progress span{display:block;height:100%;background:#a855f7;border-radius:999px}
+.wg-tile-progress span{display:block;height:100%;background:#facc15;border-radius:999px}
 .wg-tile-buttons{display:grid;gap:8px;margin-top:auto;padding-top:16px}
 .wg-tile-buttons .btn{justify-content:center;width:100%;border-radius:7px}
-.wg-tile-buttons .btn-primary{background:#a855f7;color:white;border-color:#a855f7}
+.wg-tile-buttons .btn-primary{background:#facc15;color:#111827;border-color:#facc15}
 .wg-card-dim{background:rgba(148,163,184,.14);color:var(--text);border-color:transparent}
 .wg-top-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .wg-inline-details summary{list-style:none;cursor:pointer}
@@ -543,7 +636,16 @@ require __DIR__ . '/_header.php';
 .wg-dynamic-field{display:none}
 .wg-dynamic-field.is-visible{display:block}
 .wg-form-note{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.4}
+.wg-filterbar{display:grid;grid-template-columns:minmax(220px,1.4fr) repeat(2,minmax(150px,.7fr)) auto;gap:10px;align-items:end;margin-bottom:16px}
+.wg-overview-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.wg-overview-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:14px}
+.wg-overview-kpi span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
+.wg-overview-kpi strong{display:block;font-size:26px;line-height:1.1;margin-top:8px;color:var(--text)}
+.wg-overview-kpi small{display:block;color:var(--muted);font-size:11px;margin-top:5px}
+.wg-chart-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;min-height:300px}
+.wg-chart-card canvas{max-height:245px}
 @media(max-width:1050px){.wg-grid,.wg-grid-3,.wg-row,.wg-payload-grid{grid-template-columns:1fr}}
+@media(max-width:1050px){.wg-filterbar,.wg-overview-kpis{grid-template-columns:1fr}}
 @media(max-width:1050px){.wg-message-layout{grid-template-columns:1fr}.wg-page-head{display:block}.wg-top-actions{justify-content:flex-start;margin-top:12px}}
 </style>
 
@@ -563,15 +665,31 @@ require __DIR__ . '/_header.php';
 </div>
 
 <section id="visao" class="wg-section active">
-    <div class="kpi-grid">
-        <div class="kpi kpi-g"><div class="kpi-label">Numeros conectados</div><div class="kpi-value"><?= (int)$connectedCount ?></div><div class="kpi-sub"><?= count($instances) ?> cadastrados</div></div>
-        <div class="kpi kpi-y"><div class="kpi-label">Campanhas ativas</div><div class="kpi-value"><?= count(array_filter($campaigns, fn($c) => (string)$c['status'] === 'active')) ?></div><div class="kpi-sub"><?= count($campaigns) ?> em operacao</div></div>
-        <div class="kpi kpi-b"><div class="kpi-label">Acoes programadas</div><div class="kpi-value"><?= (int)$totalScheduled ?></div><div class="kpi-sub"><?= (int)$totalSent ?> enviadas nesta listagem</div></div>
-        <div class="kpi kpi-r"><div class="kpi-label">Erros recentes</div><div class="kpi-value"><?= (int)$totalErrors ?></div><div class="kpi-sub">ultimas 80 acoes</div></div>
+    <div class="wg-page-head">
+        <div>
+            <div class="wg-page-title">Visão geral</div>
+            <div class="wg-breadcrumb"><?= $selectedCampaign ? 'Campanha &gt; ' . whatsapp_groups_h((string)$selectedCampaign['name']) : 'Todas as campanhas e grupos' ?></div>
+        </div>
+    </div>
+    <form method="get" class="wg-card wg-filterbar">
+        <input type="hidden" name="section" value="visao">
+        <div class="form-group"><label class="form-label">Campanha</label><select name="campaign_id"><option value="0">Todas as campanhas</option><?php foreach($campaigns as $c): ?><option value="<?= (int)$c['id'] ?>" <?= $overviewCampaignId===(int)$c['id']?'selected':'' ?>><?= whatsapp_groups_h((string)$c['name']) ?></option><?php endforeach; ?></select></div>
+        <div class="form-group"><label class="form-label">De</label><input type="date" name="date_from" value="<?= whatsapp_groups_h($overviewDateFrom) ?>"></div>
+        <div class="form-group"><label class="form-label">Até</label><input type="date" name="date_to" value="<?= whatsapp_groups_h($overviewDateTo) ?>"></div>
+        <button class="btn btn-primary">Filtrar</button>
+    </form>
+    <div class="wg-overview-kpis">
+        <div class="wg-overview-kpi"><span>Entradas</span><strong><?= (int)$overviewTotals['entries'] ?></strong><small>No período filtrado</small></div>
+        <div class="wg-overview-kpi"><span>Saídas</span><strong><?= (int)$overviewTotals['exits'] ?></strong><small>Saíram por conta própria</small></div>
+        <div class="wg-overview-kpi"><span>Removidos</span><strong><?= (int)$overviewTotals['removed'] ?></strong><small>Remoções por admin</small></div>
+        <div class="wg-overview-kpi"><span>Saldo</span><strong><?= (int)$overviewTotals['net'] ?></strong><small>Entradas menos perdas</small></div>
+        <div class="wg-overview-kpi"><span>Leads nos grupos</span><strong><?= (int)$overviewTotals['current_members'] ?></strong><small><?= (int)$overviewTotals['groups'] ?> grupo<?= (int)$overviewTotals['groups']===1?'':'s' ?></small></div>
     </div>
     <div class="wg-grid">
-        <div class="panel"><div class="panel-title">Fila por status</div><canvas id="wgStatusChart"></canvas></div>
-        <div class="panel"><div class="panel-title">Envios por tipo</div><canvas id="wgTypeChart"></canvas></div>
+        <div class="wg-chart-card"><div class="panel-title">Entradas, saídas e removidos por dia</div><canvas id="wgDailyChart"></canvas></div>
+        <div class="wg-chart-card"><div class="panel-title">Leads acumulados no período</div><canvas id="wgAccumulatedChart"></canvas></div>
+        <div class="wg-chart-card"><div class="panel-title">Leads por grupo</div><canvas id="wgGroupsChart"></canvas></div>
+        <div class="wg-chart-card"><div class="panel-title">Mensagens por status</div><canvas id="wgStatusChart"></canvas></div>
     </div>
 </section>
 
@@ -672,7 +790,6 @@ require __DIR__ . '/_header.php';
                 <div class="wg-tile-progress"><span style="width:<?= $usage ?>%"></span></div>
                 <div class="wg-tile-meta" style="text-align:center"><?= $groupCount ?> de <?= max(1, $groupCount) ?> grupos utilizados<?= $limit > 0 ? ' (' . $usage . '%)' : '' ?></div>
                 <div class="wg-tile-buttons">
-                    <a class="btn wg-card-dim" href="whatsapp_grupos.php?section=grupos">Seus Leads</a>
                     <details class="wg-inline-details">
                         <summary class="btn wg-card-dim">Configurações da campanha</summary>
                         <form method="post" class="wg-card" style="margin-top:8px"><input type="hidden" name="action" value="update_campaign"><input type="hidden" name="campaign_id" value="<?= $cid ?>">
@@ -686,7 +803,7 @@ require __DIR__ . '/_header.php';
                             <button class="btn btn-primary btn-sm">Salvar campanha</button>
                         </form>
                     </details>
-                    <a class="btn wg-card-dim" href="whatsapp_grupos.php?section=logs">Estatísticas da campanha</a>
+                    <a class="btn wg-card-dim" href="whatsapp_grupos.php?section=visao&campaign_id=<?= $cid ?>">Estatísticas da campanha</a>
                     <a class="btn btn-primary" href="whatsapp_grupos.php?section=mensagens&campaign_id=<?= $cid ?>">Mensagens Programadas</a>
                     <div class="wg-actions">
                         <form method="post"><input type="hidden" name="action" value="clone_campaign"><input type="hidden" name="campaign_id" value="<?= $cid ?>"><button class="btn btn-ghost btn-xs">Clonar</button></form>
@@ -944,7 +1061,7 @@ require __DIR__ . '/_header.php';
         if (updateHash) {
             const url = new URL(location.href);
             url.searchParams.set('section', tab);
-            if (tab !== 'mensagens') url.searchParams.delete('campaign_id');
+            if (tab !== 'mensagens' && tab !== 'visao') url.searchParams.delete('campaign_id');
             url.hash = '';
             history.replaceState(null, '', url.toString());
         }
@@ -955,11 +1072,19 @@ require __DIR__ . '/_header.php';
     }));
     window.addEventListener('hashchange', function(){ activateTab((location.hash || '').replace('#', ''), false); });
 
-    const statusCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['status'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
-    const typeCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['action_type'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
+    const statusCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['status'], $overviewActions)), JSON_UNESCAPED_UNICODE) ?>;
+    const dailyRows = <?= json_encode(array_values($overviewEventsByDay), JSON_UNESCAPED_UNICODE) ?>;
+    const groupRows = <?= json_encode(array_map(fn($g)=>['name'=>(string)($g['group_name'] ?? $g['group_id'] ?? 'Grupo'), 'members'=>(int)($g['current_members'] ?? 0)], $overviewGroupRows), JSON_UNESCAPED_UNICODE) ?>;
+    let accumulated = 0;
+    const accumulatedRows = dailyRows.map(function(row){
+        accumulated += Number(row.entries || 0) - Number(row.exits || 0) - Number(row.removed || 0);
+        return accumulated;
+    });
     if (window.Chart) {
+        charts.push(new Chart(document.getElementById('wgDailyChart'), {type:'bar',data:{labels:dailyRows.map(r=>r.label),datasets:[{label:'Entradas',data:dailyRows.map(r=>r.entries),backgroundColor:'#22c55e'},{label:'Saídas',data:dailyRows.map(r=>r.exits),backgroundColor:'#f59e0b'},{label:'Removidos',data:dailyRows.map(r=>r.removed),backgroundColor:'#ef4444'}]},options:{responsive:true,scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}},y:{beginAtZero:true,ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}}},plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
+        charts.push(new Chart(document.getElementById('wgAccumulatedChart'), {type:'line',data:{labels:dailyRows.map(r=>r.label),datasets:[{label:'Saldo acumulado',data:accumulatedRows,borderColor:'#facc15',backgroundColor:'rgba(250,204,21,.18)',fill:true,tension:.3}]},options:{responsive:true,scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}}},plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
+        charts.push(new Chart(document.getElementById('wgGroupsChart'), {type:'bar',data:{labels:groupRows.map(r=>r.name).slice(0,10),datasets:[{data:groupRows.map(r=>r.members).slice(0,10),backgroundColor:'#38bdf8'}]},options:{indexAxis:'y',responsive:true,scales:{x:{beginAtZero:true,ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.05)'}}},plugins:{legend:{display:false}}}}));
         charts.push(new Chart(document.getElementById('wgStatusChart'), {type:'doughnut',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['#facc15','#22c55e','#ef4444','#38bdf8','#64748b']}]},options:{plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
-        charts.push(new Chart(document.getElementById('wgTypeChart'), {type:'bar',data:{labels:Object.keys(typeCounts),datasets:[{data:Object.values(typeCounts),backgroundColor:'#38bdf8'}]},options:{scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}}},plugins:{legend:{display:false}}}}));
     }
     document.querySelectorAll('.wg-dynamic-message-form').forEach(function(form){
         const typeSelect = form.querySelector('[data-action-type]');
