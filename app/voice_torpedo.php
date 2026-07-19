@@ -483,6 +483,94 @@ function voice_test_connection(PDO $pdo): array
     return $result;
 }
 
+function voice_telnyx_sync_phone_numbers(PDO $pdo, string $actor = ''): array
+{
+    voice_ensure_schema($pdo);
+    $provider = voice_provider($pdo);
+    $page = 1;
+    $created = 0;
+    $updated = 0;
+    $seen = 0;
+    $errors = [];
+    $upsert = $pdo->prepare("INSERT INTO voice_phone_numbers(provider_id,provider_number_id,phone_e164,friendly_name,country,region,type,source_type,capabilities_json,inbound_enabled,outbound_enabled,is_default,verification_status,connection_id,outbound_profile_id,status,metadata_json)
+        VALUES(:provider_id,:provider_number_id,:phone_e164,:friendly_name,:country,:region,:type,'telnyx_owned',:capabilities_json,:inbound_enabled,:outbound_enabled,0,:verification_status,:connection_id,:outbound_profile_id,:status,:metadata_json)
+        ON DUPLICATE KEY UPDATE
+            provider_id=VALUES(provider_id),
+            provider_number_id=VALUES(provider_number_id),
+            friendly_name=VALUES(friendly_name),
+            country=VALUES(country),
+            region=VALUES(region),
+            type=VALUES(type),
+            source_type=VALUES(source_type),
+            capabilities_json=VALUES(capabilities_json),
+            inbound_enabled=VALUES(inbound_enabled),
+            outbound_enabled=VALUES(outbound_enabled),
+            verification_status=VALUES(verification_status),
+            connection_id=VALUES(connection_id),
+            outbound_profile_id=VALUES(outbound_profile_id),
+            status=VALUES(status),
+            metadata_json=VALUES(metadata_json)");
+
+    do {
+        $result = voice_telnyx_request($pdo, 'GET', '/v2/phone_numbers?page[size]=100&page[number]=' . $page, [], $provider);
+        if (!$result['ok']) {
+            $errors[] = 'HTTP ' . (int)$result['status'] . ' ao listar numeros.';
+            break;
+        }
+        $rows = is_array($result['body']['data'] ?? null) ? $result['body']['data'] : [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) continue;
+            $rawPhone = (string)($row['phone_number'] ?? $row['number'] ?? '');
+            $phone = voice_normalize_e164($rawPhone, (string)($provider['public']['default_country_code'] ?? '55'));
+            if ($phone === '') continue;
+            $cap = is_array($row['features'] ?? null) ? $row['features'] : (is_array($row['capabilities'] ?? null) ? $row['capabilities'] : []);
+            $voiceCap = voice_telnyx_number_has_voice($cap);
+            $status = strtolower((string)($row['status'] ?? $row['phone_number_status'] ?? 'active')) ?: 'active';
+            $before = $pdo->prepare("SELECT id FROM voice_phone_numbers WHERE phone_e164=:p LIMIT 1");
+            $before->execute(['p'=>$phone]);
+            $exists = (bool)$before->fetchColumn();
+            $upsert->execute([
+                'provider_id'=>(int)$provider['id'],
+                'provider_number_id'=>(string)($row['id'] ?? ''),
+                'phone_e164'=>$phone,
+                'friendly_name'=>(string)($row['name'] ?? $row['nickname'] ?? $phone),
+                'country'=>(string)($row['country_code'] ?? $row['country_iso_alpha2'] ?? ''),
+                'region'=>(string)($row['region_information'][0]['region_name'] ?? $row['locality'] ?? $row['administrative_area'] ?? ''),
+                'type'=>'voice',
+                'capabilities_json'=>voice_json($cap),
+                'inbound_enabled'=>$voiceCap ? 1 : 0,
+                'outbound_enabled'=>$voiceCap ? 1 : 0,
+                'verification_status'=>$status,
+                'connection_id'=>(string)($row['connection_id'] ?? $row['voice_settings']['connection_id'] ?? ''),
+                'outbound_profile_id'=>(string)($row['outbound_voice_profile_id'] ?? $row['voice_settings']['outbound_voice_profile_id'] ?? ''),
+                'status'=>in_array($status, ['active','enabled'], true) ? 'active' : $status,
+                'metadata_json'=>voice_json(['telnyx'=>$row,'synced_at'=>date('Y-m-d H:i:s')]),
+            ]);
+            $exists ? $updated++ : $created++;
+            $seen++;
+        }
+        $meta = is_array($result['body']['meta'] ?? null) ? $result['body']['meta'] : [];
+        $totalPages = (int)($meta['total_pages'] ?? $meta['page']['total_pages'] ?? $page);
+        $page++;
+    } while ($page <= max(1, min(20, $totalPages ?? 1)));
+
+    voice_audit($pdo, $actor, 'telnyx_numbers_synced', 'voice_phone_number', '', [], ['seen'=>$seen,'created'=>$created,'updated'=>$updated,'errors'=>$errors]);
+    return ['seen'=>$seen,'created'=>$created,'updated'=>$updated,'errors'=>$errors];
+}
+
+function voice_telnyx_number_has_voice(array $capabilities): bool
+{
+    if (!$capabilities) return true;
+    $flat = [];
+    array_walk_recursive($capabilities, static function ($v, $k) use (&$flat): void {
+        $flat[strtolower((string)$k)] = $v;
+        if (is_string($v)) $flat[strtolower($v)] = true;
+    });
+    if (isset($flat['voice'])) return (bool)$flat['voice'];
+    if (isset($flat['calling'])) return (bool)$flat['calling'];
+    return true;
+}
+
 function voice_public_key_parseable(string $publicKey): bool
 {
     $publicKey = trim($publicKey);

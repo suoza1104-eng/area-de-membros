@@ -30,6 +30,12 @@ Configure em `Admin > Torpedo de Voz > Configuracoes`:
 
 A API Key e gravada criptografada no banco e nunca e exibida integralmente no frontend.
 
+## Numeros
+
+Em `Admin > Torpedo de Voz > Numeros`, use `Sincronizar Telnyx` para buscar os numeros configurados na conta via `GET /v2/phone_numbers`.
+
+O cadastro manual permanece apenas para excecoes, numeros externos verificados, SIP ou referencia operacional. A origem tecnica dos numeros comprados/ativos deve continuar sendo a Telnyx.
+
 ## Webhooks
 
 Cadastre na Telnyx:
