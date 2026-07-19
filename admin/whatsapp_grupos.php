@@ -374,9 +374,11 @@ require __DIR__ . '/_header.php';
 ?>
 <style>
 .wg-nav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;border-bottom:1px solid var(--border);padding-bottom:10px}
-.wg-nav a{padding:8px 12px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px;text-decoration:none}
-.wg-nav a:hover{background:var(--bg-hover);color:var(--text);text-decoration:none}
-.wg-section{scroll-margin-top:80px}
+.wg-tab{padding:8px 12px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px;background:transparent;line-height:1.2}
+.wg-tab:hover{background:var(--bg-hover);color:var(--text)}
+.wg-tab.active{background:var(--primary-dim);border-color:rgba(250,204,21,.35);color:var(--primary);font-weight:700}
+.wg-section{display:none;scroll-margin-top:80px}
+.wg-section.active{display:block}
 .wg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
 .wg-title{font-size:16px;font-weight:800;margin-bottom:4px}
 .wg-sub{color:var(--muted);font-size:12px;margin-bottom:14px}
@@ -402,17 +404,17 @@ require __DIR__ . '/_header.php';
 <?php if ($error): ?><div class="alert alert-error mb-3"><?= whatsapp_groups_h($error) ?></div><?php endif; ?>
 
 <div class="wg-nav">
-    <a href="#visao">Visao geral</a>
-    <a href="#numeros">Numeros</a>
-    <a href="#campanhas">Campanhas</a>
-    <a href="#grupos">Grupos</a>
-    <a href="#programacoes">Programacoes</a>
-    <a href="#palavras">Palavras-chave</a>
-    <a href="#logs">Logs</a>
-    <a href="#saude">Saude</a>
+    <button type="button" class="wg-tab active" data-tab="visao">Visao geral</button>
+    <button type="button" class="wg-tab" data-tab="numeros">Numeros</button>
+    <button type="button" class="wg-tab" data-tab="campanhas">Campanhas</button>
+    <button type="button" class="wg-tab" data-tab="grupos">Grupos</button>
+    <button type="button" class="wg-tab" data-tab="programacoes">Programacoes</button>
+    <button type="button" class="wg-tab" data-tab="palavras">Palavras-chave</button>
+    <button type="button" class="wg-tab" data-tab="logs">Logs</button>
+    <button type="button" class="wg-tab" data-tab="saude">Saude</button>
 </div>
 
-<section id="visao" class="wg-section">
+<section id="visao" class="wg-section active">
     <div class="kpi-grid">
         <div class="kpi kpi-g"><div class="kpi-label">Numeros conectados</div><div class="kpi-value"><?= (int)$connectedCount ?></div><div class="kpi-sub"><?= count($instances) ?> cadastrados</div></div>
         <div class="kpi kpi-y"><div class="kpi-label">Campanhas ativas</div><div class="kpi-value"><?= count(array_filter($campaigns, fn($c) => (string)$c['status'] === 'active')) ?></div><div class="kpi-sub"><?= count($campaigns) ?> em operacao</div></div>
@@ -626,12 +628,30 @@ require __DIR__ . '/_header.php';
 
 <script>
 (function(){
+    const tabButtons = Array.from(document.querySelectorAll('.wg-tab'));
+    const sections = Array.from(document.querySelectorAll('.wg-section'));
+    const charts = [];
+    function activateTab(tab, updateHash) {
+        if (!tab || !document.getElementById(tab)) tab = 'visao';
+        tabButtons.forEach(btn => btn.classList.toggle('active', btn.getAttribute('data-tab') === tab));
+        sections.forEach(section => section.classList.toggle('active', section.id === tab));
+        if (updateHash) history.replaceState(null, '', '#' + tab);
+        charts.forEach(chart => { if (chart && typeof chart.resize === 'function') chart.resize(); });
+    }
+    tabButtons.forEach(btn => btn.addEventListener('click', function(){
+        activateTab(btn.getAttribute('data-tab') || 'visao', true);
+    }));
+    window.addEventListener('hashchange', function(){
+        activateTab((location.hash || '').replace('#', ''), false);
+    });
+
     const statusCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['status'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
     const typeCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['action_type'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
     if (window.Chart) {
-        new Chart(document.getElementById('wgStatusChart'), {type:'doughnut',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['#facc15','#22c55e','#ef4444','#38bdf8','#64748b']}]},options:{plugins:{legend:{labels:{color:'#94a3b8'}}}}});
-        new Chart(document.getElementById('wgTypeChart'), {type:'bar',data:{labels:Object.keys(typeCounts),datasets:[{data:Object.values(typeCounts),backgroundColor:'#38bdf8'}]},options:{scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}}},plugins:{legend:{display:false}}}});
+        charts.push(new Chart(document.getElementById('wgStatusChart'), {type:'doughnut',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['#facc15','#22c55e','#ef4444','#38bdf8','#64748b']}]},options:{plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
+        charts.push(new Chart(document.getElementById('wgTypeChart'), {type:'bar',data:{labels:Object.keys(typeCounts),datasets:[{data:Object.values(typeCounts),backgroundColor:'#38bdf8'}]},options:{scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}}},plugins:{legend:{display:false}}}}));
     }
+    activateTab((location.hash || '').replace('#', ''), false);
     document.querySelectorAll('[data-instance-id]').forEach(function(card){
         const state = card.querySelector('[data-state]');
         if (!state || !/CONNECTING|DISCONNECTED|ERROR/.test(state.textContent)) return;
