@@ -338,6 +338,26 @@ function voice_mask_phone(string $phone): string
     return substr($phone, 0, 4) . str_repeat('*', max(2, strlen($phone) - 8)) . substr($phone, -4);
 }
 
+function voice_error_summary(?string $errorJson, ?string $responseJson = null): string
+{
+    foreach ([$errorJson, $responseJson] as $json) {
+        $data = json_decode((string)$json, true);
+        if (!is_array($data)) continue;
+        $body = $data;
+        if (isset($data['body']) && is_string($data['body'])) {
+            $decoded = json_decode($data['body'], true);
+            if (is_array($decoded)) $body = $decoded;
+        }
+        $parts = [];
+        $code = (string)($body['telnyx_error']['error_code'] ?? $body['errors'][0]['code'] ?? $data['status'] ?? '');
+        $detail = (string)($body['errors'][0]['detail'] ?? $body['errors'][0]['title'] ?? $data['error'] ?? '');
+        if ($code !== '') $parts[] = 'Codigo ' . $code;
+        if ($detail !== '') $parts[] = $detail;
+        if ($parts) return implode(' - ', $parts);
+    }
+    return '';
+}
+
 function voice_normalize_e164(string $phone, string $countryCode = '55'): string
 {
     $phone = trim($phone);
@@ -757,7 +777,10 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
             'err'=>$result['ok'] ? null : voice_json(['status'=>$result['status'],'body'=>$result['raw']]),
             'id'=>$attemptId,
         ]);
-    if (!$result['ok']) throw new RuntimeException('Telnyx recusou a chamada: HTTP ' . $result['status']);
+    if (!$result['ok']) {
+        $detail = voice_error_summary(voice_json(['status'=>$result['status'],'body'=>$result['raw']]), voice_json($result['body'] ?? []));
+        throw new RuntimeException('Telnyx recusou a chamada: HTTP ' . $result['status'] . ($detail !== '' ? ' - ' . $detail : ''));
+    }
     return ['attempt_id'=>$attemptId,'status'=>$status,'call_control_id'=>(string)($data['call_control_id'] ?? ''),'call_leg_id'=>(string)($data['call_leg_id'] ?? '')];
 }
 
