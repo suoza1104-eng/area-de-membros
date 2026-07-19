@@ -27,6 +27,26 @@ function wg_roles($value): array {
     return $roles ?: ['spy'];
 }
 
+function wg_handle_media_upload(array $file): ?array {
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) return null;
+    if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) throw new RuntimeException('Falha ao enviar arquivo.');
+    $original = (string)($file['name'] ?? 'arquivo');
+    $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+    $allowed = ['jpg','jpeg','png','webp','gif','mp3','ogg','oga','wav','m4a','aac','mp4','mov','webm','pdf','doc','docx','xls','xlsx','ppt','pptx','txt'];
+    if (!in_array($ext, $allowed, true)) throw new RuntimeException('Tipo de arquivo nao permitido.');
+    $dir = dirname(__DIR__) . '/uploads/whatsapp_groups';
+    if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) throw new RuntimeException('Nao foi possivel criar pasta de uploads.');
+    $safeName = preg_replace('/[^a-zA-Z0-9._-]+/', '-', pathinfo($original, PATHINFO_FILENAME)) ?: 'arquivo';
+    $fileName = date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . substr($safeName, 0, 70) . '.' . $ext;
+    $target = $dir . '/' . $fileName;
+    if (!move_uploaded_file((string)$file['tmp_name'], $target)) throw new RuntimeException('Nao foi possivel salvar o arquivo enviado.');
+    return [
+        'url' => rtrim(BASE_URL, '/') . '/uploads/whatsapp_groups/' . rawurlencode($fileName),
+        'name' => $original,
+        'ext' => $ext,
+    ];
+}
+
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'instance_state') {
     header('Content-Type: application/json; charset=utf-8');
     $id = (int)($_GET['id'] ?? 0);
@@ -265,6 +285,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $scheduledAt = trim((string)($_POST['scheduled_at'] ?? ''));
             if ($scheduledAt === '') throw new RuntimeException('Informe a data/hora.');
             $scheduledAt = date('Y-m-d H:i:s', strtotime($scheduledAt));
+            if (!empty($_FILES['media_file']) && is_array($_FILES['media_file'])) {
+                $upload = wg_handle_media_upload($_FILES['media_file']);
+                if ($upload) {
+                    $_POST['media_url'] = $upload['url'];
+                    if (trim((string)($_POST['file_name'] ?? '')) === '') $_POST['file_name'] = $upload['name'];
+                    if ($type === 'send_media') {
+                        if (in_array($upload['ext'], ['mp4','mov','webm'], true)) $_POST['media_type'] = 'video';
+                        elseif (in_array($upload['ext'], ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'], true)) $_POST['media_type'] = 'document';
+                        else $_POST['media_type'] = 'image';
+                    }
+                }
+            }
             $pdo->prepare("
                 INSERT INTO whatsapp_group_scheduled_actions
                     (campaign_id, group_id, instance_key, title, action_type, payload_json, scheduled_at, recurrence, recurrence_interval, status, max_attempts, created_at, updated_at)
@@ -508,6 +540,9 @@ require __DIR__ . '/_header.php';
 .wg-message-card{border:1px solid var(--border);background:rgba(255,255,255,.025);border-radius:8px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;margin-bottom:10px}
 .wg-message-title{font-weight:800;margin-bottom:4px}
 .wg-message-preview{font-size:12px;color:var(--muted);max-width:680px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wg-dynamic-field{display:none}
+.wg-dynamic-field.is-visible{display:block}
+.wg-form-note{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.4}
 @media(max-width:1050px){.wg-grid,.wg-grid-3,.wg-row,.wg-payload-grid{grid-template-columns:1fr}}
 @media(max-width:1050px){.wg-message-layout{grid-template-columns:1fr}.wg-page-head{display:block}.wg-top-actions{justify-content:flex-start;margin-top:12px}}
 </style>
@@ -729,13 +764,43 @@ require __DIR__ . '/_header.php';
         </div>
     <?php else: ?>
     <div class="wg-message-layout">
-        <form method="post" class="wg-card" style="margin:0"><input type="hidden" name="action" value="create_scheduled_action"><input type="hidden" name="campaign_id" value="<?= $selectedCampaignId ?>">
+        <form method="post" enctype="multipart/form-data" class="wg-card wg-dynamic-message-form" style="margin:0"><input type="hidden" name="action" value="create_scheduled_action"><input type="hidden" name="campaign_id" value="<?= $selectedCampaignId ?>">
             <div class="wg-title" style="font-size:15px">Inserir nova mensagem</div>
             <div class="form-group"><label class="form-label">Grupo especifico</label><select name="group_id"><option value="">Usar grupo atual da campanha</option><?php foreach($groups as $g): ?><option value="<?= whatsapp_groups_h((string)$g['group_id']) ?>"><?= whatsapp_groups_h((string)($g['group_name'] ?: $g['group_id'])) ?></option><?php endforeach; ?></select></div>
-            <div class="wg-row"><div class="form-group"><label class="form-label">Titulo interno</label><input name="title" placeholder="Aviso de abertura"></div><div class="form-group"><label class="form-label">Tipo</label><select name="action_type"><?php foreach($actionTypes as $v=>$l): ?><option value="<?= $v ?>"><?= whatsapp_groups_h($l) ?></option><?php endforeach; ?></select></div></div>
+            <div class="wg-row"><div class="form-group"><label class="form-label">Titulo interno</label><input name="title" placeholder="Aviso de abertura"></div><div class="form-group"><label class="form-label">Tipo</label><select name="action_type" data-action-type><?php foreach($actionTypes as $v=>$l): ?><option value="<?= $v ?>"><?= whatsapp_groups_h($l) ?></option><?php endforeach; ?></select></div></div>
             <div class="wg-row"><div class="form-group"><label class="form-label">Data/hora</label><input type="datetime-local" name="scheduled_at" required value="<?= date('Y-m-d\TH:i') ?>"></div><div class="form-group"><label class="form-label">Instancia</label><select name="instance_key"><option value="">Auto</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>"><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div></div>
-            <div class="form-group"><label class="form-label">Texto / mensagem</label><textarea name="text" rows="6" placeholder="Mensagem do grupo"></textarea></div>
-            <div class="wg-row"><div class="form-group"><label class="form-label">URL da midia/audio</label><input name="media_url" placeholder="https://..."></div><div class="form-group"><label class="form-label">Legenda</label><input name="caption" placeholder="Legenda"></div></div>
+            <div class="form-group wg-dynamic-field" data-show-for="send_text send_buttons send_list send_poll"><label class="form-label">Texto / mensagem</label><textarea name="text" rows="6" placeholder="Mensagem do grupo"></textarea></div>
+            <div class="wg-dynamic-field" data-show-for="send_media send_audio send_document send_video group_picture">
+                <div class="wg-row">
+                    <div class="form-group"><label class="form-label">Upload do arquivo</label><input type="file" name="media_file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"><div class="wg-form-note">Imagem, audio, video ou documento. Se preencher URL abaixo, o sistema usa a URL.</div></div>
+                    <div class="form-group"><label class="form-label">URL do arquivo</label><input name="media_url" placeholder="https://..."></div>
+                </div>
+                <div class="wg-row">
+                    <div class="form-group wg-dynamic-field" data-show-for="send_media"><label class="form-label">Tipo de midia</label><select name="media_type"><option value="image">Imagem</option><option value="video">Video</option><option value="document">Documento</option></select></div>
+                    <div class="form-group"><label class="form-label">Legenda / nome do arquivo</label><input name="caption" placeholder="Legenda"><input name="file_name" style="margin-top:8px" placeholder="arquivo.pdf"></div>
+                </div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="send_buttons">
+                <div class="wg-row"><div class="form-group"><label class="form-label">Titulo dos botoes</label><input name="subject" placeholder="Escolha uma opcao"></div><div class="form-group"><label class="form-label">Rodape</label><input name="caption" placeholder="Toque em uma opção"></div></div>
+                <div class="form-group"><label class="form-label">Botoes, um por linha</label><textarea name="poll_options" rows="4" placeholder="Quero participar&#10;Tenho uma dúvida&#10;Ver detalhes"></textarea><div class="wg-form-note">O envio usa esses textos como botões clicáveis no WhatsApp.</div></div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="send_list send_poll">
+                <div class="wg-row"><div class="form-group"><label class="form-label">Titulo / pergunta</label><input name="poll_name" placeholder="Escolha uma opcao"></div><div class="form-group"><label class="form-label">Texto do botão / seleções</label><input name="caption" placeholder="Ver opcoes"><input type="number" name="selectable_count" value="1" min="1" style="margin-top:8px"></div></div>
+                <div class="form-group"><label class="form-label">Opcoes, uma por linha</label><textarea name="poll_options" rows="4" placeholder="Opcao 1&#10;Opcao 2&#10;Opcao 3"></textarea></div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="send_location">
+                <div class="wg-row"><div class="form-group"><label class="form-label">Nome do local</label><input name="location_name" placeholder="Escola Emerson Leite"></div><div class="form-group"><label class="form-label">Endereco</label><input name="location_address" placeholder="Rua, numero, cidade"></div></div>
+                <div class="wg-row"><div class="form-group"><label class="form-label">Latitude</label><input name="latitude" placeholder="-23.55052"></div><div class="form-group"><label class="form-label">Longitude</label><input name="longitude" placeholder="-46.63331"></div></div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="send_contact">
+                <div class="wg-row"><div class="form-group"><label class="form-label">Nome do contato</label><input name="contact_name" placeholder="Suporte"></div><div class="form-group"><label class="form-label">Telefone do contato</label><input name="contact_phone" placeholder="5511999999999"></div></div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="send_reaction">
+                <div class="wg-row"><div class="form-group"><label class="form-label">ID da mensagem</label><input name="message_id" placeholder="ID da mensagem original"></div><div class="form-group"><label class="form-label">Reacao</label><input name="reaction" placeholder="👍"></div></div>
+            </div>
+            <div class="wg-dynamic-field" data-show-for="group_subject group_description">
+                <div class="wg-row"><div class="form-group wg-dynamic-field" data-show-for="group_subject"><label class="form-label">Novo titulo do grupo</label><input name="subject" placeholder="Novo titulo"></div><div class="form-group wg-dynamic-field" data-show-for="group_description"><label class="form-label">Nova descricao</label><textarea name="group_description" rows="3"></textarea></div></div>
+            </div>
             <div class="wg-row"><div class="form-group"><label class="form-label">Recorrencia</label><select name="recurrence"><option value="once">Unica</option><option value="daily">Diaria</option><option value="weekly">Semanal</option><option value="monthly">Mensal</option></select></div><div class="form-group"><label class="form-label">Tentativas</label><input type="number" name="max_attempts" value="3" min="1"></div></div>
             <input type="hidden" name="recurrence_interval" value="1">
             <label class="form-label"><input type="checkbox" name="mentions_everyone"> Mencionar todos</label>
@@ -896,6 +961,23 @@ require __DIR__ . '/_header.php';
         charts.push(new Chart(document.getElementById('wgStatusChart'), {type:'doughnut',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['#facc15','#22c55e','#ef4444','#38bdf8','#64748b']}]},options:{plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
         charts.push(new Chart(document.getElementById('wgTypeChart'), {type:'bar',data:{labels:Object.keys(typeCounts),datasets:[{data:Object.values(typeCounts),backgroundColor:'#38bdf8'}]},options:{scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}}},plugins:{legend:{display:false}}}}));
     }
+    document.querySelectorAll('.wg-dynamic-message-form').forEach(function(form){
+        const typeSelect = form.querySelector('[data-action-type]');
+        const fields = Array.from(form.querySelectorAll('.wg-dynamic-field'));
+        const updateFields = function(){
+            const type = typeSelect ? typeSelect.value : 'send_text';
+            fields.forEach(function(field){
+                const allowed = (field.getAttribute('data-show-for') || '').split(/\s+/).filter(Boolean);
+                const visible = allowed.indexOf(type) !== -1;
+                field.classList.toggle('is-visible', visible);
+                field.querySelectorAll('input,select,textarea').forEach(function(input){
+                    input.disabled = !visible;
+                });
+            });
+        };
+        if (typeSelect) typeSelect.addEventListener('change', updateFields);
+        updateFields();
+    });
     activateTab((location.hash || '').replace('#', '') || <?= json_encode($selectedSection, JSON_UNESCAPED_UNICODE) ?>, false);
     document.querySelectorAll('[data-instance-id]').forEach(function(card){
         const state = card.querySelector('[data-state]');
