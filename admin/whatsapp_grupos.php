@@ -15,6 +15,11 @@ function wg_redirect(string $query = ''): void {
     exit;
 }
 
+function wg_section_query(string $section, array $params = []): string {
+    $params = array_merge(['section' => $section], $params);
+    return http_build_query($params);
+}
+
 function wg_roles($value): array {
     $allowed = ['spy', 'administrator', 'sender', 'creator', 'reserve'];
     $roles = is_array($value) ? $value : explode(',', (string)$value);
@@ -277,7 +282,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':recurrence_interval' => max(1, (int)($_POST['recurrence_interval'] ?? 1)),
                 ':max_attempts' => max(1, (int)($_POST['max_attempts'] ?? 3)),
             ]);
-            wg_redirect('saved=action#programacoes');
+            $target = $campaignId > 0 ? wg_section_query('mensagens', ['campaign_id' => $campaignId, 'saved' => 'action']) : 'saved=action#programacoes';
+            wg_redirect($target);
         }
 
         if ($action === 'run_action_now') {
@@ -287,13 +293,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $row = $st->fetch(PDO::FETCH_ASSOC);
             if (!$row) throw new RuntimeException('Acao nao encontrada.');
             whatsapp_groups_execute_action($pdo, $row);
-            wg_redirect('saved=run#programacoes');
+            $targetCampaign = (int)($row['campaign_id'] ?? 0);
+            $target = $targetCampaign > 0 ? wg_section_query('mensagens', ['campaign_id' => $targetCampaign, 'saved' => 'run']) : 'saved=run#programacoes';
+            wg_redirect($target);
         }
 
         if ($action === 'cancel_action') {
             $id = (int)($_POST['action_id'] ?? 0);
+            $st = $pdo->prepare("SELECT campaign_id FROM whatsapp_group_scheduled_actions WHERE id=:id LIMIT 1");
+            $st->execute([':id' => $id]);
+            $targetCampaign = (int)($st->fetchColumn() ?: 0);
             $pdo->prepare("UPDATE whatsapp_group_scheduled_actions SET status='cancelled', updated_at=NOW() WHERE id=:id LIMIT 1")->execute([':id' => $id]);
-            wg_redirect('saved=action#programacoes');
+            $target = $targetCampaign > 0 ? wg_section_query('mensagens', ['campaign_id' => $targetCampaign, 'saved' => 'action']) : 'saved=action#programacoes';
+            wg_redirect($target);
+        }
+
+        if ($action === 'clone_action') {
+            $id = (int)($_POST['action_id'] ?? 0);
+            $st = $pdo->prepare("SELECT * FROM whatsapp_group_scheduled_actions WHERE id=:id LIMIT 1");
+            $st->execute([':id' => $id]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) throw new RuntimeException('Mensagem nao encontrada.');
+            $pdo->prepare("
+                INSERT INTO whatsapp_group_scheduled_actions
+                    (campaign_id, group_id, instance_key, title, action_type, payload_json, scheduled_at, recurrence, recurrence_interval, status, max_attempts, created_at, updated_at)
+                VALUES
+                    (:campaign_id, :group_id, :instance_key, :title, :action_type, :payload_json, :scheduled_at, :recurrence, :recurrence_interval, 'scheduled', :max_attempts, NOW(), NOW())
+            ")->execute([
+                ':campaign_id' => $row['campaign_id'] ?: null,
+                ':group_id' => $row['group_id'] ?: null,
+                ':instance_key' => $row['instance_key'] ?: null,
+                ':title' => trim((string)$row['title']) . ' copia',
+                ':action_type' => (string)$row['action_type'],
+                ':payload_json' => (string)($row['payload_json'] ?? ''),
+                ':scheduled_at' => date('Y-m-d H:i:s', strtotime('+5 minutes')),
+                ':recurrence' => (string)($row['recurrence'] ?? 'once'),
+                ':recurrence_interval' => max(1, (int)($row['recurrence_interval'] ?? 1)),
+                ':max_attempts' => max(1, (int)($row['max_attempts'] ?? 3)),
+            ]);
+            $targetCampaign = (int)($row['campaign_id'] ?? 0);
+            $target = $targetCampaign > 0 ? wg_section_query('mensagens', ['campaign_id' => $targetCampaign, 'saved' => 'action']) : 'saved=action#programacoes';
+            wg_redirect($target);
+        }
+
+        if ($action === 'delete_action') {
+            $id = (int)($_POST['action_id'] ?? 0);
+            $st = $pdo->prepare("SELECT campaign_id FROM whatsapp_group_scheduled_actions WHERE id=:id LIMIT 1");
+            $st->execute([':id' => $id]);
+            $targetCampaign = (int)($st->fetchColumn() ?: 0);
+            $pdo->prepare("DELETE FROM whatsapp_group_scheduled_actions WHERE id=:id LIMIT 1")->execute([':id' => $id]);
+            $target = $targetCampaign > 0 ? wg_section_query('mensagens', ['campaign_id' => $targetCampaign, 'saved' => 'action']) : 'saved=action#programacoes';
+            wg_redirect($target);
         }
 
         if ($action === 'save_keyword') {
@@ -331,12 +381,25 @@ $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY role_priorit
 $connectedCount = 0;
 foreach ($instances as $inst) if (strtoupper((string)$inst['status']) === 'CONNECTED') $connectedCount++;
 $campaigns = $pdo->query("SELECT * FROM whatsapp_group_campaigns WHERE status <> 'archived' ORDER BY updated_at DESC, id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$selectedSection = preg_replace('/[^a-z0-9_-]/i', '', (string)($_GET['section'] ?? 'visao')) ?: 'visao';
+$selectedCampaignId = (int)($_GET['campaign_id'] ?? 0);
 $groups = $pdo->query("SELECT * FROM whatsapp_groups ORDER BY COALESCE(group_name, group_id)")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $campaignGroups = $pdo->query("
     SELECT cg.*, c.name AS campaign_name
       FROM whatsapp_group_campaign_groups cg
       JOIN whatsapp_group_campaigns c ON c.id=cg.campaign_id
      ORDER BY c.updated_at DESC, cg.id DESC
+")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$campaignGroupCountsRows = $pdo->query("
+    SELECT campaign_id, COUNT(*) AS total
+      FROM whatsapp_group_campaign_groups
+     GROUP BY campaign_id
+")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$campaignMessageCountsRows = $pdo->query("
+    SELECT campaign_id, COUNT(*) AS total
+      FROM whatsapp_group_scheduled_actions
+     WHERE campaign_id IS NOT NULL
+     GROUP BY campaign_id
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $actions = $pdo->query("
     SELECT a.*, c.name AS campaign_name, COALESCE(wg.group_name, a.group_id) AS resolved_group_name
@@ -346,6 +409,27 @@ $actions = $pdo->query("
      ORDER BY FIELD(a.status,'processing','scheduled','error','sent','cancelled'), a.scheduled_at DESC
      LIMIT 80
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$selectedCampaign = null;
+foreach ($campaigns as $campaignRow) {
+    if ((int)$campaignRow['id'] === $selectedCampaignId) {
+        $selectedCampaign = $campaignRow;
+        break;
+    }
+}
+if (!$selectedCampaign && $selectedCampaignId > 0) $selectedCampaignId = 0;
+$campaignMessages = [];
+if ($selectedCampaignId > 0) {
+    $st = $pdo->prepare("
+        SELECT a.*, c.name AS campaign_name, COALESCE(wg.group_name, a.group_id) AS resolved_group_name
+          FROM whatsapp_group_scheduled_actions a
+          LEFT JOIN whatsapp_group_campaigns c ON c.id=a.campaign_id
+          LEFT JOIN whatsapp_groups wg ON wg.group_id=a.group_id
+         WHERE a.campaign_id=:campaign_id
+         ORDER BY FIELD(a.status,'processing','scheduled','error','sent','cancelled'), a.scheduled_at DESC, a.id DESC
+    ");
+    $st->execute([':campaign_id' => $selectedCampaignId]);
+    $campaignMessages = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
 $logs = $pdo->query("
     SELECT l.*, c.name AS campaign_name, COALESCE(wg.group_name, l.group_id) AS resolved_group_name
       FROM whatsapp_group_action_logs l
@@ -369,6 +453,10 @@ foreach ($actions as $a) {
     if ((string)$a['status'] === 'sent') $totalSent++;
 }
 $actionTypes = whatsapp_groups_action_types();
+$campaignGroupCounts = [];
+$campaignMessageCounts = [];
+foreach ($campaignGroupCountsRows as $countRow) $campaignGroupCounts[(int)$countRow['campaign_id']] = (int)$countRow['total'];
+foreach ($campaignMessageCountsRows as $countRow) $campaignMessageCounts[(int)$countRow['campaign_id']] = (int)$countRow['total'];
 
 require __DIR__ . '/_header.php';
 ?>
@@ -384,6 +472,7 @@ require __DIR__ . '/_header.php';
 .wg-sub{color:var(--muted);font-size:12px;margin-bottom:14px}
 .wg-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .wg-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.wg-directory{display:grid;grid-template-columns:repeat(auto-fill,minmax(295px,1fr));gap:20px;align-items:stretch}
 .wg-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .wg-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .wg-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px;color:var(--muted)}
@@ -397,7 +486,30 @@ require __DIR__ . '/_header.php';
 .wg-help{font-size:11px;color:var(--muted);line-height:1.45;margin-top:5px}
 .wg-soft{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.18);border-radius:10px;padding:12px;color:var(--muted);font-size:12px;line-height:1.5}
 .wg-payload-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.wg-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.wg-page-title{font-size:22px;font-weight:800;letter-spacing:0;color:var(--text)}
+.wg-breadcrumb{font-size:12px;color:var(--muted);margin-top:4px}
+.wg-card-tile{position:relative;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:22px 18px 16px;min-height:268px;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,.16)}
+.wg-card-tile:hover{border-color:var(--border-light);transform:translateY(-1px)}
+.wg-tile-menu{position:absolute;top:16px;right:14px;color:var(--muted);font-weight:800;letter-spacing:2px}
+.wg-tile-icon{width:52px;height:52px;margin:4px auto 18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);color:var(--muted);font-size:30px}
+.wg-tile-name{font-size:16px;font-weight:800;color:var(--text);line-height:1.25;margin-bottom:8px}
+.wg-tile-meta{font-size:12px;color:var(--muted);line-height:1.55;word-break:break-word}
+.wg-tile-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;margin:18px 0 8px}
+.wg-tile-progress span{display:block;height:100%;background:#a855f7;border-radius:999px}
+.wg-tile-buttons{display:grid;gap:8px;margin-top:auto;padding-top:16px}
+.wg-tile-buttons .btn{justify-content:center;width:100%;border-radius:7px}
+.wg-tile-buttons .btn-primary{background:#a855f7;color:white;border-color:#a855f7}
+.wg-card-dim{background:rgba(148,163,184,.14);color:var(--text);border-color:transparent}
+.wg-top-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.wg-inline-details summary{list-style:none;cursor:pointer}
+.wg-inline-details summary::-webkit-details-marker{display:none}
+.wg-message-layout{display:grid;grid-template-columns:minmax(310px,390px) minmax(0,1fr);gap:18px;align-items:start}
+.wg-message-card{border:1px solid var(--border);background:rgba(255,255,255,.025);border-radius:8px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;margin-bottom:10px}
+.wg-message-title{font-weight:800;margin-bottom:4px}
+.wg-message-preview{font-size:12px;color:var(--muted);max-width:680px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:1050px){.wg-grid,.wg-grid-3,.wg-row,.wg-payload-grid{grid-template-columns:1fr}}
+@media(max-width:1050px){.wg-message-layout{grid-template-columns:1fr}.wg-page-head{display:block}.wg-top-actions{justify-content:flex-start;margin-top:12px}}
 </style>
 
 <?php if ($notice): ?><div class="alert alert-ok mb-3"><?= whatsapp_groups_h($notice) ?></div><?php endif; ?>
@@ -407,6 +519,7 @@ require __DIR__ . '/_header.php';
     <button type="button" class="wg-tab active" data-tab="visao">Visao geral</button>
     <button type="button" class="wg-tab" data-tab="numeros">Numeros</button>
     <button type="button" class="wg-tab" data-tab="campanhas">Campanhas</button>
+    <button type="button" class="wg-tab" data-tab="mensagens">Mensagens</button>
     <button type="button" class="wg-tab" data-tab="grupos">Grupos</button>
     <button type="button" class="wg-tab" data-tab="programacoes">Programacoes</button>
     <button type="button" class="wg-tab" data-tab="palavras">Palavras-chave</button>
@@ -478,7 +591,80 @@ require __DIR__ . '/_header.php';
     </div>
 </section>
 
-<section id="campanhas" class="wg-section wg-card">
+<section id="campanhas" class="wg-section">
+    <div class="wg-page-head">
+        <div>
+            <div class="wg-page-title">Suas campanhas de WhatsApp</div>
+            <div class="wg-breadcrumb">Dashboard &gt; Suas campanhas de WhatsApp</div>
+        </div>
+        <div class="wg-top-actions">
+            <a class="btn btn-ghost" href="whatsapp_grupos.php?section=campanhas_encerradas">Ver campanhas encerradas</a>
+            <details class="wg-inline-details">
+                <summary class="btn btn-primary">+ Criar nova campanha</summary>
+                <form method="post" class="wg-card" style="position:absolute;right:24px;z-index:20;width:min(620px,calc(100vw - 48px));margin-top:10px">
+                    <input type="hidden" name="action" value="create_campaign">
+                    <div class="wg-title" style="font-size:14px">Nova campanha</div>
+                    <div class="wg-row"><div class="form-group"><label class="form-label">Nome</label><input name="name" required placeholder="17/07/2026 - MCQDC"></div><div class="form-group"><label class="form-label">Slug</label><input name="slug" placeholder="mcqdc-170726"></div></div>
+                    <div class="form-group"><label class="form-label">Descricao</label><textarea name="description" rows="2"></textarea></div>
+                    <div class="wg-row"><div class="form-group"><label class="form-label">Status</label><select name="status"><option value="draft">Rascunho</option><option value="active">Ativa</option><option value="paused">Pausada</option></select></div><div class="form-group"><label class="form-label">Max. leads por grupo</label><input type="number" name="max_leads_per_group" value="0"></div></div>
+                    <div class="wg-row"><div class="form-group"><label class="form-label">Instancia disparadora padrao</label><select name="default_instance_key"><option value="">Selecionar automaticamente</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>"><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Instancia espia</label><select name="spy_instance_key"><option value="">Sem verificacao fixa</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>"><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div></div>
+                    <div class="wg-row"><div class="form-group"><label class="form-label">Envios/minuto</label><input type="number" name="rate_per_minute" value="6"></div><div class="form-group"><label class="form-label">Cooldown segundos</label><input type="number" name="cooldown_seconds" value="8"></div></div>
+                    <label class="form-label"><input type="checkbox" name="rotate_when_full" checked> Rotacionar grupo quando lotar</label>
+                    <label class="form-label"><input type="checkbox" name="verify_with_spy"> Verificar envio com numero espiao quando possivel</label>
+                    <button class="btn btn-primary">Criar campanha</button>
+                </form>
+            </details>
+        </div>
+    </div>
+    <div class="wg-directory">
+        <?php foreach($campaigns as $c):
+            $cid = (int)$c['id'];
+            $groupCount = (int)($campaignGroupCounts[$cid] ?? 0);
+            $messageCount = (int)($campaignMessageCounts[$cid] ?? 0);
+            $limit = (int)($c['max_leads_per_group'] ?? 0);
+            $entries = (int)($c['total_entries'] ?? 0);
+            $usage = $limit > 0 && $groupCount > 0 ? min(100, (int)round(($entries / ($limit * $groupCount)) * 100)) : 100;
+        ?>
+            <article class="wg-card-tile">
+                <span class="wg-tile-menu">...</span>
+                <div class="wg-tile-icon">^</div>
+                <div class="wg-tile-name"><?= whatsapp_groups_h((string)$c['name']) ?></div>
+                <div class="wg-tile-meta">
+                    <span class="wg-chip <?= (string)$c['status']==='active'?'ok':((string)$c['status']==='paused'?'warn':'') ?>"><?= whatsapp_groups_h(whatsapp_groups_status_label((string)$c['status'])) ?></span>
+                    <?= $groupCount ?> grupo<?= $groupCount===1?'':'s' ?> · <?= $messageCount ?> mensagem<?= $messageCount===1?'':'s' ?>
+                </div>
+                <div class="wg-tile-meta" style="margin-top:8px"><?= whatsapp_groups_h((string)$c['public_url']) ?></div>
+                <div class="wg-tile-progress"><span style="width:<?= $usage ?>%"></span></div>
+                <div class="wg-tile-meta" style="text-align:center"><?= $groupCount ?> de <?= max(1, $groupCount) ?> grupos utilizados<?= $limit > 0 ? ' (' . $usage . '%)' : '' ?></div>
+                <div class="wg-tile-buttons">
+                    <a class="btn wg-card-dim" href="whatsapp_grupos.php?section=grupos">Seus Leads</a>
+                    <details class="wg-inline-details">
+                        <summary class="btn wg-card-dim">Configurações da campanha</summary>
+                        <form method="post" class="wg-card" style="margin-top:8px"><input type="hidden" name="action" value="update_campaign"><input type="hidden" name="campaign_id" value="<?= $cid ?>">
+                            <div class="wg-row"><div class="form-group"><label class="form-label">Nome</label><input name="name" value="<?= whatsapp_groups_h((string)$c['name']) ?>"></div><div class="form-group"><label class="form-label">Slug</label><input name="slug" value="<?= whatsapp_groups_h((string)$c['slug']) ?>"></div></div>
+                            <div class="form-group"><label class="form-label">Descricao</label><textarea name="description" rows="2"><?= whatsapp_groups_h((string)$c['description']) ?></textarea></div>
+                            <div class="wg-row"><div class="form-group"><label class="form-label">Status</label><select name="status"><?php foreach(['draft'=>'Rascunho','active'=>'Ativa','paused'=>'Pausada'] as $v=>$l): ?><option value="<?= $v ?>" <?= (string)$c['status']===$v?'selected':'' ?>><?= $l ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Max. leads/grupo</label><input type="number" name="max_leads_per_group" value="<?= (int)$c['max_leads_per_group'] ?>"></div></div>
+                            <div class="wg-row"><div class="form-group"><label class="form-label">Disparadora</label><select name="default_instance_key"><option value="">Auto</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>" <?= (string)$c['default_instance_key']===(string)$i['instance_key']?'selected':'' ?>><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Espia</label><select name="spy_instance_key"><option value="">Auto/nenhuma</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>" <?= (string)$c['spy_instance_key']===(string)$i['instance_key']?'selected':'' ?>><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div></div>
+                            <div class="wg-row"><div class="form-group"><label class="form-label">Envios/min</label><input type="number" name="rate_per_minute" value="<?= (int)$c['rate_per_minute'] ?>"></div><div class="form-group"><label class="form-label">Cooldown</label><input type="number" name="cooldown_seconds" value="<?= (int)$c['cooldown_seconds'] ?>"></div></div>
+                            <label class="form-label"><input type="checkbox" name="rotate_when_full" <?= (int)$c['rotate_when_full']===1?'checked':'' ?>> Rotacionar quando lotar</label>
+                            <label class="form-label"><input type="checkbox" name="verify_with_spy" <?= (int)$c['verify_with_spy']===1?'checked':'' ?>> Verificar com espiao</label>
+                            <button class="btn btn-primary btn-sm">Salvar campanha</button>
+                        </form>
+                    </details>
+                    <a class="btn wg-card-dim" href="whatsapp_grupos.php?section=logs">Estatísticas da campanha</a>
+                    <a class="btn btn-primary" href="whatsapp_grupos.php?section=mensagens&campaign_id=<?= $cid ?>">Mensagens Programadas</a>
+                    <div class="wg-actions">
+                        <form method="post"><input type="hidden" name="action" value="clone_campaign"><input type="hidden" name="campaign_id" value="<?= $cid ?>"><button class="btn btn-ghost btn-xs">Clonar</button></form>
+                        <form method="post" onsubmit="return confirm('Arquivar esta campanha?')"><input type="hidden" name="action" value="delete_campaign"><input type="hidden" name="campaign_id" value="<?= $cid ?>"><button class="btn btn-ghost btn-xs" style="color:var(--danger)">Arquivar</button></form>
+                    </div>
+                </div>
+            </article>
+        <?php endforeach; ?>
+        <?php if(!$campaigns): ?><div class="wg-card">Nenhuma campanha criada.</div><?php endif; ?>
+    </div>
+</section>
+
+<section id="campanhas_legacy" class="wg-section wg-card" style="display:none">
     <div class="wg-title">Campanhas</div>
     <div class="wg-sub">Crie campanhas com link publico, grupos vinculados, rotação, limites e verificacao pelo numero espiao.</div>
     <details open><summary class="btn btn-ghost btn-sm" style="display:inline-flex">+ Criar campanha</summary>
@@ -521,6 +707,61 @@ require __DIR__ . '/_header.php';
         <?php if(!$campaigns): ?><tr><td colspan="6">Nenhuma campanha criada.</td></tr><?php endif; ?>
         </tbody></table>
     </div>
+</section>
+
+<section id="campanhas_encerradas" class="wg-section wg-card">
+    <div class="wg-title">Campanhas encerradas</div>
+    <div class="wg-sub">Campanhas arquivadas ficam fora da grade principal.</div>
+    <div class="wg-help">Use a grade principal para operar campanhas ativas, pausadas e rascunhos. Campanhas arquivadas continuam preservadas no banco.</div>
+</section>
+
+<section id="mensagens" class="wg-section wg-card">
+    <div class="wg-page-head">
+        <div>
+            <div class="wg-page-title">Mensagens da campanha</div>
+            <div class="wg-breadcrumb">Campanhas &gt; <?= $selectedCampaign ? whatsapp_groups_h((string)$selectedCampaign['name']) : 'Selecione uma campanha' ?></div>
+        </div>
+        <div class="wg-top-actions"><a class="btn btn-ghost" href="whatsapp_grupos.php?section=campanhas">Voltar para campanhas</a></div>
+    </div>
+    <?php if (!$selectedCampaign): ?>
+        <div class="wg-directory">
+            <?php foreach($campaigns as $c): ?><a class="wg-card-tile" href="whatsapp_grupos.php?section=mensagens&campaign_id=<?= (int)$c['id'] ?>"><div class="wg-tile-icon">^</div><div class="wg-tile-name"><?= whatsapp_groups_h((string)$c['name']) ?></div><div class="wg-tile-meta">Abrir mensagens programadas desta campanha</div></a><?php endforeach; ?>
+        </div>
+    <?php else: ?>
+    <div class="wg-message-layout">
+        <form method="post" class="wg-card" style="margin:0"><input type="hidden" name="action" value="create_scheduled_action"><input type="hidden" name="campaign_id" value="<?= $selectedCampaignId ?>">
+            <div class="wg-title" style="font-size:15px">Inserir nova mensagem</div>
+            <div class="form-group"><label class="form-label">Grupo especifico</label><select name="group_id"><option value="">Usar grupo atual da campanha</option><?php foreach($groups as $g): ?><option value="<?= whatsapp_groups_h((string)$g['group_id']) ?>"><?= whatsapp_groups_h((string)($g['group_name'] ?: $g['group_id'])) ?></option><?php endforeach; ?></select></div>
+            <div class="wg-row"><div class="form-group"><label class="form-label">Titulo interno</label><input name="title" placeholder="Aviso de abertura"></div><div class="form-group"><label class="form-label">Tipo</label><select name="action_type"><?php foreach($actionTypes as $v=>$l): ?><option value="<?= $v ?>"><?= whatsapp_groups_h($l) ?></option><?php endforeach; ?></select></div></div>
+            <div class="wg-row"><div class="form-group"><label class="form-label">Data/hora</label><input type="datetime-local" name="scheduled_at" required value="<?= date('Y-m-d\TH:i') ?>"></div><div class="form-group"><label class="form-label">Instancia</label><select name="instance_key"><option value="">Auto</option><?php foreach($instances as $i): ?><option value="<?= whatsapp_groups_h((string)$i['instance_key']) ?>"><?= whatsapp_groups_h((string)$i['name']) ?></option><?php endforeach; ?></select></div></div>
+            <div class="form-group"><label class="form-label">Texto / mensagem</label><textarea name="text" rows="6" placeholder="Mensagem do grupo"></textarea></div>
+            <div class="wg-row"><div class="form-group"><label class="form-label">URL da midia/audio</label><input name="media_url" placeholder="https://..."></div><div class="form-group"><label class="form-label">Legenda</label><input name="caption" placeholder="Legenda"></div></div>
+            <div class="wg-row"><div class="form-group"><label class="form-label">Recorrencia</label><select name="recurrence"><option value="once">Unica</option><option value="daily">Diaria</option><option value="weekly">Semanal</option><option value="monthly">Mensal</option></select></div><div class="form-group"><label class="form-label">Tentativas</label><input type="number" name="max_attempts" value="3" min="1"></div></div>
+            <input type="hidden" name="recurrence_interval" value="1">
+            <label class="form-label"><input type="checkbox" name="mentions_everyone"> Mencionar todos</label>
+            <label class="form-label"><input type="checkbox" name="link_preview" checked> Preview de link</label>
+            <button class="btn btn-primary">Programar mensagem</button>
+        </form>
+        <div>
+            <?php foreach($campaignMessages as $a): $payload = json_decode((string)($a['payload_json'] ?? ''), true) ?: []; ?>
+                <div class="wg-message-card">
+                    <div>
+                        <div class="wg-message-title"><?= whatsapp_groups_h((string)$a['title']) ?></div>
+                        <div class="wg-message-preview"><?= whatsapp_groups_h((string)($payload['text'] ?? $payload['caption'] ?? $payload['media_url'] ?? 'Sem texto cadastrado')) ?></div>
+                        <div class="wg-tile-meta" style="margin-top:8px"><?= date('d/m/Y H:i', strtotime((string)$a['scheduled_at'])) ?> · <?= whatsapp_groups_h($actionTypes[(string)$a['action_type']] ?? (string)$a['action_type']) ?> · <span class="wg-chip <?= (string)$a['status']==='sent'?'ok':((string)$a['status']==='error'?'err':'warn') ?>"><?= whatsapp_groups_h(whatsapp_groups_status_label((string)$a['status'])) ?></span></div>
+                    </div>
+                    <div class="wg-actions" style="justify-content:flex-end">
+                        <form method="post"><input type="hidden" name="action" value="run_action_now"><input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>"><button class="btn btn-ghost btn-xs">Rodar</button></form>
+                        <form method="post"><input type="hidden" name="action" value="clone_action"><input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>"><button class="btn btn-ghost btn-xs">Clonar</button></form>
+                        <form method="post"><input type="hidden" name="action" value="cancel_action"><input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>"><button class="btn btn-ghost btn-xs">Cancelar</button></form>
+                        <form method="post" onsubmit="return confirm('Deletar esta mensagem?')"><input type="hidden" name="action" value="delete_action"><input type="hidden" name="action_id" value="<?= (int)$a['id'] ?>"><button class="btn btn-ghost btn-xs" style="color:var(--danger)">Deletar</button></form>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+            <?php if(!$campaignMessages): ?><div class="wg-soft">Nenhuma mensagem programada para esta campanha.</div><?php endif; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 </section>
 
 <section id="grupos" class="wg-section wg-card">
@@ -635,15 +876,19 @@ require __DIR__ . '/_header.php';
         if (!tab || !document.getElementById(tab)) tab = 'visao';
         tabButtons.forEach(btn => btn.classList.toggle('active', btn.getAttribute('data-tab') === tab));
         sections.forEach(section => section.classList.toggle('active', section.id === tab));
-        if (updateHash) history.replaceState(null, '', '#' + tab);
+        if (updateHash) {
+            const url = new URL(location.href);
+            url.searchParams.set('section', tab);
+            if (tab !== 'mensagens') url.searchParams.delete('campaign_id');
+            url.hash = '';
+            history.replaceState(null, '', url.toString());
+        }
         charts.forEach(chart => { if (chart && typeof chart.resize === 'function') chart.resize(); });
     }
     tabButtons.forEach(btn => btn.addEventListener('click', function(){
         activateTab(btn.getAttribute('data-tab') || 'visao', true);
     }));
-    window.addEventListener('hashchange', function(){
-        activateTab((location.hash || '').replace('#', ''), false);
-    });
+    window.addEventListener('hashchange', function(){ activateTab((location.hash || '').replace('#', ''), false); });
 
     const statusCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['status'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
     const typeCounts = <?= json_encode(array_count_values(array_map(fn($a)=>(string)$a['action_type'], $actions)), JSON_UNESCAPED_UNICODE) ?>;
@@ -651,7 +896,7 @@ require __DIR__ . '/_header.php';
         charts.push(new Chart(document.getElementById('wgStatusChart'), {type:'doughnut',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['#facc15','#22c55e','#ef4444','#38bdf8','#64748b']}]},options:{plugins:{legend:{labels:{color:'#94a3b8'}}}}}));
         charts.push(new Chart(document.getElementById('wgTypeChart'), {type:'bar',data:{labels:Object.keys(typeCounts),datasets:[{data:Object.values(typeCounts),backgroundColor:'#38bdf8'}]},options:{scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}},y:{ticks:{color:'#94a3b8'},grid:{color:'rgba(255,255,255,.06)'}}},plugins:{legend:{display:false}}}}));
     }
-    activateTab((location.hash || '').replace('#', ''), false);
+    activateTab((location.hash || '').replace('#', '') || <?= json_encode($selectedSection, JSON_UNESCAPED_UNICODE) ?>, false);
     document.querySelectorAll('[data-instance-id]').forEach(function(card){
         const state = card.querySelector('[data-state]');
         if (!state || !/CONNECTING|DISCONNECTED|ERROR/.test(state.textContent)) return;
