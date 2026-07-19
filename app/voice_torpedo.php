@@ -483,6 +483,117 @@ function voice_test_connection(PDO $pdo): array
     return $result;
 }
 
+function voice_public_key_parseable(string $publicKey): bool
+{
+    $publicKey = trim($publicKey);
+    if ($publicKey === '') return false;
+    $key = ctype_xdigit($publicKey) ? @hex2bin($publicKey) : base64_decode($publicKey, true);
+    return $key !== false && strlen((string)$key) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES;
+}
+
+function voice_http_health(string $url, int $timeout = 8): array
+{
+    if ($url === '' || !function_exists('curl_init')) return ['ok'=>false,'status'=>0,'error'=>'URL ou cURL indisponivel.'];
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER => false,
+        CURLOPT_TIMEOUT => max(3, min(20, $timeout)),
+        CURLOPT_FOLLOWLOCATION => false,
+    ]);
+    $body = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    return ['ok'=>$status >= 200 && $status < 300, 'status'=>$status, 'error'=>$err, 'body'=>is_string($body) ? mb_substr($body, 0, 300) : ''];
+}
+
+function voice_diagnostic_item(string $key, string $label, string $status, string $detail = '', array $meta = []): array
+{
+    return ['key'=>$key,'label'=>$label,'status'=>$status,'detail'=>$detail,'meta'=>$meta];
+}
+
+function voice_telnyx_diagnostics(PDO $pdo): array
+{
+    voice_ensure_schema($pdo);
+    $provider = voice_provider($pdo);
+    $cfg = (array)$provider['public'];
+    $items = [];
+    $ready = true;
+    $apiOk = false;
+
+    try {
+        $api = voice_telnyx_request($pdo, 'GET', '/v2/call_control_applications?page[size]=1', [], $provider);
+        $apiOk = $api['ok'];
+        $items[] = voice_diagnostic_item('api_key', 'API Key valida', $apiOk ? 'ok' : 'error', $apiOk ? 'Autenticacao Telnyx OK.' : 'HTTP ' . (int)$api['status']);
+    } catch (Throwable $e) {
+        $items[] = voice_diagnostic_item('api_key', 'API Key valida', 'error', $e->getMessage());
+    }
+
+    $connectionId = trim((string)($cfg['connection_id'] ?? ''));
+    if ($connectionId === '') {
+        $items[] = voice_diagnostic_item('connection_id', 'Connection ID existe', 'pending', 'Connection ID nao configurado.');
+    } elseif ($apiOk) {
+        try {
+            $r = voice_telnyx_request($pdo, 'GET', '/v2/call_control_applications/' . rawurlencode($connectionId), [], $provider);
+            $items[] = voice_diagnostic_item('connection_id', 'Connection ID existe', $r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Call Control Application encontrada.' : 'HTTP ' . (int)$r['status']);
+        } catch (Throwable $e) {
+            $items[] = voice_diagnostic_item('connection_id', 'Connection ID existe', 'error', $e->getMessage());
+        }
+    }
+
+    $profileId = trim((string)($cfg['outbound_voice_profile_id'] ?? ''));
+    if ($profileId === '') {
+        $items[] = voice_diagnostic_item('outbound_profile', 'Outbound Voice Profile existe', 'pending', 'Outbound Voice Profile nao configurado.');
+    } elseif ($apiOk) {
+        try {
+            $r = voice_telnyx_request($pdo, 'GET', '/v2/outbound_voice_profiles/' . rawurlencode($profileId), [], $provider);
+            $data = is_array($r['body']['data'] ?? null) ? $r['body']['data'] : [];
+            $enabled = array_key_exists('enabled', $data) ? (bool)$data['enabled'] : true;
+            $items[] = voice_diagnostic_item('outbound_profile', 'Outbound Voice Profile existe', $r['ok'] && $enabled ? 'ok' : 'error', $r['ok'] ? ($enabled ? 'Perfil ativo para saida.' : 'Perfil encontrado, mas desativado.') : 'HTTP ' . (int)$r['status']);
+        } catch (Throwable $e) {
+            $items[] = voice_diagnostic_item('outbound_profile', 'Outbound Voice Profile existe', 'error', $e->getMessage());
+        }
+    }
+
+    $number = voice_normalize_e164((string)($cfg['default_from_number'] ?? ''), (string)($cfg['default_country_code'] ?? '55'));
+    if ($number === '') {
+        $items[] = voice_diagnostic_item('number_exists', 'Numero existe', 'pending', 'Numero padrao de origem nao configurado.');
+        $items[] = voice_diagnostic_item('number_active', 'Numero esta Active', 'pending', 'Aguardando numero padrao.');
+    } elseif ($apiOk) {
+        try {
+            $r = voice_telnyx_request($pdo, 'GET', '/v2/phone_numbers?filter[phone_number]=' . rawurlencode($number), [], $provider);
+            $rows = is_array($r['body']['data'] ?? null) ? $r['body']['data'] : [];
+            $found = $r['ok'] && count($rows) > 0;
+            $status = strtolower((string)($rows[0]['status'] ?? $rows[0]['phone_number_status'] ?? ''));
+            $active = $found && ($status === '' || in_array($status, ['active','enabled'], true));
+            $items[] = voice_diagnostic_item('number_exists', 'Numero existe', $found ? 'ok' : 'error', $found ? 'Numero localizado na Telnyx.' : 'Numero nao localizado pela API.');
+            $items[] = voice_diagnostic_item('number_active', 'Numero esta Active', $active ? 'ok' : ($found ? 'warning' : 'pending'), $found ? ('Status retornado: ' . ($status ?: 'nao informado')) : 'Sem numero localizado.');
+        } catch (Throwable $e) {
+            $items[] = voice_diagnostic_item('number_exists', 'Numero existe', 'error', $e->getMessage());
+            $items[] = voice_diagnostic_item('number_active', 'Numero esta Active', 'pending', 'Nao foi possivel validar status.');
+        }
+    }
+
+    $webhookBase = rtrim((string)($cfg['webhook_base_url'] ?? ''), '/') ?: rtrim(defined('BASE_URL') ? BASE_URL : '', '/');
+    $webhookUrl = $webhookBase . '/telnyx_voice_webhook.php?health=1';
+    $wh = voice_http_health($webhookUrl, (int)($cfg['http_timeout'] ?? 8));
+    $items[] = voice_diagnostic_item('webhook_http', 'Webhook responde HTTP 200', $wh['ok'] ? 'ok' : 'error', $wh['ok'] ? 'Endpoint publico respondeu.' : ('HTTP ' . (int)$wh['status'] . ' ' . (string)$wh['error']), ['url'=>$webhookUrl]);
+
+    $publicKey = trim((string)($cfg['public_key'] ?? getenv('TELNYX_PUBLIC_KEY') ?: ''));
+    $pkOk = voice_public_key_parseable($publicKey);
+    $items[] = voice_diagnostic_item('public_key', 'Public Key valida', $pkOk ? 'ok' : 'error', $pkOk ? 'Formato Ed25519 aceito pelo servidor.' : 'Public key ausente ou em formato invalido.');
+
+    foreach ($items as $item) {
+        if (in_array($item['status'], ['error','pending'], true)) $ready = false;
+    }
+    $summary = ['ok'=>0,'warning'=>0,'pending'=>0,'error'=>0];
+    foreach ($items as $item) $summary[$item['status']] = ($summary[$item['status']] ?? 0) + 1;
+    $pdo->prepare("UPDATE voice_providers SET connection_status=:s,last_tested_at=NOW(),last_error=:e WHERE provider='telnyx'")
+        ->execute(['s'=>$ready ? 'ready' : ($summary['error'] > 0 ? 'error' : 'pending'), 'e'=>$ready ? null : voice_json($summary)]);
+    return ['ready'=>$ready,'summary'=>$summary,'items'=>$items,'tested_at'=>date('Y-m-d H:i:s')];
+}
+
 function voice_allowed_test_number(array $provider, string $to): bool
 {
     $list = preg_split('/[\s,;]+/', (string)($provider['public']['test_allowed_numbers'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: [];
