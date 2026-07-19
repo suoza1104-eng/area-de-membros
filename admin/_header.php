@@ -17,6 +17,9 @@ $__isEquipe    = ($_SESSION['admin_tipo'] === 'equipe');
 $__equipePerms = $__isEquipe
     ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
     : [];
+if ($__isEquipe && empty($__equipePerms['whatsapp_grupos']) && !empty($__equipePerms['whatsapp_monitor'])) {
+    $__equipePerms['whatsapp_grupos'] = $__equipePerms['whatsapp_monitor'];
+}
 if ($__isEquipe && empty($__equipePerms['whatsapp_config']) && !empty($__equipePerms['whatsapp_ai'])) {
     $__equipePerms['whatsapp_config'] = $__equipePerms['whatsapp_ai'];
 }
@@ -53,7 +56,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','torpedo_voz','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'webhooks','integration_hub','meta_leads','superfuncionario','manychat','torpedo_voz','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 
@@ -84,6 +87,7 @@ $titleMap = [
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
+    'whatsapp_grupos'  => 'Grupos WhatsApp',
     'whatsapp_ai'      => 'IA WhatsApp',
     'suporte_chat'     => 'Central de Suporte',
     'automacoes'       => 'Automações',
@@ -778,7 +782,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['torpedo_voz'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['torpedo_voz'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -854,6 +858,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M8 9h8M8 13h5"/>
       </svg>
       WhatsApp Monitor
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_grupos']): ?>
+    <a href="whatsapp_grupos.php" class="sb-item <?= $currentMenu === 'whatsapp_grupos' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 5h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-5 3V7a2 2 0 012-2z"/>
+        <path d="M8 9h8M8 13h6"/>
+        <circle cx="18" cy="18" r="3"/>
+      </svg>
+      Grupos WhatsApp
     </a>
     <?php endif; ?>
 

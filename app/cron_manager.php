@@ -12,6 +12,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'whatsapp_grupos' => [
+            'label' => 'Grupos WhatsApp',
+            'description' => 'Processa acoes programadas, mensagens e operacoes de campanhas em grupos de WhatsApp.',
+            'script' => __DIR__ . '/../cron/processar_whatsapp_grupos.php',
+            'interval' => 1,
+            'timeout' => 300,
+        ],
         'reagendamentos_live' => [
             'label' => 'Reagendamentos de live',
             'description' => 'Envia lembretes e encerra reagendamentos vencidos.',

@@ -129,7 +129,7 @@ function automation_flow_validate_graph(array $graph, bool $publish = false): ar
         if ($type === 'wait' && ((int)($c['duration'] ?? 0) < 1 || !in_array(($c['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure o temporizador.';
         if ($type === 'email' && (int)($c['templateVersionId'] ?? 0) < 1) $errors[] = 'Selecione um modelo no bloco de e-mail.';
         if ($type === 'push' && (trim((string)($c['title'] ?? '')) === '' || trim((string)($c['body'] ?? '')) === '')) $errors[] = 'Configure titulo e mensagem no bloco push.';
-        if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') === 'audio_url' && trim((string)($c['audioUrl'] ?? '')) === '') $errors[] = 'Configure a URL de audio no bloco de voz.';
+        if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') === 'audio_url' && trim((string)($c['audioUrl'] ?? '')) === '' && (int)($c['audioMediaId'] ?? 0) < 1) $errors[] = 'Selecione um audio da biblioteca ou configure a URL de audio no bloco de voz.';
         if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') !== 'audio_url' && trim((string)($c['message'] ?? '')) === '') $errors[] = 'Configure a mensagem TTS no bloco de voz.';
         if ($type === 'action' && trim((string)($c['tag'] ?? '')) === '') $errors[] = 'Configure a tag no bloco de acao.';
         if ($type === 'integration' && !in_array(($c['provider'] ?? ''), ['webhook','superfuncionario','manychat'], true)) $errors[] = 'Configure a integracao.';

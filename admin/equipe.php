@@ -55,6 +55,7 @@ $PAGINAS = [
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'   => 'Configurações WhatsApp',
     'whatsapp_monitor'  => 'WhatsApp Monitor',
+    'whatsapp_grupos'   => 'Grupos WhatsApp',
     'whatsapp_ai'       => 'IA WhatsApp',
     'notificacoes'      => 'Notificações do App',
     'suporte_chat'      => 'Central de Suporte',

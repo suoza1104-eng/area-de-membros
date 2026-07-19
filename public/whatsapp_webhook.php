@@ -3,12 +3,14 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/evolution_api.php';
 require_once __DIR__ . '/../app/whatsapp_ai.php';
+require_once __DIR__ . '/../app/whatsapp_groups.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
 $pdo = getPDO();
 evolution_ensure_tables($pdo);
 whatsapp_ai_ensure_tables($pdo);
+whatsapp_groups_ensure_tables($pdo);
 
 $expectedToken = evolution_get_webhook_token();
 $receivedToken = preg_replace('/[^a-f0-9]/i', '', (string)($_GET['t'] ?? $_GET['token'] ?? ''));
@@ -79,6 +81,15 @@ try {
     @error_log('whatsapp_ai_record_message: ' . $e->getMessage());
 }
 
+$keywordResult = null;
+try {
+    foreach ($loggedEvents as $loggedEvent) {
+        $keywordResult = whatsapp_groups_process_keyword_message($pdo, (int)$loggedEvent['id'], $payload);
+    }
+} catch (Throwable $e) {
+    @error_log('whatsapp_groups_process_keyword_message: ' . $e->getMessage());
+}
+
 $process = [];
 foreach ($loggedEvents as $loggedEvent) {
     $process[] = evolution_process_group_event($pdo, (int)$loggedEvent['id'], (array)$loggedEvent['fields']);
@@ -88,5 +99,6 @@ echo json_encode([
     'ok' => true,
     'logged' => count($loggedEvents) === 1 ? $loggedEvents[0]['id'] : array_column($loggedEvents, 'id'),
     'ai_message' => $aiMessageId,
+    'keyword' => $keywordResult,
     'process' => count($process) === 1 ? $process[0] : $process,
 ]);

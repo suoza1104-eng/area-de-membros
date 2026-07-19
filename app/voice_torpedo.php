@@ -837,7 +837,13 @@ function voice_automation_start_call(PDO $pdo, array $config, array $user, array
     $mode = (string)($config['messageMode'] ?? 'text_to_speech');
     $message = voice_render_template((string)($config['message'] ?? ''), $user, $extra);
     $audioUrl = trim((string)($config['audioUrl'] ?? ''));
-    if ($mode === 'audio_url' && $audioUrl === '') throw new RuntimeException('Configure a URL de audio no bloco de voz.');
+    $audioMediaId = (int)($config['audioMediaId'] ?? 0);
+    if ($mode === 'audio_url' && $audioUrl === '' && $audioMediaId > 0) {
+        $st = $pdo->prepare("SELECT public_url FROM voice_media WHERE id=:id AND status='active' LIMIT 1");
+        $st->execute(['id'=>$audioMediaId]);
+        $audioUrl = trim((string)$st->fetchColumn());
+    }
+    if ($mode === 'audio_url' && $audioUrl === '') throw new RuntimeException('Selecione um audio da biblioteca ou configure uma URL de audio no bloco de voz.');
     if ($mode !== 'audio_url' && trim($message) === '') throw new RuntimeException('Configure a mensagem TTS no bloco de voz.');
     return voice_create_telnyx_call($pdo, [
         'to'=>$to,
