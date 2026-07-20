@@ -227,11 +227,20 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
             $match = (int)$progress['required'] > 0 && (int)$progress['done'] >= (int)$progress['required'];
         }
     } elseif (str_starts_with($field, 'email_') || str_starts_with($field, 'any_email_')) {
-        $specific = str_starts_with($field, 'email_');
+        $scope = (string)($r['scope'] ?? 'specific');
+        $specific = str_starts_with($field, 'email_') && $scope !== 'any' && $scope !== 'all';
         $event = str_starts_with($field, 'any_email_') ? substr($field, 10) : substr($field, 6);
         $statusMap = ['delivered' => 'delivered_at', 'opened' => 'first_opened_at', 'clicked' => 'first_clicked_at'];
         if (isset($statusMap[$event])) {
             $sql = 'SELECT 1 FROM email_messages WHERE user_id=:u AND ' . $statusMap[$event] . ' IS NOT NULL';
+            if ($scope === 'all' && !str_starts_with($field, 'any_email_')) {
+                $allSql = 'SELECT COUNT(*) total, SUM(' . $statusMap[$event] . ' IS NOT NULL) matched FROM email_messages WHERE user_id=:u AND status NOT IN (\'queued\',\'sending\',\'failed\')';
+                $st = $pdo->prepare($allSql);
+                $st->execute(['u' => $userId]);
+                $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'matched' => 0];
+                $match = (int)$row['total'] > 0 && (int)$row['total'] === (int)$row['matched'];
+                return $negative ? !$match : $match;
+            }
         } else {
             $status = ['bounced' => 'bounced', 'complaint' => 'complaint', 'unsubscribed' => 'unsubscribed'][$event] ?? '';
             $sql = "SELECT 1 FROM email_messages WHERE user_id=:u AND status=" . $pdo->quote($status);
@@ -284,21 +293,38 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
     } elseif ($field === 'live_rescheduled') {
         $match = email_flow_exists($pdo, "SELECT 1 FROM reagendamentos_live WHERE user_id=:u AND status IN ('reagendado','enviado')", ['u' => $userId]);
     } elseif (str_starts_with($field, 'voice_')) {
-        $exists = function (string $sql) use ($pdo, $userId): bool {
-            try {
-                $st = $pdo->prepare($sql . ' LIMIT 1');
-                $st->execute(['u' => $userId]);
-                return (bool)$st->fetchColumn();
-            } catch (Throwable $e) {
-                return false;
-            }
+        $scope = (string)($r['scope'] ?? 'any');
+        $campaignId = (int)$value;
+        $campaignSql = $scope === 'specific' && $campaignId > 0 ? ' AND campaign_id=:campaign' : '';
+        $params = ['u' => $userId];
+        if ($campaignSql !== '') $params['campaign'] = $campaignId;
+        $predicate = match ($field) {
+            'voice_answered' => '(answered_at IS NOT NULL OR answered_by IS NOT NULL)',
+            'voice_human' => "answered_by='human'",
+            'voice_machine' => "answered_by='machine'",
+            'voice_not_answered' => "hangup_cause LIKE '%timeout%'",
+            'voice_audio_completed' => 'audio_ended_at IS NOT NULL',
+            default => '',
         };
-        if ($field === 'voice_answered') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND (answered_at IS NOT NULL OR answered_by IS NOT NULL)");
-        elseif ($field === 'voice_human') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND answered_by='human'");
-        elseif ($field === 'voice_machine') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND answered_by='machine'");
-        elseif ($field === 'voice_not_answered') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND hangup_cause LIKE '%timeout%'");
-        elseif ($field === 'voice_audio_completed') $match = $exists("SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND audio_ended_at IS NOT NULL");
-        elseif ($field === 'voice_dtmf') $match = $exists("SELECT 1 FROM voice_events WHERE user_id=:u AND normalized_event='interacted'");
+        if ($field === 'voice_dtmf') {
+            if ($scope === 'all') {
+                $st = $pdo->prepare("SELECT COUNT(*) total,SUM(normalized_event='interacted') matched FROM voice_events WHERE user_id=:u");
+                $st->execute(['u' => $userId]);
+                $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'matched' => 0];
+                $match = (int)$row['total'] > 0 && (int)$row['total'] === (int)$row['matched'];
+            } else {
+                $match = email_flow_exists($pdo, "SELECT 1 FROM voice_events WHERE user_id=:u AND normalized_event='interacted'{$campaignSql}", $params);
+            }
+        } elseif ($predicate !== '') {
+            if ($scope === 'all') {
+                $st = $pdo->prepare("SELECT COUNT(*) total,SUM({$predicate}) matched FROM voice_call_attempts WHERE user_id=:u");
+                $st->execute(['u' => $userId]);
+                $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'matched' => 0];
+                $match = (int)$row['total'] > 0 && (int)$row['total'] === (int)$row['matched'];
+            } else {
+                $match = email_flow_exists($pdo, "SELECT 1 FROM voice_call_attempts WHERE user_id=:u AND {$predicate}{$campaignSql}", $params);
+            }
+        }
     }
     return $negative ? !$match : $match;
 }
