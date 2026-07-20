@@ -122,6 +122,76 @@ function email_flow_has_tag(PDO $pdo, int $userId, string $tag): bool
     return (bool)$st->fetchColumn();
 }
 
+function email_flow_table_exists(PDO $pdo, string $table): bool
+{
+    try {
+        $st = $pdo->prepare('SHOW TABLES LIKE :table');
+        $st->execute(['table' => $table]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function email_flow_exists(PDO $pdo, string $sql, array $params): bool
+{
+    try {
+        $st = $pdo->prepare($sql . ' LIMIT 1');
+        $st->execute($params);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function email_flow_number_match(float $actual, string $op, float $wanted): bool
+{
+    return match ($op) {
+        'lte' => $actual <= $wanted,
+        'equals' => $actual == $wanted,
+        'not_equals' => $actual != $wanted,
+        default => $actual >= $wanted,
+    };
+}
+
+function email_flow_course_progress(PDO $pdo, int $userId): array
+{
+    $out = ['done' => 0, 'required' => 0, 'percent' => 0];
+    try {
+        if (!email_flow_table_exists($pdo, 'lesson_progress') || !email_flow_table_exists($pdo, 'lessons')) return $out;
+        $filter = 'l.ativo=1 AND l.conta_para_conclusao=1';
+        $out['required'] = (int)$pdo->query('SELECT COUNT(*) FROM lessons WHERE ativo=1 AND conta_para_conclusao=1')->fetchColumn();
+        if ($out['required'] <= 0) {
+            $filter = 'l.ativo=1';
+            $out['required'] = (int)$pdo->query('SELECT COUNT(*) FROM lessons WHERE ativo=1')->fetchColumn();
+        }
+        if ($out['required'] > 0) {
+            $st = $pdo->prepare("
+                SELECT COUNT(DISTINCT lp.lesson_id)
+                  FROM lesson_progress lp
+                  JOIN lessons l ON l.id=lp.lesson_id
+                 WHERE lp.user_id=:u
+                   AND lp.status='completed'
+                   AND {$filter}
+            ");
+            $st->execute(['u' => $userId]);
+            $out['done'] = (int)$st->fetchColumn();
+            $out['percent'] = min(100, (int)floor(($out['done'] / max(1, $out['required'])) * 100));
+        }
+    } catch (Throwable $e) {
+        return ['done' => 0, 'required' => 0, 'percent' => 0];
+    }
+    return $out;
+}
+
+function email_flow_user_had_event(PDO $pdo, int $userId, string $eventCode, bool $prefix = false): bool
+{
+    $params = ['u' => $userId, 'e' => $prefix ? $eventCode . '%' : $eventCode];
+    $op = $prefix ? 'LIKE' : '=';
+    return email_flow_exists($pdo, "SELECT 1 FROM automation_flow_events WHERE user_id=:u AND event_code {$op} :e", $params)
+        || email_flow_exists($pdo, "SELECT 1 FROM email_flow_events WHERE user_id=:u AND event_code {$op} :e", $params);
+}
+
 function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
 {
     $field = (string)($r['field'] ?? '');
@@ -147,9 +217,18 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
             : str_contains(mb_strtolower((string)($user['email'] ?? '')), mb_strtolower($value));
     } elseif ($field === 'marketing_eligible') {
         $match = !email_is_suppressed($pdo, (string)($user['email'] ?? ''));
+    } elseif (in_array($field, ['course_progress_pct', 'lessons_completed_count', 'completed_trail'], true)) {
+        $progress = email_flow_course_progress($pdo, $userId);
+        if ($field === 'course_progress_pct') {
+            $match = email_flow_number_match((float)$progress['percent'], $op, (float)$value);
+        } elseif ($field === 'lessons_completed_count') {
+            $match = email_flow_number_match((float)$progress['done'], $op, (float)$value);
+        } else {
+            $match = (int)$progress['required'] > 0 && (int)$progress['done'] >= (int)$progress['required'];
+        }
     } elseif (str_starts_with($field, 'email_') || str_starts_with($field, 'any_email_')) {
         $specific = str_starts_with($field, 'email_');
-        $event = str_replace(['email_', 'any_email_'], ['', ''], $field);
+        $event = str_starts_with($field, 'any_email_') ? substr($field, 10) : substr($field, 6);
         $statusMap = ['delivered' => 'delivered_at', 'opened' => 'first_opened_at', 'clicked' => 'first_clicked_at'];
         if (isset($statusMap[$event])) {
             $sql = 'SELECT 1 FROM email_messages WHERE user_id=:u AND ' . $statusMap[$event] . ' IS NOT NULL';
@@ -175,6 +254,35 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
         $actual = (int)$st->fetchColumn();
         $wanted = (int)$value;
         $match = $op === 'gte' ? $actual >= $wanted : ($op === 'lte' ? $actual <= $wanted : $actual === $wanted);
+    } elseif (in_array($field, ['push_clicked', 'push_notification_clicked', 'push_received', 'push_notification_received'], true)) {
+        $statusSql = $field === 'push_clicked' || $field === 'push_notification_clicked'
+            ? 'clicked_at IS NOT NULL'
+            : "status IN ('accepted','clicked')";
+        $sql = "SELECT 1 FROM push_delivery_logs WHERE user_id=:u AND {$statusSql}";
+        $params = ['u' => $userId];
+        if ($field === 'push_notification_clicked' || $field === 'push_notification_received') {
+            $sql .= ' AND notification_id=:n';
+            $params['n'] = (int)$value;
+        }
+        $match = email_flow_exists($pdo, $sql, $params);
+    } elseif (in_array($field, ['live_accessed', 'live_offer', 'live_purchase', 'live_event', 'certificate_password_error', 'live_reschedule_expired'], true)) {
+        $eventMap = [
+            'live_accessed' => 'LIVE_ACESSOU',
+            'live_offer' => 'LIVE_OFERTA',
+            'live_purchase' => 'LIVE_COMPRA',
+            'certificate_password_error' => 'CERT_SENHA_ERRADA',
+            'live_reschedule_expired' => 'LIVE_REAGENDAMENTO_EXPIRADO',
+        ];
+        $match = $field === 'live_event'
+            ? email_flow_user_had_event($pdo, $userId, 'LIVE_', true)
+            : email_flow_user_had_event($pdo, $userId, $eventMap[$field]);
+        if (!$match && $field === 'live_reschedule_expired') {
+            $match = email_flow_exists($pdo, 'SELECT 1 FROM reagendamentos_live WHERE user_id=:u AND expired_checked_at IS NOT NULL', ['u' => $userId]);
+        }
+    } elseif ($field === 'certificate_issued') {
+        $match = email_flow_exists($pdo, "SELECT 1 FROM certificates WHERE user_id=:u AND status='emitido'", ['u' => $userId]);
+    } elseif ($field === 'live_rescheduled') {
+        $match = email_flow_exists($pdo, "SELECT 1 FROM reagendamentos_live WHERE user_id=:u AND status IN ('reagendado','enviado')", ['u' => $userId]);
     } elseif (str_starts_with($field, 'voice_')) {
         $exists = function (string $sql) use ($pdo, $userId): bool {
             try {
