@@ -127,7 +127,18 @@ function automation_flow_validate_graph(array $graph, bool $publish = false): ar
         $c = is_array($node['config'] ?? null) ? $node['config'] : [];
         if ($type === 'trigger' && trim((string)($c['event'] ?? '')) === '') $errors[] = 'Configure o evento do gatilho.';
         if ($type === 'wait' && ((int)($c['duration'] ?? 0) < 1 || !in_array(($c['unit'] ?? ''), ['minutes','hours','days'], true))) $errors[] = 'Configure o temporizador.';
-        if ($type === 'email' && (int)($c['templateVersionId'] ?? 0) < 1) $errors[] = 'Selecione um modelo no bloco de e-mail.';
+        if ($type === 'email') {
+            if (!empty($c['abEnabled'])) {
+                $variants = is_array($c['variants'] ?? null) ? $c['variants'] : [];
+                $validVariants = 0;
+                foreach ($variants as $variant) {
+                    if ((int)($variant['templateVersionId'] ?? 0) > 0 && (int)($variant['weight'] ?? 0) > 0) $validVariants++;
+                }
+                if ($validVariants < 2) $errors[] = 'Configure pelo menos duas variantes validas no teste A/B/n do bloco de e-mail.';
+            } elseif ((int)($c['templateVersionId'] ?? 0) < 1) {
+                $errors[] = 'Selecione um modelo no bloco de e-mail.';
+            }
+        }
         if ($type === 'push' && (trim((string)($c['title'] ?? '')) === '' || trim((string)($c['body'] ?? '')) === '')) $errors[] = 'Configure titulo e mensagem no bloco push.';
         if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') === 'audio_url' && trim((string)($c['audioUrl'] ?? '')) === '' && (int)($c['audioMediaId'] ?? 0) < 1) $errors[] = 'Selecione um audio da biblioteca ou configure a URL de audio no bloco de voz.';
         if ($type === 'voice' && (string)($c['messageMode'] ?? 'text_to_speech') !== 'audio_url' && trim((string)($c['message'] ?? '')) === '') $errors[] = 'Configure a mensagem TTS no bloco de voz.';
@@ -260,16 +271,52 @@ function automation_flow_claim(PDO $pdo): ?array
     return $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
+function automation_flow_pick_email_variant(array $variants, array $job): array
+{
+    $valid = [];
+    $total = 0;
+    foreach ($variants as $index => $variant) {
+        $weight = max(0, (int)($variant['weight'] ?? 0));
+        $versionId = (int)($variant['templateVersionId'] ?? 0);
+        if ($weight <= 0 || $versionId <= 0) continue;
+        $variant['_index'] = $index;
+        $variant['weight'] = $weight;
+        $valid[] = $variant;
+        $total += $weight;
+    }
+    if (count($valid) < 2 || $total <= 0) throw new RuntimeException('Teste A/B/n sem variantes validas.');
+    $seed = hexdec(substr(hash('sha256', 'automation_ab|' . $job['run_id'] . '|' . $job['node_id'] . '|' . $job['user_id']), 0, 8));
+    $bucket = $seed % $total;
+    $cursor = 0;
+    foreach ($valid as $variant) {
+        $cursor += (int)$variant['weight'];
+        if ($bucket < $cursor) return $variant;
+    }
+    return $valid[count($valid) - 1];
+}
+
 function automation_flow_send_email(PDO $pdo, array $job, array $config, array $user): array
 {
-    $versionId=(int)($config['templateVersionId'] ?? 0);
+    $variant = null;
+    if (!empty($config['abEnabled'])) {
+        $variant = automation_flow_pick_email_variant(is_array($config['variants'] ?? null) ? $config['variants'] : [], $job);
+        $versionId = (int)($variant['templateVersionId'] ?? 0);
+    } else {
+        $versionId=(int)($config['templateVersionId'] ?? 0);
+    }
     $st=$pdo->prepare('SELECT * FROM email_template_versions WHERE id=:id');$st->execute(['id'=>$versionId]);$version=$st->fetch(PDO::FETCH_ASSOC);
     if (!$version) throw new RuntimeException('Modelo do bloco de email nao encontrado.');
-    if (email_is_suppressed($pdo, (string)($user['email'] ?? ''))) return ['skipped'=>'suppressed'];
+    $variantId = $variant ? (string)($variant['id'] ?? ('v' . (((int)($variant['_index'] ?? 0)) + 1))) : '';
+    if (email_is_suppressed($pdo, (string)($user['email'] ?? ''))) return ['skipped'=>'suppressed','template_version_id'=>$versionId] + ($variant ? ['variant_id'=>$variantId] : []);
     $user=email_flow_render_user($user, $job);
-    $key=hash('sha256','automation|' . $job['run_id'] . '|' . $job['node_id'] . '|' . $job['user_id']);
-    $id=email_send_rendered_message($pdo, email_settings($pdo), ['flow_run_id'=>(int)$job['run_id']], $user, $version, $key, ['automation_flow_id'=>(string)$job['flow_id'],'automation_run_id'=>(string)$job['run_id']]);
-    return ['message_id'=>$id,'template_version_id'=>$versionId];
+    $key=hash('sha256','automation|' . $job['run_id'] . '|' . $job['node_id'] . '|' . $job['user_id'] . ($variant ? '|' . $variantId : ''));
+    $tags = ['automation_flow_id'=>(string)$job['flow_id'],'automation_run_id'=>(string)$job['run_id']];
+    if ($variant) {
+        $tags['ab_node'] = (string)$job['node_id'];
+        $tags['ab_variant'] = $variantId;
+    }
+    $id=email_send_rendered_message($pdo, email_settings($pdo), ['flow_id'=>(int)$job['flow_id'],'flow_run_id'=>(int)$job['run_id']], $user, $version, $key, $tags);
+    return ['message_id'=>$id,'template_version_id'=>$versionId] + ($variant ? ['variant_id'=>$variantId] : []);
 }
 
 function automation_flow_process_job(PDO $pdo, array $job): string
