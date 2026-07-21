@@ -198,6 +198,389 @@ function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): ar
     return ['payments'=>$payments,'installments'=>$installments,'products'=>$products,'sources'=>$sources];
 }
 
+function md_table_columns(PDO $pdo, string $table): array
+{
+    static $cache = [];
+    if (isset($cache[$table])) return $cache[$table];
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM `{$table}`");
+        $stmt->execute();
+        $cache[$table] = array_fill_keys(array_map(static fn($r) => (string)$r['Field'], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []), true);
+    } catch (Throwable $e) {
+        $cache[$table] = [];
+    }
+    return $cache[$table];
+}
+
+function md_pick_column(PDO $pdo, string $table, array $candidates): string
+{
+    $cols = md_table_columns($pdo, $table);
+    foreach ($candidates as $column) {
+        if (isset($cols[$column])) return $column;
+    }
+    return '';
+}
+
+function md_in_params(array $values, string $prefix, array &$params): string
+{
+    $placeholders = [];
+    $i = 0;
+    foreach ($values as $value) {
+        $key = $prefix . $i++;
+        $placeholders[] = ':' . $key;
+        $params[$key] = $value;
+    }
+    return implode(',', $placeholders);
+}
+
+function md_tag_meaning(string $tag, string $description = ''): string
+{
+    $tag = trim($tag);
+    $description = trim($description);
+    if ($description !== '') return $description;
+    $upper = strtoupper($tag);
+    if (preg_match('/^VIU_AULA_(\d+)$/', $upper, $m)) return 'Aluno marcou ou acionou visualizacao/conclusao da aula ID ' . $m[1] . '.';
+    if (strpos($upper, 'LIVE_ACESSOU') !== false || strpos($upper, 'ACESSOU') !== false) return 'Lead acessou a live ou sala do evento.';
+    if (strpos($upper, 'LIVE_OFERTA') !== false || strpos($upper, 'OFERTA') !== false) return 'Lead chegou ao momento de oferta da live.';
+    if (strpos($upper, 'LIVE_COMPRA') !== false || strpos($upper, 'COMPRA') !== false) return 'Lead clicou/comprou em evento ligado a live.';
+    if (strpos($upper, 'REAGENDAMENTO') !== false) return 'Estado do fluxo de reagendamento de live.';
+    if (strpos($upper, 'BLOQUEAR') !== false) return 'Controle operacional de bloqueio/desbloqueio de disparos.';
+    if (strpos($upper, 'WHATSAPP') !== false) return 'Sinal gerado por interacao ou alerta de WhatsApp.';
+    return 'Tag registrada no CRM/automacoes; sem descricao cadastrada no banco.';
+}
+
+function md_buyer_profile(PDO $pdo, string $start, string $end, array $filters, int $detailLimit = 500): array
+{
+    $detailLimit = max(50, min(1500, $detailLimit));
+    $params = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
+    $saleFilter = md_filter_sql($filters, 'sale', $params);
+    $saleDateExpr = md_sale_revenue_date_sql('s');
+    $sales = md_rows($pdo, "SELECT s.id,s.transaction_code,s.status,s.webhook_event,{$saleDateExpr} sale_date,
+              s.product_code,s.product_name,s.price_name,s.payment_type,s.installments_number,s.sales_channel,
+              s.gross_revenue,s.net_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw,
+              s.buyer_phone_norm,s.matched_user_id,s.match_method,s.utm_source,s.utm_medium,s.utm_campaign,s.utm_term,s.utm_content
+            FROM hotmart_sales_live s
+            WHERE " . md_approved_sql('s') . "
+              AND {$saleDateExpr} BETWEEN :start AND :end{$saleFilter}
+            ORDER BY {$saleDateExpr} ASC, s.id ASC", $params);
+
+    $emails = [];
+    $phones = [];
+    $userIds = [];
+    foreach ($sales as $sale) {
+        $uid = (int)($sale['matched_user_id'] ?? 0);
+        if ($uid > 0) $userIds[$uid] = $uid;
+        $email = normalize_email_value($sale['buyer_email'] ?? '');
+        $phone = normalize_phone_value($sale['buyer_phone_norm'] ?: ($sale['buyer_phone_raw'] ?? ''));
+        if ($email !== '') $emails[$email] = $email;
+        if ($phone !== '') $phones[$phone] = $phone;
+    }
+
+    $users = [];
+    $emailToUsers = [];
+    $phoneToUsers = [];
+    $loadUsers = static function(array $rows) use (&$users, &$emailToUsers, &$phoneToUsers): void {
+        foreach ($rows as $u) {
+            $id = (int)($u['id'] ?? 0);
+            if ($id <= 0) continue;
+            $users[$id] = $u;
+            $email = normalize_email_value($u['email'] ?? '');
+            $phone = normalize_phone_value($u['telefone'] ?? '');
+            if ($email !== '') $emailToUsers[$email][$id] = $id;
+            if ($phone !== '') $phoneToUsers[$phone][$id] = $id;
+        }
+    };
+    if ($userIds) {
+        $p = [];
+        $in = md_in_params(array_values($userIds), 'u', $p);
+        $loadUsers(md_rows($pdo, "SELECT * FROM users WHERE id IN ({$in})", $p));
+    }
+    if ($emails) {
+        $p = [];
+        $in = md_in_params(array_values($emails), 'e', $p);
+        $loadUsers(md_rows($pdo, "SELECT * FROM users WHERE LOWER(TRIM(email)) IN ({$in}) ORDER BY id DESC", $p));
+    }
+    if ($phones) {
+        $p = [];
+        $in = md_in_params(array_values($phones), 'p', $p);
+        $expr = "RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''),' ',''),'-',''),'(',''),')',''),'+',''),11)";
+        $loadUsers(md_rows($pdo, "SELECT * FROM users WHERE {$expr} IN ({$in}) ORDER BY id DESC", $p));
+    }
+
+    $buyers = [];
+    $saleDetails = [];
+    foreach ($sales as $sale) {
+        $email = normalize_email_value($sale['buyer_email'] ?? '');
+        $phone = normalize_phone_value($sale['buyer_phone_norm'] ?: ($sale['buyer_phone_raw'] ?? ''));
+        $uid = (int)($sale['matched_user_id'] ?? 0);
+        if ($uid <= 0 && $email !== '' && !empty($emailToUsers[$email])) $uid = (int)array_key_first($emailToUsers[$email]);
+        if ($uid <= 0 && $phone !== '' && !empty($phoneToUsers[$phone])) $uid = (int)array_key_first($phoneToUsers[$phone]);
+        if ($uid > 0) $userIds[$uid] = $uid;
+        $buyerKey = $uid > 0 ? 'u:' . $uid : ($email !== '' ? 'e:' . $email : ($phone !== '' ? 'p:' . $phone : 'tx:' . (string)$sale['transaction_code']));
+        if (!isset($buyers[$buyerKey])) {
+            $u = $uid > 0 ? ($users[$uid] ?? []) : [];
+            $buyers[$buyerKey] = [
+                'buyer_key' => $buyerKey,
+                'user_id' => $uid ?: null,
+                'name' => (string)($u['nome'] ?? $sale['buyer_name'] ?? ''),
+                'email' => (string)($u['email'] ?? $sale['buyer_email'] ?? ''),
+                'phone' => (string)($u['telefone'] ?? $sale['buyer_phone_raw'] ?? $sale['buyer_phone_norm'] ?? ''),
+                'lead_created_at' => (string)($u['created_at'] ?? ''),
+                'turma' => (string)($u['codigo_turma'] ?? $u['turma_codigo'] ?? ''),
+                'scheduled_live_at' => (string)($u['data_live'] ?? ''),
+                'utm' => [
+                    'source' => (string)($u['utm_source'] ?? $sale['utm_source'] ?? ''),
+                    'medium' => (string)($u['utm_medium'] ?? $sale['utm_medium'] ?? ''),
+                    'campaign' => (string)($u['utm_campaign'] ?? $sale['utm_campaign'] ?? ''),
+                    'term' => (string)($u['utm_term'] ?? $sale['utm_term'] ?? ''),
+                    'content' => (string)($u['utm_content'] ?? $sale['utm_content'] ?? ''),
+                ],
+                'sales' => [],
+                'tags' => [],
+                'events' => [],
+                'live_events' => [],
+                'lesson_views' => 0,
+                'lessons_completed' => 0,
+                'first_lesson_view_at' => '',
+                'first_live_access_at' => '',
+                'first_event_at' => '',
+                'revenue' => 0.0,
+            ];
+        }
+        $saleRow = [
+            'transaction' => (string)$sale['transaction_code'],
+            'date' => (string)$sale['sale_date'],
+            'product' => (string)($sale['product_name'] ?: 'Sem produto'),
+            'offer' => (string)($sale['price_name'] ?? ''),
+            'gross' => (float)$sale['gross_revenue'],
+            'producer_net' => (float)$sale['producer_net'],
+            'payment_type' => (string)($sale['payment_type'] ?? ''),
+            'installments' => (int)($sale['installments_number'] ?? 0),
+            'channel' => (string)($sale['sales_channel'] ?? ''),
+        ];
+        $buyers[$buyerKey]['sales'][] = $saleRow;
+        $buyers[$buyerKey]['revenue'] += (float)$sale['producer_net'];
+        if (count($saleDetails) < $detailLimit) $saleDetails[] = $saleRow + ['buyer_key' => $buyerKey];
+    }
+
+    $resolvedUserIds = [];
+    foreach ($buyers as $buyer) {
+        if (!empty($buyer['user_id'])) $resolvedUserIds[(int)$buyer['user_id']] = (int)$buyer['user_id'];
+    }
+
+    $tagStats = [];
+    if ($resolvedUserIds && metrics_table_exists($pdo, 'user_tags') && metrics_table_exists($pdo, 'tags')) {
+        $p = [];
+        $in = md_in_params(array_values($resolvedUserIds), 'tu', $p);
+        $descCol = md_pick_column($pdo, 'tags', ['descricao','description','significado']);
+        $descSql = $descCol !== '' ? ",t.`{$descCol}` description" : ",'' description";
+        foreach (md_rows($pdo, "SELECT ut.user_id,t.nome tag_name,ut.origem,ut.created_at{$descSql} FROM user_tags ut JOIN tags t ON t.id=ut.tag_id WHERE ut.user_id IN ({$in}) ORDER BY ut.created_at ASC", $p) as $row) {
+            $uid = (int)$row['user_id'];
+            $tag = (string)$row['tag_name'];
+            $meaning = md_tag_meaning($tag, (string)($row['description'] ?? ''));
+            foreach ($buyers as &$buyer) {
+                if ((int)($buyer['user_id'] ?? 0) === $uid) {
+                    $buyer['tags'][] = ['tag' => $tag, 'meaning' => $meaning, 'origin' => (string)$row['origem'], 'date' => (string)$row['created_at']];
+                    break;
+                }
+            }
+            unset($buyer);
+            if (!isset($tagStats[$tag])) $tagStats[$tag] = ['tag' => $tag, 'meaning' => $meaning, 'buyers' => [], 'count' => 0, 'origins' => []];
+            $tagStats[$tag]['buyers'][$uid] = true;
+            $tagStats[$tag]['count']++;
+            $origin = (string)$row['origem'];
+            if ($origin !== '') $tagStats[$tag]['origins'][$origin] = ($tagStats[$tag]['origins'][$origin] ?? 0) + 1;
+        }
+    }
+    foreach ($tagStats as &$tagRow) {
+        $tagRow['buyers'] = count($tagRow['buyers']);
+        arsort($tagRow['origins']);
+    }
+    unset($tagRow);
+    uasort($tagStats, static fn($a, $b) => ((int)$b['buyers'] <=> (int)$a['buyers']) ?: ((int)$b['count'] <=> (int)$a['count']));
+
+    if ($resolvedUserIds && metrics_table_exists($pdo, 'lesson_view_events')) {
+        $p = [];
+        $in = md_in_params(array_values($resolvedUserIds), 'lv', $p);
+        foreach (md_rows($pdo, "SELECT user_id,COUNT(*) views,MIN(viewed_at) first_view FROM lesson_view_events WHERE user_id IN ({$in}) GROUP BY user_id", $p) as $row) {
+            foreach ($buyers as &$buyer) {
+                if ((int)($buyer['user_id'] ?? 0) === (int)$row['user_id']) {
+                    $buyer['lesson_views'] = (int)$row['views'];
+                    $buyer['first_lesson_view_at'] = (string)$row['first_view'];
+                    break;
+                }
+            }
+            unset($buyer);
+        }
+    }
+    if ($resolvedUserIds && metrics_table_exists($pdo, 'lesson_progress')) {
+        $p = [];
+        $in = md_in_params(array_values($resolvedUserIds), 'lp', $p);
+        foreach (md_rows($pdo, "SELECT user_id,COUNT(*) completed,MIN(completed_at) first_completed FROM lesson_progress WHERE user_id IN ({$in}) AND status='completed' GROUP BY user_id", $p) as $row) {
+            foreach ($buyers as &$buyer) {
+                if ((int)($buyer['user_id'] ?? 0) === (int)$row['user_id']) {
+                    $buyer['lessons_completed'] = (int)$row['completed'];
+                    if ($buyer['first_lesson_view_at'] === '') $buyer['first_lesson_view_at'] = (string)$row['first_completed'];
+                    break;
+                }
+            }
+            unset($buyer);
+        }
+    }
+    if ($resolvedUserIds && metrics_table_exists($pdo, 'automation_flow_events')) {
+        $p = [];
+        $in = md_in_params(array_values($resolvedUserIds), 'ev', $p);
+        foreach (md_rows($pdo, "SELECT user_id,event_code,created_at,payload_json FROM automation_flow_events WHERE user_id IN ({$in}) ORDER BY created_at ASC LIMIT 5000", $p) as $row) {
+            foreach ($buyers as &$buyer) {
+                if ((int)($buyer['user_id'] ?? 0) === (int)$row['user_id']) {
+                    if (count($buyer['events']) < 30) $buyer['events'][] = ['event' => (string)$row['event_code'], 'date' => (string)$row['created_at']];
+                    if ($buyer['first_event_at'] === '') $buyer['first_event_at'] = (string)$row['created_at'];
+                    break;
+                }
+            }
+            unset($buyer);
+        }
+    }
+    if ($resolvedUserIds && metrics_table_exists($pdo, 'live_event_recebimentos') && metrics_table_exists($pdo, 'live_events')) {
+        $p = [];
+        $in = md_in_params(array_values($resolvedUserIds), 'le', $p);
+        foreach (md_rows($pdo, "SELECT r.user_id,e.nome,e.tipo,e.tag_nome,r.recebido_em,r.processado_em FROM live_event_recebimentos r JOIN live_events e ON e.id=r.event_id WHERE r.user_id IN ({$in}) AND r.status='processado' ORDER BY r.recebido_em ASC LIMIT 3000", $p) as $row) {
+            foreach ($buyers as &$buyer) {
+                if ((int)($buyer['user_id'] ?? 0) === (int)$row['user_id']) {
+                    $event = ['name' => (string)$row['nome'], 'type' => (string)$row['tipo'], 'tag' => (string)$row['tag_nome'], 'date' => (string)$row['recebido_em']];
+                    if (count($buyer['live_events']) < 20) $buyer['live_events'][] = $event;
+                    if ((string)$row['tipo'] === 'acessou' && $buyer['first_live_access_at'] === '') $buyer['first_live_access_at'] = (string)$row['recebido_em'];
+                    break;
+                }
+            }
+            unset($buyer);
+        }
+    }
+
+    $productStats = [];
+    $warmupDays = [];
+    $liveBuyers = 0;
+    $noLessonBuyers = 0;
+    $unmatchedBuyers = 0;
+    foreach ($buyers as &$buyer) {
+        if (empty($buyer['user_id'])) $unmatchedBuyers++;
+        if ((int)$buyer['lesson_views'] <= 0 && (int)$buyer['lessons_completed'] <= 0) $noLessonBuyers++;
+        if ($buyer['first_live_access_at'] !== '') $liveBuyers++;
+        $leadTs = strtotime((string)$buyer['lead_created_at']);
+        $firstSaleTs = null;
+        foreach ($buyer['sales'] as $sale) {
+            $saleTs = strtotime((string)$sale['date']);
+            if ($firstSaleTs === null || ($saleTs && $saleTs < $firstSaleTs)) $firstSaleTs = $saleTs ?: $firstSaleTs;
+            $product = (string)$sale['product'];
+            if (!isset($productStats[$product])) $productStats[$product] = ['product' => $product, 'sales' => 0, 'buyers' => [], 'revenue' => 0.0, 'warmup_days' => []];
+            $productStats[$product]['sales']++;
+            $productStats[$product]['buyers'][$buyer['buyer_key']] = true;
+            $productStats[$product]['revenue'] += (float)$sale['producer_net'];
+            if ($leadTs && $saleTs && $saleTs >= $leadTs) $productStats[$product]['warmup_days'][] = round(($saleTs - $leadTs) / 86400, 2);
+        }
+        if ($leadTs && $firstSaleTs && $firstSaleTs >= $leadTs) $warmupDays[] = round(($firstSaleTs - $leadTs) / 86400, 2);
+        $buyer['days_to_first_purchase'] = ($leadTs && $firstSaleTs && $firstSaleTs >= $leadTs) ? round(($firstSaleTs - $leadTs) / 86400, 2) : null;
+    }
+    unset($buyer);
+    foreach ($productStats as &$product) {
+        $days = $product['warmup_days'];
+        sort($days);
+        $product['buyers'] = count($product['buyers']);
+        $product['avg_warmup_days'] = $days ? array_sum($days) / count($days) : null;
+        $product['median_warmup_days'] = $days ? $days[(int)floor((count($days) - 1) / 2)] : null;
+        unset($product['warmup_days']);
+    }
+    unset($product);
+    uasort($productStats, static fn($a, $b) => ((float)$b['revenue'] <=> (float)$a['revenue']));
+    sort($warmupDays);
+
+    $detailBuyers = array_values($buyers);
+    usort($detailBuyers, static fn($a, $b) => ((float)$b['revenue'] <=> (float)$a['revenue']));
+    $truncated = count($detailBuyers) > $detailLimit;
+    $detailBuyers = array_slice($detailBuyers, 0, $detailLimit);
+
+    return [
+        'period' => ['start' => $start, 'end' => $end],
+        'filters' => $filters,
+        'summary' => [
+            'sales' => count($sales),
+            'buyers' => count($buyers),
+            'resolved_buyers' => count($buyers) - $unmatchedBuyers,
+            'unmatched_buyers' => $unmatchedBuyers,
+            'buyers_without_any_lesson' => $noLessonBuyers,
+            'buyers_without_any_lesson_pct' => count($buyers) > 0 ? $noLessonBuyers / count($buyers) * 100 : 0,
+            'buyers_with_live_access' => $liveBuyers,
+            'buyers_with_live_access_pct' => count($buyers) > 0 ? $liveBuyers / count($buyers) * 100 : 0,
+            'avg_days_to_purchase' => $warmupDays ? array_sum($warmupDays) / count($warmupDays) : null,
+            'median_days_to_purchase' => $warmupDays ? $warmupDays[(int)floor((count($warmupDays) - 1) / 2)] : null,
+        ],
+        'top_tags' => array_slice(array_values($tagStats), 0, 30),
+        'products' => array_values($productStats),
+        'buyers' => $detailBuyers,
+        'sales_sample' => $saleDetails,
+        'truncated' => $truncated,
+        'detail_limit' => $detailLimit,
+    ];
+}
+
+function md_buyer_profile_ai(PDO $pdo, array $profile): array
+{
+    $apiKey = trim((string)get_setting('buyer_profile_ai_openai_api_key', ''));
+    if ($apiKey === '') $apiKey = trim((string)get_setting('whatsapp_ai_openai_api_key', ''));
+    if ($apiKey === '') $apiKey = trim((string)get_setting('openai_api_key', ''));
+    if ($apiKey === '') throw new RuntimeException('Configure a chave da OpenAI no agente de vendas.');
+    if (!function_exists('curl_init')) throw new RuntimeException('Extensao cURL do PHP nao disponivel.');
+    $model = trim((string)get_setting('buyer_profile_ai_model', ''));
+    if ($model === '') $model = trim((string)get_setting('whatsapp_ai_model', 'gpt-4.1-mini')) ?: 'gpt-4.1-mini';
+    $maxTokens = max(800, min(8000, (int)get_setting('buyer_profile_ai_max_tokens', '2400')));
+    $systemPrompt = trim((string)get_setting('buyer_profile_ai_prompt', ''));
+    if ($systemPrompt === '') {
+        $systemPrompt = 'Voce e um analista senior de growth para venda de cursos online. Responda em portugues do Brasil, com insights praticos, sem inventar dados. Use os dados enviados para identificar perfis que compram, tags fortes, eventos decisivos, tempo de aquecimento por curso, influencia de live, gargalos e onde colocar mais energia.';
+    }
+    $prompt = [
+        'role' => 'system',
+        'content' => $systemPrompt
+    ];
+    $user = [
+        'role' => 'user',
+        'content' => "Analise esta base de compradores filtrada no dashboard. Gere:\n1. resumo executivo;\n2. perfil dos leads que mais compram;\n3. tags mais importantes e o que elas indicam;\n4. cursos que vendem rapido vs depois de aquecer;\n5. impacto de live e datas de acesso;\n6. gargalos do percurso;\n7. recomendacoes objetivas de onde injetar energia nos proximos 7 dias.\n\nBASE_JSON:\n" . json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    ];
+    $payload = [
+        'model' => $model,
+        'input' => [$prompt, $user],
+        'max_output_tokens' => $maxTokens,
+    ];
+    if (strpos($model, 'gpt-5') !== 0) $payload['temperature'] = 0.2;
+    $ch = curl_init('https://api.openai.com/v1/responses');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $apiKey, 'Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 90,
+    ]);
+    $raw = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    if ($raw === false || $raw === '') throw new RuntimeException('Falha ao chamar OpenAI: ' . $err);
+    $decoded = json_decode((string)$raw, true);
+    if ($code < 200 || $code >= 300) {
+        $msg = is_array($decoded) ? (string)($decoded['error']['message'] ?? $raw) : $raw;
+        throw new RuntimeException('OpenAI HTTP ' . $code . ': ' . substr($msg, 0, 1000));
+    }
+    $text = (string)($decoded['output_text'] ?? '');
+    if ($text === '' && is_array($decoded['output'] ?? null)) {
+        foreach ($decoded['output'] as $out) {
+            foreach (($out['content'] ?? []) as $content) {
+                if (($content['type'] ?? '') === 'output_text') $text .= (string)($content['text'] ?? '');
+            }
+        }
+    }
+    if (trim($text) === '') throw new RuntimeException('A OpenAI retornou uma resposta vazia.');
+    return ['model' => $model, 'analysis' => trim($text), 'raw' => $decoded];
+}
+
 function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
 {
     $useInscricaoLogs=metrics_table_exists($pdo,'inscricao_logs')&&trim((string)($filters['campaign']??''))===''&&trim((string)($filters['adset']??''))==='';

@@ -180,11 +180,69 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
     ];
 }
 
+if(empty($_SESSION['sales_csrf']))$_SESSION['sales_csrf']=bin2hex(random_bytes(24));
+
 if ((string)($_GET['ajax'] ?? '') === 'lead_search') {
     header('Content-Type: application/json; charset=UTF-8');
     $term=trim((string)($_GET['q']??''));$rows=[];
     if(mb_strlen($term)>=2){$st=$pdo->prepare("SELECT id,source_user_id,lead_name,lead_email,lead_phone_raw,turma_codigo,created_at FROM attribution_leads WHERE lead_name LIKE :q OR lead_email LIKE :q OR lead_phone_raw LIKE :q OR CAST(source_user_id AS CHAR)=:exact ORDER BY created_at DESC LIMIT 20");$st->execute(['q'=>'%'.$term.'%','exact'=>$term]);$rows=$st->fetchAll(PDO::FETCH_ASSOC)?:[];}
     echo json_encode(['ok'=>true,'rows'=>$rows],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['ajax'] ?? '') === 'buyer_profile_ai') {
+    header('Content-Type: application/json; charset=UTF-8');
+    try {
+        if (!hash_equals((string)($_SESSION['sales_csrf'] ?? ''), (string)($_POST['csrf'] ?? ''))) {
+            throw new RuntimeException('Sessao expirada. Recarregue a pagina.');
+        }
+        $aiPreset = (string)($_POST['period'] ?? 'month');
+        if (!in_array($aiPreset, ['today','7','30','90','365','month','quarter','year','custom'], true)) $aiPreset = 'month';
+        $aiPeriod = metrics_period($aiPreset, $_POST['from'] ?? null, $_POST['to'] ?? null);
+        $aiFilters = [
+            'basis' => in_array(($_POST['basis'] ?? ''), ['gross_revenue','net_revenue','producer_net'], true) ? $_POST['basis'] : (get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net'),
+            'model' => ($_POST['model'] ?? '') === 'first_touch' ? 'first_touch' : 'last_touch',
+            'product' => trim((string)($_POST['product'] ?? '')),
+            'turma' => trim((string)($_POST['turma'] ?? '')),
+            'campaign' => trim((string)($_POST['campaign'] ?? '')),
+            'adset' => trim((string)($_POST['adset'] ?? '')),
+        ];
+        $profile = md_buyer_profile($pdo, $aiPeriod['start'], $aiPeriod['end'], $aiFilters, 800);
+        $result = md_buyer_profile_ai($pdo, $profile);
+        echo json_encode([
+            'ok' => true,
+            'analysis' => $result['analysis'],
+            'model' => $result['model'],
+            'summary' => $profile['summary'],
+            'truncated' => $profile['truncated'],
+            'detail_limit' => $profile['detail_limit'],
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'salvar_buyer_ai_config') {
+    try {
+        if (!hash_equals((string)($_SESSION['sales_csrf'] ?? ''), (string)($_POST['csrf'] ?? ''))) {
+            throw new RuntimeException('Sessao expirada. Recarregue a pagina.');
+        }
+        $apiKey = trim((string)($_POST['openai_api_key'] ?? ''));
+        if ($apiKey !== '') set_setting('buyer_profile_ai_openai_api_key', $apiKey);
+        set_setting('buyer_profile_ai_model', trim((string)($_POST['model'] ?? 'gpt-4.1-mini')) ?: 'gpt-4.1-mini');
+        set_setting('buyer_profile_ai_max_tokens', (string)max(800, min(8000, (int)($_POST['max_tokens'] ?? 2400))));
+        set_setting('buyer_profile_ai_prompt', trim((string)($_POST['prompt'] ?? '')));
+        $return = $_GET;
+        $return['buyer_ai_config_ok'] = '1';
+        header('Location: vendas_analytics.php?' . http_build_query($return) . '#config-agente-vendas');
+        exit;
+    } catch (Throwable $e) {
+        $return = $_GET;
+        $return['buyer_ai_config_err'] = $e->getMessage();
+        header('Location: vendas_analytics.php?' . http_build_query($return) . '#config-agente-vendas');
+        exit;
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && (string)($_POST['acao']??'')==='atribuir_venda_manual') {
@@ -202,7 +260,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && (string)($_POST['acao']??'')==='atrib
         header('Location: vendas_analytics.php?'.$returnQuery.'&manual_ok=1#nao-atribuidas');exit;
     } catch(Throwable $e){header('Location: vendas_analytics.php?'.$returnQuery.'&manual_err='.urlencode($e->getMessage()).'#nao-atribuidas');exit;}
 }
-if(empty($_SESSION['sales_csrf']))$_SESSION['sales_csrf']=bin2hex(random_bytes(24));
 
 $preset = (string)($_GET['period'] ?? 'month');
 if (!in_array($preset, ['today','7','30','90','365','month','quarter','year','custom'], true)) $preset = 'month';
@@ -221,12 +278,22 @@ $compareDays=[
     'z'=>max(1,min(365,(int)($_GET['compare_z']??90))),
 ];
 $adsMetricSource=(string)($_GET['ads_metric_source']??'cross')==='meta'?'meta':'cross';
+$buyerAiConfig = [
+    'has_key' => trim((string)get_setting('buyer_profile_ai_openai_api_key', '')) !== '' || trim((string)get_setting('whatsapp_ai_openai_api_key', '')) !== '' || trim((string)get_setting('openai_api_key', '')) !== '',
+    'model' => trim((string)get_setting('buyer_profile_ai_model', 'gpt-4.1-mini')) ?: 'gpt-4.1-mini',
+    'max_tokens' => max(800, min(8000, (int)get_setting('buyer_profile_ai_max_tokens', '2400'))),
+    'prompt' => trim((string)get_setting('buyer_profile_ai_prompt', '')),
+];
+if ($buyerAiConfig['prompt'] === '') {
+    $buyerAiConfig['prompt'] = 'Voce e um analista senior de growth para venda de cursos online. Responda em portugues do Brasil, com insights praticos, sem inventar dados. Use os dados enviados para identificar perfis que compram, tags fortes, eventos decisivos, tempo de aquecimento por curso, influencia de live, gargalos e onde colocar mais energia.';
+}
 
 $current = md_snapshot($pdo, $period['start'], $period['end'], $filters);
 $previous = md_snapshot($pdo, $period['previous_start'], $period['previous_end'], $filters);
 $daily = md_daily_series($pdo, $period['start'], $period['end'], $filters);
 $monthly = md_monthly_series($pdo, $filters);
 $breakdowns = md_breakdowns($pdo, $period['start'], $period['end'], $filters);
+$buyerProfile = md_buyer_profile($pdo, $period['start'], $period['end'], $filters, 120);
 $cohorts = md_cohorts($pdo, $period['start'], $period['end'], $filters);
 $adsHierarchy = md_ads_hierarchy($pdo,$period['end'],$filters['model'],$compareDays);
 $options = md_filter_options($pdo);
@@ -353,9 +420,11 @@ include __DIR__ . '/_header.php';
 .chart-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:12px}.chart-box{height:330px;position:relative;min-width:0}.chart-box.small{height:270px}.mtd-compare{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:13px;align-items:stretch}.mtd-chart{height:305px;min-width:0}.mtd-trend{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:12px;display:flex;flex-direction:column;justify-content:center;gap:8px}.mtd-trend small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.mtd-trend strong{font-size:19px;color:var(--text)}.mtd-trend span{font-size:10px;color:var(--muted);line-height:1.45}.mtd-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 12px}.mtd-menu{position:relative}.mtd-menu-btn{height:32px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;cursor:pointer}.mtd-menu-panel{position:absolute;left:0;top:38px;z-index:30;width:245px;max-height:310px;overflow:auto;padding:8px;border:1px solid var(--border);border-radius:10px;background:#0f172a;box-shadow:var(--shadow);display:none}.mtd-menu.open .mtd-menu-panel{display:grid;gap:5px}.mtd-option{display:flex;align-items:center;gap:8px;padding:7px;border-radius:7px;color:var(--muted);font-size:11px;cursor:pointer}.mtd-option:hover{background:var(--bg-hover);color:var(--text)}.mtd-option input{accent-color:var(--primary)}.mtd-full{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);font-size:11px;color:var(--muted);cursor:pointer}.mtd-full input{accent-color:var(--primary)}.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.three-col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.four-col{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px;max-width:100%;min-width:0;-webkit-overflow-scrolling:touch}.bi-table{width:100%;border-collapse:collapse;min-width:760px}.bi-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:9px;border-bottom:1px solid var(--border);white-space:nowrap}.bi-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text);vertical-align:top}.bi-table td:first-child{min-width:130px}.bi-table tr:last-child td{border-bottom:0}.bi-table tr:hover td{background:var(--bg-hover)}.subtext{font-size:9px;color:var(--muted);margin-top:2px}.resilient{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--success-dim);color:#86efac;font-size:9px;font-weight:700}.watch{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--warning-dim);color:#fcd34d;font-size:9px;font-weight:700}.bar-list{display:flex;flex-direction:column;gap:10px}.bar-row{display:grid;grid-template-columns:minmax(100px,1fr) 2fr auto;gap:9px;align-items:center;font-size:10px}.bar-track{height:7px;background:var(--bg);border-radius:99px;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),#fb923c);border-radius:99px}.empty{padding:28px;text-align:center;color:var(--muted);font-size:11px}
 .sales-tools{display:grid;grid-template-columns:minmax(220px,1fr) 180px auto;gap:8px;align-items:end}.sales-tools input,.sales-tools select{width:100%;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px;font-size:11px}.sales-tools label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase}.cohort-table{min-width:0}.cohort-table th,.cohort-table td{padding:8px 7px;font-size:10px}.cohort-table th{white-space:normal}.sales-table{min-width:1500px}.sales-status{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--bg-hover);color:var(--text);font-size:9px;font-weight:750}.sales-money strong{display:block;color:#bbf7d0}.sales-pagination{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;color:var(--muted);font-size:10px}.sales-pages{display:flex;gap:6px}.sales-pages a,.sales-pages span{padding:6px 9px;border:1px solid var(--border);border-radius:7px;color:var(--text);text-decoration:none}.sales-pages .active{background:var(--primary-dim);color:var(--primary);border-color:rgba(250,204,21,.3)}.utm-stack{max-width:260px;overflow-wrap:anywhere}
 .ads-controls{display:grid;grid-template-columns:repeat(3,minmax(90px,120px)) minmax(210px,1fr) auto;gap:9px;align-items:end;margin-bottom:12px}.ads-controls label{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;margin-bottom:4px}.ads-controls input[type=number]{width:100%;height:35px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px}.ads-source{display:flex;align-items:center;gap:8px;height:35px;padding:0 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}.ads-source label{margin:0;text-transform:none;font-size:11px;color:var(--text)}.ads-scroll{overflow:auto;border:1px solid var(--border);border-radius:10px;max-height:650px}.ads-table{border-collapse:separate;border-spacing:0;min-width:1450px;width:100%}.ads-table th,.ads-table td{padding:9px 10px;border-bottom:1px solid var(--border);background:var(--bg-card);font-size:10px;white-space:nowrap;text-align:right}.ads-table th{position:sticky;top:0;z-index:4;background:#101a2e;color:var(--muted);text-transform:uppercase;font-size:9px}.ads-table th:first-child,.ads-table td:first-child{position:sticky;left:0;z-index:3;text-align:left;min-width:330px;max-width:330px;box-shadow:8px 0 12px -12px #000}.ads-table th:first-child{z-index:5}.ads-table tr:hover td{background:#142039}.ads-table tr:hover td:first-child{background:#142039}.ads-name{display:flex;align-items:center;gap:7px;min-width:0}.ads-toggle{width:19px;height:19px;border:0;background:transparent;color:#60a5fa;cursor:pointer;padding:0}.ads-indent-1{padding-left:25px}.ads-indent-2{padding-left:50px}.ads-level{font-size:8px;color:var(--muted);text-transform:uppercase}.ads-sep{color:#475569;margin:0 2px}.ads-values{font-weight:700}.ads-head-note{font-size:9px;color:var(--muted);margin-top:3px}.eff-table{width:100%;border-collapse:collapse}.eff-table th,.eff-table td{padding:10px;border-bottom:1px solid var(--border);font-size:10px;text-align:left}.eff-table th{color:var(--muted);text-transform:uppercase;font-size:9px}.manual-alert{padding:10px 12px;border-radius:9px;margin-bottom:10px;font-size:11px}.manual-alert.ok{background:var(--success-dim);color:#86efac}.manual-alert.err{background:var(--danger-dim);color:#fca5a5}.unattr-table{min-width:1050px}.lead-picker{position:relative;min-width:290px}.lead-picker input[type=search]{width:100%;height:32px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:0 8px;font-size:10px}.lead-results{position:absolute;left:0;right:0;top:35px;z-index:20;background:#0f172a;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);max-height:220px;overflow:auto;display:none}.lead-option{display:block;width:100%;padding:8px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;font-size:10px;cursor:pointer}.lead-option:hover{background:var(--bg-hover)}.lead-selected{margin:5px 0;color:#86efac;font-size:9px}.manual-form-actions{display:flex;gap:6px;align-items:center}
+.profile-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.profile-kpi{padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);min-width:0}.profile-kpi small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.profile-kpi strong{display:block;margin-top:4px;color:var(--text);font-size:20px}.profile-kpi span{display:block;margin-top:3px;color:var(--muted);font-size:10px}.profile-panel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:12px}.profile-list{display:flex;flex-direction:column;gap:8px}.profile-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px;border:1px solid var(--border);border-radius:9px;background:rgba(15,23,42,.45)}.profile-item strong{font-size:11px;color:var(--text);overflow-wrap:anywhere}.profile-item span,.profile-item small{font-size:10px;color:var(--muted)}.ai-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.ai-box{display:none;margin-top:12px;padding:13px;border:1px solid rgba(56,189,248,.22);border-radius:10px;background:rgba(56,189,248,.06);color:#dbeafe;font-size:12px;line-height:1.55;white-space:pre-wrap}.ai-box.show{display:block}.ai-box.err{border-color:rgba(248,113,113,.28);background:rgba(239,68,68,.08);color:#fecaca}.ai-status{font-size:10px;color:var(--muted)}
+.ai-config-grid{display:grid;grid-template-columns:1.1fr 220px 180px;gap:10px;align-items:end}.ai-config-grid label,.ai-prompt label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}.ai-config-grid input,.ai-prompt textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:9px;font-size:11px}.ai-config-grid input{height:36px}.ai-prompt{margin-top:10px}.ai-prompt textarea{min-height:135px;resize:vertical;line-height:1.45}.ai-config-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px}.ai-config-note{color:var(--muted);font-size:10px}.ai-config-ok{padding:9px 11px;border-radius:9px;margin-bottom:10px;background:var(--success-dim);color:#86efac;font-size:11px}.ai-config-err{padding:9px 11px;border-radius:9px;margin-bottom:10px;background:var(--danger-dim);color:#fca5a5;font-size:11px}
 @media(max-width:1300px){.metric-grid{grid-template-columns:repeat(4,1fr)}.filter-grid{grid-template-columns:repeat(3,1fr)}.four-col{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.metric-grid{grid-template-columns:repeat(2,1fr)}.chart-grid,.two-col,.three-col,.four-col,.mtd-compare{grid-template-columns:1fr}.context-grid{grid-template-columns:repeat(2,1fr)}.bi-head{flex-direction:column}.sync-pill{white-space:normal}}@media(max-width:600px){.filter-grid{grid-template-columns:1fr 1fr}.fg-actions{grid-column:span 2}.metric-grid{grid-template-columns:1fr 1fr;gap:7px}.metric{padding:11px;min-height:96px}.metric-value{font-size:16px}.context-grid{grid-template-columns:1fr}.chart-box{height:285px}.mtd-chart{height:270px}.section-card{padding:11px}.bi-title h1{font-size:19px}}
 @media(max-width:700px){.sales-tools{grid-template-columns:1fr}.sales-pagination{align-items:flex-start;flex-direction:column}}
-@media(max-width:800px){.ads-controls{grid-template-columns:repeat(3,1fr)}.ads-source,.ads-controls .fg-actions{grid-column:1/-1}}
+@media(max-width:800px){.ads-controls{grid-template-columns:repeat(3,1fr)}.ads-source,.ads-controls .fg-actions{grid-column:1/-1}.profile-grid,.profile-panel,.ai-config-grid{grid-template-columns:1fr}}
 </style>
 
 <div class="bi">
@@ -390,6 +459,61 @@ include __DIR__ . '/_header.php';
       <article class="metric"><div class="metric-label"><?=va_h($label)?></div><div class="metric-value"><?=va_metric_value($current,$key,$format)?></div><div class="metric-foot"><?=va_delta_html(va_delta($current,$previous,$key),$lower)?><span class="metric-hint"><?=va_h($hint)?></span></div></article>
     <?php endforeach; ?>
   </div>
+
+  <section class="section-card" id="perfil-compradores">
+    <div class="section-head">
+      <div><h2>Perfil dos compradores</h2><p>Compradores, tags, aulas, eventos e live usando a mesma janela dos filtros.</p></div>
+      <div class="ai-actions"><span class="ai-status" id="buyerAiStatus">Base: <?=va_num($buyerProfile['summary']['buyers'] ?? 0)?> compradores</span><button type="button" class="btn btn-primary" id="buyerAiBtn">Analise da IA</button></div>
+    </div>
+    <div class="profile-grid">
+      <div class="profile-kpi"><small>Compradores</small><strong><?=va_num($buyerProfile['summary']['buyers'] ?? 0)?></strong><span><?=va_num($buyerProfile['summary']['sales'] ?? 0)?> vendas aprovadas</span></div>
+      <div class="profile-kpi"><small>Compraram sem ver aula</small><strong><?=va_num($buyerProfile['summary']['buyers_without_any_lesson'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_without_any_lesson_pct'] ?? 0)?> dos compradores</span></div>
+      <div class="profile-kpi"><small>Passaram pela live</small><strong><?=va_num($buyerProfile['summary']['buyers_with_live_access'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_with_live_access_pct'] ?? 0)?> com evento de live</span></div>
+      <div class="profile-kpi"><small>Tempo ate comprar</small><strong><?=($buyerProfile['summary']['median_days_to_purchase'] ?? null)!==null?va_num($buyerProfile['summary']['median_days_to_purchase'],1).' dias':'Sem base'?></strong><span>Mediana desde cadastro/lead</span></div>
+    </div>
+    <div class="profile-panel">
+      <div>
+        <div class="section-head" style="margin-bottom:8px"><div><h2>Tags mais presentes</h2><p>Tags dos leads que compraram.</p></div></div>
+        <div class="profile-list">
+          <?php foreach(array_slice($buyerProfile['top_tags'] ?? [],0,8) as $tag): ?>
+            <div class="profile-item"><div><strong><?=va_h($tag['tag'])?></strong><small><?=va_h($tag['meaning'])?></small></div><span><?=va_num($tag['buyers'])?> leads</span></div>
+          <?php endforeach; ?>
+          <?php if(empty($buyerProfile['top_tags'])):?><div class="empty">Sem tags nos compradores filtrados.</div><?php endif;?>
+        </div>
+      </div>
+      <div>
+        <div class="section-head" style="margin-bottom:8px"><div><h2>Aquecimento por curso</h2><p>Curso, compradores e tempo medio ate a compra.</p></div></div>
+        <div class="profile-list">
+          <?php foreach(array_slice($buyerProfile['products'] ?? [],0,8) as $product): ?>
+            <div class="profile-item"><div><strong><?=va_h($product['product'])?></strong><small><?=va_num($product['sales'])?> vendas · <?=va_money($product['revenue'])?></small></div><span><?=($product['median_warmup_days'] ?? null)!==null?va_num($product['median_warmup_days'],1).'d':'-'?></span></div>
+          <?php endforeach; ?>
+          <?php if(empty($buyerProfile['products'])):?><div class="empty">Sem cursos vendidos no periodo.</div><?php endif;?>
+        </div>
+      </div>
+    </div>
+    <div class="ai-box" id="buyerAiResult"></div>
+  </section>
+
+  <section class="section-card" id="config-agente-vendas">
+    <div class="section-head"><div><h2>Configurar agente de IA de vendas</h2><p>Este agente analisa compradores, tags, eventos, cursos, live e tempo de aquecimento na propria tela de vendas.</p></div></div>
+    <?php if(isset($_GET['buyer_ai_config_ok'])):?><div class="ai-config-ok">Configuracao do agente salva.</div><?php endif;?>
+    <?php if(!empty($_GET['buyer_ai_config_err'])):?><div class="ai-config-err"><?=va_h((string)$_GET['buyer_ai_config_err'])?></div><?php endif;?>
+    <?php $aiConfigQuery=$_GET;unset($aiConfigQuery['buyer_ai_config_ok'],$aiConfigQuery['buyer_ai_config_err']); ?>
+    <form method="post" action="vendas_analytics.php?<?=va_h(http_build_query($aiConfigQuery))?>#config-agente-vendas">
+      <input type="hidden" name="acao" value="salvar_buyer_ai_config">
+      <input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>">
+      <div class="ai-config-grid">
+        <div><label>Chave OpenAI deste agente</label><input type="password" name="openai_api_key" value="" placeholder="<?= $buyerAiConfig['has_key'] ? 'Chave ja configurada. Preencha apenas para trocar.' : 'Cole a chave da OpenAI' ?>" autocomplete="off"></div>
+        <div><label>Modelo</label><input type="text" name="model" value="<?=va_h($buyerAiConfig['model'])?>" placeholder="gpt-4.1-mini"></div>
+        <div><label>Limite da resposta</label><input type="number" name="max_tokens" min="800" max="8000" step="100" value="<?=(int)$buyerAiConfig['max_tokens']?>"></div>
+      </div>
+      <div class="ai-prompt"><label>Prompt do agente</label><textarea name="prompt"><?=va_h($buyerAiConfig['prompt'])?></textarea></div>
+      <div class="ai-config-foot">
+        <span class="ai-config-note"><?= $buyerAiConfig['has_key'] ? 'Status: chave disponivel para gerar analises.' : 'Status: configure uma chave para habilitar a analise.' ?></span>
+        <button class="btn btn-primary" type="submit">Salvar agente</button>
+      </div>
+    </form>
+  </section>
 
   <section class="section-card">
     <div class="section-head"><div><h2>Mes atual ate o dia <?=date('d')?></h2><p>Comparacoes com a mesma quantidade de dias, sem comparar mes parcial com mes cheio.</p></div></div>
@@ -545,6 +669,41 @@ include __DIR__ . '/_header.php';
 
 <script>
 (function(){
+const buyerAiBtn=document.getElementById('buyerAiBtn'),buyerAiResult=document.getElementById('buyerAiResult'),buyerAiStatus=document.getElementById('buyerAiStatus');
+if(buyerAiBtn&&buyerAiResult){
+  buyerAiBtn.addEventListener('click',async()=>{
+    buyerAiBtn.disabled=true;
+    buyerAiStatus.textContent='Montando base e consultando IA...';
+    buyerAiResult.className='ai-box show';
+    buyerAiResult.textContent='Aguarde. A base enviada inclui compradores do periodo filtrado, cursos comprados, tags com significado, eventos, datas de live e sinais de aulas.';
+    const fd=new FormData();
+    fd.append('ajax','buyer_profile_ai');
+    fd.append('csrf',<?=json_encode((string)$_SESSION['sales_csrf'])?>);
+    fd.append('period',<?=json_encode($preset)?>);
+    fd.append('from',<?=json_encode($period['start'])?>);
+    fd.append('to',<?=json_encode($period['end'])?>);
+    fd.append('basis',<?=json_encode($filters['basis'])?>);
+    fd.append('model',<?=json_encode($filters['model'])?>);
+    fd.append('product',<?=json_encode($filters['product'])?>);
+    fd.append('turma',<?=json_encode($filters['turma'])?>);
+    fd.append('campaign',<?=json_encode($filters['campaign'])?>);
+    fd.append('adset',<?=json_encode($filters['adset'])?>);
+    try{
+      const response=await fetch('vendas_analytics.php',{method:'POST',body:fd,headers:{Accept:'application/json'}});
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw new Error(data.message||'Falha ao gerar analise.');
+      buyerAiResult.className='ai-box show';
+      buyerAiResult.textContent=data.analysis+(data.truncated?`\n\nObs.: a IA recebeu os ${data.detail_limit} compradores mais relevantes em detalhe, alem dos agregados completos do periodo.`:'');
+      buyerAiStatus.textContent=`IA: ${data.model||'modelo configurado'} · ${data.summary?.buyers||0} compradores avaliados`;
+    }catch(e){
+      buyerAiResult.className='ai-box show err';
+      buyerAiResult.textContent=e.message||'Erro ao chamar IA.';
+      buyerAiStatus.textContent='Analise nao concluida';
+    }finally{
+      buyerAiBtn.disabled=false;
+    }
+  });
+}
 document.querySelectorAll('.ads-toggle').forEach(btn=>btn.addEventListener('click',()=>{
   const id=btn.dataset.target,opening=btn.getAttribute('aria-expanded')!=='true';btn.setAttribute('aria-expanded',opening?'true':'false');btn.textContent=opening?'▼':'▶';
   document.querySelectorAll(`[data-parent="${id}"]`).forEach(row=>{row.hidden=!opening;if(!opening){const child=row.dataset.rowId;if(child){const childBtn=row.querySelector('.ads-toggle');if(childBtn){childBtn.setAttribute('aria-expanded','false');childBtn.textContent='▶';}document.querySelectorAll(`[data-parent="${child}"]`).forEach(r=>r.hidden=true);}}});
