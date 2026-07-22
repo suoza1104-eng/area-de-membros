@@ -86,6 +86,7 @@ function support_chat_ensure_schema(PDO $pdo): void
         'support_agent_technical_enabled'=>'1',
         'support_agent_reschedule_enabled'=>'1',
         'support_agent_max_tokens'=>'3000',
+        'support_agent_pause_seconds'=>'5',
         'support_agent_prompt_basic'=>'Responda duvidas basicas de acesso, certificado, aula ao vivo, andamento do curso e suporte da area de membros.',
         'support_agent_prompt_sales'=>'Quando vendas estiver ativo, responda duvidas comerciais somente com base nos dados do contexto. Nao invente preco, bonus ou prazo.',
         'support_agent_prompt_technical'=>'Ajude em problemas tecnicos comuns: login, acesso ao curso, certificado, audio/video, app e notificacoes.',
@@ -208,6 +209,7 @@ function support_agent_config(PDO $pdo): array
         'technical'=>get_setting('support_agent_technical_enabled','1')==='1',
         'reschedule'=>get_setting('support_agent_reschedule_enabled','1')==='1',
         'max_tokens'=>max(500,min(12000,(int)get_setting('support_agent_max_tokens','3000'))),
+        'pause_seconds'=>max(0,min(30,(int)get_setting('support_agent_pause_seconds','5'))),
         'model'=>trim((string)get_setting('whatsapp_ai_model','gpt-4.1-mini'))?:'gpt-4.1-mini',
         'api_key'=>trim((string)get_setting('whatsapp_ai_openai_api_key','')),
         'temperature'=>max(0,min(1,(float)get_setting('whatsapp_ai_temperature','0.2'))),
@@ -302,9 +304,14 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
     $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['stage']??'')==='human'||($conv['status']??'')==='closed')return;
     $st=$pdo->prepare("SELECT * FROM support_messages WHERE id=:id AND conversation_id=:c LIMIT 1");$st->execute(['id'=>$messageId,'c'=>$conversationId]);$msg=$st->fetch(PDO::FETCH_ASSOC);if(!$msg||($msg['sender_type']??'')!=='student')return;
     try{
+        $pause=(int)($cfg['pause_seconds']??0);if($pause>0){sleep($pause);$newer=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:id");$newer->execute(['c'=>$conversationId,'id'=>$messageId]);if((int)$newer->fetchColumn()>0)return;}
         $body=trim((string)($msg['body']??''));$type=(string)($msg['message_type']??'text');
         if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);return;}
         if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
+        $lastBot=$pdo->prepare("SELECT COALESCE(MAX(id),0) FROM support_messages WHERE conversation_id=:c AND sender_type<>'student'");$lastBot->execute(['c'=>$conversationId]);$afterBot=(int)$lastBot->fetchColumn();
+        $batchSt=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:a AND id<=:id ORDER BY id ASC");$batchSt->execute(['c'=>$conversationId,'a'=>$afterBot,'id'=>$messageId]);$batch=$batchSt->fetchAll(PDO::FETCH_ASSOC)?:[];
+        foreach($batch as $bm)if(in_array((string)($bm['message_type']??'text'),['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);return;}
+        $parts=[];foreach($batch as $bm){$txt=trim((string)($bm['body']??''));if($txt!=='')$parts[]=$txt;}$body=trim(implode("\n",$parts))?:$body;
         $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
         $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);$recent=support_chat_messages($pdo,$conversationId,max(0,$messageId-25));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
         if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);return;}
