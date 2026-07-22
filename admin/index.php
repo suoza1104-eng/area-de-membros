@@ -556,10 +556,10 @@ function dash_lead_engagement_series(PDO $pdo, string $dataDe, string $dataAte, 
               FROM (
                 SELECT {$bucketExpr} bucket,
                        CASE
-                         WHEN {$pelandoLessonExpr}
-                              AND COALESCE(lac.live_access,0)=1
-                              AND COALESCE(lo.live_offer,0)=1
-                              AND COALESCE(cert.has_certificate,0)=1 THEN 'pelando'
+                          WHEN ({$pelandoLessonExpr}
+                               AND COALESCE(lac.live_access,0)=1
+                               AND COALESCE(lo.live_offer,0)=1)
+                               OR COALESCE(cert.has_certificate,0)=1 THEN 'pelando'
                          WHEN COALESCE(la.lessons_1_4,0) BETWEEN 1 AND 4
                               OR COALESCE(oc.offer_click,0)=1
                               OR {$progressExpr} >= 0.9 THEN 'quente'
@@ -2335,7 +2335,7 @@ body.dash-chart-fullscreen {
         <span><strong style="color:#94a3b8">Frio</strong>: cadastrou e nao teve outros sinais.</span>
         <span><strong style="color:#38bdf8">Morno</strong>: logou no sistema ou entrou/logou.</span>
         <span><strong style="color:#f59e0b">Quente</strong>: viu aulas 1-4, clicou oferta ou chegou a 90%.</span>
-        <span><strong style="color:#ef4444">Pelando</strong>: viu aulas 1-6, entrou na live, ficou ate oferta e gerou certificado.</span>
+        <span><strong style="color:#ef4444">Pelando</strong>: viu aulas 1-6, entrou na live e ficou ate oferta, ou gerou certificado.</span>
     </div>
 </div>
 
