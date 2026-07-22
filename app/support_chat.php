@@ -195,6 +195,14 @@ function support_chat_messages(PDO $pdo,int $conversationId,int $after=0): array
     $st->execute(['c'=>$conversationId,'a'=>$after]);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];
 }
 
+function support_chat_recent_duplicate_id(PDO $pdo,int $conversationId,string $senderType,string $body,int $seconds=4): int
+{
+    $body=trim($body);if($conversationId<=0||$body==='')return 0;
+    $st=$pdo->prepare("SELECT id FROM support_messages WHERE conversation_id=:c AND sender_type=:s AND message_type='text' AND attachment_url IS NULL AND body=:b AND created_at>=DATE_SUB(NOW(),INTERVAL :sec SECOND) ORDER BY id DESC LIMIT 1");
+    $st->bindValue(':c',$conversationId,PDO::PARAM_INT);$st->bindValue(':s',$senderType);$st->bindValue(':b',$body);$st->bindValue(':sec',max(1,min(30,$seconds)),PDO::PARAM_INT);$st->execute();
+    return (int)$st->fetchColumn();
+}
+
 function support_chat_store_upload(array $file): array
 {
     if (($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new RuntimeException('Não foi possível receber o arquivo.');
