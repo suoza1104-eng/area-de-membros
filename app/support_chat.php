@@ -109,7 +109,7 @@ function support_agent_default_prompt(string $type): string
     $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente.";
     if($type==='sales')return $common." Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Se nao houver, colete a duvida e transfira para humano. Nao prometa bonus, desconto, prazo ou garantia que nao esteja no payload.";
     if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para erro com arquivo, imagem ou situacao sem diagnostico no payload, transfira para humano.";
-    return $common." Regras de certificado: se certificado.tem_certificado_emitido=true, informe que ja existe certificado e use certificado.link_verificacao ou certificado.pdf_url. Nao use certificado.link_emitir quando o certificado ja foi emitido. Se nao existe certificado emitido, verifique criterios_e_pendencias: aulas obrigatorias, aulas concluidas, percentual de avanco, aulas faltantes, eventos de live e demais pendencias. Diga exatamente o que falta. Para live, use data_live, eventos da live e reagendamentos. Para grupo e acesso, use os links do payload quando existirem.";
+    return $common." Regras de certificado: antes de transferir para humano, avalie certificado.tem_certificado_emitido, certificado.link_verificacao, certificado.pdf_url, certificado.link_emitir, aulas obrigatorias, aulas concluidas, aulas faltantes, percentual de avanco, aula 5, data_live e eventos de live. Para emitir, o aluno precisa ter concluido todas as aulas obrigatorias, assistido a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo. Se ja existe certificado emitido e houver link_verificacao/pdf_url, mande o link. Se nao existe certificado emitido e os criterios estiverem ok, mande o link_emitir e oriente a usar as duas senhas na tela de emissao. Se ainda falta algo, explique exatamente o que falta. Nao use certificado.link_emitir como certificado pronto quando o certificado ja foi emitido. Para grupo e acesso, use os links do payload quando existirem.";
 }
 
 function support_agent_default_variable_map(): array
@@ -378,10 +378,11 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
         'certificado'=>[
             'tem_certificado_emitido'=>$issuedCert!==null,
             'pode_iniciar_emissao_agora'=>$required>0&&$done>=$required,
-            'regra_emissao'=>'O certificado so pode ser emitido quando todas as aulas obrigatorias estiverem concluidas; depois o aluno confirma a senha do certificado e o nome.',
+            'regra_emissao'=>'Para emitir o certificado, o aluno precisa concluir todas as aulas obrigatorias, assistir a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo; depois confirma a senha do certificado e o nome na tela de emissao.',
             'criterios_e_pendencias'=>[
                 'aulas_obrigatorias_total'=>$required,'aulas_obrigatorias_concluidas'=>$done,'percentual_obrigatorio'=>$coursePct,
                 'aulas_faltantes'=>$missing,
+                'senhas_necessarias'=>['senha_da_aula_5','senha_da_aula_ao_vivo'],
                 'senha_certificado'=>'Necessaria na tela de emissao; nao informe senha se ela nao estiver no payload/contexto.',
             ],
             'link_emitir'=>rtrim((string)BASE_URL,'/').'/certificado.php','link_verificacao'=>$certVerify,'pdf_url'=>(string)($issuedCert['pdf_url']??''),'registros'=>$certificates
@@ -451,6 +452,53 @@ function support_agent_is_human_request(string $body): bool
     $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);return str_contains($b,'atendimento humano')||str_contains($b,'falar com humano')||str_contains($b,'pessoa da equipe')||str_contains($b,'atendente humano')||str_contains($b,'quero atendente')||str_contains($b,'chamar atendente');
 }
 
+function support_agent_is_certificate_request(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    return str_contains($b,'certificado')||str_contains($b,'certificacao')||str_contains($b,'diploma')||str_contains($b,'certidao');
+}
+
+function support_agent_has_live_completion(array $payload): bool
+{
+    $events=$payload['live']['eventos']??[];if(!is_array($events)||!$events)return false;
+    foreach($events as $event){$type=strtolower((string)($event['tipo']??''));if($type!==''&&(str_contains($type,'oferta')||str_contains($type,'ficou')||str_contains($type,'assistiu')||str_contains($type,'acessou')||str_contains($type,'live')))return true;}
+    return false;
+}
+
+function support_agent_lesson_completed_by_order(array $payload,int $order): bool
+{
+    $lessons=$payload['curso']['aulas']??[];if(!is_array($lessons))return false;
+    foreach($lessons as $lesson){
+        $title=strtolower((string)($lesson['titulo']??''));
+        $matchesOrder=(int)($lesson['ordem']??0)===$order;
+        $matchesTitle=(bool)preg_match('/\baula\s*0?'.preg_quote((string)$order,'/').'\b/',$title);
+        if(($matchesOrder||$matchesTitle)&&($lesson['status']??'')==='completed')return true;
+    }
+    return false;
+}
+
+function support_agent_certificate_answer(array $payload): string
+{
+    $cert=$payload['certificado']??[];$course=$payload['curso']??[];$student=$payload['aluno']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+    $prefix=$first!==''?$first.', ':'';
+    if(!empty($cert['tem_certificado_emitido'])){
+        $url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));
+        if($url!=='')return $prefix."seu certificado ja foi emitido. Vou deixar o acesso direto abaixo:\n".$url;
+        $emit=trim((string)($cert['link_emitir']??''));return $prefix."nao encontrei um PDF ou link pronto do seu certificado salvo no sistema. Isso normalmente significa que voce ainda precisa emitir pela tela de certificado. Acesse abaixo e confirme seus dados usando a senha da aula 5 e a senha da aula ao vivo quando forem solicitadas.\n".$emit;
+    }
+    $required=(int)($course['aulas_obrigatorias']??0);$done=(int)($course['aulas_concluidas']??0);$missing=$course['aulas_faltantes_obrigatorias']??($cert['criterios_e_pendencias']['aulas_faltantes']??[]);
+    $lessonsOk=$required>0&&$done>=$required;$liveOk=support_agent_has_live_completion($payload);$lesson5Ok=support_agent_lesson_completed_by_order($payload,5);
+    if($lessonsOk&&$liveOk&&$lesson5Ok){
+        $url=trim((string)($cert['link_emitir']??''));if($url!=='')return $prefix."analisei seu progresso: as aulas obrigatorias estao concluidas, a aula 5 consta como concluida e encontrei registro de live/aula ao vivo. Agora voce precisa emitir o certificado pela tela abaixo, usando a senha da aula 5 e a senha da aula ao vivo quando forem solicitadas.\n".$url;
+    }
+    $parts=[];if($required<=0)$parts[]='nao consegui confirmar a lista de aulas obrigatorias no seu cadastro';elseif(!$lessonsOk){$parts[]="voce concluiu {$done} de {$required} aulas obrigatorias";if(is_array($missing)&&$missing){$names=[];foreach(array_slice($missing,0,6) as $m)$names[]=trim((string)($m['titulo']??''));$names=array_values(array_filter($names));if($names)$parts[]='aulas pendentes: '.implode(', ',$names);}}
+    if(!$lesson5Ok)$parts[]='a aula 5 ainda nao consta como concluida; ela e importante porque nela voce recebe uma das senhas';
+    if(!$liveOk)$parts[]='nao encontrei no sistema a confirmacao da sua participacao na aula ao vivo/live; a outra senha vem da live';
+    if(!$parts)$parts[]='ainda nao encontrei no sistema todos os criterios marcados como concluidos';
+    return $prefix."seu certificado ainda nao aparece como emitido. Pelo status atual, para conseguir emitir falta: ".implode('; ',$parts).". Quando concluir esses pontos, acesse a tela de certificado e use a senha da aula 5 junto com a senha da aula ao vivo.";
+}
+
 function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $messageId): void
 {
     $cfg=support_agent_config($pdo);if(!$cfg['enabled'])return;
@@ -464,9 +512,14 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
         if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
         $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
         $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
-        $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);$recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
+        $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);
+        if(support_agent_is_certificate_request($body)){
+            $answer=support_agent_certificate_answer($payload);
+            support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);return;
+        }
+        $recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
         if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);return;}
-        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Se faltar dado, action=handoff. Certificado: sempre olhe payload_aluno.certificado. Se tem_certificado_emitido=true, diga que ja existe e use link_verificacao ou pdf_url; nunca use link_emitir nesse caso. Se true mas link_verificacao/pdf_url estiverem vazios, action=handoff. Se false, olhe criterios_e_pendencias e diga exatamente o que falta, principalmente aulas_faltantes. Se pode_iniciar_emissao_agora=true, oriente a emitir pelo link_emitir e explique que a tela pedira senha e confirmacao do nome; nao informe senha se ela nao estiver no payload/contexto. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links e payload_aluno.variaveis_configuradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Certificado: se a pergunta for sobre certificado, nao transfira por padrao. Avalie tem_certificado_emitido, link_verificacao, pdf_url, link_emitir, aulas obrigatorias/concluidas, aulas_faltantes, percentual, aula 5, data_live e eventos da live. Para emitir, o aluno precisa concluir todas as aulas obrigatorias, assistir a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo. Se ja emitido e houver link_verificacao/pdf_url, responda com o link. Se nao emitido e criterios ok, oriente a emitir pelo link_emitir e usar as duas senhas. Se nao pode, explique exatamente o que falta. Nunca use link_emitir como certificado pronto quando o certificado ja foi emitido. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links e payload_aluno.variaveis_configuradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
         $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory['summary']??'','payload_aluno'=>$payload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
