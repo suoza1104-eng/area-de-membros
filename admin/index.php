@@ -2313,13 +2313,19 @@ body.dash-chart-fullscreen {
                 Classificacao por aluno cadastrado no periodo: frio, morno, quente e pelando.
             </div>
         </div>
-        <div class="dash-period-switch" data-engagement-period>
-            <button type="button" class="active" data-period="daily">Dia</button>
-            <button type="button" data-period="weekly">Semana</button>
-            <button type="button" data-period="monthly">Mes</button>
-            <button type="button" data-period="quarterly">Trimestre</button>
-            <button type="button" data-period="semester">Semestre</button>
-            <button type="button" data-period="yearly">Ano</button>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+            <div class="dash-period-switch" data-engagement-mode>
+                <button type="button" class="active" data-mode="count">Quantidade</button>
+                <button type="button" data-mode="percent">%</button>
+            </div>
+            <div class="dash-period-switch" data-engagement-period>
+                <button type="button" class="active" data-period="daily">Dia</button>
+                <button type="button" data-period="weekly">Semana</button>
+                <button type="button" data-period="monthly">Mes</button>
+                <button type="button" data-period="quarterly">Trimestre</button>
+                <button type="button" data-period="semester">Semestre</button>
+                <button type="button" data-period="yearly">Ano</button>
+            </div>
         </div>
     </div>
     <div style="height:360px;position:relative">
@@ -3061,20 +3067,39 @@ body.dash-chart-fullscreen {
 
     const LEAD_ENGAGEMENT_SERIES = <?= json_encode($leadEngagementSeries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     let leadEngagementChart = null;
+    const leadEngagementState = {period:'daily', mode:'count'};
+    function leadEngagementTotals(data) {
+        const labels = data.labels || [];
+        return labels.map(function(_, i) {
+            return ['frio','morno','quente','pelando'].reduce(function(sum, key) {
+                return sum + Number((data[key] || [])[i] || 0);
+            }, 0);
+        });
+    }
+    function leadEngagementValues(data, key, totals, mode) {
+        const raw = data[key] || [];
+        if (mode !== 'percent') return raw;
+        return raw.map(function(value, i) {
+            const total = Number(totals[i] || 0);
+            return total > 0 ? Math.round((Number(value || 0) / total * 100) * 10) / 10 : 0;
+        });
+    }
     function renderLeadEngagementChart(period) {
         const canvas = document.getElementById('chartLeadEngagement');
         if (!canvas) return;
         const data = LEAD_ENGAGEMENT_SERIES[period] || LEAD_ENGAGEMENT_SERIES.daily || {labels:[],frio:[],morno:[],quente:[],pelando:[]};
+        const totals = leadEngagementTotals(data);
+        const mode = leadEngagementState.mode;
         if (leadEngagementChart) leadEngagementChart.destroy();
         leadEngagementChart = new Chart(canvas, {
             type: 'bar',
             data: {
                 labels: data.labels || [],
                 datasets: [
-                    {label:'Frio', data:data.frio || [], backgroundColor:'#64748b', borderRadius:3, stack:'engagement'},
-                    {label:'Morno', data:data.morno || [], backgroundColor:'#38bdf8', borderRadius:3, stack:'engagement'},
-                    {label:'Quente', data:data.quente || [], backgroundColor:'#f59e0b', borderRadius:3, stack:'engagement'},
-                    {label:'Pelando', data:data.pelando || [], backgroundColor:'#ef4444', borderRadius:3, stack:'engagement'}
+                    {label:'Frio', key:'frio', data:leadEngagementValues(data,'frio',totals,mode), backgroundColor:'#64748b', borderRadius:3, stack:'engagement'},
+                    {label:'Morno', key:'morno', data:leadEngagementValues(data,'morno',totals,mode), backgroundColor:'#38bdf8', borderRadius:3, stack:'engagement'},
+                    {label:'Quente', key:'quente', data:leadEngagementValues(data,'quente',totals,mode), backgroundColor:'#f59e0b', borderRadius:3, stack:'engagement'},
+                    {label:'Pelando', key:'pelando', data:leadEngagementValues(data,'pelando',totals,mode), backgroundColor:'#ef4444', borderRadius:3, stack:'engagement'}
                 ]
             },
             options: {
@@ -3086,18 +3111,23 @@ body.dash-chart-fullscreen {
                     tooltip: {
                         callbacks: {
                             footer: function(items) {
-                                const total = items.reduce((sum, item) => sum + Number(item.parsed.y || 0), 0);
-                                return 'Total: ' + total.toLocaleString('pt-BR') + ' lead(s)';
+                                const idx = items[0] ? items[0].dataIndex : 0;
+                                const total = Number(totals[idx] || 0);
+                                return 'Total inscrito: ' + total.toLocaleString('pt-BR') + ' lead(s)';
                             },
                             label: function(ctx) {
-                                return ctx.dataset.label + ': ' + Number(ctx.parsed.y || 0).toLocaleString('pt-BR');
+                                const raw = Number((data[ctx.dataset.key] || [])[ctx.dataIndex] || 0);
+                                const total = Number(totals[ctx.dataIndex] || 0);
+                                const pct = total > 0 ? raw / total * 100 : 0;
+                                if (mode === 'percent') return ctx.dataset.label + ': ' + Number(ctx.parsed.y || 0).toLocaleString('pt-BR') + '% (' + raw.toLocaleString('pt-BR') + ')';
+                                return ctx.dataset.label + ': ' + raw.toLocaleString('pt-BR') + ' (' + pct.toLocaleString('pt-BR', {maximumFractionDigits:1}) + '%)';
                             }
                         }
                     }
                 },
                 scales: {
                     x: {stacked:true, ticks:{color:'#94a3b8', maxTicksLimit:10, font:{size:11}}, grid:{display:false}},
-                    y: {stacked:true, beginAtZero:true, ticks:{color:'#94a3b8', precision:0, font:{size:11}}, grid:{color:'rgba(26,37,64,.6)'}}
+                    y: {stacked:true, beginAtZero:true, max:mode==='percent'?100:undefined, ticks:{color:'#94a3b8', precision:0, font:{size:11}, callback:function(value){return mode==='percent'?value+'%':value;}}, grid:{color:'rgba(26,37,64,.6)'}}
                 }
             }
         });
@@ -3108,10 +3138,22 @@ body.dash-chart-fullscreen {
             btn.addEventListener('click', function() {
                 engagementSwitch.querySelectorAll('button').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                renderLeadEngagementChart(btn.getAttribute('data-period') || 'daily');
+                leadEngagementState.period = btn.getAttribute('data-period') || 'daily';
+                renderLeadEngagementChart(leadEngagementState.period);
             });
         });
         renderLeadEngagementChart('daily');
+    }
+    const engagementModeSwitch = document.querySelector('[data-engagement-mode]');
+    if (engagementModeSwitch) {
+        engagementModeSwitch.querySelectorAll('button[data-mode]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                engagementModeSwitch.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                leadEngagementState.mode = btn.getAttribute('data-mode') || 'count';
+                renderLeadEngagementChart(leadEngagementState.period);
+            });
+        });
     }
 
     const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
