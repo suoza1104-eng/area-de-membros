@@ -91,12 +91,14 @@ function support_chat_ensure_schema(PDO $pdo): void
         'support_agent_prompt_sales'=>support_agent_default_prompt('sales'),
         'support_agent_prompt_technical'=>support_agent_default_prompt('technical'),
         'support_agent_handoff_message'=>'Vou encaminhar seu atendimento para uma pessoa da equipe analisar com seguranca.',
+        'support_agent_variable_map_json'=>json_encode(support_agent_default_variable_map(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
         'support_crm_stages_json'=>'[{"id":"agent","label":"Com agente","condition":"status=open"},{"id":"human","label":"Humano pendente","condition":"stage=human"},{"id":"done","label":"Concluido","condition":"status=closed"}]',
     ] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
     }
     foreach(['support_agent_prompt_basic'=>'basic','support_agent_prompt_sales'=>'sales','support_agent_prompt_technical'=>'technical'] as $key=>$type){try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave=:k AND (valor='' OR valor LIKE 'Responda duvidas basicas%' OR valor LIKE 'Quando vendas estiver ativo%' OR valor LIKE 'Ajude em problemas tecnicos comuns%')")->execute(['v'=>support_agent_default_prompt($type),'k'=>$key]);}catch(Throwable $ignored){}}
+    try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave='support_agent_variable_map_json' AND (valor='' OR valor IS NULL)")->execute(['v'=>json_encode(support_agent_default_variable_map(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);}catch(Throwable $ignored){}
 }
 
 function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
@@ -104,10 +106,22 @@ function support_chat_column_exists(PDO $pdo,string $table,string $column): bool
 
 function support_agent_default_prompt(string $type): string
 {
-    $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente.";
+    $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente.";
     if($type==='sales')return $common." Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Se nao houver, colete a duvida e transfira para humano. Nao prometa bonus, desconto, prazo ou garantia que nao esteja no payload.";
     if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para erro com arquivo, imagem ou situacao sem diagnostico no payload, transfira para humano.";
-    return $common." Regras de certificado: se tem_certificado=true, informe que ja existe certificado e use o link disponivel. Se nao existe, verifique criterios_e_pendencias: aulas obrigatorias, aulas concluidas, percentual de avanco, aulas faltantes, eventos de live e demais pendencias. Diga exatamente o que falta. Para live, use data_live, eventos da live e reagendamentos. Para grupo e acesso, use os links do payload quando existirem.";
+    return $common." Regras de certificado: se certificado.tem_certificado_emitido=true, informe que ja existe certificado e use certificado.link_verificacao ou certificado.pdf_url. Nao use certificado.link_emitir quando o certificado ja foi emitido. Se nao existe certificado emitido, verifique criterios_e_pendencias: aulas obrigatorias, aulas concluidas, percentual de avanco, aulas faltantes, eventos de live e demais pendencias. Diga exatamente o que falta. Para live, use data_live, eventos da live e reagendamentos. Para grupo e acesso, use os links do payload quando existirem.";
+}
+
+function support_agent_default_variable_map(): array
+{
+    return [
+        ['key'=>'link_certificado_emitido','label'=>'Link do certificado emitido','path'=>'certificado.link_verificacao','description'=>'Use quando o certificado ja foi emitido. Se existir PDF, use pdf_certificado_emitido como alternativa.'],
+        ['key'=>'pdf_certificado_emitido','label'=>'PDF do certificado emitido','path'=>'certificado.pdf_url','description'=>'URL direta do PDF do certificado, quando o sistema ja gerou o arquivo.'],
+        ['key'=>'link_emitir_certificado','label'=>'Link para emitir certificado','path'=>'certificado.link_emitir','description'=>'Use apenas quando nao existe certificado emitido e o aluno ja concluiu as aulas obrigatorias.'],
+        ['key'=>'link_acesso','label'=>'Link de acesso direto','path'=>'links.acesso_direto_area_membros','description'=>'Magic link de acesso temporario para o aluno entrar na area de membros.'],
+        ['key'=>'data_live','label'=>'Data da live','path'=>'aluno.data_live','description'=>'Data da aula ao vivo vinculada ao aluno.'],
+        ['key'=>'link_grupo','label'=>'Link do grupo','path'=>'links.grupos_whatsapp.0.invite_url','description'=>'Primeiro link de convite de grupo WhatsApp encontrado para a turma/campanha.'],
+    ];
 }
 
 function support_chat_admin_identity(): array
@@ -195,7 +209,7 @@ function support_chat_push_student(PDO $pdo,int $conversationId,int $messageId,s
 function support_agent_prepare_answer(string $answer,bool $firstAgentReply): array
 {
     if(!$firstAgentReply){$clean=preg_replace('/^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[,!.\s]*(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][^.!?\n]{0,70})?[.!?\s]*/iu','',$answer,1);if(is_string($clean)&&trim($clean)!=='')$answer=trim($clean);}
-    $buttons=[];if(preg_match('/https?:\/\/[^\s<>"\']+/iu',$answer,$m)){ $url=rtrim($m[0],".,;:)");$label=stripos($url,'certificado')!==false?'Emitir certificado':'Abrir link';$answer=trim((string)preg_replace('/\s*[:;-]\s*$/u','',str_replace($m[0],'',$answer)));$buttons[]=['label'=>$label,'url'=>$url];if($answer==='')$answer='Use o botao abaixo para abrir o link.'; }
+    $buttons=[];if(preg_match('/https?:\/\/[^\s<>"\']+/iu',$answer,$m)){ $url=rtrim($m[0],".,;:)");$label=(stripos($url,'verificar_certificado')!==false||stripos($url,'uploads/certificates')!==false)?'Ver certificado':(stripos($url,'certificado.php')!==false?'Emitir certificado':'Abrir link');$answer=trim((string)preg_replace('/\s*[:;-]\s*$/u','',str_replace($m[0],'',$answer)));$buttons[]=['label'=>$label,'url'=>$url];if($answer==='')$answer='Use o botao abaixo para abrir o link.'; }
     return ['body'=>$answer,'metadata'=>$buttons?['buttons'=>$buttons]:[]];
 }
 
@@ -210,6 +224,14 @@ function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,b
 {
     $prepared=support_agent_prepare_answer($answer,$firstAgentReply);$parts=support_agent_split_answer((string)$prepared['body']);
     foreach($parts as $i=>$part){$last=$i===count($parts)-1;support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$part,[],$last?$prepared['metadata']:[]);if(!$last){support_chat_typing($pdo,$conversationId,'bot','Agente de suporte');sleep(random_int(4,6));}}
+}
+
+function support_agent_normalize_answer_for_payload(string $answer,array $payload): string
+{
+    $cert=$payload['certificado']??[];if(empty($cert['tem_certificado_emitido']))return $answer;
+    $emit=(string)($cert['link_emitir']??'');$preferred=(string)($cert['pdf_url']??'');if($preferred==='')$preferred=(string)($cert['link_verificacao']??'');
+    if($emit!==''&&$preferred!==''&&str_contains($answer,$emit))$answer=str_replace($emit,$preferred,$answer);
+    return $answer;
 }
 
 function support_chat_mark_read(PDO $pdo,int $conversationId,string $viewer): void
@@ -266,6 +288,22 @@ function support_agent_user_public_fields(PDO $pdo,array $user): array
     return $out;
 }
 
+function support_agent_variable_map(PDO $pdo): array
+{
+    $map=json_decode((string)get_setting('support_agent_variable_map_json',''),true);if(!is_array($map)||!$map)$map=support_agent_default_variable_map();
+    return array_values(array_filter($map,static fn($r)=>is_array($r)&&trim((string)($r['key']??''))!==''&&trim((string)($r['path']??''))!==''));
+}
+
+function support_agent_path_value(array $payload,string $path)
+{
+    $value=$payload;foreach(explode('.',$path) as $part){if($part==='')continue;if(is_array($value)&&array_key_exists($part,$value))$value=$value[$part];else return null;}return $value;
+}
+
+function support_agent_configured_variables(PDO $pdo,array $payload): array
+{
+    $out=[];foreach(support_agent_variable_map($pdo) as $row){$key=preg_replace('/[^a-z0-9_-]/i','',(string)$row['key']);if($key==='')continue;$out[$key]=['label'=>(string)($row['label']??$key),'path'=>(string)$row['path'],'description'=>(string)($row['description']??''),'value'=>support_agent_path_value($payload,(string)$row['path'])];}return $out;
+}
+
 function support_agent_user_payload(PDO $pdo,int $userId): array
 {
     $st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$user=$st->fetch(PDO::FETCH_ASSOC)?:[];
@@ -280,7 +318,7 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
     $coursePct=$required>0?(int)floor(($done/max(1,$required))*100):0;$issuedCert=null;foreach($certificates as $cert)if(($cert['status']??'')==='emitido'){$issuedCert=$cert;break;}
     $certVerify=$issuedCert&&!empty($issuedCert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$issuedCert['codigo_uid']):'';
     $magicLink=function_exists('gerar_magic_link')?gerar_magic_link($userId,30,false):'';
-    return [
+    $payload=[
         'aluno'=>[
             'id'=>(int)$user['id'],'nome'=>(string)($user['nome']??''),'email'=>(string)($user['email']??''),'telefone'=>(string)($user['telefone']??''),
             'data_inscricao'=>(string)($user['created_at']??$user['criado_em']??''),'codigo_turma'=>$turmaCodigo,
@@ -311,6 +349,8 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
         'live'=>['eventos'=>$live,'reagendamentos'=>$reschedules],
         'reagendamento'=>['opcoes'=>support_agent_available_reschedule_slots($pdo,2)],
     ];
+    $payload['variaveis_configuradas']=support_agent_configured_variables($pdo,$payload);
+    return $payload;
 }
 
 function support_agent_available_reschedule_slots(PDO $pdo,int $qty=2): array
@@ -361,8 +401,14 @@ function support_agent_transcribe_audio(PDO $pdo,array $cfg,array $message): str
 
 function support_agent_handoff(PDO $pdo,int $conversationId,string $reason,array $cfg): void
 {
+    $conv=support_chat_detail($pdo,$conversationId);if($conv&&($conv['stage']??'')==='human')return;
     $pdo->prepare("UPDATE support_conversations SET status='pending',stage='human',priority=IF(priority='normal','high',priority),notes=CONCAT(COALESCE(notes,''),IF(COALESCE(notes,'')='','',\"\n\"),:n) WHERE id=:id")->execute(['n'=>'Agente transferiu para humano: '.$reason,'id'=>$conversationId]);
     $msg=trim((string)$cfg['handoff_message']);if($msg!=='')support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$msg);
+}
+
+function support_agent_is_human_request(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);return str_contains($b,'atendimento humano')||str_contains($b,'falar com humano')||str_contains($b,'pessoa da equipe')||str_contains($b,'atendente humano')||str_contains($b,'quero atendente')||str_contains($b,'chamar atendente');
 }
 
 function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $messageId): void
@@ -373,18 +419,19 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
     try{
         $pause=(int)($cfg['pause_seconds']??0);if($pause>0){sleep($pause);$newer=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:id");$newer->execute(['c'=>$conversationId,'id'=>$messageId]);if((int)$newer->fetchColumn()>0)return;}
         $body=trim((string)($msg['body']??''));$type=(string)($msg['message_type']??'text');
+        if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);return;}
         if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);return;}
         if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
         $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
         $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
         $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);$recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
         if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);return;}
-        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se faltar dado, action=handoff. Certificado: sempre olhe payload_aluno.certificado. Se tem_certificado_emitido=true, diga que ja existe e use link_verificacao/pdf_url/link_emitir. Se false, olhe criterios_e_pendencias e diga exatamente o que falta, principalmente aulas_faltantes. Se pode_iniciar_emissao_agora=true, oriente a emitir pelo link_emitir e explique que a tela pedira senha e confirmacao do nome; nao informe senha se ela nao estiver no payload/contexto. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Se faltar dado, action=handoff. Certificado: sempre olhe payload_aluno.certificado. Se tem_certificado_emitido=true, diga que ja existe e use link_verificacao ou pdf_url; nunca use link_emitir nesse caso. Se true mas link_verificacao/pdf_url estiverem vazios, action=handoff. Se false, olhe criterios_e_pendencias e diga exatamente o que falta, principalmente aulas_faltantes. Se pode_iniciar_emissao_agora=true, oriente a emitir pelo link_emitir e explique que a tela pedira senha e confirmacao do nome; nao informe senha se ela nao estiver no payload/contexto. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links e payload_aluno.variaveis_configuradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
         $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory['summary']??'','payload_aluno'=>$payload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
         if($action==='handoff'||$confidence<0.55){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Baixa confianca.'),$cfg);}
-        else{support_agent_send_answer($pdo,$conversationId,trim((string)$res['answer'])?:'Consegui analisar seu caso, mas vou precisar de mais detalhes.',$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}
+        else{$answer=support_agent_normalize_answer_for_payload(trim((string)$res['answer'])?:'Consegui analisar seu caso, mas vou precisar de mais detalhes.',$payload);support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}
         $pdo->prepare("INSERT INTO support_agent_memory(conversation_id,summary,token_count,last_intent,last_confidence) VALUES(:c,:s,:t,:i,:cf) ON DUPLICATE KEY UPDATE summary=VALUES(summary),token_count=VALUES(token_count),last_intent=VALUES(last_intent),last_confidence=VALUES(last_confidence)")->execute(['c'=>$conversationId,'s'=>mb_substr((string)($res['memory_summary']??''),0,12000),'t'=>min(999999,(int)($res['tokens_estimate']??$estimated)),'i'=>mb_substr((string)($res['intent']??''),0,80),'cf'=>$confidence]);
     }catch(Throwable $e){support_agent_handoff($pdo,$conversationId,'Erro do agente: '.$e->getMessage(),$cfg);}
 }
