@@ -67,6 +67,15 @@ $__sbInitial = strtoupper(substr($__sbNome, 0, 1));
 $__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 // ──────────────────────────────────────────────────────────────────────────
 
+$__supportUnread = 0;
+try {
+    $pdoBadge = getPDO();
+    $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
+    if ($stBadge && $stBadge->fetchColumn()) {
+        $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
+    }
+} catch (Throwable $ignored) {}
+
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
@@ -534,6 +543,7 @@ button:not([class]):hover { filter: brightness(1.07); }
 .badge-warning { background: rgba(245,158,11,.1);   color: #fcd34d; }
 .badge-neutral { background: rgba(100,116,139,.1);  color: #94a3b8; }
 .badge-primary { background: var(--primary-dim);    color: var(--primary); }
+.sb-support-badge { margin-left:auto; min-width:18px; height:18px; padding:0 5px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#ef4444; color:#fff; font-size:10px; font-weight:800; }
 
 /* ===== ALERTS ===== */
 .alert {
@@ -925,6 +935,7 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/><path d="M8 9h8M8 13h5"/>
       </svg>
       Central de Suporte
+      <?php if ($__supportUnread > 0): ?><span class="sb-support-badge"><?= $__supportUnread > 99 ? '99+' : (int)$__supportUnread ?></span><?php endif; ?>
     </a>
     <?php endif; ?>
 
