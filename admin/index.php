@@ -377,6 +377,24 @@ function dash_bucket_label(string $bucket, string $period): string {
     return $bucket;
 }
 
+function dash_engagement_bucket_expr(string $dateExpr, string $period): string {
+    if ($period === 'weekly') return "DATE_FORMAT(DATE_SUB(DATE($dateExpr), INTERVAL WEEKDAY($dateExpr) DAY), '%Y-%m-%d')";
+    if ($period === 'monthly') return "DATE_FORMAT($dateExpr, '%Y-%m')";
+    if ($period === 'quarterly') return "CONCAT(YEAR($dateExpr), '-T', QUARTER($dateExpr))";
+    if ($period === 'semester') return "CONCAT(YEAR($dateExpr), '-S', IF(MONTH($dateExpr) <= 6, 1, 2))";
+    if ($period === 'yearly') return "DATE_FORMAT($dateExpr, '%Y')";
+    return "DATE_FORMAT(DATE($dateExpr), '%Y-%m-%d')";
+}
+
+function dash_engagement_bucket_label(string $bucket, string $period): string {
+    if ($period === 'daily' && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $bucket, $m)) return $m[3] . '/' . $m[2] . '/' . $m[1];
+    if ($period === 'weekly' && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $bucket, $m)) return 'Sem. ' . $m[3] . '/' . $m[2] . '/' . $m[1];
+    if ($period === 'monthly' && preg_match('/^(\d{4})-(\d{2})$/', $bucket, $m)) return $m[2] . '/' . $m[1];
+    if ($period === 'quarterly' && preg_match('/^(\d{4})-T([1-4])$/', $bucket, $m)) return 'T' . $m[2] . '/' . $m[1];
+    if ($period === 'semester' && preg_match('/^(\d{4})-S([12])$/', $bucket, $m)) return 'S' . $m[2] . '/' . $m[1];
+    return $bucket;
+}
+
 function dash_turma_where(string $userAlias, ?string $turmaCol, array $turmaIds, array $codigosTurma, array &$params, string $prefix): array {
     if (!$turmaIds || !$turmaCol) return [];
     $where = [];
@@ -451,6 +469,139 @@ function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, str
     return $out;
 }
 
+function dash_lead_engagement_series(PDO $pdo, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma): array {
+    $empty = [
+        'daily' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+        'weekly' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+        'monthly' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+        'quarterly' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+        'semester' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+        'yearly' => ['labels' => [], 'frio' => [], 'morno' => [], 'quente' => [], 'pelando' => []],
+    ];
+    try {
+        $expected16 = (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1 AND ordem BETWEEN 1 AND 6")->fetchColumn();
+        $totalRequired = (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1 AND conta_para_conclusao = 1")->fetchColumn();
+    } catch (Throwable $e) {
+        $expected16 = 0;
+        $totalRequired = 0;
+    }
+
+    $lessonActivitySql = "SELECT NULL user_id,0 lessons_1_4,0 lessons_1_6,0 required_completed WHERE 1=0";
+    if (dash_table_exists($pdo, 'lessons')) {
+        $lessonParts = [];
+        if (dash_table_exists($pdo, 'lesson_progress')) {
+            $lessonParts[] = "SELECT lp.user_id,lp.lesson_id FROM lesson_progress lp WHERE lp.status='completed'";
+        }
+        if (dash_table_exists($pdo, 'lesson_view_events')) {
+            $lessonParts[] = "SELECT lve.user_id,lve.lesson_id FROM lesson_view_events lve";
+        }
+        if ($lessonParts) {
+            $lessonActivitySql = "
+                SELECT la.user_id,
+                       COUNT(DISTINCT CASE WHEN l.ativo=1 AND l.ordem BETWEEN 1 AND 4 THEN l.id END) lessons_1_4,
+                       COUNT(DISTINCT CASE WHEN l.ativo=1 AND l.ordem BETWEEN 1 AND 6 THEN l.id END) lessons_1_6,
+                       COUNT(DISTINCT CASE WHEN l.ativo=1 AND l.conta_para_conclusao=1 AND lp_done.lesson_id IS NOT NULL THEN l.id END) required_completed
+                  FROM (" . implode(' UNION ALL ', $lessonParts) . ") la
+                  JOIN lessons l ON l.id = la.lesson_id
+                  LEFT JOIN lesson_progress lp_done ON lp_done.user_id=la.user_id AND lp_done.lesson_id=la.lesson_id AND lp_done.status='completed'
+              GROUP BY la.user_id
+            ";
+        }
+    }
+
+    $loginSql = dash_table_exists($pdo, 'login_events')
+        ? "SELECT user_id,1 has_login FROM login_events GROUP BY user_id"
+        : "SELECT NULL user_id,0 has_login WHERE 1=0";
+    $groupSql = (dash_table_exists($pdo, 'whatsapp_group_events') && dash_column_exists($pdo, 'whatsapp_group_events', 'interpreted_event'))
+        ? "SELECT user_id,1 joined_group FROM whatsapp_group_events WHERE user_id IS NOT NULL AND user_id>0 AND interpreted_event='WHATSAPP_GRUPO_ENTROU' GROUP BY user_id"
+        : "SELECT NULL user_id,0 joined_group WHERE 1=0";
+    $liveAccessSql = (dash_table_exists($pdo, 'live_event_recebimentos') && dash_table_exists($pdo, 'live_events'))
+        ? "SELECT ler.user_id,1 live_access FROM live_event_recebimentos ler JOIN live_events le ON le.id=ler.event_id WHERE ler.status='processado' AND le.tipo='acessou' AND ler.user_id IS NOT NULL GROUP BY ler.user_id"
+        : "SELECT NULL user_id,0 live_access WHERE 1=0";
+    $liveOfferSql = (dash_table_exists($pdo, 'live_event_recebimentos') && dash_table_exists($pdo, 'live_events'))
+        ? "SELECT ler.user_id,1 live_offer FROM live_event_recebimentos ler JOIN live_events le ON le.id=ler.event_id WHERE ler.status='processado' AND le.tipo='oferta' AND ler.user_id IS NOT NULL GROUP BY ler.user_id"
+        : "SELECT NULL user_id,0 live_offer WHERE 1=0";
+    $offerClickParts = [];
+    if (dash_table_exists($pdo, 'live_event_recebimentos') && dash_table_exists($pdo, 'live_events')) {
+        $offerClickParts[] = "SELECT ler.user_id FROM live_event_recebimentos ler JOIN live_events le ON le.id=ler.event_id WHERE ler.status='processado' AND le.tipo='compra' AND ler.user_id IS NOT NULL";
+    }
+    if (dash_table_exists($pdo, 'automation_flow_events')) {
+        $offerClickParts[] = "SELECT user_id FROM automation_flow_events WHERE event_code IN ('LIVE_COMPRA','BOTAO_OFERTA','BOTAO_COMPRA') AND user_id IS NOT NULL";
+    }
+    $offerClickSql = $offerClickParts
+        ? "SELECT user_id,1 offer_click FROM (" . implode(' UNION ALL ', $offerClickParts) . ") oc GROUP BY user_id"
+        : "SELECT NULL user_id,0 offer_click WHERE 1=0";
+    $certificateSql = dash_table_exists($pdo, 'certificates')
+        ? "SELECT user_id,1 has_certificate FROM certificates WHERE status='emitido' GROUP BY user_id"
+        : "SELECT NULL user_id,0 has_certificate WHERE 1=0";
+
+    $out = $empty;
+    foreach (array_keys($empty) as $period) {
+        $params = [];
+        $where = ['u.created_at IS NOT NULL'];
+        if ($dataDe !== '') {
+            $where[] = 'u.created_at >= :de';
+            $params['de'] = $dataDe . ' 00:00:00';
+        }
+        if ($dataAte !== '') {
+            $where[] = 'u.created_at <= :ate';
+            $params['ate'] = $dataAte . ' 23:59:59';
+        }
+        $where = array_merge($where, dash_turma_where('u', $turmaCol, $turmaIds, $codigosTurma, $params, 'eng_' . $period));
+        $bucketExpr = dash_engagement_bucket_expr('u.created_at', $period);
+        $progressExpr = $totalRequired > 0 ? "COALESCE(la.required_completed,0) / {$totalRequired}" : "0";
+        $pelandoLessonExpr = $expected16 > 0 ? "COALESCE(la.lessons_1_6,0) >= {$expected16}" : "0";
+        $sql = "
+            SELECT bucket, perfil, COUNT(*) total
+              FROM (
+                SELECT {$bucketExpr} bucket,
+                       CASE
+                         WHEN {$pelandoLessonExpr}
+                              AND COALESCE(lac.live_access,0)=1
+                              AND COALESCE(lo.live_offer,0)=1
+                              AND COALESCE(cert.has_certificate,0)=1 THEN 'pelando'
+                         WHEN COALESCE(la.lessons_1_4,0) BETWEEN 1 AND 4
+                              OR COALESCE(oc.offer_click,0)=1
+                              OR {$progressExpr} >= 0.9 THEN 'quente'
+                         WHEN COALESCE(login.has_login,0)=1
+                              OR (COALESCE(grp.joined_group,0)=1 AND COALESCE(login.has_login,0)=1) THEN 'morno'
+                         ELSE 'frio'
+                       END perfil
+                  FROM users u
+             LEFT JOIN ({$loginSql}) login ON login.user_id=u.id
+             LEFT JOIN ({$groupSql}) grp ON grp.user_id=u.id
+             LEFT JOIN ({$lessonActivitySql}) la ON la.user_id=u.id
+             LEFT JOIN ({$liveAccessSql}) lac ON lac.user_id=u.id
+             LEFT JOIN ({$liveOfferSql}) lo ON lo.user_id=u.id
+             LEFT JOIN ({$offerClickSql}) oc ON oc.user_id=u.id
+             LEFT JOIN ({$certificateSql}) cert ON cert.user_id=u.id
+                 WHERE " . implode(' AND ', $where) . "
+              ) classified
+          GROUP BY bucket, perfil
+          ORDER BY bucket ASC
+        ";
+        try {
+            $st = $pdo->prepare($sql);
+            $st->execute($params);
+            $byBucket = [];
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                $bucket = (string)($row['bucket'] ?? '');
+                $perfil = (string)($row['perfil'] ?? '');
+                if ($bucket === '' || !isset($out[$period][$perfil])) continue;
+                if (!isset($byBucket[$bucket])) $byBucket[$bucket] = ['frio' => 0, 'morno' => 0, 'quente' => 0, 'pelando' => 0];
+                $byBucket[$bucket][$perfil] = (int)($row['total'] ?? 0);
+            }
+            foreach ($byBucket as $bucket => $values) {
+                $out[$period]['labels'][] = dash_engagement_bucket_label($bucket, $period);
+                foreach (['frio','morno','quente','pelando'] as $perfil) $out[$period][$perfil][] = (int)$values[$perfil];
+            }
+        } catch (Throwable $e) {
+            $out[$period] = $empty[$period];
+        }
+    }
+    return $out;
+}
+
 function dash_device_family(?string $userAgent): string {
     $ua = strtolower(trim((string)$userAgent));
     if ($ua === '') return 'Não identificado';
@@ -505,6 +656,7 @@ $deviceData = array_values($deviceCounts);
 $deviceTotalStudents = array_sum($deviceData);
 $deviceMobileStudents = (int)($deviceCounts['Android'] ?? 0) + (int)($deviceCounts['iPhone'] ?? 0) + (int)($deviceCounts['iPad'] ?? 0);
 $deviceMobilePct = $deviceTotalStudents > 0 ? round($deviceMobileStudents / $deviceTotalStudents * 100, 1) : 0.0;
+$leadEngagementSeries = dash_lead_engagement_series($pdo, $dataDe, $dataAte, $turmaColTop, $turmaIds, $codigosTurmaFiltro);
 
 $dashLineCharts = [];
 $lineTurmaCol = $turmaColTop;
@@ -2152,6 +2304,35 @@ body.dash-chart-fullscreen {
     </div>
 </div>
 
+<!-- CHART: Indice de engajamento por cadastro -->
+<div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
+        <div>
+            <span>Indice de engajamento dos leads</span>
+            <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:4px">
+                Classificacao por aluno cadastrado no periodo: frio, morno, quente e pelando.
+            </div>
+        </div>
+        <div class="dash-period-switch" data-engagement-period>
+            <button type="button" class="active" data-period="daily">Dia</button>
+            <button type="button" data-period="weekly">Semana</button>
+            <button type="button" data-period="monthly">Mes</button>
+            <button type="button" data-period="quarterly">Trimestre</button>
+            <button type="button" data-period="semester">Semestre</button>
+            <button type="button" data-period="yearly">Ano</button>
+        </div>
+    </div>
+    <div style="height:360px;position:relative">
+        <canvas id="chartLeadEngagement"></canvas>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font-size:11px">
+        <span><strong style="color:#94a3b8">Frio</strong>: cadastrou e nao teve outros sinais.</span>
+        <span><strong style="color:#38bdf8">Morno</strong>: logou no sistema ou entrou/logou.</span>
+        <span><strong style="color:#f59e0b">Quente</strong>: viu aulas 1-4, clicou oferta ou chegou a 90%.</span>
+        <span><strong style="color:#ef4444">Pelando</strong>: viu aulas 1-6, entrou na live, ficou ate oferta e gerou certificado.</span>
+    </div>
+</div>
+
 <!-- CHARTS: Atividade diaria/mensal/anual -->
 <div class="grid-2 mb-4">
     <?php foreach ($dashLineCharts as $chartKey => $chartCfg): ?>
@@ -2877,6 +3058,61 @@ body.dash-chart-fullscreen {
     } catch (e) {}
 
     renderLiveRelativeChart('original');
+
+    const LEAD_ENGAGEMENT_SERIES = <?= json_encode($leadEngagementSeries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    let leadEngagementChart = null;
+    function renderLeadEngagementChart(period) {
+        const canvas = document.getElementById('chartLeadEngagement');
+        if (!canvas) return;
+        const data = LEAD_ENGAGEMENT_SERIES[period] || LEAD_ENGAGEMENT_SERIES.daily || {labels:[],frio:[],morno:[],quente:[],pelando:[]};
+        if (leadEngagementChart) leadEngagementChart.destroy();
+        leadEngagementChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: data.labels || [],
+                datasets: [
+                    {label:'Frio', data:data.frio || [], backgroundColor:'#64748b', borderRadius:3, stack:'engagement'},
+                    {label:'Morno', data:data.morno || [], backgroundColor:'#38bdf8', borderRadius:3, stack:'engagement'},
+                    {label:'Quente', data:data.quente || [], backgroundColor:'#f59e0b', borderRadius:3, stack:'engagement'},
+                    {label:'Pelando', data:data.pelando || [], backgroundColor:'#ef4444', borderRadius:3, stack:'engagement'}
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {mode:'index', intersect:false},
+                plugins: {
+                    legend: {position:'bottom', labels:{color:'#94a3b8', boxWidth:10, font:{size:11}}},
+                    tooltip: {
+                        callbacks: {
+                            footer: function(items) {
+                                const total = items.reduce((sum, item) => sum + Number(item.parsed.y || 0), 0);
+                                return 'Total: ' + total.toLocaleString('pt-BR') + ' lead(s)';
+                            },
+                            label: function(ctx) {
+                                return ctx.dataset.label + ': ' + Number(ctx.parsed.y || 0).toLocaleString('pt-BR');
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {stacked:true, ticks:{color:'#94a3b8', maxTicksLimit:10, font:{size:11}}, grid:{display:false}},
+                    y: {stacked:true, beginAtZero:true, ticks:{color:'#94a3b8', precision:0, font:{size:11}}, grid:{color:'rgba(26,37,64,.6)'}}
+                }
+            }
+        });
+    }
+    const engagementSwitch = document.querySelector('[data-engagement-period]');
+    if (engagementSwitch) {
+        engagementSwitch.querySelectorAll('button[data-period]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                engagementSwitch.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                renderLeadEngagementChart(btn.getAttribute('data-period') || 'daily');
+            });
+        });
+        renderLeadEngagementChart('daily');
+    }
 
     const DASH_LINE_CHARTS = <?= json_encode($dashLineCharts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const dashLineInstances = {};
