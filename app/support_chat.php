@@ -124,6 +124,38 @@ function support_agent_default_variable_map(): array
     ];
 }
 
+function support_agent_payload_field_options(): array
+{
+    return [
+        ['path'=>'aluno.id','label'=>'ID do aluno','description'=>'Identificador interno do aluno.'],
+        ['path'=>'aluno.nome','label'=>'Nome do aluno','description'=>'Nome cadastrado do aluno.'],
+        ['path'=>'aluno.email','label'=>'E-mail do aluno','description'=>'E-mail cadastrado do aluno.'],
+        ['path'=>'aluno.telefone','label'=>'Telefone do aluno','description'=>'Telefone cadastrado do aluno.'],
+        ['path'=>'aluno.data_inscricao','label'=>'Data de inscricao','description'=>'Data em que o aluno entrou no sistema.'],
+        ['path'=>'aluno.codigo_turma','label'=>'Codigo da turma','description'=>'Turma/campanha vinculada ao aluno.'],
+        ['path'=>'aluno.data_live','label'=>'Data da live','description'=>'Data da aula ao vivo vinculada ao aluno.'],
+        ['path'=>'aluno.campos_personalizados','label'=>'Campos personalizados','description'=>'Campos extras do cadastro/importacao do aluno.'],
+        ['path'=>'engajamento.aulas_assistidas','label'=>'Aulas assistidas','description'=>'Lista de aulas que o aluno assistiu.'],
+        ['path'=>'engajamento.aulas_concluidas','label'=>'Total de aulas concluidas','description'=>'Quantidade de aulas obrigatorias concluidas.'],
+        ['path'=>'engajamento.aulas_obrigatorias','label'=>'Total de aulas obrigatorias','description'=>'Quantidade de aulas exigidas para concluir.'],
+        ['path'=>'engajamento.percentual_avanco','label'=>'Percentual de avanco','description'=>'Percentual de conclusao do curso.'],
+        ['path'=>'engajamento.eventos','label'=>'Eventos do aluno','description'=>'Eventos acionados pelo aluno com datas.'],
+        ['path'=>'certificado.tem_certificado_emitido','label'=>'Certificado ja emitido','description'=>'Indica se o aluno ja possui certificado emitido.'],
+        ['path'=>'certificado.link_verificacao','label'=>'Link do certificado emitido','description'=>'Link publico para verificar/abrir certificado ja emitido.'],
+        ['path'=>'certificado.pdf_url','label'=>'PDF do certificado emitido','description'=>'URL direta do PDF do certificado, quando existir.'],
+        ['path'=>'certificado.link_emitir','label'=>'Link para emitir certificado','description'=>'Link para iniciar emissao quando o aluno ainda nao tem certificado emitido.'],
+        ['path'=>'certificado.criterios_e_pendencias','label'=>'Pendencias do certificado','description'=>'O que falta para o aluno poder emitir certificado.'],
+        ['path'=>'certificado.pode_iniciar_emissao_agora','label'=>'Pode emitir agora','description'=>'Indica se o aluno ja cumpre os criterios para emitir.'],
+        ['path'=>'links.acesso_direto_area_membros','label'=>'Link de acesso direto','description'=>'Magic link temporario para o aluno acessar a area de membros.'],
+        ['path'=>'links.grupos_whatsapp.0.invite_url','label'=>'Link do grupo WhatsApp','description'=>'Primeiro link de convite do grupo relacionado ao aluno.'],
+        ['path'=>'live.eventos','label'=>'Eventos da live','description'=>'Eventos do aluno na live, como acesso, permanencia e oferta.'],
+        ['path'=>'live.reagendamentos','label'=>'Reagendamentos da live','description'=>'Historico de reagendamentos de live do aluno.'],
+        ['path'=>'reagendamento.opcoes','label'=>'Opcoes para reagendar live','description'=>'Datas que o agente pode oferecer ao aluno.'],
+        ['path'=>'tags','label'=>'Tags do aluno','description'=>'Tags atuais vinculadas ao aluno.'],
+        ['path'=>'compras','label'=>'Compras do aluno','description'=>'Cursos/produtos comprados pelo aluno.'],
+    ];
+}
+
 function support_chat_admin_identity(): array
 {
     $name=trim((string)($_SESSION['equipe_nome'] ?? $_SESSION['admin_nome'] ?? 'Administrador'));
