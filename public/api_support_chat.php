@@ -6,6 +6,7 @@ require_once __DIR__ . '/../app/support_chat.php';
 proteger_aluno();
 $pdo = getPDO();
 support_chat_ensure_schema($pdo);
+support_chat_auto_close_idle($pdo);
 
 if (empty($_SESSION['support_chat_public_csrf'])) {
     $_SESSION['support_chat_public_csrf'] = bin2hex(random_bytes(24));
@@ -19,7 +20,7 @@ function support_public_json(array $data, int $status = 200): never
     exit;
 }
 
-function support_public_conversation(PDO $pdo): int
+function support_public_conversation(PDO $pdo, int $preferredId = 0): int
 {
     $userId = (int)($_SESSION['aluno_id'] ?? 0);
     if ($userId <= 0) {
@@ -27,6 +28,13 @@ function support_public_conversation(PDO $pdo): int
     }
     if (get_setting('support_chat_student_enabled', '0') !== '1') {
         throw new RuntimeException('Suporte pelo agente desativado.');
+    }
+    if ($preferredId > 0) {
+        $st = $pdo->prepare("SELECT id FROM support_conversations WHERE id=:id AND user_id=:u LIMIT 1");
+        $st->execute(['id'=>$preferredId,'u'=>$userId]);
+        if ((int)$st->fetchColumn() === $preferredId) {
+            return $preferredId;
+        }
     }
     return support_chat_get_or_create($pdo, $userId, 'app');
 }
@@ -55,7 +63,7 @@ try {
             ]);
         }
         if ($api === 'messages') {
-            $conversationId = support_public_conversation($pdo);
+            $conversationId = support_public_conversation($pdo, (int)($_GET['conversation_id'] ?? 0));
             support_chat_mark_read($pdo, $conversationId, 'student');
             support_public_json([
                 'ok' => true,
@@ -71,6 +79,16 @@ try {
         throw new RuntimeException('Sessao expirada.');
     }
     $action = (string)($_POST['action'] ?? '');
+    if ($action === 'feedback') {
+        $conversationId = (int)($_POST['conversation_id'] ?? 0);
+        $st = $pdo->prepare("SELECT user_id FROM support_conversations WHERE id=:id LIMIT 1");
+        $st->execute(['id'=>$conversationId]);
+        if ((int)$st->fetchColumn() !== (int)($_SESSION['aluno_id'] ?? 0)) {
+            throw new RuntimeException('Atendimento invalido.');
+        }
+        support_chat_submit_feedback($pdo, $conversationId, (int)($_SESSION['aluno_id'] ?? 0), (int)($_POST['rating'] ?? 0), (string)($_POST['comment'] ?? ''));
+        support_public_json(['ok' => true]);
+    }
     $conversationId = support_public_conversation($pdo);
     if ($action === 'send') {
         $body = (string)($_POST['body'] ?? '');
@@ -84,7 +102,7 @@ try {
         } else {
             support_chat_run_automation($pdo, $conversationId);
         }
-        support_public_json(['ok' => true, 'message_id' => $messageId]);
+        support_public_json(['ok' => true, 'message_id' => $messageId, 'conversation_id' => $conversationId]);
     }
     if ($action === 'typing') {
         support_chat_typing($pdo, $conversationId, 'student', (string)($_SESSION['aluno_nome'] ?? 'Aluno'));

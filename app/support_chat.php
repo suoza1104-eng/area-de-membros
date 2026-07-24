@@ -102,7 +102,28 @@ function support_chat_ensure_schema(PDO $pdo): void
         KEY idx_support_events_turma (turma_codigo),
         KEY idx_support_events_action (action_type,created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_feedback (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        user_id INT NOT NULL,
+        rating TINYINT UNSIGNED NOT NULL,
+        comment TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_feedback_created (created_at),
+        KEY idx_support_feedback_conv (conversation_id),
+        KEY idx_support_feedback_user (user_id),
+        KEY idx_support_feedback_rating (rating)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_button_mode'=>'fixed','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_display_name'=>'Suporte FERA','support_chat_sound_enabled'=>'1'] as $key=>$value) {
+        $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
+        try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
+    }
+    foreach ([
+        'support_chat_auto_close_minutes'=>'30',
+        'support_chat_closing_message'=>'Obrigado pelo contato. Fico a disposicao sempre que precisar.',
+        'support_chat_followup_variations_json'=>'["Te ajudo em algo mais, {primeiro_nome}?","Posso ajudar com mais alguma coisa, {primeiro_nome}?","Ficou alguma duvida que eu possa resolver, {primeiro_nome}?"]',
+    ] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
     }
@@ -210,6 +231,99 @@ function support_chat_analytics(PDO $pdo,string $from,string $to,string $bucket=
         'ai_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=c.id AND m2.sender_type='admin')",$params),
     ];
     return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'kpis'=>$kpis,'clicks'=>$clicks,'started'=>$started,'closed'=>$closed,'status'=>$status,'agents'=>$agents,'turmas'=>$turmas,'actions'=>$actions,'logs'=>$logs];
+}
+
+function support_chat_first_name(array $conv): string
+{
+    $name=trim((string)($conv['user_name']??''));
+    return $name!==''?(explode(' ',$name)[0]??''):'';
+}
+
+function support_chat_random_followup(PDO $pdo,array $conv): string
+{
+    $raw=(string)get_setting('support_chat_followup_variations_json','');
+    $items=json_decode($raw,true);
+    if(!is_array($items)||!$items)$items=['Te ajudo em algo mais, {primeiro_nome}?','Posso ajudar com mais alguma coisa, {primeiro_nome}?'];
+    $text=(string)$items[array_rand($items)];
+    $first=support_chat_first_name($conv);
+    return trim(str_replace('{primeiro_nome}',$first!==''?$first:'',str_replace(', {primeiro_nome}', $first!==''?', {primeiro_nome}':'', $text)));
+}
+
+function support_agent_is_closing_message(string $body): bool
+{
+    $b=mb_strtolower(trim(preg_replace('/\s+/u',' ',$body)));
+    if($b===''||mb_strlen($b)>90)return false;
+    if(preg_match('/\b(n[aã]o|nao)\s+(consigo|consegui|abre|abriu|funciona|recebi|entendi|sei|aparece|est[aá]|tenho)\b/u',$b))return false;
+    $patterns=[
+        '/^(obrigad[ao]|obg|valeu|vlw|beleza|blz|show|ok|certo|perfeito|resolvido|resolveu|deu certo)[.! ]*$/u',
+        '/^(n[aã]o|nao|n[aã]o obrigado|nao obrigado|n[aã]o precisa|nao precisa|nada|s[oó] isso|so isso|era isso|por enquanto n[aã]o|por enquanto nao)[.! ]*$/u',
+        '/\b(pode encerrar|pode fechar|encerrar atendimento|fechar atendimento|finalizar atendimento)\b/u',
+    ];
+    foreach($patterns as $p)if(preg_match($p,$b))return true;
+    return false;
+}
+
+function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte',bool $sendClosing=true): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;
+    if((string)($conv['status']??'')==='closed')return;
+    if($sendClosing){
+        $message=trim((string)get_setting('support_chat_closing_message','Obrigado pelo contato. Fico a disposicao sempre que precisar.'));
+        if($message==='')$message='Obrigado pelo contato. Fico a disposicao sempre que precisar.';
+        support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,$message,[],[
+            'feedback'=>['prompt'=>'Como foi seu atendimento?','scale'=>[0,1,2,3,4,5],'conversation_id'=>$conversationId],
+        ]);
+    }
+    $pdo->prepare("UPDATE support_conversations SET status='closed',stage='done',closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'feedback_requested');
+}
+
+function support_chat_submit_feedback(PDO $pdo,int $conversationId,int $userId,int $rating,string $comment): void
+{
+    if($conversationId<=0||$userId<=0)throw new RuntimeException('Atendimento invalido.');
+    $rating=max(0,min(5,$rating));$comment=mb_substr(trim($comment),0,3000);
+    $st=$pdo->prepare("SELECT id FROM support_feedback WHERE conversation_id=:c AND user_id=:u ORDER BY id DESC LIMIT 1");$st->execute(['c'=>$conversationId,'u'=>$userId]);$id=(int)$st->fetchColumn();
+    if($id>0)$pdo->prepare("UPDATE support_feedback SET rating=:r,comment=:m WHERE id=:id")->execute(['r'=>$rating,'m'=>$comment!==''?$comment:null,'id'=>$id]);
+    else $pdo->prepare("INSERT INTO support_feedback(conversation_id,user_id,rating,comment) VALUES(:c,:u,:r,:m)")->execute(['c'=>$conversationId,'u'=>$userId,'r'=>$rating,'m'=>$comment!==''?$comment:null]);
+    support_chat_log_event($pdo,'feedback_submitted',$conversationId,$userId,'student',(string)$userId,'Aluno','fps',['rating'=>$rating]);
+}
+
+function support_chat_auto_close_idle(PDO $pdo): int
+{
+    $minutes=max(0,min(10080,(int)get_setting('support_chat_auto_close_minutes','30')));if($minutes<=0)return 0;
+    $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
+    $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
+    foreach($ids as $id)support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true);
+    return count($ids);
+}
+
+function support_chat_feedback_analytics(PDO $pdo,string $from,string $to,string $bucket='day',string $turma=''): array
+{
+    [$fromDt,$toDt,$fromDate,$toDate]=support_chat_period_bounds($from,$to);if(!in_array($bucket,['day','week','month'],true))$bucket='day';[$keyExpr,$labelExpr]=support_chat_bucket_sql($bucket,'f.created_at');
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $params=['from'=>$fromDt,'to'=>$toDt];$where="f.created_at BETWEEN :from AND :to";
+    if(trim($turma)!==''){$where.=" AND {$turmaExpr} LIKE :turma";$params['turma']='%'.trim($turma).'%';}
+    $trend=support_chat_fetch_pairs($pdo,"SELECT {$keyExpr} k,{$labelExpr} label,COUNT(*) total,ROUND(AVG(f.rating),2) avg_rating FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} GROUP BY k,label ORDER BY k",$params);
+    $dist=support_chat_fetch_pairs($pdo,"SELECT f.rating label,COUNT(*) total FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} GROUP BY f.rating ORDER BY f.rating",$params);
+    $comments=support_chat_fetch_pairs($pdo,"SELECT f.*,u.nome user_name,u.email user_email,{$turmaExpr} turma FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} ORDER BY f.id DESC LIMIT 200",$params);
+    $summary=support_chat_fetch_pairs($pdo,"SELECT COUNT(*) responses,ROUND(AVG(f.rating),2) avg_rating FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where}",$params)[0]??['responses'=>0,'avg_rating'=>0];
+    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'turma'=>$turma,'summary'=>$summary,'trend'=>$trend,'distribution'=>$dist,'comments'=>$comments];
+}
+
+function support_chat_feedback_ai_analysis(PDO $pdo,array $data): string
+{
+    $comments=array_slice(array_map(static fn($r)=>['nota'=>(int)($r['rating']??0),'aluno'=>(string)($r['user_name']??''),'turma'=>(string)($r['turma']??''),'opiniao'=>(string)($r['comment']??'')],$data['comments']??[]),0,120);
+    $responses=(int)($data['summary']['responses']??0);$avg=(string)($data['summary']['avg_rating']??'0');
+    if($responses<=0)return "Sem respostas de FPS no filtro selecionado.";
+    $cfg=support_agent_config($pdo);$apiKey=(string)($cfg['api_key']??'');
+    if($apiKey==='')return "Resumo: {$responses} resposta(s), nota media {$avg}.\n\nPontos criticos: configure a chave OpenAI para uma analise qualitativa completa dos textos.\n\nPontos positivos e melhorias devem ser avaliados a partir das opinioes da tabela.";
+    $input=[['role'=>'system','content'=>'Analise pesquisas de atendimento FPS de uma central de suporte. Entregue em portugues: resumo, pontos criticos, pontos positivos, melhorias e conclusao. Seja objetivo e use somente os dados enviados.'],['role'=>'user','content'=>json_encode(['resumo'=>$data['summary']??[],'distribuicao'=>$data['distribution']??[],'comentarios'=>$comments],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+    $payload=['model'=>$cfg['model']??'gpt-4.1-mini','input'=>$input,'max_output_tokens'=>1200];
+    if(strpos((string)($cfg['model']??''),'gpt-5')!==0)$payload['temperature']=0.2;
+    $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$apiKey,'Content-Type: application/json'],CURLOPT_POSTFIELDS=>json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),CURLOPT_TIMEOUT=>60]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+    if($raw===false||$raw==='')throw new RuntimeException('Falha ao chamar IA: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('IA HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,600));
+    $text=(string)($decoded['output_text']??'');if($text==='')foreach($decoded['output']??[] as $out)foreach($out['content']??[] as $c)if(isset($c['text']))$text.=(string)$c['text'];
+    return trim($text)!==''?trim($text):'A IA nao retornou texto para este filtro.';
 }
 
 function support_agent_default_prompt(string $type): string
@@ -362,7 +476,7 @@ function support_chat_send(PDO $pdo,int $conversationId,string $senderType,strin
     $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
         ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
     if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
-    if(!$student && $senderType!=='bot' && get_setting('support_chat_student_enabled','0')==='1') {
+    if(!$student && get_setting('support_chat_student_enabled','0')==='1') {
         try { support_chat_push_student($pdo,$conversationId,$id,$body!==''?$body:'Você recebeu um novo anexo.'); }
         catch(Throwable $e) { @error_log('support_chat_push: '.$e->getMessage()); }
     }
@@ -395,10 +509,14 @@ function support_agent_split_answer(string $body,int $limit=650): array
     if($rest!=='')$parts[]=trim($rest);return array_values(array_filter($parts));
 }
 
-function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply): void
+function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply,bool $sendFollowup=true): void
 {
     $prepared=support_agent_prepare_answer($answer,$firstAgentReply);$parts=support_agent_split_answer((string)$prepared['body']);
     foreach($parts as $i=>$part){$last=$i===count($parts)-1;support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$part,[],$last?$prepared['metadata']:[]);if(!$last){support_chat_typing($pdo,$conversationId,'bot','Agente de suporte');sleep(random_int(4,6));}}
+    if($sendFollowup&&!preg_match('/como posso ajudar|em que posso ajudar/iu',(string)$prepared['body'])){
+        $conv=support_chat_detail($pdo,$conversationId);
+        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!=='')support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$follow);
+    }
 }
 
 function support_agent_normalize_answer_for_payload(string $answer,array $payload): string
@@ -754,6 +872,10 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
         if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
         if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);support_agent_finish_message($pdo,$messageId);return;}
         if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);support_agent_finish_message($pdo,$messageId);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
+        if(support_agent_is_closing_message($body)){
+            support_chat_close_with_feedback($pdo,$conversationId,'bot','Agente de suporte',true);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
         $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
         $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
         $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);
