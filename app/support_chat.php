@@ -674,10 +674,60 @@ function support_agent_reschedule_live(PDO $pdo,int $userId,string $slot): bool
     $st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$user=$st->fetch(PDO::FETCH_ASSOC);if(!$user)return false;
     $sets=[];$params=['id'=>$userId,'slot'=>$slot];if(support_chat_column_exists($pdo,'users','turma_live_at'))$sets[]='turma_live_at=:slot';if(support_chat_column_exists($pdo,'users','data_live'))$sets[]='data_live=:slot';if(!$sets)return false;
     $old=(string)($user['turma_live_at']??$user['data_live']??'');$turma=(string)($user['codigo_turma']??$user['turma_codigo']??'');
+    $liveUrl=trim((string)get_setting('reagendar_live_url',''));$offsetMin=(int)get_setting('reagendar_dispatch_offset_min','0');$delayMs=max(0,min(30000,(int)get_setting('reagendar_dispatch_delay_ms','500')));$dt=new DateTimeImmutable($slot,new DateTimeZone('America/Sao_Paulo'));$dispatchAt=$dt->modify(($offsetMin>=0?'+':'').$offsetMin.' minutes')->format('Y-m-d H:i:s');$histId=0;
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET '.implode(',',$sets).' WHERE id=:id LIMIT 1')->execute($params);
-    if(support_chat_table_exists($pdo,'reagendamentos_live'))$pdo->prepare("INSERT INTO reagendamentos_live(user_id,old_codigo_turma,new_codigo_turma,old_turma_live_at,new_turma_live_at,status,origem,created_at) VALUES(:u,:oc,:nc,:ol,:nl,'reagendado','agente_suporte',NOW())")->execute(['u'=>$userId,'oc'=>$turma?:null,'nc'=>$turma?:null,'ol'=>$old?:null,'nl'=>$slot]);
-    $pdo->commit();support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','reagendamento_live',['new_turma_live_at'=>$slot,'old_turma_live_at'=>$old]);return true;
+    if(support_chat_table_exists($pdo,'reagendamentos_live')){
+        $cols=['user_id','old_codigo_turma','new_codigo_turma','old_turma_live_at','new_turma_live_at','status','origem','created_at'];$vals=[':u',':oc',':nc',':ol',':nl',"'reagendado'",':origem','NOW()'];$p=['u'=>$userId,'oc'=>$turma?:null,'nc'=>$turma?:null,'ol'=>$old?:null,'nl'=>$slot,'origem'=>'agente_suporte'];
+        if(support_chat_column_exists($pdo,'reagendamentos_live','live_url')){$cols[]='live_url';$vals[]=':url';$p['url']=$liveUrl?:null;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','sf_disparo_at')){$cols[]='sf_disparo_at';$vals[]=':sf';$p['sf']=$dispatchAt;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','sf_delay_ms')){$cols[]='sf_delay_ms';$vals[]=':delay';$p['delay']=$delayMs;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','ip')){$cols[]='ip';$vals[]=':ip';$p['ip']=$_SERVER['REMOTE_ADDR']??null;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','user_agent')){$cols[]='user_agent';$vals[]=':ua';$p['ua']='support_chat';}
+        $pdo->prepare('INSERT INTO reagendamentos_live('.implode(',',$cols).') VALUES('.implode(',',$vals).')')->execute($p);$histId=(int)$pdo->lastInsertId();
+        try{reagendamento_live_log($pdo,$histId,$userId,'agendamento_criado','pendente','Reagendamento criado pela central de suporte.',['new_turma_live_at'=>$slot,'sf_disparo_at'=>$dispatchAt,'origem'=>'support_chat']);}catch(Throwable $ignored){}
+    }
+    $pdo->commit();
+    try{definir_tag_estado_reagendamento($userId,'ativo','support_chat',$histId?:null);}catch(Throwable $ignored){}
+    support_chat_dispatch_live_rescheduled($pdo,$userId,$histId,$turma,$old,$slot,$liveUrl,'support_chat');
+    support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','reagendamento_live',['reagendamento_id'=>$histId,'new_turma_live_at'=>$slot,'old_turma_live_at'=>$old]);return true;
+}
+
+function support_chat_dispatch_live_rescheduled(PDO $pdo,int $userId,int $histId,string $codigoTurma,string $oldLive,string $newLive,string $liveUrl,string $origem): void
+{
+    try{
+        $dt=new DateTimeImmutable($newLive,new DateTimeZone('America/Sao_Paulo'));
+        disparar_webhooks('LIVE_REAGENDADA',$userId,[
+            'reagendamento_id'=>$histId?:null,
+            'codigo_turma'=>$codigoTurma,
+            'data_live'=>$dt->format('d/m/Y H:i'),
+            'data_live_iso'=>$dt->format('Y-m-d H:i:s'),
+            'live_url'=>$liveUrl,
+            'origem'=>$origem,
+            'reagendamento'=>[
+                'id'=>$histId?:null,
+                'turma_original'=>$codigoTurma,
+                'live_antiga'=>$oldLive,
+                'live_nova'=>$dt->format('d/m/Y H:i'),
+                'live_nova_iso'=>$dt->format('Y-m-d H:i:s'),
+                'live_url'=>$liveUrl,
+                'status'=>'reagendado',
+            ],
+        ]);
+    }catch(Throwable $ignored){}
+}
+
+function support_chat_dispatch_certificate_event(PDO $pdo,int $userId,array $cert,string $origem): void
+{
+    try{adicionar_tag($userId,'CERT_EMITIDO',$origem);}catch(Throwable $ignored){}
+    try{disparar_webhooks('CERT_EMITIDO',$userId,[
+        'codigo_certificado'=>$cert['codigo_uid']??'',
+        'curso'=>$cert['course']??'',
+        'emitido_em'=>$cert['emitido_em']??'',
+        'pdf_url'=>$cert['pdf_url']??'',
+        'certificado_id'=>$cert['id']??null,
+        'origem'=>$origem,
+    ]);}catch(Throwable $ignored){}
 }
 
 function support_agent_certificate_expected_password(PDO $pdo,int $userId): string
@@ -720,9 +770,8 @@ function support_agent_generate_certificate(PDO $pdo,int $userId): array
         $pdf=trim((string)($cert['pdf_url']??''));if($pdf===''){$pdf=gerar_pdf_certificado($user,$cert,$cfg);$pdo->prepare("UPDATE certificates SET pdf_url=:p WHERE id=:id")->execute(['p'=>$pdf,'id'=>(int)$cert['id']]);$cert['pdf_url']=$pdf;}
         $pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
-    try{adicionar_tag($userId,'CERT_EMITIDO','agente_suporte');}catch(Throwable $ignored){}
     support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','geracao_certificado',['certificate_id'=>(int)($cert['id']??0),'pdf_url'=>(string)($cert['pdf_url']??'')]);
-    try{disparar_webhooks('CERT_EMITIDO',$userId,['codigo_certificado'=>$cert['codigo_uid']??'','curso'=>$cert['course']??$course,'emitido_em'=>$cert['emitido_em']??'','pdf_url'=>$cert['pdf_url']??'']);}catch(Throwable $ignored){}
+    $cert['course']=$cert['course']??$course;support_chat_dispatch_certificate_event($pdo,$userId,$cert,'agente_suporte');
     $cert['link_verificacao']=!empty($cert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$cert['codigo_uid']):'';
     return $cert;
 }
@@ -842,7 +891,7 @@ function support_agent_certificate_answer(array $payload): string
 function support_agent_certificate_flow(PDO $pdo,int $conversationId,int $messageId,array $conv,array $payload,string $body,bool $firstAgentReply): bool
 {
     $cert=$payload['certificado']??[];$already=!empty($cert['tem_certificado_emitido']);
-    if($already){$url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);support_agent_send_answer($pdo,$conversationId,$url!==''?"Seu certificado ja esta emitido. Vou deixar o link abaixo:\n".$url:'Seu certificado ja consta como emitido, mas nao encontrei o link salvo. Vou encaminhar para a equipe conferir.',$firstAgentReply);return true;}
+    if($already){$url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));if($url!==''){$issued=[];foreach(($cert['registros']??[]) as $r){if(($r['status']??'')==='emitido'){$issued=$r;break;}}support_chat_dispatch_certificate_event($pdo,(int)$conv['user_id'],['codigo_uid'=>$issued['codigo_uid']??'','course'=>$issued['course']??'','emitido_em'=>$issued['emitido_em']??'','pdf_url'=>$url,'id'=>$issued['id']??null],'agente_suporte_envio');}support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);support_agent_send_answer($pdo,$conversationId,$url!==''?"Seu certificado ja esta emitido. Vou deixar o link abaixo:\n".$url:'Seu certificado ja consta como emitido, mas nao encontrei o link salvo. Vou encaminhar para a equipe conferir.',$firstAgentReply);return true;}
     $missing=support_agent_certificate_answer($payload);
     $eligible=(int)($payload['curso']['aulas_obrigatorias']??0)>0&&(int)($payload['curso']['aulas_concluidas']??0)>=(int)($payload['curso']['aulas_obrigatorias']??0)&&support_agent_has_live_completion($payload)&&support_agent_lesson_completed_by_order($payload,5);
     if(!$eligible){support_agent_send_answer($pdo,$conversationId,$missing,$firstAgentReply);return true;}
