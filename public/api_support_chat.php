@@ -74,7 +74,11 @@ try {
     $conversationId = support_public_conversation($pdo);
     if ($action === 'send') {
         $body = (string)($_POST['body'] ?? '');
-        $messageId = support_chat_send($pdo, $conversationId, 'student', (string)($_SESSION['aluno_id'] ?? ''), (string)($_SESSION['aluno_nome'] ?? 'Aluno'), $body);
+        $attachment = [];
+        if (!empty($_FILES['attachment']['tmp_name'])) {
+            $attachment = support_chat_store_upload($_FILES['attachment']);
+        }
+        $messageId = support_chat_send($pdo, $conversationId, 'student', (string)($_SESSION['aluno_id'] ?? ''), (string)($_SESSION['aluno_nome'] ?? 'Aluno'), $body, $attachment);
         if (support_agent_config($pdo)['enabled']) {
             support_agent_handle_student_message($pdo, $conversationId, $messageId);
         } else {
