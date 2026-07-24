@@ -253,6 +253,22 @@ function support_chat_random_followup(PDO $pdo,array $conv): string
 
 function support_agent_is_closing_message(string $body): bool
 {
+    $plain=mb_strtolower(trim(preg_replace('/\s+/u',' ',$body)));
+    if($plain===''||mb_strlen($plain)>140)return false;
+    $ascii=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$plain);
+    $plain=$ascii!==false?$ascii:$plain;
+    $plain=preg_replace('/[^a-z0-9\s]+/i',' ',$plain);
+    $plain=trim(preg_replace('/\s+/',' ',$plain));
+    if($plain==='')return false;
+    if(preg_match('/\bnao\s+(consigo|consegui|abre|abriu|funciona|recebi|entendi|sei|aparece|esta|tenho)\b/',$plain))return false;
+    $positive=['obrigado','obrigada','obg','valeu','vlw','beleza','blz','show','ok','certo','perfeito','resolvido','resolveu','deu certo','entendido'];
+    $closing=['so isso','era isso','nada','nada mais','nao precisa','nao obrigado','por enquanto nao','pode fechar','pode encerrar','sem mais duvidas','tudo certo','tudo resolvido'];
+    foreach($closing as $term)if($plain===$term||str_contains($plain,$term))return true;
+    foreach($positive as $term)if($plain===$term)return true;
+    foreach($positive as $ok)foreach($closing as $end)if(str_contains($plain,$ok)&&str_contains($plain,$end))return true;
+    if(preg_match('/\b(encerrar|fechar|finalizar)\s+(o\s+)?atendimento\b/',$plain))return true;
+    if(preg_match('/^(ok|certo|perfeito|obrigado|obrigada|obg|valeu|vlw)\s+(obrigado|obrigada|obg|valeu|vlw)$/',$plain))return true;
+
     $b=mb_strtolower(trim(preg_replace('/\s+/u',' ',$body)));
     if($b===''||mb_strlen($b)>90)return false;
     if(preg_match('/\b(n[aã]o|nao)\s+(consigo|consegui|abre|abriu|funciona|recebi|entendi|sei|aparece|est[aá]|tenho)\b/u',$b))return false;
