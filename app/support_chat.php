@@ -245,6 +245,7 @@ function support_chat_send(PDO $pdo,int $conversationId,string $senderType,strin
     $id=(int)$pdo->lastInsertId();$student=$senderType==='student';
     $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
         ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
+    if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
     if(!$student && $senderType!=='bot' && get_setting('support_chat_student_enabled','0')==='1') {
         try { support_chat_push_student($pdo,$conversationId,$id,$body!==''?$body:'Você recebeu um novo anexo.'); }
         catch(Throwable $e) { @error_log('support_chat_push: '.$e->getMessage()); }
