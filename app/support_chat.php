@@ -476,7 +476,7 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
     $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
     $from=trim((string)($criteria['date_from']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)){$where.=" AND c.created_at>=:from";$params['from']=$from.' 00:00:00';}
     $to=trim((string)($criteria['date_to']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)){$where.=" AND c.created_at<=:to";$params['to']=$to.' 23:59:59';}
-    $assignee=trim((string)($criteria['assignee']??''));if($assignee==='__ia__')$where.=" AND c.status<>'closed' AND (c.stage='agent' OR c.assigned_name IS NULL OR c.assigned_name='')";elseif($assignee!==''){$where.=" AND c.assigned_name=:assignee";$params['assignee']=$assignee;}
+    $assignee=trim((string)($criteria['assignee']??''));if($assignee==='__ia__')$where.=" AND c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='')";elseif($assignee!==''){$where.=" AND c.assigned_name=:assignee";$params['assignee']=$assignee;}
     $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma,
         (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
         (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
@@ -493,8 +493,8 @@ function support_chat_assign_conversation(PDO $pdo,int $conversationId,string $a
 {
     $assignedName=trim($assignedName);if($conversationId<=0||$assignedName==='')return false;
     $st=$pdo->prepare("SELECT assigned_name,status,stage,user_id FROM support_conversations WHERE id=:id LIMIT 1");$st->execute(['id'=>$conversationId]);$conv=$st->fetch(PDO::FETCH_ASSOC);if(!$conv)return false;
-    $current=trim((string)($conv['assigned_name']??''));if(mb_strtolower($current)===mb_strtolower($assignedName))return false;
-    $pdo->prepare("UPDATE support_conversations SET assigned_to=:a,assigned_name=:n,status=IF(status='closed',status,'open'),stage=IF(stage='human','em_atendimento',stage) WHERE id=:id")->execute(['a'=>$assignedName,'n'=>$assignedName,'id'=>$conversationId]);
+    $current=trim((string)($conv['assigned_name']??''));if(mb_strtolower($current)===mb_strtolower($assignedName)&&(string)($conv['status']??'')!=='closed'&&(string)($conv['stage']??'')==='em_atendimento')return false;
+    $pdo->prepare("UPDATE support_conversations SET assigned_to=:a,assigned_name=:n,status='open',stage='em_atendimento',closed_at=NULL WHERE id=:id")->execute(['a'=>$assignedName,'n'=>$assignedName,'id'=>$conversationId]);
     support_chat_log_event($pdo,'assignment',$conversationId,(int)($conv['user_id']??0),'admin',$actorId,$actorName,'atribuir',['assigned_name'=>$assignedName,'previous_assigned_name'=>$current,'reason'=>$reason]);
     return true;
 }
