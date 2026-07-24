@@ -33,7 +33,8 @@ $agentCfg=support_agent_config($pdo);$crmStages=json_decode((string)get_setting(
 $crmConversations=support_chat_conversations($pdo,'all');
 $supportFontScale=max(0.85,min(1.35,(float)get_setting('support_chat_font_scale','1.08')));
 $supportAvatarUrl=trim((string)get_setting('support_chat_avatar_url',''));
-$supportAvatarSrc=$supportAvatarUrl!==''?(preg_match('~^(?:https?:)?//|^data:|^/~i',$supportAvatarUrl)?$supportAvatarUrl:'../public/'.ltrim($supportAvatarUrl,'/')):'';
+$supportAvatarSrc='';
+if($supportAvatarUrl!=='')$supportAvatarSrc=preg_match('~^(?:https?:)?//|^data:|^/~i',$supportAvatarUrl)?$supportAvatarUrl:'../public/'.ltrim($supportAvatarUrl,'/');
 $supportSoundEnabled=get_setting('support_chat_sound_enabled','1')==='1';
 require __DIR__.'/_header.php';
 ?>
