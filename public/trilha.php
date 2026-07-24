@@ -57,6 +57,8 @@ try {
 $courseTitle     = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
 $logoUrl         = $appCfg['logo_url']     ?? '';
 $whatsappHelpUrl = get_setting('whatsapp_help_url', '');
+$supportButtonMode = get_setting('support_chat_button_mode', 'fixed') === 'agent' ? 'agent' : 'fixed';
+$supportFabUrl = $supportButtonMode === 'fixed' ? $whatsappHelpUrl : 'trilha.php?abrir_suporte=1';
 
 try {
     $stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
@@ -991,9 +993,9 @@ width: 100%;
     </footer>
 </div>
 
-<?php if ($whatsappHelpUrl): ?>
-<a href="<?= h($whatsappHelpUrl) ?>" class="whatsapp-fab"
-   target="_blank" rel="noopener noreferrer"
+<?php if ($supportFabUrl): ?>
+<a href="<?= h($supportFabUrl) ?>" class="whatsapp-fab"
+   <?= $supportButtonMode === 'fixed' ? 'target="_blank" rel="noopener noreferrer"' : 'data-support-agent="1"' ?>
    aria-label="Falar com suporte no WhatsApp">
     <span class="whatsapp-fab-icon" aria-hidden="true">
         <!-- Ãcone estilo WhatsApp (bolha verde com telefone branco) -->
