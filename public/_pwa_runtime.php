@@ -29,6 +29,7 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
         const token = await messaging.getToken({vapidKey:<?= json_encode($__pwaVapidKey) ?>,serviceWorkerRegistration:registration});
         if (!token) throw new Error('Não foi possível conectar este telefone.');
         const installed = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        if (installed) localStorage.setItem('pwa_installed','1');
         const response = await fetch('api_push_device.php', {
             method:'POST',credentials:'same-origin',cache:'no-store',
             headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
@@ -59,6 +60,7 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
                     if (!tokenAtual) return;
                     localStorage.setItem('push_fcm_token',tokenAtual);
                     const installed=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+                    if(installed)localStorage.setItem('pwa_installed','1');
                     return fetch('api_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:installed?'installed':'heartbeat',client_id:clientId,token:tokenAtual,permission:'granted',installed:installed,platform:/Android/i.test(navigator.userAgent)?'android':'web'})});
                 }).catch(function(){});
                 messaging.onMessage(function(payload){
@@ -74,6 +76,7 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
         try {
             const token = localStorage.getItem('push_fcm_token');
             const installed = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+            if (installed) localStorage.setItem('pwa_installed','1');
             if (installed && (!('Notification' in window) || Notification.permission !== 'granted' || !token)) {
                 fetch('api_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:'installed',client_id:clientId,token:'',permission:('Notification' in window?Notification.permission:'default'),installed:true,platform:/Android/i.test(navigator.userAgent)?'android':'web'})}).catch(function(){});
                 return;

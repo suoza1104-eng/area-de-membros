@@ -1004,6 +1004,7 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
     </span>
 </a>
 <?php endif; ?>
+<?php include __DIR__ . '/_pwa_install_banner.php'; ?>
 <?php if ($supportButtonMode === 'agent'): ?>
 <?php include __DIR__ . '/_support_chat_widget.php'; ?>
 <?php endif; ?>

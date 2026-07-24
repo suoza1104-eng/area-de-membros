@@ -45,6 +45,7 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
     const chrome=/Chrome\//i.test(ua)&&!/(?:wv\)|; wv|Version\/4\.0|EdgA|OPR|Opera|SamsungBrowser|FBAN|FBAV|Instagram|WhatsApp)/i.test(ua);
     let deferredPrompt=null,closeTimer=null,suppressedModal=null;
     function reportInstall(){
+        try{localStorage.setItem('pwa_installed','1')}catch(e){}
         let clientId=localStorage.getItem('push_client_id');
         if(!clientId){clientId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2));localStorage.setItem('push_client_id',clientId)}
         return fetch('api_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:'installed',client_id:clientId,token:'',permission:('Notification'in window?Notification.permission:'default'),installed:true,platform:android?'android':'web'})}).catch(function(){});
@@ -84,8 +85,30 @@ body.pwa-modal-open{overflow:hidden}.pwa-promo{display:none;position:fixed;inset
             }catch(error){action.disabled=false;action.textContent='Tentar novamente';message(error&&error.message?error.message:String(error),'err')}
         };show();
     }
+    window.areaMembrosShowPwaPrompt=function(reason){
+        const installed=standalone||localStorage.getItem('pwa_installed')==='1';
+        const token=localStorage.getItem('push_fcm_token')||'';
+        if(installed){
+            if(options.requestPush&&('Notification'in window)&&Notification.permission!=='granted')activationMode();
+            else if(options.requestPush&&('Notification'in window)&&Notification.permission==='granted'&&!token)activationMode();
+            return;
+        }
+        if(apple){
+            if(!options.showApple)return;
+            title.textContent='Instale no seu iPhone ou iPad';text.textContent='No Safari, toque em Compartilhar e depois em Adicionar à Tela de Início.';
+            action.textContent='Entendi';action.disabled=false;action.onclick=hide;show();return;
+        }
+        if(android&&!chrome&&options.showNonChrome){
+            title.textContent='Abra suas aulas no Google Chrome';
+            text.textContent='Este aplicativo foi preparado para reproduzir suas aulas pelo Google Chrome, oferecendo mais estabilidade, velocidade e qualidade. Toque no botão abaixo para abrir no Chrome e instalar.';
+            action.textContent='Abrir no Google Chrome';action.disabled=false;
+            action.onclick=function(){const fallback=window.location.href;const path=window.location.host+window.location.pathname+window.location.search;window.location.href='intent://'+path+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallback)+';end'};
+            show();return;
+        }
+        show();
+    };
 
-    if(standalone){
+    if(standalone||localStorage.getItem('pwa_installed')==='1'){
         if(options.requestPush){
             if(!('Notification'in window)||Notification.permission!=='granted')activationMode();
         }
