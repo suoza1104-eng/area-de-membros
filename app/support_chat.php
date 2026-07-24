@@ -406,6 +406,7 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
     $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
     $from=trim((string)($criteria['date_from']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)){$where.=" AND c.created_at>=:from";$params['from']=$from.' 00:00:00';}
     $to=trim((string)($criteria['date_to']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)){$where.=" AND c.created_at<=:to";$params['to']=$to.' 23:59:59';}
+    $assignee=trim((string)($criteria['assignee']??''));if($assignee==='__ia__')$where.=" AND c.status<>'closed' AND (c.stage='agent' OR c.assigned_name IS NULL OR c.assigned_name='')";elseif($assignee!==''){$where.=" AND c.assigned_name=:assignee";$params['assignee']=$assignee;}
     $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma,
         (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
         (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
