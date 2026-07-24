@@ -259,10 +259,42 @@ function support_agent_is_closing_message(string $body): bool
     $patterns=[
         '/^(obrigad[ao]|obg|valeu|vlw|beleza|blz|show|ok|certo|perfeito|resolvido|resolveu|deu certo)[.! ]*$/u',
         '/^(n[aã]o|nao|n[aã]o obrigado|nao obrigado|n[aã]o precisa|nao precisa|nada|s[oó] isso|so isso|era isso|por enquanto n[aã]o|por enquanto nao)[.! ]*$/u',
+        '/\b(ok|certo|perfeito|obrigad[ao]|obg|valeu|vlw).{0,20}\b(s[oÃ³] isso|so isso|nada mais|n[aÃ£]o precisa|nao precisa|pode fechar)\b/u',
+        '/\b(s[oÃ³] isso mesmo|so isso mesmo|tudo certo|tudo resolvido|era isso mesmo|sem mais duvidas)\b/u',
         '/\b(pode encerrar|pode fechar|encerrar atendimento|fechar atendimento|finalizar atendimento)\b/u',
     ];
     foreach($patterns as $p)if(preg_match($p,$b))return true;
     return false;
+}
+
+function support_chat_last_message(PDO $pdo,int $conversationId): ?array
+{
+    $st=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c ORDER BY id DESC LIMIT 1");
+    $st->execute(['c'=>$conversationId]);
+    $row=$st->fetch(PDO::FETCH_ASSOC);
+    return $row?:null;
+}
+
+function support_chat_message_meta(?array $message): array
+{
+    if(!$message)return [];
+    $meta=json_decode((string)($message['metadata_json']??''),true);
+    return is_array($meta)?$meta:[];
+}
+
+function support_chat_has_pending_close_prompt(PDO $pdo,int $conversationId): bool
+{
+    $last=support_chat_last_message($pdo,$conversationId);
+    $meta=support_chat_message_meta($last);
+    return !empty($meta['close_prompt'])&&($last['sender_type']??'')!=='student';
+}
+
+function support_chat_send_close_prompt(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte'): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
+    if(support_chat_has_pending_close_prompt($pdo,$conversationId))return;
+    support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,support_chat_random_followup($pdo,$conv),[],['close_prompt'=>true]);
+    support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'ask_more_help');
 }
 
 function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte',bool $sendClosing=true): void
@@ -305,7 +337,10 @@ function support_chat_auto_close_idle(PDO $pdo): int
     $minutes=max(0,min(10080,(int)get_setting('support_chat_auto_close_minutes','30')));if($minutes<=0)return 0;
     $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='') AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
     $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
-    foreach($ids as $id)support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true);
+    foreach($ids as $id){
+        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true);
+        else support_chat_send_close_prompt($pdo,$id,'bot','Agente de suporte');
+    }
     $hours=max(0,min(720,(int)get_setting('support_chat_human_idle_close_hours','24')));
     if($hours>0){
         $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.assigned_name IS NOT NULL AND c.assigned_name<>'' AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$hours} HOUR) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')='admin' LIMIT 30";
