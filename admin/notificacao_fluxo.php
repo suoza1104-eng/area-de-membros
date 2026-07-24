@@ -49,6 +49,26 @@ $triggerOptions = push_flow_trigger_options($pdo);
 $turmaOptions = [''=>'Selecione a turma'];
 try { foreach ($pdo->query("SELECT codigo FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' ORDER BY codigo")->fetchAll(PDO::FETCH_COLUMN) ?: [] as $codigo) $turmaOptions[(string)$codigo] = (string)$codigo; } catch (Throwable $ignored) {}
 $pushPreviewIcon=push_app_icon_url();if(!preg_match('~^(?:https?:)?//|^data:|^/~i',$pushPreviewIcon))$pushPreviewIcon='../public/'.ltrim($pushPreviewIcon,'/');
+$pushInternalPages = [
+    ['url' => 'trilha.php', 'label' => 'Trilha do aluno'],
+    ['url' => 'aplicativo.php', 'label' => 'Aplicativo'],
+    ['url' => 'certificado.php', 'label' => 'Certificado'],
+    ['url' => 'reagendar_live.php', 'label' => 'Reagendar live'],
+    ['url' => 'nao_consigo_acessar.php', 'label' => 'Ajuda de acesso'],
+    ['url' => 'verificar_certificado.php', 'label' => 'Verificar certificado'],
+    ['url' => 'formulario_lead.php', 'label' => 'Formulário de lead'],
+];
+try {
+    $lessonRows = $pdo->query("SELECT id,titulo,ordem FROM lessons WHERE ativo=1 ORDER BY ordem ASC,id ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($lessonRows as $lesson) {
+        $order = (int)($lesson['ordem'] ?? 0);
+        $title = trim((string)($lesson['titulo'] ?? ''));
+        $pushInternalPages[] = [
+            'url' => 'aula.php?id=' . (int)$lesson['id'],
+            'label' => 'Aula ' . ($order > 0 ? $order : (int)$lesson['id']) . ($title !== '' ? ' - ' . $title : ''),
+        ];
+    }
+} catch (Throwable $e) {}
 include __DIR__ . '/_header.php';
 ?>
 <style>
@@ -115,7 +135,7 @@ html+=`</div><div class="pf-inspector-actions"><button class="btn btn-danger btn
 function previewText(value){return String(value||'').replaceAll('{{nome}}','Emerson').replaceAll('{{email}}','aluno@email.com').replaceAll('{{telefone}}','(31) 99999-9999').replaceAll('{{turma}}','010726').replaceAll('{{data_live}}','10/07/2026').replaceAll('{{hora_live}}','19:00').replaceAll('{{codigo_live}}','LIVE01')}
 function renderCompactPreview(expanded){const mock=document.getElementById('pfNotificationMock'),title=mock.dataset.title||'Título da notificação',body=mock.dataset.body||'Mensagem da notificação';mock.classList.toggle('expanded',expanded);const t=splitRisk(title,PUSH_COMPACT_TITLE),b=splitRisk(body,PUSH_COMPACT_BODY);document.getElementById('pfPreviewTitle').textContent=expanded?title:t.safe+(t.risk?'…':'');document.getElementById('pfPreviewBody').textContent=expanded?body:b.safe+(b.risk?'…':'');document.getElementById('pfPreviewExpand').textContent=expanded?'⌃':'⌄'}
 function openPushPreview(config){const mock=document.getElementById('pfNotificationMock'),title=previewText(config.title),body=previewText(config.body),t=splitRisk(title,PUSH_COMPACT_TITLE),b=splitRisk(body,PUSH_COMPACT_BODY);mock.dataset.title=title;mock.dataset.body=body;document.getElementById('pfPreviewRisk').textContent=t.risk||b.risk?'Aviso: há conteúdo com risco de corte no estado recolhido. A seta mostra o texto completo.':'';renderCompactPreview(false);document.getElementById('pfPushPreview').classList.add('open')}
-const internalPushPages=[['trilha.php','Trilha do aluno'],['aula.php','Página de aula'],['aplicativo.php','Aplicativo'],['certificado.php','Certificado'],['reagendar_live.php','Reagendar live'],['nao_consigo_acessar.php','Ajuda de acesso'],['verificar_certificado.php','Verificar certificado'],['formulario_lead.php','Formulário de lead']];
+const internalPushPages=<?=json_encode(array_map(static fn($p)=>[(string)$p['url'],(string)$p['label']],$pushInternalPages),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_HEX_TAG)?>;
 function isExternalPushUrl(value){return /^https:\/\//i.test(String(value||''))}
 function pushLinkControlsHtml(current){const mode=isExternalPushUrl(current)?'external':'internal',internal=mode==='internal'?(current||'trilha.php'):'trilha.php',known=internalPushPages.some(p=>p[0]===internal),pages=internalPushPages.concat(!known&&internal?[[internal,'Destino atual: '+internal]]:[]);return `<div class="pf-field"><label>Tipo de destino</label><select id="pfPushLinkMode"><option value="internal" ${mode==='internal'?'selected':''}>Página interna</option><option value="external" ${mode==='external'?'selected':''}>URL externa HTTPS</option></select></div><div class="pf-field" id="pfPushInternalWrap"><label>Página interna</label><select id="pfPushInternalPage">${pages.map(p=>`<option value="${esc(p[0])}" ${p[0]===internal?'selected':''}>${esc(p[1])}</option>`).join('')}</select></div><div class="pf-field" id="pfPushExternalWrap"><label>URL externa</label><input id="pfPushExternalUrl" value="${esc(mode==='external'?current:'')}" placeholder="https://dominio-autorizado.com/pagina"></div>`}
 function mountPushLinkControls(c){const old=inspector.querySelector('[data-key="clickUrl"]');if(!old)return;const oldField=old.closest('.pf-field');if(!oldField||document.getElementById('pfPushLinkMode'))return;const wrap=document.createElement('div');wrap.className='pf-fields';wrap.innerHTML=pushLinkControlsHtml(c.clickUrl||'trilha.php');oldField.replaceWith(wrap);const mode=document.getElementById('pfPushLinkMode'),internal=document.getElementById('pfPushInternalPage'),external=document.getElementById('pfPushExternalUrl'),internalWrap=document.getElementById('pfPushInternalWrap'),externalWrap=document.getElementById('pfPushExternalWrap');const sync=()=>{const isExt=mode.value==='external';internalWrap.style.display=isExt?'none':'';externalWrap.style.display=isExt?'':'none';c.clickUrl=isExt?external.value.trim():(internal.value||'trilha.php');render()};mode.addEventListener('change',sync);internal.addEventListener('change',sync);external.addEventListener('input',sync);sync()}
