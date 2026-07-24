@@ -1007,6 +1007,9 @@ width: 100%;
     </span>
 </a>
 <?php endif; ?>
+<?php if ($supportButtonMode === 'agent'): ?>
+<?php include __DIR__ . '/_support_chat_widget.php'; ?>
+<?php endif; ?>
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {

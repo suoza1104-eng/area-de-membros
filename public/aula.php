@@ -1004,6 +1004,9 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
     </span>
 </a>
 <?php endif; ?>
+<?php if ($supportButtonMode === 'agent'): ?>
+<?php include __DIR__ . '/_support_chat_widget.php'; ?>
+<?php endif; ?>
 
 <script>
 // Mantém a sessão ativa durante vídeos longos. Se o provedor remover a sessão,
