@@ -419,6 +419,22 @@ function support_chat_detail(PDO $pdo,int $conversationId): ?array
     $st->execute(['id'=>$conversationId]);$row=$st->fetch(PDO::FETCH_ASSOC);return $row?:null;
 }
 
+function support_chat_assign_conversation(PDO $pdo,int $conversationId,string $assignedName,string $actorId,string $actorName,string $reason='manual'): bool
+{
+    $assignedName=trim($assignedName);if($conversationId<=0||$assignedName==='')return false;
+    $st=$pdo->prepare("SELECT assigned_name,status,stage,user_id FROM support_conversations WHERE id=:id LIMIT 1");$st->execute(['id'=>$conversationId]);$conv=$st->fetch(PDO::FETCH_ASSOC);if(!$conv)return false;
+    $current=trim((string)($conv['assigned_name']??''));if(mb_strtolower($current)===mb_strtolower($assignedName))return false;
+    $pdo->prepare("UPDATE support_conversations SET assigned_to=:a,assigned_name=:n,status=IF(status='closed',status,'open'),stage=IF(stage='human','em_atendimento',stage) WHERE id=:id")->execute(['a'=>$assignedName,'n'=>$assignedName,'id'=>$conversationId]);
+    support_chat_log_event($pdo,'assignment',$conversationId,(int)($conv['user_id']??0),'admin',$actorId,$actorName,'atribuir',['assigned_name'=>$assignedName,'previous_assigned_name'=>$current,'reason'=>$reason]);
+    return true;
+}
+
+function support_chat_assignment_history(PDO $pdo,int $conversationId): array
+{
+    if($conversationId<=0)return [];
+    return support_chat_fetch_pairs($pdo,"SELECT created_at,actor_name,actor_type,metadata_json FROM support_events WHERE conversation_id=:c AND event_type='assignment' ORDER BY id DESC LIMIT 80",['c'=>$conversationId]);
+}
+
 function support_chat_messages(PDO $pdo,int $conversationId,int $after=0): array
 {
     $st=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c AND id>:a ORDER BY id ASC LIMIT 300");
