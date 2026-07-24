@@ -447,7 +447,7 @@ function support_chat_get_or_create(PDO $pdo,int $userId,string $channel='test')
     if ($userId<=0) throw new InvalidArgumentException('Aluno inválido.');
     $u=$pdo->prepare("SELECT id FROM users WHERE id=:id LIMIT 1");$u->execute(['id'=>$userId]);
     if (!$u->fetchColumn()) throw new RuntimeException('Aluno não encontrado.');
-    $st=$pdo->prepare("SELECT id FROM support_conversations WHERE user_id=:u AND status<>'closed' ORDER BY id DESC LIMIT 1");
+    $st=$pdo->prepare("SELECT id FROM support_conversations WHERE user_id=:u ORDER BY id DESC LIMIT 1");
     $st->execute(['u'=>$userId]);$id=(int)$st->fetchColumn();if($id>0)return $id;
     $pdo->prepare("INSERT INTO support_conversations(user_id,channel,subject) VALUES(:u,:c,'Atendimento pelo aplicativo')")->execute(['u'=>$userId,'c'=>$channel]);
     $id=(int)$pdo->lastInsertId();support_chat_log_event($pdo,'conversation_started',$id,$userId,'student',(string)$userId,'Aluno','',['channel'=>$channel]);return $id;
@@ -544,7 +544,7 @@ function support_chat_send(PDO $pdo,int $conversationId,string $senderType,strin
     $st->execute(['c'=>$conversationId,'st'=>$senderType,'si'=>$senderId,'sn'=>$senderName,'mt'=>$type,'b'=>$body!==''?$body:null,'url'=>$attachment['url']??null,'an'=>$attachment['name']??null,'am'=>$attachment['mime']??null,'az'=>$attachment['size']??null,'meta'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null]);
     $id=(int)$pdo->lastInsertId();$student=$senderType==='student';
     support_chat_log_event($pdo,'message_sent',$conversationId,0,$senderType,$senderId,$senderName,$type,['message_id'=>$id,'has_attachment'=>!empty($attachment)]);
-    $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
+    $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),stage=IF(status='closed','agent',stage),assigned_to=IF(status='closed',NULL,assigned_to),assigned_name=IF(status='closed',NULL,assigned_name),closed_at=IF(status='closed',NULL,closed_at),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
         ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
     if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
     if(!$student && get_setting('support_chat_student_enabled','0')==='1') {
