@@ -50,6 +50,8 @@ try {
                 'avatar_src' => $avatarSrc,
                 'font_scale' => max(0.85, min(1.35, (float)get_setting('support_chat_font_scale', '1.08'))),
                 'welcome' => trim((string)get_setting('support_chat_welcome', '')),
+                'messages' => support_chat_messages($pdo, $conversationId, 0),
+                'typing' => support_chat_typing_state($pdo, $conversationId, 'student'),
             ]);
         }
         if ($api === 'messages') {
