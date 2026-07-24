@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/support_chat.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -26,6 +26,7 @@ if ($userId <= 0) {
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
+support_chat_ensure_schema($pdo);
 
 function table_exists(PDO $pdo, string $table): bool {
     $st = $pdo->prepare("SHOW TABLES LIKE :t");
@@ -181,6 +182,10 @@ function post_json(string $url, array $payload): array {
 // ============================
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
 if ($action === 'help') {
+    support_chat_log_event($pdo, 'support_button_click', 0, $userId, 'student', (string)$userId, 'Aluno', 'click', [
+        'url' => (string)($_SERVER['HTTP_REFERER'] ?? ''),
+        'user_agent' => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+    ]);
     // 1) marca TAG
     $tagOk = add_tag_to_user($pdo, $userId, 'BOTAO_HELP', 'BOTAO_HELP', 0);
 

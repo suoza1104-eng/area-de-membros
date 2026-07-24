@@ -83,6 +83,25 @@ function support_chat_ensure_schema(PDO $pdo): void
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         KEY idx_support_agent_processed_conv (conversation_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_events (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NULL,
+        user_id INT NULL,
+        event_type VARCHAR(60) NOT NULL,
+        actor_type VARCHAR(30) NULL,
+        actor_id VARCHAR(150) NULL,
+        actor_name VARCHAR(150) NULL,
+        action_type VARCHAR(80) NULL,
+        turma_codigo VARCHAR(120) NULL,
+        metadata_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_support_events_created (created_at),
+        KEY idx_support_events_type_created (event_type,created_at),
+        KEY idx_support_events_conv (conversation_id),
+        KEY idx_support_events_user (user_id),
+        KEY idx_support_events_turma (turma_codigo),
+        KEY idx_support_events_action (action_type,created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_button_mode'=>'fixed','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_display_name'=>'Suporte FERA','support_chat_sound_enabled'=>'1'] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
@@ -117,6 +136,81 @@ function support_chat_ensure_schema(PDO $pdo): void
 
 function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
 function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+
+function support_chat_user_turma(PDO $pdo,int $userId): string
+{
+    if($userId<=0||!support_chat_table_exists($pdo,'users'))return '';
+    try{$st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$u=$st->fetch(PDO::FETCH_ASSOC)?:[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $c){$v=trim((string)($u[$c]??''));if($v!=='')return mb_substr($v,0,120);}}catch(Throwable $ignored){}
+    return '';
+}
+
+function support_chat_log_event(PDO $pdo,string $eventType,int $conversationId=0,int $userId=0,string $actorType='',string $actorId='',string $actorName='',string $actionType='',array $metadata=[]): void
+{
+    try{
+        if(!support_chat_table_exists($pdo,'support_events'))return;
+        if($userId<=0&&$conversationId>0){$st=$pdo->prepare("SELECT user_id FROM support_conversations WHERE id=:id LIMIT 1");$st->execute(['id'=>$conversationId]);$userId=(int)$st->fetchColumn();}
+        $turma=support_chat_user_turma($pdo,$userId);
+        $pdo->prepare("INSERT INTO support_events(conversation_id,user_id,event_type,actor_type,actor_id,actor_name,action_type,turma_codigo,metadata_json) VALUES(:c,:u,:e,:at,:ai,:an,:ac,:t,:m)")->execute([
+            'c'=>$conversationId>0?$conversationId:null,'u'=>$userId>0?$userId:null,'e'=>mb_substr($eventType,0,60),
+            'at'=>$actorType!==''?mb_substr($actorType,0,30):null,'ai'=>$actorId!==''?mb_substr($actorId,0,150):null,'an'=>$actorName!==''?mb_substr($actorName,0,150):null,
+            'ac'=>$actionType!==''?mb_substr($actionType,0,80):null,'t'=>$turma!==''?$turma:null,'m'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null
+        ]);
+    }catch(Throwable $ignored){}
+}
+
+function support_chat_period_bounds(string $from,string $to): array
+{
+    $to=preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)?$to:date('Y-m-d');
+    $from=preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)?$from:date('Y-m-d',strtotime('-29 days'));
+    if(strtotime($from)>strtotime($to))[$from,$to]=[$to,$from];
+    return [$from.' 00:00:00',$to.' 23:59:59',substr($from,0,10),substr($to,0,10)];
+}
+
+function support_chat_bucket_sql(string $bucket,string $column='created_at'): array
+{
+    if($bucket==='month')return ["DATE_FORMAT($column,'%Y-%m')","DATE_FORMAT($column,'%m/%Y')"];
+    if($bucket==='week')return ["YEARWEEK($column,3)","CONCAT('Sem ',DATE_FORMAT(DATE_SUB(DATE($column),INTERVAL WEEKDAY($column) DAY),'%d/%m'))"];
+    return ["DATE($column)","DATE_FORMAT($column,'%d/%m')"];
+}
+
+function support_chat_fetch_pairs(PDO $pdo,string $sql,array $params=[]): array
+{
+    try{$st=$pdo->prepare($sql);$st->execute($params);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $e){return [];}
+}
+
+function support_chat_analytics(PDO $pdo,string $from,string $to,string $bucket='day'): array
+{
+    [$fromDt,$toDt,$fromDate,$toDate]=support_chat_period_bounds($from,$to);if(!in_array($bucket,['day','week','month'],true))$bucket='day';[$keyExpr,$labelExpr]=support_chat_bucket_sql($bucket,'created_at');
+    $params=['from'=>$fromDt,'to'=>$toDt];
+    $clickParams=['cfrom1'=>$fromDt,'cto1'=>$toDt];$clickParts=["SELECT created_at FROM support_events WHERE event_type='support_button_click' AND created_at BETWEEN :cfrom1 AND :cto1"];
+    if(support_chat_table_exists($pdo,'webhook_logs')&&support_chat_column_exists($pdo,'webhook_logs','evento')&&support_chat_column_exists($pdo,'webhook_logs','created_at')){
+        $first=support_chat_fetch_pairs($pdo,"SELECT MIN(created_at) first_at FROM support_events WHERE event_type='support_button_click'");
+        $firstAt=(string)($first[0]['first_at']??'');$clickParams['cfrom2']=$fromDt;$clickParams['cto2']=$toDt;
+        $oldLimit=$firstAt!==''?" AND created_at<:first_click_event":'';if($firstAt!=='')$clickParams['first_click_event']=$firstAt;
+        $clickParts[]="SELECT created_at FROM webhook_logs WHERE evento='BOTAO_HELP' AND created_at BETWEEN :cfrom2 AND :cto2{$oldLimit}";
+    }
+    $clickSource='('.implode(' UNION ALL ',$clickParts).') click_src';[$clickKey,$clickLabel]=support_chat_bucket_sql($bucket,'click_src.created_at');
+    $clicks=support_chat_fetch_pairs($pdo,"SELECT {$clickKey} k,{$clickLabel} label,COUNT(*) total FROM {$clickSource} GROUP BY k,label ORDER BY k",$clickParams);
+    $started=support_chat_fetch_pairs($pdo,"SELECT {$keyExpr} k,{$labelExpr} label,COUNT(*) total,SUM(channel='app') app,SUM(channel='test') test FROM support_conversations WHERE created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    [$closedKey,$closedLabel]=support_chat_bucket_sql($bucket,'closed_at');
+    $closed=support_chat_fetch_pairs($pdo,"SELECT {$closedKey} k,{$closedLabel} label,COUNT(*) closed_total,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='admin')) closed_human,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=support_conversations.id AND m2.sender_type='admin')) closed_ai FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    $status=support_chat_fetch_pairs($pdo,"SELECT status label,COUNT(*) total FROM support_conversations GROUP BY status ORDER BY total DESC");
+    [$agentKey,$agentLabel]=support_chat_bucket_sql($bucket,'a.dt');
+    $agents=support_chat_fetch_pairs($pdo,"SELECT a.agent,{$agentKey} k,{$agentLabel} label,SUM(a.started) started,SUM(a.closed_total) closed_total FROM (SELECT COALESCE(NULLIF(assigned_name,''),'Sem atendente') agent,created_at dt,1 started,0 closed_total FROM support_conversations WHERE created_at BETWEEN :afrom1 AND :ato1 UNION ALL SELECT COALESCE(NULLIF(assigned_name,''),'Sem atendente') agent,closed_at dt,0 started,1 closed_total FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :afrom2 AND :ato2) a GROUP BY a.agent,k,label ORDER BY k,a.agent",['afrom1'=>$fromDt,'ato1'=>$toDt,'afrom2'=>$fromDt,'ato2'=>$toDt]);
+    $turmas=support_chat_fetch_pairs($pdo,"SELECT COALESCE(NULLIF(COALESCE(u.codigo_turma,u.turma_codigo,u.turma,u.utm_campaign),''),'Sem turma') turma,COUNT(*) total FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.created_at BETWEEN :from AND :to GROUP BY turma ORDER BY total DESC LIMIT 12",$params);
+    $actions=support_chat_fetch_pairs($pdo,"SELECT COALESCE(NULLIF(action_type,''),'outras') label,COUNT(*) total FROM support_events WHERE event_type='ai_action' AND created_at BETWEEN :from AND :to GROUP BY label ORDER BY total DESC",$params);
+    $logs=support_chat_fetch_pairs($pdo,"SELECT e.*,u.nome user_name,u.email user_email FROM support_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.created_at BETWEEN :from AND :to ORDER BY e.id DESC LIMIT 160",$params);
+    $one=static fn(string $sql,array $p=[])=> (int)((support_chat_fetch_pairs($pdo,$sql,$p)[0]['n']??0));
+    $kpis=[
+        'clicks'=>$one("SELECT COUNT(*) n FROM {$clickSource}",$clickParams),
+        'started'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE created_at BETWEEN :from AND :to",$params),
+        'open'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status<>'closed'"),
+        'closed'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to",$params),
+        'human_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='admin')",$params),
+        'ai_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=c.id AND m2.sender_type='admin')",$params),
+    ];
+    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'kpis'=>$kpis,'clicks'=>$clicks,'started'=>$started,'closed'=>$closed,'status'=>$status,'agents'=>$agents,'turmas'=>$turmas,'actions'=>$actions,'logs'=>$logs];
+}
 
 function support_agent_default_prompt(string $type): string
 {
@@ -188,7 +282,7 @@ function support_chat_get_or_create(PDO $pdo,int $userId,string $channel='test')
     $st=$pdo->prepare("SELECT id FROM support_conversations WHERE user_id=:u AND status<>'closed' ORDER BY id DESC LIMIT 1");
     $st->execute(['u'=>$userId]);$id=(int)$st->fetchColumn();if($id>0)return $id;
     $pdo->prepare("INSERT INTO support_conversations(user_id,channel,subject) VALUES(:u,:c,'Atendimento pelo aplicativo')")->execute(['u'=>$userId,'c'=>$channel]);
-    return (int)$pdo->lastInsertId();
+    $id=(int)$pdo->lastInsertId();support_chat_log_event($pdo,'conversation_started',$id,$userId,'student',(string)$userId,'Aluno','',['channel'=>$channel]);return $id;
 }
 
 function support_chat_conversations(PDO $pdo,string $filter='open'): array
@@ -260,6 +354,7 @@ function support_chat_send(PDO $pdo,int $conversationId,string $senderType,strin
     $st=$pdo->prepare("INSERT INTO support_messages(conversation_id,sender_type,sender_id,sender_name,message_type,body,attachment_url,attachment_name,attachment_mime,attachment_size,metadata_json) VALUES(:c,:st,:si,:sn,:mt,:b,:url,:an,:am,:az,:meta)");
     $st->execute(['c'=>$conversationId,'st'=>$senderType,'si'=>$senderId,'sn'=>$senderName,'mt'=>$type,'b'=>$body!==''?$body:null,'url'=>$attachment['url']??null,'an'=>$attachment['name']??null,'am'=>$attachment['mime']??null,'az'=>$attachment['size']??null,'meta'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null]);
     $id=(int)$pdo->lastInsertId();$student=$senderType==='student';
+    support_chat_log_event($pdo,'message_sent',$conversationId,0,$senderType,$senderId,$senderName,$type,['message_id'=>$id,'has_attachment'=>!empty($attachment)]);
     $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
         ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
     if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
@@ -459,7 +554,7 @@ function support_agent_reschedule_live(PDO $pdo,int $userId,string $slot): bool
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET '.implode(',',$sets).' WHERE id=:id LIMIT 1')->execute($params);
     if(support_chat_table_exists($pdo,'reagendamentos_live'))$pdo->prepare("INSERT INTO reagendamentos_live(user_id,old_codigo_turma,new_codigo_turma,old_turma_live_at,new_turma_live_at,status,origem,created_at) VALUES(:u,:oc,:nc,:ol,:nl,'reagendado','agente_suporte',NOW())")->execute(['u'=>$userId,'oc'=>$turma?:null,'nc'=>$turma?:null,'ol'=>$old?:null,'nl'=>$slot]);
-    $pdo->commit();return true;
+    $pdo->commit();support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','reagendamento_live',['new_turma_live_at'=>$slot,'old_turma_live_at'=>$old]);return true;
 }
 
 function support_agent_certificate_expected_password(PDO $pdo,int $userId): string
@@ -503,6 +598,7 @@ function support_agent_generate_certificate(PDO $pdo,int $userId): array
         $pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
     try{adicionar_tag($userId,'CERT_EMITIDO','agente_suporte');}catch(Throwable $ignored){}
+    support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','geracao_certificado',['certificate_id'=>(int)($cert['id']??0),'pdf_url'=>(string)($cert['pdf_url']??'')]);
     try{disparar_webhooks('CERT_EMITIDO',$userId,['codigo_certificado'=>$cert['codigo_uid']??'','curso'=>$cert['course']??$course,'emitido_em'=>$cert['emitido_em']??'','pdf_url'=>$cert['pdf_url']??'']);}catch(Throwable $ignored){}
     $cert['link_verificacao']=!empty($cert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$cert['codigo_uid']):'';
     return $cert;
@@ -536,6 +632,7 @@ function support_agent_transcribe_audio(PDO $pdo,array $cfg,array $message): str
 function support_agent_handoff(PDO $pdo,int $conversationId,string $reason,array $cfg): void
 {
     $conv=support_chat_detail($pdo,$conversationId);if($conv&&($conv['stage']??'')==='human')return;
+    support_chat_log_event($pdo,'human_handoff',$conversationId,0,'bot','support_agent','Agente de suporte','handoff',['reason'=>$reason]);
     $pdo->prepare("UPDATE support_conversations SET status='pending',stage='human',priority=IF(priority='normal','high',priority),notes=CONCAT(COALESCE(notes,''),IF(COALESCE(notes,'')='','',\"\n\"),:n) WHERE id=:id")->execute(['n'=>'Agente transferiu para humano: '.$reason,'id'=>$conversationId]);
     $msg=trim((string)$cfg['handoff_message']);if($msg!=='')support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$msg);
 }
@@ -622,7 +719,7 @@ function support_agent_certificate_answer(array $payload): string
 function support_agent_certificate_flow(PDO $pdo,int $conversationId,int $messageId,array $conv,array $payload,string $body,bool $firstAgentReply): bool
 {
     $cert=$payload['certificado']??[];$already=!empty($cert['tem_certificado_emitido']);
-    if($already){$url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));support_agent_send_answer($pdo,$conversationId,$url!==''?"Seu certificado ja esta emitido. Vou deixar o link abaixo:\n".$url:'Seu certificado ja consta como emitido, mas nao encontrei o link salvo. Vou encaminhar para a equipe conferir.',$firstAgentReply);return true;}
+    if($already){$url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);support_agent_send_answer($pdo,$conversationId,$url!==''?"Seu certificado ja esta emitido. Vou deixar o link abaixo:\n".$url:'Seu certificado ja consta como emitido, mas nao encontrei o link salvo. Vou encaminhar para a equipe conferir.',$firstAgentReply);return true;}
     $missing=support_agent_certificate_answer($payload);
     $eligible=(int)($payload['curso']['aulas_obrigatorias']??0)>0&&(int)($payload['curso']['aulas_concluidas']??0)>=(int)($payload['curso']['aulas_obrigatorias']??0)&&support_agent_has_live_completion($payload)&&support_agent_lesson_completed_by_order($payload,5);
     if(!$eligible){support_agent_send_answer($pdo,$conversationId,$missing,$firstAgentReply);return true;}
@@ -630,6 +727,7 @@ function support_agent_certificate_flow(PDO $pdo,int $conversationId,int $messag
     if($expected===''||$password===''||support_agent_is_certificate_request($password)){support_agent_send_answer($pdo,$conversationId,'Voce ja cumpre os criterios para emitir o certificado. Me envie a senha do certificado para eu validar e gerar o link.',$firstAgentReply);return true;}
     if(!hash_equals($expected,$password)){try{disparar_webhooks('CERT_SENHA_ERRADA',(int)$conv['user_id'],['motivo'=>'senha_incorreta','origem'=>'agente_suporte']);}catch(Throwable $ignored){}support_agent_send_answer($pdo,$conversationId,'Essa senha nao conferiu. Verifique a senha da aula 5 e da aula ao vivo e me envie novamente.',$firstAgentReply);return true;}
     $issued=support_agent_generate_certificate($pdo,(int)$conv['user_id']);$url=trim((string)($issued['pdf_url']??''));if($url==='')$url=trim((string)($issued['link_verificacao']??''));
+    support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);
     support_agent_send_answer($pdo,$conversationId,"Pronto, gerei seu certificado e disparei o gatilho de certificado emitido. Vou deixar o link abaixo:\n".$url,$firstAgentReply);return true;
 }
 
@@ -671,6 +769,7 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
             support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
         }
         if($cfg['group']&&support_agent_is_group_request($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_link_grupo');
             support_agent_send_answer($pdo,$conversationId,support_agent_group_answer($payload),$firstAgentReply);
             $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
         }
@@ -680,6 +779,7 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
         $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory['summary']??'','payload_aluno'=>$payload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
+        support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte',(string)($res['intent']??$action),['action'=>$action,'confidence'=>$confidence]);
         if($action==='handoff'||$confidence<0.55){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Baixa confianca.'),$cfg);support_agent_finish_message($pdo,$messageId);}
         else{$answer=support_agent_normalize_answer_for_payload(trim((string)$res['answer'])?:'Consegui analisar seu caso, mas vou precisar de mais detalhes.',$payload);support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}
         $pdo->prepare("INSERT INTO support_agent_memory(conversation_id,summary,token_count,last_intent,last_confidence) VALUES(:c,:s,:t,:i,:cf) ON DUPLICATE KEY UPDATE summary=VALUES(summary),token_count=VALUES(token_count),last_intent=VALUES(last_intent),last_confidence=VALUES(last_confidence)")->execute(['c'=>$conversationId,'s'=>mb_substr((string)($res['memory_summary']??''),0,12000),'t'=>min(999999,(int)($res['tokens_estimate']??$estimated)),'i'=>mb_substr((string)($res['intent']??''),0,80),'cf'=>$confidence]);
