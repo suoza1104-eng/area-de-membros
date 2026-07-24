@@ -122,6 +122,8 @@ function support_chat_ensure_schema(PDO $pdo): void
     foreach ([
         'support_chat_auto_close_minutes'=>'30',
         'support_chat_closing_message'=>'Obrigado pelo contato. Fico a disposicao sempre que precisar.',
+        'support_chat_human_idle_close_hours'=>'24',
+        'support_chat_human_idle_message'=>'Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.',
         'support_chat_followup_variations_json'=>'["Te ajudo em algo mais, {primeiro_nome}?","Posso ajudar com mais alguma coisa, {primeiro_nome}?","Ficou alguma duvida que eu possa resolver, {primeiro_nome}?"]',
     ] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
@@ -288,12 +290,29 @@ function support_chat_submit_feedback(PDO $pdo,int $conversationId,int $userId,i
     support_chat_log_event($pdo,'feedback_submitted',$conversationId,$userId,'student',(string)$userId,'Aluno','fps',['rating'=>$rating]);
 }
 
+function support_chat_close_for_human_inactivity(PDO $pdo,int $conversationId): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
+    $message=trim((string)get_setting('support_chat_human_idle_message','Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.'));
+    if($message==='')$message='Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.';
+    support_chat_send($pdo,$conversationId,'bot','support_inactivity','Central de suporte',$message,[],['closed_by_inactivity'=>true]);
+    $pdo->prepare("UPDATE support_conversations SET status='closed',stage='agent',assigned_to=NULL,assigned_name=NULL,closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),'bot','support_inactivity','Central de suporte','human_inactivity',['previous_assigned_name'=>(string)($conv['assigned_name']??'')]);
+}
+
 function support_chat_auto_close_idle(PDO $pdo): int
 {
     $minutes=max(0,min(10080,(int)get_setting('support_chat_auto_close_minutes','30')));if($minutes<=0)return 0;
-    $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
+    $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='') AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
     $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
     foreach($ids as $id)support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true);
+    $hours=max(0,min(720,(int)get_setting('support_chat_human_idle_close_hours','24')));
+    if($hours>0){
+        $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.assigned_name IS NOT NULL AND c.assigned_name<>'' AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$hours} HOUR) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')='admin' LIMIT 30";
+        $humanIds=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
+        foreach($humanIds as $id)support_chat_close_for_human_inactivity($pdo,$id);
+        $ids=array_merge($ids,$humanIds);
+    }
     return count($ids);
 }
 
