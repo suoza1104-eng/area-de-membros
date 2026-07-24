@@ -75,7 +75,7 @@ function support_chat_ensure_schema(PDO $pdo): void
         last_confidence DECIMAL(4,2) NULL,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.'] as $key=>$value) {
+    foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_sound_enabled'=>'1'] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
     }
@@ -217,10 +217,28 @@ function support_chat_store_upload(array $file): array
     return ['url'=>'uploads/support_chat/'.date('Y/m').'/'.$name,'name'=>mb_substr($original,0,255),'mime'=>$mime,'size'=>(int)$file['size'],'type'=>$type];
 }
 
+function support_chat_store_avatar(array $file): string
+{
+    if (($file['error']??UPLOAD_ERR_NO_FILE)===UPLOAD_ERR_NO_FILE) return '';
+    if (($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new RuntimeException('Não foi possível receber a imagem.');
+    if ((int)($file['size']??0)>3*1024*1024) throw new RuntimeException('A imagem deve ter no máximo 3 MB.');
+    $tmp=(string)$file['tmp_name'];$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp)?:'application/octet-stream';
+    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif'];
+    if(!isset($allowed[$mime]))throw new RuntimeException('Envie uma imagem JPG, PNG, WEBP ou GIF.');
+    $dir=__DIR__.'/../public/uploads/support_chat/avatar';if(!is_dir($dir)&&!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Falha ao preparar upload da imagem.');
+    $name='support-avatar-'.bin2hex(random_bytes(8)).'.'.$allowed[$mime];if(!move_uploaded_file($tmp,$dir.'/'.$name))throw new RuntimeException('Falha ao salvar a imagem.');
+    return 'uploads/support_chat/avatar/'.$name;
+}
+
 function support_chat_send(PDO $pdo,int $conversationId,string $senderType,string $senderId,string $senderName,string $body,array $attachment=[],array $metadata=[]): int
 {
     $body=trim($body);if($body===''&&!$attachment)throw new InvalidArgumentException('Digite uma mensagem ou anexe um arquivo.');
     if(mb_strlen($body)>10000)throw new InvalidArgumentException('Mensagem muito longa.');
+    if(!$attachment&&$body!==''){
+        $dupeWindow=in_array($senderType,['bot','admin'],true)?90:12;
+        $duplicateId=support_chat_recent_duplicate_id($pdo,$conversationId,$senderType,$body,$dupeWindow);
+        if($duplicateId>0)return $duplicateId;
+    }
     $type=(string)($attachment['type']??'text');
     $st=$pdo->prepare("INSERT INTO support_messages(conversation_id,sender_type,sender_id,sender_name,message_type,body,attachment_url,attachment_name,attachment_mime,attachment_size,metadata_json) VALUES(:c,:st,:si,:sn,:mt,:b,:url,:an,:am,:az,:meta)");
     $st->execute(['c'=>$conversationId,'st'=>$senderType,'si'=>$senderId,'sn'=>$senderName,'mt'=>$type,'b'=>$body!==''?$body:null,'url'=>$attachment['url']??null,'an'=>$attachment['name']??null,'am'=>$attachment['mime']??null,'az'=>$attachment['size']??null,'meta'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null]);
