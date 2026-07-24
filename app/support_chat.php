@@ -75,6 +75,14 @@ function support_chat_ensure_schema(PDO $pdo): void
         last_confidence DECIMAL(4,2) NULL,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_agent_processed_messages (
+        message_id BIGINT UNSIGNED PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'processing',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_agent_processed_conv (conversation_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_display_name'=>'Suporte FERA','support_chat_sound_enabled'=>'1'] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
@@ -477,6 +485,27 @@ function support_agent_is_certificate_request(string $body): bool
     return str_contains($b,'certificado')||str_contains($b,'certificacao')||str_contains($b,'diploma')||str_contains($b,'certidao');
 }
 
+function support_agent_is_greeting_only(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^\p{L}\p{N}\s]+/u',' ',$b));$b=(string)preg_replace('/\s+/u',' ',$b);
+    return (bool)preg_match('/^(oi|ola|olá|bom dia|boa tarde|boa noite|e ai|e ai tudo bem|tudo bem|opa)$/iu',$b);
+}
+
+function support_agent_claim_message(PDO $pdo,int $conversationId,int $messageId): bool
+{
+    try{
+        $st=$pdo->prepare("INSERT IGNORE INTO support_agent_processed_messages(message_id,conversation_id,status) VALUES(:m,:c,'processing')");
+        $st->execute(['m'=>$messageId,'c'=>$conversationId]);
+        return $st->rowCount()>0;
+    }catch(Throwable $e){return true;}
+}
+
+function support_agent_finish_message(PDO $pdo,int $messageId,string $status='done'): void
+{
+    try{$pdo->prepare("UPDATE support_agent_processed_messages SET status=:s WHERE message_id=:m")->execute(['s'=>$status,'m'=>$messageId]);}catch(Throwable $ignored){}
+}
+
 function support_agent_has_live_completion(array $payload): bool
 {
     $events=$payload['live']['eventos']??[];if(!is_array($events)||!$events)return false;
@@ -521,31 +550,39 @@ function support_agent_certificate_answer(array $payload): string
 function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $messageId): void
 {
     $cfg=support_agent_config($pdo);if(!$cfg['enabled'])return;
-    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['stage']??'')==='human'||($conv['status']??'')==='closed')return;
-    $st=$pdo->prepare("SELECT * FROM support_messages WHERE id=:id AND conversation_id=:c LIMIT 1");$st->execute(['id'=>$messageId,'c'=>$conversationId]);$msg=$st->fetch(PDO::FETCH_ASSOC);if(!$msg||($msg['sender_type']??'')!=='student')return;
+    if(!support_agent_claim_message($pdo,$conversationId,$messageId))return;
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['stage']??'')==='human'||($conv['status']??'')==='closed'){support_agent_finish_message($pdo,$messageId,'skipped');return;}
+    $st=$pdo->prepare("SELECT * FROM support_messages WHERE id=:id AND conversation_id=:c LIMIT 1");$st->execute(['id'=>$messageId,'c'=>$conversationId]);$msg=$st->fetch(PDO::FETCH_ASSOC);if(!$msg||($msg['sender_type']??'')!=='student'){support_agent_finish_message($pdo,$messageId,'skipped');return;}
     try{
-        $pause=(int)($cfg['pause_seconds']??0);if($pause>0){sleep($pause);$newer=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:id");$newer->execute(['c'=>$conversationId,'id'=>$messageId]);if((int)$newer->fetchColumn()>0)return;}
+        $pause=(int)($cfg['pause_seconds']??0);if($pause>0){sleep($pause);$newer=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:id");$newer->execute(['c'=>$conversationId,'id'=>$messageId]);if((int)$newer->fetchColumn()>0){support_agent_finish_message($pdo,$messageId,'skipped');return;}}
         $body=trim((string)($msg['body']??''));$type=(string)($msg['message_type']??'text');
-        if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);return;}
-        if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);return;}
-        if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
+        if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
+        if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);support_agent_finish_message($pdo,$messageId);return;}
+        if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);support_agent_finish_message($pdo,$messageId);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
         $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
         $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
         $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);
+        if($type==='text'&&support_agent_is_greeting_only($body)){
+            $name=trim((string)($payload['aluno']['nome']??$conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?$first.', ':'').'oi. Como posso ajudar?',$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
         if(support_agent_is_certificate_request($body)){
             $answer=support_agent_certificate_answer($payload);
-            support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);return;
+            support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
         }
         $recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
-        if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);return;}
-        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Certificado: se a pergunta for sobre certificado, nao transfira por padrao. Avalie tem_certificado_emitido, link_verificacao, pdf_url, link_emitir, aulas obrigatorias/concluidas, aulas_faltantes, percentual, aula 5, data_live e eventos da live. Para emitir, o aluno precisa concluir todas as aulas obrigatorias, assistir a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo. Se ja emitido e houver link_verificacao/pdf_url, responda com o link. Se nao emitido e criterios ok, oriente a emitir pelo link_emitir e usar as duas senhas. Se nao pode, explique exatamente o que falta. Nunca use link_emitir como certificado pronto quando o certificado ja foi emitido. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links e payload_aluno.variaveis_configuradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
+        if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Certificado: se a pergunta for sobre certificado, nao transfira por padrao. Avalie tem_certificado_emitido, link_verificacao, pdf_url, link_emitir, aulas obrigatorias/concluidas, aulas_faltantes, percentual, aula 5, data_live e eventos da live. Para emitir, o aluno precisa concluir todas as aulas obrigatorias, assistir a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo. Se ja emitido e houver link_verificacao/pdf_url, responda com o link. Se nao emitido e criterios ok, oriente a emitir pelo link_emitir e usar as duas senhas. Se nao pode, explique exatamente o que falta. Nunca use link_emitir como certificado pronto quando o certificado ja foi emitido. Para live, use datas do payload. Para grupos e acesso, use payload_aluno.links e payload_aluno.variaveis_configuradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']}";
         $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory['summary']??'','payload_aluno'=>$payload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
-        if($action==='handoff'||$confidence<0.55){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Baixa confianca.'),$cfg);}
+        if($action==='handoff'||$confidence<0.55){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Baixa confianca.'),$cfg);support_agent_finish_message($pdo,$messageId);}
         else{$answer=support_agent_normalize_answer_for_payload(trim((string)$res['answer'])?:'Consegui analisar seu caso, mas vou precisar de mais detalhes.',$payload);support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}
         $pdo->prepare("INSERT INTO support_agent_memory(conversation_id,summary,token_count,last_intent,last_confidence) VALUES(:c,:s,:t,:i,:cf) ON DUPLICATE KEY UPDATE summary=VALUES(summary),token_count=VALUES(token_count),last_intent=VALUES(last_intent),last_confidence=VALUES(last_confidence)")->execute(['c'=>$conversationId,'s'=>mb_substr((string)($res['memory_summary']??''),0,12000),'t'=>min(999999,(int)($res['tokens_estimate']??$estimated)),'i'=>mb_substr((string)($res['intent']??''),0,80),'cf'=>$confidence]);
-    }catch(Throwable $e){support_agent_handoff($pdo,$conversationId,'Erro do agente: '.$e->getMessage(),$cfg);}
+        support_agent_finish_message($pdo,$messageId);
+    }catch(Throwable $e){support_agent_finish_message($pdo,$messageId,'error');support_agent_handoff($pdo,$conversationId,'Erro do agente: '.$e->getMessage(),$cfg);}
 }
 
 function support_chat_blank_graph(): array
