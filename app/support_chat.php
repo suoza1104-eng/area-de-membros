@@ -285,13 +285,17 @@ function support_chat_get_or_create(PDO $pdo,int $userId,string $channel='test')
     $id=(int)$pdo->lastInsertId();support_chat_log_event($pdo,'conversation_started',$id,$userId,'student',(string)$userId,'Aluno','',['channel'=>$channel]);return $id;
 }
 
-function support_chat_conversations(PDO $pdo,string $filter='open'): array
+function support_chat_conversations(PDO $pdo,string $filter='open',array $criteria=[]): array
 {
     $where=$filter==='all'?'1=1':($filter==='unassigned'?"c.status<>'closed' AND c.assigned_to IS NULL":($filter==='closed'?"c.status='closed'":"c.status<>'closed'"));
-    return $pdo->query("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
+    $from=trim((string)($criteria['date_from']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)){$where.=" AND c.created_at>=:from";$params['from']=$from.' 00:00:00';}
+    $to=trim((string)($criteria['date_to']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)){$where.=" AND c.created_at<=:to";$params['to']=$to.' 23:59:59';}
+    $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma,
         (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
         (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
-        FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC)?:[];
+        FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC,c.id DESC LIMIT 200");$st->execute($params);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];
 }
 
 function support_chat_detail(PDO $pdo,int $conversationId): ?array
