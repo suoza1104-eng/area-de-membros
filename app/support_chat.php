@@ -155,10 +155,25 @@ function support_chat_ensure_schema(PDO $pdo): void
     }
     foreach(['support_agent_prompt_basic'=>'basic','support_agent_prompt_sales'=>'sales','support_agent_prompt_technical'=>'technical'] as $key=>$type){try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave=:k AND (valor='' OR valor LIKE 'Responda duvidas basicas%' OR valor LIKE 'Quando vendas estiver ativo%' OR valor LIKE 'Ajude em problemas tecnicos comuns%')")->execute(['v'=>support_agent_default_prompt($type),'k'=>$key]);}catch(Throwable $ignored){}}
     try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave='support_agent_variable_map_json' AND (valor='' OR valor IS NULL)")->execute(['v'=>json_encode(support_agent_default_variable_map(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);}catch(Throwable $ignored){}
+    support_chat_ensure_user_summary_columns($pdo);
 }
 
 function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
 function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+
+function support_chat_ensure_user_summary_columns(PDO $pdo): void
+{
+    if(!support_chat_table_exists($pdo,'users'))return;
+    foreach([
+        'support_chat_assunto'=>"ALTER TABLE users ADD COLUMN support_chat_assunto LONGTEXT NULL",
+        'support_chat_assunto_at'=>"ALTER TABLE users ADD COLUMN support_chat_assunto_at DATETIME NULL",
+        'support_chat_assunto_conversation_id'=>"ALTER TABLE users ADD COLUMN support_chat_assunto_conversation_id BIGINT UNSIGNED NULL",
+    ] as $column=>$sql){
+        if(!support_chat_column_exists($pdo,'users',$column)){
+            try{$pdo->exec($sql);}catch(Throwable $ignored){}
+        }
+    }
+}
 
 function support_chat_user_turma(PDO $pdo,int $userId): string
 {
@@ -313,7 +328,108 @@ function support_chat_send_close_prompt(PDO $pdo,int $conversationId,string $act
     support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'ask_more_help');
 }
 
-function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte',bool $sendClosing=true): void
+function support_chat_trim_summary_text(string $text,int $limit=2400): string
+{
+    $text=trim((string)preg_replace('/\s+/u',' ',$text));
+    return mb_strlen($text)>$limit?mb_substr($text,0,$limit-3).'...':$text;
+}
+
+function support_chat_closure_reason_label(string $reason): string
+{
+    return $reason==='inactivity'?'Fechamento por inatividade':'Fechamento por conclusao do assunto';
+}
+
+function support_chat_fallback_closure_summary(PDO $pdo,int $conversationId,string $reason): array
+{
+    $messages=support_chat_messages($pdo,$conversationId,0);
+    $firstStudent='';$answers=[];
+    foreach($messages as $m){
+        $body=trim((string)($m['body']??''));if($body==='')continue;
+        if($firstStudent===''&&($m['sender_type']??'')==='student')$firstStudent=$body;
+        if(in_array((string)($m['sender_type']??''),['bot','admin'],true))$answers[]=$body;
+    }
+    $motivo=$firstStudent!==''?support_chat_trim_summary_text($firstStudent,700):'Atendimento sem mensagem inicial identificada.';
+    $respostas=$answers?support_chat_trim_summary_text(implode(' | ',array_slice($answers,-8)),1400):'Sem respostas registradas no atendimento.';
+    $fechamento=support_chat_closure_reason_label($reason);
+    return [
+        'assunto'=>"Motivo do contato: {$motivo}\nRespostas: {$respostas}\nFechamento: {$fechamento}.",
+        'motivo_contato'=>$motivo,
+        'respostas'=>$respostas,
+        'motivo_fechamento'=>$fechamento,
+        'generated_by'=>'fallback',
+    ];
+}
+
+function support_chat_generate_closure_summary(PDO $pdo,int $conversationId,string $reason): array
+{
+    $fallback=support_chat_fallback_closure_summary($pdo,$conversationId,$reason);
+    try{
+        $cfg=support_agent_config($pdo);if(trim((string)($cfg['api_key']??''))==='')return $fallback;
+        $messages=support_chat_messages($pdo,$conversationId,0);
+        $history=[];foreach(array_slice($messages,-80) as $m){$history[]=[
+            'quando'=>(string)($m['created_at']??''),'autor'=>(string)($m['sender_name']??$m['sender_type']??''),'tipo'=>(string)($m['sender_type']??''),
+            'mensagem'=>support_chat_trim_summary_text((string)($m['body']??''),1600),
+        ];}
+        $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+            'assunto'=>['type'=>'string'],
+            'motivo_contato'=>['type'=>'string'],
+            'respostas'=>['type'=>'string'],
+            'motivo_fechamento'=>['type'=>'string'],
+        ],'required'=>['assunto','motivo_contato','respostas','motivo_fechamento']];
+        $input=[
+            ['role'=>'system','content'=>'Voce resume atendimentos de suporte em portugues do Brasil. Gere um resumo fiel, objetivo e util para automacoes. Use somente a conversa enviada.'],
+            ['role'=>'user','content'=>json_encode(['motivo_fechamento'=>support_chat_closure_reason_label($reason),'mensagens'=>$history],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)],
+        ];
+        $payload=['model'=>(string)$cfg['model'],'input'=>$input,'max_output_tokens'=>900,'text'=>['format'=>['type'=>'json_schema','name'=>'support_chat_closure_summary','strict'=>true,'schema'=>$schema]]];
+        if(strpos((string)$cfg['model'],'gpt-5')!==0)$payload['temperature']=0.2;
+        $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$cfg['api_key'],'Content-Type: application/json'],CURLOPT_POSTFIELDS=>json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),CURLOPT_TIMEOUT=>35]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+        if($raw===false||$raw==='')throw new RuntimeException('Falha ao chamar OpenAI: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('OpenAI HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,800));
+        $text=(string)($decoded['output_text']??'');if($text==='')foreach($decoded['output']??[] as $out)foreach($out['content']??[] as $c)if(isset($c['text']))$text.=(string)$c['text'];
+        $result=json_decode($text,true);if(!is_array($result))throw new RuntimeException('Resumo da IA retornou formato invalido.');
+        return [
+            'assunto'=>support_chat_trim_summary_text((string)($result['assunto']??$fallback['assunto']),6000),
+            'motivo_contato'=>support_chat_trim_summary_text((string)($result['motivo_contato']??$fallback['motivo_contato']),1600),
+            'respostas'=>support_chat_trim_summary_text((string)($result['respostas']??$fallback['respostas']),2400),
+            'motivo_fechamento'=>support_chat_trim_summary_text((string)($result['motivo_fechamento']??support_chat_closure_reason_label($reason)),1200),
+            'generated_by'=>'openai',
+        ];
+    }catch(Throwable $e){
+        @error_log('support_chat_generate_closure_summary: '.$e->getMessage());
+        return $fallback;
+    }
+}
+
+function support_chat_store_and_dispatch_closure(PDO $pdo,int $conversationId,array $conv,string $reason,string $actorType,string $actorId,string $actorName,array $extra=[]): void
+{
+    $reason=$reason==='inactivity'?'inactivity':'conclusion';
+    $userId=(int)($conv['user_id']??0);if($userId<=0)return;
+    $summary=support_chat_generate_closure_summary($pdo,$conversationId,$reason);
+    try{
+        support_chat_ensure_user_summary_columns($pdo);
+        $pdo->prepare("UPDATE users SET support_chat_assunto=:assunto,support_chat_assunto_at=NOW(),support_chat_assunto_conversation_id=:conversation_id WHERE id=:user_id")
+            ->execute(['assunto'=>$summary['assunto'],'conversation_id'=>$conversationId,'user_id'=>$userId]);
+    }catch(Throwable $e){@error_log('support_chat_store_summary: '.$e->getMessage());}
+    $event=$reason==='inactivity'?'SUPORTE_CHAT_FECHADO_INATIVIDADE':'SUPORTE_CHAT_FECHADO_CONCLUSAO';
+    $payload=array_merge([
+        'event_id'=>'support_chat_'.$event.'_'.$conversationId,
+        'conversation_id'=>$conversationId,
+        'closure_reason'=>$reason,
+        'closure_label'=>support_chat_closure_reason_label($reason),
+        'closed_at'=>date('Y-m-d H:i:s'),
+        'closed_by'=>['type'=>$actorType,'id'=>$actorId,'name'=>$actorName],
+        'stage_before_close'=>(string)($conv['stage']??''),
+        'assigned_name'=>(string)($conv['assigned_name']??''),
+        'support_chat_assunto'=>$summary['assunto'],
+        'motivo_contato'=>$summary['motivo_contato'],
+        'respostas'=>$summary['respostas'],
+        'motivo_fechamento'=>$summary['motivo_fechamento'],
+        'summary_generated_by'=>$summary['generated_by'],
+    ],$extra);
+    try{disparar_webhooks($event,$userId,$payload);}catch(Throwable $e){@error_log('support_chat_dispatch_closure: '.$e->getMessage());}
+    support_chat_log_event($pdo,'automation_trigger',$conversationId,$userId,$actorType,$actorId,$actorName,$event,['summary_generated_by'=>$summary['generated_by']]);
+}
+
+function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte',bool $sendClosing=true,string $closureReason='conclusion'): void
 {
     $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;
     if((string)($conv['status']??'')==='closed')return;
@@ -326,6 +442,7 @@ function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $a
     }
     $pdo->prepare("UPDATE support_conversations SET status='closed',stage='done',closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
     support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'feedback_requested');
+    support_chat_store_and_dispatch_closure($pdo,$conversationId,$conv,$closureReason,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,['send_feedback'=>true]);
 }
 
 function support_chat_submit_feedback(PDO $pdo,int $conversationId,int $userId,int $rating,string $comment): void
@@ -346,6 +463,7 @@ function support_chat_close_for_human_inactivity(PDO $pdo,int $conversationId): 
     support_chat_send($pdo,$conversationId,'bot','support_inactivity','Central de suporte',$message,[],['closed_by_inactivity'=>true]);
     $pdo->prepare("UPDATE support_conversations SET status='closed',stage='agent',assigned_to=NULL,assigned_name=NULL,closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
     support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),'bot','support_inactivity','Central de suporte','human_inactivity',['previous_assigned_name'=>(string)($conv['assigned_name']??'')]);
+    support_chat_store_and_dispatch_closure($pdo,$conversationId,$conv,'inactivity','bot','support_inactivity','Central de suporte',['previous_assigned_name'=>(string)($conv['assigned_name']??''),'send_feedback'=>false]);
 }
 
 function support_chat_auto_close_idle(PDO $pdo): int
@@ -354,7 +472,7 @@ function support_chat_auto_close_idle(PDO $pdo): int
     $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='') AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
     $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
     foreach($ids as $id){
-        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true);
+        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true,'inactivity');
         else support_chat_send_close_prompt($pdo,$id,'bot','Agente de suporte');
     }
     $hours=max(0,min(720,(int)get_setting('support_chat_human_idle_close_hours','24')));

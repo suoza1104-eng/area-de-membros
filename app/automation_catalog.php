@@ -43,6 +43,8 @@ function automation_trigger_seed_catalog(): array
         ['code'=>'TAG_REMOVIDA','label'=>'Perdeu tag','category'=>'Tags','badge'=>'Tag','description'=>'Aluno perdeu uma tag configurada.'],
         ['code'=>'AVANCO_CURSO','label'=>'Alcancou avanco no curso','category'=>'Curso','badge'=>'Curso','description'=>'Aluno alcancou um percentual minimo de avanco no curso.'],
         ['code'=>'BOTAO_SUPORTE_CLICADO','label'=>'Clicou no suporte','category'=>'Interacoes','badge'=>'Suporte','description'=>'Aluno clicou no botao de suporte.'],
+        ['code'=>'SUPORTE_CHAT_FECHADO_INATIVIDADE','label'=>'Atendimento fechado por inatividade','category'=>'Suporte','badge'=>'Suporte','description'=>'Disparado quando um atendimento da central e fechado automaticamente por inatividade na etapa da IA ou humana.'],
+        ['code'=>'SUPORTE_CHAT_FECHADO_CONCLUSAO','label'=>'Atendimento fechado por conclusao','category'=>'Suporte','badge'=>'Suporte','description'=>'Disparado quando um atendimento da central e fechado por conclusao do assunto pelo admin, CRM ou agente IA.'],
         ['code'=>'VOICE_CALL_INITIATED','label'=>'Ligacao iniciada','category'=>'Voz','badge'=>'Voz','description'=>'A Telnyx iniciou uma chamada de voz vinculada ao aluno.'],
         ['code'=>'VOICE_CALL_RINGING','label'=>'Ligacao chamando','category'=>'Voz','badge'=>'Voz','description'=>'O telefone do aluno recebeu toque de chamada.'],
         ['code'=>'VOICE_CALL_ANSWERED','label'=>'Ligacao atendida','category'=>'Voz','badge'=>'Voz','description'=>'A chamada de voz foi atendida.'],
