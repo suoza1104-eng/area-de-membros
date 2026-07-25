@@ -43,6 +43,57 @@ function vv_table_exists(PDO $pdo, string $table): bool {
     }
 }
 
+function vv_column_exists(PDO $pdo, string $table, string $column): bool {
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :column");
+        $stmt->execute([':column' => $column]);
+        return (bool)$stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function vv_turma_student_counts(PDO $pdo, array $turmas): array {
+    $turmas = array_values(array_unique(array_filter(array_map(
+        static fn($turma): string => trim((string)$turma),
+        $turmas
+    ), static fn(string $turma): bool => $turma !== '' && $turma !== 'Sem turma')));
+    if (!$turmas) return [];
+
+    $sources = [];
+    if (vv_column_exists($pdo, 'users', 'codigo_turma')) {
+        $sources[] = "SELECT id AS user_id, codigo_turma AS turma FROM users WHERE codigo_turma IS NOT NULL AND codigo_turma <> ''";
+    }
+    if (vv_column_exists($pdo, 'users', 'turma_codigo')) {
+        $sources[] = "SELECT id AS user_id, turma_codigo AS turma FROM users WHERE turma_codigo IS NOT NULL AND turma_codigo <> ''";
+    }
+    if (vv_table_exists($pdo, 'inscricao_logs')) {
+        $sources[] = "SELECT user_id, codigo_turma AS turma FROM inscricao_logs WHERE codigo_turma IS NOT NULL AND codigo_turma <> ''";
+    }
+    if (!$sources) return [];
+
+    $counts = [];
+    foreach (array_chunk($turmas, 400) as $chunk) {
+        $params = [];
+        $placeholders = [];
+        foreach ($chunk as $i => $turma) {
+            $key = ':t' . $i;
+            $placeholders[] = $key;
+            $params[$key] = $turma;
+        }
+        $sql = "SELECT turma, COUNT(DISTINCT user_id) total
+                  FROM (" . implode(' UNION ALL ', $sources) . ") base
+                 WHERE turma IN (" . implode(',', $placeholders) . ")
+                 GROUP BY turma";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $counts[(string)$row['turma']] = (int)$row['total'];
+        }
+    }
+    return $counts;
+}
+
 function vv_payload_value(array $payload, array $paths): ?float {
     foreach ($paths as $path) {
         $cur = $payload;
@@ -245,6 +296,7 @@ $dailyRows = array_values($daily);
 $turmaRows = array_values($turmaStats);
 usort($turmaRows, static fn(array $a, array $b): int => $b['qtd'] <=> $a['qtd']);
 $turmaRows = array_slice($turmaRows, 0, 20);
+$turmaStudentCounts = vv_turma_student_counts($pdo, array_column($turmaRows, 'turma'));
 $avgTicket = $totalSales > 0 ? $totalGross / $totalSales : 0.0;
 $avgConversionSeconds = $conversionTimes ? (int)round(array_sum($conversionTimes) / count($conversionTimes)) : null;
 $medianConversionSeconds = null;
@@ -258,6 +310,8 @@ if ($conversionTimes) {
 $journeyCoverage = $totalSales > 0 ? count($conversionTimes) / $totalSales * 100 : 0.0;
 foreach ($turmaRows as &$turmaRow) {
     $turmaRow['tempo_medio'] = $turmaRow['tempo_qtd'] > 0 ? (int)round($turmaRow['tempo_total'] / $turmaRow['tempo_qtd']) : null;
+    $turmaRow['alunos'] = (int)($turmaStudentCounts[(string)$turmaRow['turma']] ?? 0);
+    $turmaRow['resultado_por_aluno'] = $turmaRow['alunos'] > 0 ? (float)$turmaRow['net'] / $turmaRow['alunos'] : 0.0;
 }
 unset($turmaRow);
 
@@ -340,12 +394,12 @@ require_once __DIR__ . '/_header.php';
     <div class="vv-k vv-panel-title">Desempenho por turma</div>
     <div class="vv-scroll">
       <table class="vv-table">
-        <thead><tr><th>Turma</th><th>Vendas</th><th>Bruto</th><th>Líquido</th><th>Tempo médio</th></tr></thead>
+        <thead><tr><th>Turma</th><th>Alunos</th><th>Vendas</th><th>Bruto</th><th>Líquido</th><th>Resultado/aluno</th><th>Tempo médio</th></tr></thead>
         <tbody>
         <?php foreach ($turmaRows as $turmaRow): ?>
-          <tr><td><strong><?= vv_h((string)$turmaRow['turma']) ?></strong></td><td><?= (int)$turmaRow['qtd'] ?></td><td><?= vv_money((float)$turmaRow['gross']) ?></td><td><?= vv_money((float)$turmaRow['net']) ?></td><td><?= vv_h(vv_duration($turmaRow['tempo_medio'])) ?></td></tr>
+          <tr><td><strong><?= vv_h((string)$turmaRow['turma']) ?></strong></td><td><?= (int)$turmaRow['alunos'] ?></td><td><?= (int)$turmaRow['qtd'] ?></td><td><?= vv_money((float)$turmaRow['gross']) ?></td><td><?= vv_money((float)$turmaRow['net']) ?></td><td><?= vv_money((float)$turmaRow['resultado_por_aluno']) ?></td><td><?= vv_h(vv_duration($turmaRow['tempo_medio'])) ?></td></tr>
         <?php endforeach; ?>
-        <?php if (!$turmaRows): ?><tr><td colspan="5" class="vv-empty">Sem dados por turma.</td></tr><?php endif; ?>
+        <?php if (!$turmaRows): ?><tr><td colspan="7" class="vv-empty">Sem dados por turma.</td></tr><?php endif; ?>
         </tbody>
       </table>
     </div>

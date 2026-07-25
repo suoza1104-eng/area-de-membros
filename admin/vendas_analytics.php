@@ -334,8 +334,7 @@ $salesParams = [
 ];
 $salesFilter = md_filter_sql($filters, 'sale', $salesParams);
 $salesDateExpr = md_sale_revenue_date_sql('s');
-$salesDateWithImportExpr = "COALESCE(s.payment_confirmed_at,s.transaction_date,s.imported_at)";
-$salesWhere = ["{$salesDateWithImportExpr} BETWEEN :sales_start AND :sales_end"];
+$salesWhere = ["{$salesDateExpr} BETWEEN :sales_start AND :sales_end"];
 if ($salesStatus === 'approved') $salesWhere[] = md_approved_sql('s');
 if ($salesStatus === 'refunded') $salesWhere[] = md_refund_sql('s');
 if ($salesQuery !== '') {
