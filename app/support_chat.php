@@ -471,7 +471,7 @@ function support_chat_get_or_create(PDO $pdo,int $userId,string $channel='test')
 
 function support_chat_conversations(PDO $pdo,string $filter='open',array $criteria=[]): array
 {
-    $where=$filter==='all'?'1=1':($filter==='unassigned'?"c.status<>'closed' AND c.assigned_to IS NULL":($filter==='closed'?"c.status='closed'":"c.status<>'closed'"));
+    $where=$filter==='all'?'1=1':($filter==='human'?"c.status='pending' AND c.stage='human'":($filter==='unassigned'?"c.status<>'closed' AND c.assigned_to IS NULL":($filter==='closed'?"c.status='closed'":"c.status<>'closed'")));
     $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
     $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
     if(empty($criteria['include_empty']))$where.=" AND EXISTS(SELECT 1 FROM support_messages sm WHERE sm.conversation_id=c.id)";
