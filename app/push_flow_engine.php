@@ -483,6 +483,20 @@ function push_flow_live_column(PDO $pdo): ?string
     return null;
 }
 
+function push_flow_live_turma_select(PDO $pdo,string $liveColumn): string
+{
+    $select="codigo,`{$liveColumn}` live_at";
+    if(push_flow_engine_column_exists($pdo,'turmas','codigo_live'))$select.=",codigo_live";
+    if(push_flow_engine_column_exists($pdo,'turmas','webhook_live_url'))$select.=",webhook_live_url";
+    return $select;
+}
+
+function push_flow_live_link(array $turma): string
+{
+    $url=trim((string)($turma['webhook_live_url']??''));
+    return $url!==''?$url:'trilha.php';
+}
+
 function push_flow_live_students(PDO $pdo, string $turma, int $afterUserId, int $limit): array
 {
     $parts=[];$params=['cursor'=>$afterUserId];
@@ -521,11 +535,11 @@ function automation_live_reminder_flows(PDO $pdo): array
 function automation_live_reminder_turmas(PDO $pdo, string $liveColumn, string $filter): array
 {
     if ($filter !== '') {
-        $st = $pdo->prepare("SELECT codigo,`{$liveColumn}` live_at" . (push_flow_engine_column_exists($pdo, 'turmas', 'codigo_live') ? ',codigo_live' : '') . " FROM turmas WHERE codigo=:codigo AND `{$liveColumn}` IS NOT NULL LIMIT 1");
+        $st = $pdo->prepare("SELECT ".push_flow_live_turma_select($pdo,$liveColumn)." FROM turmas WHERE codigo=:codigo AND `{$liveColumn}` IS NOT NULL LIMIT 1");
         $st->execute(['codigo' => $filter]);
         return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
-    return $pdo->query("SELECT codigo,`{$liveColumn}` live_at" . (push_flow_engine_column_exists($pdo, 'turmas', 'codigo_live') ? ',codigo_live' : '') . " FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' AND `{$liveColumn}` IS NOT NULL ORDER BY `{$liveColumn}` ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $pdo->query("SELECT ".push_flow_live_turma_select($pdo,$liveColumn)." FROM turmas WHERE codigo IS NOT NULL AND codigo<>'' AND `{$liveColumn}` IS NOT NULL ORDER BY `{$liveColumn}` ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
 function push_flow_prepare_live_batches(PDO $pdo): int
@@ -582,14 +596,15 @@ function push_flow_enqueue_live_reminders(PDO $pdo, int $studentBatch = 500, int
     $stats = ['created_batches' => $created, 'processed_batches' => 0, 'candidates' => 0, 'enqueued' => 0, 'push_enqueued' => 0, 'email_enqueued' => 0, 'automation_enqueued' => 0];
     $liveColumn = push_flow_live_column($pdo);
     foreach ($batches as $batch) {
-        $codigoLive = '';
+        $codigoLive = '';$linkLive='trilha.php';
         if ($liveColumn) {
-            $select = "`{$liveColumn}` live_value" . (push_flow_engine_column_exists($pdo, 'turmas', 'codigo_live') ? ',codigo_live' : '');
+            $select = "`{$liveColumn}` live_value" . (push_flow_engine_column_exists($pdo, 'turmas', 'codigo_live') ? ',codigo_live' : '') . (push_flow_engine_column_exists($pdo, 'turmas', 'webhook_live_url') ? ',webhook_live_url' : '');
             $live = $pdo->prepare("SELECT {$select} FROM turmas WHERE codigo=:codigo LIMIT 1");
             $live->execute(['codigo' => $batch['turma_codigo']]);
             $liveRow = $live->fetch(PDO::FETCH_ASSOC) ?: [];
             $current = trim((string)($liveRow['live_value'] ?? ''));
             $codigoLive = trim((string)($liveRow['codigo_live'] ?? ''));
+            $linkLive = push_flow_live_link($liveRow);
             try { $currentAt = $current !== '' ? new DateTimeImmutable($current, new DateTimeZone('America/Sao_Paulo')) : null; } catch (Throwable $ignored) { $currentAt = null; }
             if (!$currentAt || $currentAt->format('Y-m-d H:i:s') !== (string)$batch['live_at']) {
                 $pdo->prepare("UPDATE automation_live_reminder_batches SET status='superseded',completed_at=NOW() WHERE id=:id")->execute(['id' => $batch['id']]);
@@ -620,7 +635,7 @@ function push_flow_enqueue_live_reminders(PDO $pdo, int $studentBatch = 500, int
                 'codigo_live' => $codigoLive,
                 'data_live' => (string)$batch['live_at'],
                 'live_at' => (string)$batch['live_at'],
-                'link_live' => 'trilha.php',
+                'link_live' => $linkLive,
                 'antecedencia_valor' => (int)$batch['advance_value'],
                 'antecedencia_unidade' => (string)$batch['advance_unit'],
                 '_scheduled_flow_kind' => (string)$batch['flow_kind'],
