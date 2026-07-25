@@ -474,6 +474,7 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
     $where=$filter==='all'?'1=1':($filter==='unassigned'?"c.status<>'closed' AND c.assigned_to IS NULL":($filter==='closed'?"c.status='closed'":"c.status<>'closed'"));
     $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
     $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
+    if(empty($criteria['include_empty']))$where.=" AND EXISTS(SELECT 1 FROM support_messages sm WHERE sm.conversation_id=c.id)";
     $from=trim((string)($criteria['date_from']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)){$where.=" AND c.created_at>=:from";$params['from']=$from.' 00:00:00';}
     $to=trim((string)($criteria['date_to']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)){$where.=" AND c.created_at<=:to";$params['to']=$to.' 23:59:59';}
     $assignee=trim((string)($criteria['assignee']??''));if($assignee==='__ia__')$where.=" AND c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='')";elseif($assignee!==''){$where.=" AND c.assigned_name=:assignee";$params['assignee']=$assignee;}
@@ -486,7 +487,20 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
 function support_chat_detail(PDO $pdo,int $conversationId): ?array
 {
     $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.id=:id LIMIT 1");
-    $st->execute(['id'=>$conversationId]);$row=$st->fetch(PDO::FETCH_ASSOC);return $row?:null;
+    $st->execute(['id'=>$conversationId]);$row=$st->fetch(PDO::FETCH_ASSOC);if(!$row)return null;return array_merge($row,support_chat_user_app_status($pdo,(int)($row['user_id']??0)));
+}
+
+function support_chat_user_app_status(PDO $pdo,int $userId): array
+{
+    $status=['app_installed'=>0,'push_enabled'=>0];
+    if($userId<=0||!support_chat_table_exists($pdo,'push_devices'))return $status;
+    try{
+        $st=$pdo->prepare("SELECT MAX(installed_at IS NOT NULL AND status='active') app_installed,MAX(status='active' AND notification_permission='granted' AND token IS NOT NULL) push_enabled FROM push_devices WHERE user_id=:u");
+        $st->execute(['u'=>$userId]);$row=$st->fetch(PDO::FETCH_ASSOC)?:[];
+        $status['app_installed']=(int)($row['app_installed']??0)>0?1:0;
+        $status['push_enabled']=(int)($row['push_enabled']??0)>0?1:0;
+    }catch(Throwable $ignored){}
+    return $status;
 }
 
 function support_chat_assign_conversation(PDO $pdo,int $conversationId,string $assignedName,string $actorId,string $actorName,string $reason='manual'): bool

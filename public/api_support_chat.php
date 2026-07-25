@@ -39,12 +39,35 @@ function support_public_conversation(PDO $pdo, int $preferredId = 0): int
     return support_chat_get_or_create($pdo, $userId, 'app');
 }
 
+function support_public_existing_conversation(PDO $pdo, int $preferredId = 0): int
+{
+    $userId = (int)($_SESSION['aluno_id'] ?? 0);
+    if ($userId <= 0) {
+        throw new RuntimeException('Aluno nao autenticado.');
+    }
+    if (get_setting('support_chat_student_enabled', '0') !== '1') {
+        throw new RuntimeException('Suporte pelo agente desativado.');
+    }
+    if ($preferredId > 0) {
+        $st = $pdo->prepare("SELECT id FROM support_conversations WHERE id=:id AND user_id=:u LIMIT 1");
+        $st->execute(['id'=>$preferredId,'u'=>$userId]);
+        if ((int)$st->fetchColumn() === $preferredId) {
+            return $preferredId;
+        }
+    }
+    $st = $pdo->prepare("SELECT id FROM support_conversations WHERE user_id=:u ORDER BY id DESC LIMIT 1");
+    $st->execute(['u'=>$userId]);
+    return (int)($st->fetchColumn() ?: 0);
+}
+
 try {
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $api = (string)($_GET['api'] ?? 'init');
         if ($api === 'init') {
-            $conversationId = support_public_conversation($pdo);
-            support_chat_mark_read($pdo, $conversationId, 'student');
+            $conversationId = support_public_existing_conversation($pdo);
+            if ($conversationId > 0) {
+                support_chat_mark_read($pdo, $conversationId, 'student');
+            }
             $avatarUrl = trim((string)get_setting('support_chat_avatar_url', ''));
             $avatarSrc = '';
             if ($avatarUrl !== '') {
@@ -58,17 +81,19 @@ try {
                 'avatar_src' => $avatarSrc,
                 'font_scale' => max(0.85, min(1.35, (float)get_setting('support_chat_font_scale', '1.08'))),
                 'welcome' => trim((string)get_setting('support_chat_welcome', '')),
-                'messages' => support_chat_messages($pdo, $conversationId, 0),
+                'messages' => $conversationId > 0 ? support_chat_messages($pdo, $conversationId, 0) : [],
                 'typing' => support_chat_typing_state($pdo, $conversationId, 'student'),
             ]);
         }
         if ($api === 'messages') {
-            $conversationId = support_public_conversation($pdo, (int)($_GET['conversation_id'] ?? 0));
-            support_chat_mark_read($pdo, $conversationId, 'student');
+            $conversationId = support_public_existing_conversation($pdo, (int)($_GET['conversation_id'] ?? 0));
+            if ($conversationId > 0) {
+                support_chat_mark_read($pdo, $conversationId, 'student');
+            }
             support_public_json([
                 'ok' => true,
                 'conversation_id' => $conversationId,
-                'messages' => support_chat_messages($pdo, $conversationId, (int)($_GET['after'] ?? 0)),
+                'messages' => $conversationId > 0 ? support_chat_messages($pdo, $conversationId, (int)($_GET['after'] ?? 0)) : [],
                 'typing' => support_chat_typing_state($pdo, $conversationId, 'student'),
             ]);
         }
