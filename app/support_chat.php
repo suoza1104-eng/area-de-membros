@@ -139,6 +139,7 @@ function support_chat_ensure_schema(PDO $pdo): void
         'support_agent_group_enabled'=>'1',
         'support_agent_max_tokens'=>'3000',
         'support_agent_pause_seconds'=>'5',
+        'support_agent_display_name'=>'Agente de suporte',
         'support_agent_prompt_basic'=>support_agent_default_prompt('basic'),
         'support_agent_prompt_sales'=>support_agent_default_prompt('sales'),
         'support_agent_prompt_technical'=>support_agent_default_prompt('technical'),
@@ -160,6 +161,12 @@ function support_chat_ensure_schema(PDO $pdo): void
 
 function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
 function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+
+function support_agent_display_name(?PDO $pdo=null): string
+{
+    $name=trim((string)get_setting('support_agent_display_name','Agente de suporte'));
+    return $name!==''?mb_substr($name,0,80):'Agente de suporte';
+}
 
 function support_chat_ensure_user_summary_columns(PDO $pdo): void
 {
@@ -352,6 +359,7 @@ function support_chat_send_close_prompt(PDO $pdo,int $conversationId,string $act
 {
     $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
     if(support_chat_has_pending_close_prompt($pdo,$conversationId))return;
+    if($actorType!=='admin')$actorName=support_agent_display_name($pdo);
     support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,support_chat_random_followup($pdo,$conv),[],['close_prompt'=>true]);
     support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'ask_more_help');
 }
@@ -461,6 +469,7 @@ function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $a
 {
     $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;
     if((string)($conv['status']??'')==='closed')return;
+    if($actorType!=='admin')$actorName=support_agent_display_name($pdo);
     if($sendClosing){
         $message=trim((string)get_setting('support_chat_closing_message','Obrigado pelo contato. Fico a disposicao sempre que precisar.'));
         if($message==='')$message='Obrigado pelo contato. Fico a disposicao sempre que precisar.';
@@ -500,8 +509,8 @@ function support_chat_auto_close_idle(PDO $pdo): int
     $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='') AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
     $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
     foreach($ids as $id){
-        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot','Agente de suporte',true,'inactivity');
-        else support_chat_send_close_prompt($pdo,$id,'bot','Agente de suporte');
+        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot',support_agent_display_name($pdo),true,'inactivity');
+        else support_chat_send_close_prompt($pdo,$id,'bot',support_agent_display_name($pdo));
     }
     $hours=max(0,min(720,(int)get_setting('support_chat_human_idle_close_hours','24')));
     if($hours>0){
@@ -758,16 +767,17 @@ function support_agent_split_answer(string $body,int $limit=650): array
 
 function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply,bool $sendFollowup=true,bool $markClosePrompt=false): void
 {
+    $agentName=support_agent_display_name($pdo);
     $prepared=support_agent_prepare_answer($answer,$firstAgentReply);$parts=support_agent_split_answer((string)$prepared['body']);
     $answerAsksClose=(bool)preg_match('/como posso ajudar|em que posso ajudar|posso ajudar.{0,50}(mais|alguma coisa)|alguma duvida|mais alguma coisa/iu',(string)$prepared['body']);
-    foreach($parts as $i=>$part){$last=$i===count($parts)-1;$metadata=$last?$prepared['metadata']:[];if($last&&($markClosePrompt||$answerAsksClose))$metadata['close_prompt']=true;support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$part,[],$metadata);if(!$last){support_chat_typing($pdo,$conversationId,'bot','Agente de suporte');sleep(random_int(4,6));}}
+    foreach($parts as $i=>$part){$last=$i===count($parts)-1;$metadata=$last?$prepared['metadata']:[];if($last&&($markClosePrompt||$answerAsksClose))$metadata['close_prompt']=true;support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$part,[],$metadata);if(!$last){support_chat_typing($pdo,$conversationId,'bot',$agentName);sleep(random_int(4,6));}}
     if($markClosePrompt||$answerAsksClose){
         $conv=support_chat_detail($pdo,$conversationId);
-        if($conv)support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent','Agente de suporte','ask_more_help',['source'=>'agent_answer']);
+        if($conv)support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent',$agentName,'ask_more_help',['source'=>'agent_answer']);
     }
     if($sendFollowup&&!$answerAsksClose&&!$markClosePrompt){
         $conv=support_chat_detail($pdo,$conversationId);
-        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!==''){support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$follow,[],['close_prompt'=>true]);support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent','Agente de suporte','ask_more_help',['source'=>'agent_followup']);}
+        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!==''){support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$follow,[],['close_prompt'=>true]);support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent',$agentName,'ask_more_help',['source'=>'agent_followup']);}
     }
 }
 
@@ -808,6 +818,7 @@ function support_agent_config(PDO $pdo): array
         'group'=>get_setting('support_agent_group_enabled','1')==='1',
         'max_tokens'=>max(500,min(12000,(int)get_setting('support_agent_max_tokens','3000'))),
         'pause_seconds'=>max(0,min(30,(int)get_setting('support_agent_pause_seconds','5'))),
+        'display_name'=>support_agent_display_name($pdo),
         'model'=>trim((string)get_setting('whatsapp_ai_model','gpt-4.1-mini'))?:'gpt-4.1-mini',
         'api_key'=>trim((string)get_setting('whatsapp_ai_openai_api_key','')),
         'temperature'=>max(0,min(1,(float)get_setting('whatsapp_ai_temperature','0.2'))),
@@ -1055,9 +1066,10 @@ function support_agent_transcribe_audio(PDO $pdo,array $cfg,array $message): str
 function support_agent_handoff(PDO $pdo,int $conversationId,string $reason,array $cfg): void
 {
     $conv=support_chat_detail($pdo,$conversationId);if($conv&&($conv['stage']??'')==='human')return;
-    support_chat_log_event($pdo,'human_handoff',$conversationId,0,'bot','support_agent','Agente de suporte','handoff',['reason'=>$reason]);
+    $agentName=support_agent_display_name($pdo);
+    support_chat_log_event($pdo,'human_handoff',$conversationId,0,'bot','support_agent',$agentName,'handoff',['reason'=>$reason]);
     $pdo->prepare("UPDATE support_conversations SET status='pending',stage='human',priority=IF(priority='normal','high',priority),notes=CONCAT(COALESCE(notes,''),IF(COALESCE(notes,'')='','',\"\n\"),:n) WHERE id=:id")->execute(['n'=>'Agente transferiu para humano: '.$reason,'id'=>$conversationId]);
-    $msg=trim((string)$cfg['handoff_message']);if($msg!=='')support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$msg);
+    $msg=trim((string)$cfg['handoff_message']);if($msg!=='')support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$msg);
 }
 
 function support_agent_is_human_request(string $body): bool
