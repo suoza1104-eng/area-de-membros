@@ -29,12 +29,7 @@ function md_refund_sql(string $alias = 's'): string
 
 function md_sale_revenue_date_sql(string $alias = 's'): string
 {
-    return "{$alias}.transaction_date";
-}
-
-function md_refund_revenue_date_sql(string $alias = 's'): string
-{
-    return "COALESCE({$alias}.refund_or_chargeback_at,{$alias}.transaction_date)";
+    return "COALESCE({$alias}.payment_confirmed_at,{$alias}.transaction_date)";
 }
 
 function md_basis_column(string $basis): string
@@ -139,7 +134,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
     $refunds = md_row($pdo, "SELECT COUNT(*) refunds,
               COALESCE(SUM(CASE WHEN s.refunded_value>0 THEN s.refunded_value ELSE s.gross_revenue END),0) refunded_value
             FROM hotmart_sales_live s WHERE " . md_refund_sql('s') . "
-              AND " . md_refund_revenue_date_sql('s') . " BETWEEN :start AND :end{$refundFilter}", $refundParams);
+              AND COALESCE(s.refund_or_chargeback_at,s.updated_at,s.transaction_date) BETWEEN :start AND :end{$refundFilter}", $refundParams);
 
     $out = array_merge([
         'spend'=>0,'impressions'=>0,'reach'=>0,'clicks'=>0,'link_clicks'=>0,'landing_views'=>0,'meta_leads'=>0,
