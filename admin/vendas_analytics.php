@@ -39,6 +39,72 @@ function va_metric_value(array $data, string $key, string $format): string {
     if ($format === 'decimal') return va_num($v, 2);
     return va_num($v, 0);
 }
+function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filters): array {
+    $basis = md_basis_column((string)($filters['basis'] ?? 'producer_net'));
+    $saleParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
+    $saleFilter = md_filter_sql($filters, 'sale', $saleParams);
+    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.matched_user_id) buyers,
+              COALESCE(SUM(s.gross_revenue),0) gross_revenue,
+              COALESCE(SUM(s.net_revenue),0) net_revenue,
+              COALESCE(SUM(s.producer_net),0) producer_net,
+              COALESCE(AVG(s.gross_revenue),0) average_ticket,
+              SUM(s.matched_user_id IS NOT NULL) matched_sales
+            FROM hotmart_sales_live s
+            WHERE " . md_approved_sql('s') . "
+              AND s.transaction_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
+
+    $attrParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59', 'model' => ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch'];
+    $attrWhere = [];
+    if (!empty($filters['campaign'])) { $attrWhere[] = 'am.campaign_group=:ac'; $attrParams['ac'] = $filters['campaign']; }
+    if (!empty($filters['adset'])) { $attrWhere[] = 'am.campaign_name=:aa'; $attrParams['aa'] = $filters['adset']; }
+    if (!empty($filters['product'])) { $attrWhere[] = 'axs.product_name=:ap'; $attrParams['ap'] = $filters['product']; }
+    if (!empty($filters['turma'])) { $attrWhere[] = "COALESCE(NULLIF(al.turma_codigo,''),'Sem turma')=:at"; $attrParams['at'] = $filters['turma']; }
+    $attrExtra = $attrWhere ? ' AND ' . implode(' AND ', $attrWhere) : '';
+    $attr = md_row($pdo, "SELECT COUNT(DISTINCT hs.transaction_code) attributed_sales,
+              COALESCE(SUM(hs.{$basis}),0) attributed_revenue
+            FROM attribution_matches am
+            JOIN attribution_sales axs ON axs.id=am.sale_id
+            JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
+            JOIN attribution_leads al ON al.id=am.lead_id
+            WHERE am.attribution_model=:model
+              AND " . md_approved_sql('hs') . "
+              AND hs.transaction_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
+
+    $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
+    $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
+    $refunds = md_row($pdo, "SELECT COUNT(*) refunds,
+              COALESCE(SUM(CASE WHEN s.refunded_value>0 THEN s.refunded_value WHEN s.chargeback_value>0 THEN s.chargeback_value ELSE s.{$basis} END),0) refunded_value
+            FROM hotmart_sales_live s
+            WHERE " . md_refund_sql('s') . "
+              AND COALESCE(s.refund_or_chargeback_at,s.transaction_date) BETWEEN :start AND :end{$refundFilter}", $refundParams);
+
+    $out = array_merge($sales, $attr, $refunds);
+    foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
+    // Reembolsadas/chargebacks ja ficam fora da soma de aprovadas pelo status.
+    // Subtrair novamente distorceria a comparacao com o relatorio da Hotmart.
+    $out['gross_revenue'] = (float)($out['gross_revenue'] ?? 0);
+    $out['net_revenue'] = (float)($out['net_revenue'] ?? 0);
+    $out['producer_net'] = (float)($out['producer_net'] ?? 0);
+    $out['revenue'] = (float)($out[$basis] ?? 0);
+    $out['fees'] = max(0.0, (float)($out['gross_revenue'] ?? 0) - (float)($out['producer_net'] ?? 0));
+    $out['profit'] = (float)($out['net_revenue'] ?? 0);
+    $out['conversion_rate'] = 0.0;
+    $out['cac'] = 0.0;
+    $out['roas'] = 0.0;
+    $out['refund_rate'] = ((float)($out['sales'] ?? 0) + (float)($out['refunds'] ?? 0)) > 0 ? (float)$out['refunds'] / ((float)$out['sales'] + (float)$out['refunds']) * 100 : 0;
+    $out['attribution_rate'] = (float)($out['sales'] ?? 0) > 0 ? (float)$out['attributed_sales'] / (float)$out['sales'] * 100 : 0;
+    return $out;
+}
+function va_apply_hotmart_snapshot(array $base, array $hotmart): array {
+    foreach (['sales','buyers','gross_revenue','net_revenue','producer_net','average_ticket','matched_sales','attributed_sales','attributed_revenue','refunds','refunded_value','revenue','fees','profit','refund_rate','attribution_rate'] as $key) {
+        if (array_key_exists($key, $hotmart)) $base[$key] = $hotmart[$key];
+    }
+    $base['profit'] = (float)($base['net_revenue'] ?? 0) - (float)($base['spend'] ?? 0);
+    $base['conversion_rate'] = (float)($base['leads'] ?? 0) > 0 ? (float)($base['sales'] ?? 0) / (float)$base['leads'] * 100 : 0;
+    $base['cac'] = (float)($base['sales'] ?? 0) > 0 ? (float)($base['spend'] ?? 0) / (float)$base['sales'] : 0;
+    $base['roas'] = (float)($base['spend'] ?? 0) > 0 ? (float)($base['revenue'] ?? 0) / (float)$base['spend'] : 0;
+    return $base;
+}
 function va_ads_cell(array $metrics,array $days,string $source,string $key,string $format='num'): string {
     $parts=[];foreach(['x','y','z'] as $w){$view=md_ads_metric_view($metrics[$w]??[],$source);$value=$view[$key]??0;$parts[]=$format==='money'?va_money($value):($format==='decimal'?va_num($value,2):va_num($value));}
     return implode(' <span class="ads-sep">/</span> ',$parts);
@@ -290,6 +356,8 @@ if ($buyerAiConfig['prompt'] === '') {
 
 $current = md_snapshot($pdo, $period['start'], $period['end'], $filters);
 $previous = md_snapshot($pdo, $period['previous_start'], $period['previous_end'], $filters);
+$current = va_apply_hotmart_snapshot($current, va_hotmart_snapshot($pdo, $period['start'], $period['end'], $filters));
+$previous = va_apply_hotmart_snapshot($previous, va_hotmart_snapshot($pdo, $period['previous_start'], $period['previous_end'], $filters));
 $daily = md_daily_series($pdo, $period['start'], $period['end'], $filters);
 $monthly = md_monthly_series($pdo, $filters);
 $breakdowns = md_breakdowns($pdo, $period['start'], $period['end'], $filters);
@@ -309,11 +377,15 @@ $lastYearEnd = min($lastYearStart->modify('+' . $dayOffset . ' days'), $lastYear
 $mtd = md_snapshot($pdo, $monthStart->format('Y-m-d'), $today->format('Y-m-d'), $filters);
 $prevMtd = md_snapshot($pdo, $previousMonthStart->format('Y-m-d'), $previousMonthEnd->format('Y-m-d'), $filters);
 $yearMtd = md_snapshot($pdo, $lastYearStart->format('Y-m-d'), $lastYearEnd->format('Y-m-d'), $filters);
+$mtd = va_apply_hotmart_snapshot($mtd, va_hotmart_snapshot($pdo, $monthStart->format('Y-m-d'), $today->format('Y-m-d'), $filters));
+$prevMtd = va_apply_hotmart_snapshot($prevMtd, va_hotmart_snapshot($pdo, $previousMonthStart->format('Y-m-d'), $previousMonthEnd->format('Y-m-d'), $filters));
+$yearMtd = va_apply_hotmart_snapshot($yearMtd, va_hotmart_snapshot($pdo, $lastYearStart->format('Y-m-d'), $lastYearEnd->format('Y-m-d'), $filters));
 $avg12 = ['revenue'=>0,'sales'=>0,'leads'=>0,'spend'=>0,'roas'=>0,'cac'=>0];
 $avg12Months = 0;
 for ($i=1; $i<=12; $i++) {
     $s=$monthStart->modify('-'.$i.' months'); $e=min($s->modify('+'.$dayOffset.' days'),$s->modify('last day of this month'));
     $snap=md_snapshot($pdo,$s->format('Y-m-d'),$e->format('Y-m-d'),$filters);
+    $snap=va_apply_hotmart_snapshot($snap, va_hotmart_snapshot($pdo,$s->format('Y-m-d'),$e->format('Y-m-d'),$filters));
     if ((float)$snap['sales'] > 0 || (float)$snap['leads'] > 0 || (float)$snap['spend'] > 0) {
         foreach(array_keys($avg12) as $key)$avg12[$key]+=(float)$snap[$key];
         $avg12Months++;
@@ -333,9 +405,7 @@ $salesParams = [
     'detail_model' => $filters['model'],
 ];
 $salesFilter = md_filter_sql($filters, 'sale', $salesParams);
-$salesDateExpr = md_sale_revenue_date_sql('s');
-$salesDateWithImportExpr = "COALESCE(s.payment_confirmed_at,s.transaction_date,s.imported_at)";
-$salesWhere = ["{$salesDateWithImportExpr} BETWEEN :sales_start AND :sales_end"];
+$salesWhere = ["s.transaction_date BETWEEN :sales_start AND :sales_end"];
 if ($salesStatus === 'approved') $salesWhere[] = md_approved_sql('s');
 if ($salesStatus === 'refunded') $salesWhere[] = md_refund_sql('s');
 if ($salesQuery !== '') {
@@ -372,7 +442,7 @@ $salesSql = "
            COALESCE(NULLIF(s.utm_content,''), NULLIF(u_detail.utm_content,'')) AS detail_utm_content
       {$salesFromSql}
      WHERE {$salesWhereSql}
-  ORDER BY {$salesDateWithImportExpr} DESC, s.id DESC
+  ORDER BY s.transaction_date DESC, s.id DESC
      LIMIT {$salesPerPage} OFFSET {$salesOffset}
 ";
 $salesStmt = $pdo->prepare($salesSql);
@@ -381,7 +451,7 @@ $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $unattributedParams=['model'=>$filters['model'],'start'=>$period['start'].' 00:00:00','end'=>$period['end'].' 23:59:59'];
 $unattributedProduct='';
 if($filters['product']!==''){$unattributedProduct=' AND s.product_name=:product';$unattributedParams['product']=$filters['product'];}
-$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND {$salesDateExpr} BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY {$salesDateExpr} DESC LIMIT 50",$unattributedParams);
+$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.transaction_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.transaction_date DESC LIMIT 50",$unattributedParams);
 $manualReturn=$_GET;unset($manualReturn['manual_ok'],$manualReturn['manual_err']);$manualReturnQuery=http_build_query($manualReturn);
 
 $metricCards = [
