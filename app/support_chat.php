@@ -298,6 +298,26 @@ function support_agent_is_closing_message(string $body): bool
     return false;
 }
 
+function support_agent_is_resolution_update(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^a-z0-9\s]+/',' ',$b));$b=(string)preg_replace('/\s+/',' ',$b);
+    if($b===''||strlen($b)>180)return false;
+    if(preg_match('/\b(nao|n)\s+(consegui|deu certo|funcionou|resolveu|resolvido)\b/',$b))return false;
+    foreach(['consegui','deu certo','funcionou','resolvido','resolveu','consegui o acesso','agora foi','ja consegui','ja deu certo'] as $term)if(str_contains($b,$term))return true;
+    return false;
+}
+
+function support_agent_is_deferred_no_help(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^a-z0-9\s]+/',' ',$b));$b=(string)preg_replace('/\s+/',' ',$b);
+    if($b===''||strlen($b)>220)return false;
+    if((str_contains($b,'estou assistindo')||str_contains($b,'vou assistir')||str_contains($b,'assistindo as aulas')||str_contains($b,'assistindo aulas'))&&(str_contains($b,'depois')||str_contains($b,'terminar')||str_contains($b,'chamo')))return true;
+    if((str_contains($b,'depois')||str_contains($b,'mais tarde')||str_contains($b,'quando terminar'))&&(str_contains($b,'eu chamo')||str_contains($b,'te chamo')||str_contains($b,'chamo voces')||str_contains($b,'chamo voce')))return true;
+    return false;
+}
+
 function support_chat_last_message(PDO $pdo,int $conversationId): ?array
 {
     $st=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c ORDER BY id DESC LIMIT 1");
@@ -318,6 +338,14 @@ function support_chat_has_pending_close_prompt(PDO $pdo,int $conversationId): bo
     $last=support_chat_last_message($pdo,$conversationId);
     $meta=support_chat_message_meta($last);
     return !empty($meta['close_prompt'])&&($last['sender_type']??'')!=='student';
+}
+
+function support_chat_previous_close_prompt(PDO $pdo,int $conversationId,int $beforeMessageId): bool
+{
+    $st=$pdo->prepare("SELECT metadata_json FROM support_messages WHERE conversation_id=:c AND id<:id AND sender_type<>'student' ORDER BY id DESC LIMIT 1");
+    $st->execute(['c'=>$conversationId,'id'=>$beforeMessageId]);
+    $meta=json_decode((string)$st->fetchColumn(),true);
+    return is_array($meta)&&!empty($meta['close_prompt']);
 }
 
 function support_chat_send_close_prompt(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte'): void
@@ -728,13 +756,18 @@ function support_agent_split_answer(string $body,int $limit=650): array
     if($rest!=='')$parts[]=trim($rest);return array_values(array_filter($parts));
 }
 
-function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply,bool $sendFollowup=true): void
+function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply,bool $sendFollowup=true,bool $markClosePrompt=false): void
 {
     $prepared=support_agent_prepare_answer($answer,$firstAgentReply);$parts=support_agent_split_answer((string)$prepared['body']);
-    foreach($parts as $i=>$part){$last=$i===count($parts)-1;support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$part,[],$last?$prepared['metadata']:[]);if(!$last){support_chat_typing($pdo,$conversationId,'bot','Agente de suporte');sleep(random_int(4,6));}}
-    if($sendFollowup&&!preg_match('/como posso ajudar|em que posso ajudar/iu',(string)$prepared['body'])){
+    $answerAsksClose=(bool)preg_match('/como posso ajudar|em que posso ajudar|posso ajudar.{0,50}(mais|alguma coisa)|alguma duvida|mais alguma coisa/iu',(string)$prepared['body']);
+    foreach($parts as $i=>$part){$last=$i===count($parts)-1;$metadata=$last?$prepared['metadata']:[];if($last&&($markClosePrompt||$answerAsksClose))$metadata['close_prompt']=true;support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$part,[],$metadata);if(!$last){support_chat_typing($pdo,$conversationId,'bot','Agente de suporte');sleep(random_int(4,6));}}
+    if($markClosePrompt||$answerAsksClose){
         $conv=support_chat_detail($pdo,$conversationId);
-        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!=='')support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$follow);
+        if($conv)support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent','Agente de suporte','ask_more_help',['source'=>'agent_answer']);
+    }
+    if($sendFollowup&&!$answerAsksClose&&!$markClosePrompt){
+        $conv=support_chat_detail($pdo,$conversationId);
+        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!==''){support_chat_send($pdo,$conversationId,'bot','support_agent','Agente de suporte',$follow,[],['close_prompt'=>true]);support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent','Agente de suporte','ask_more_help',['source'=>'agent_followup']);}
     }
 }
 
@@ -1140,8 +1173,21 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
         if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
         if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);support_agent_finish_message($pdo,$messageId);return;}
         if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);support_agent_finish_message($pdo,$messageId);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
-        if(support_agent_is_closing_message($body)){
+        $hadClosePrompt=support_chat_previous_close_prompt($pdo,$conversationId,$messageId);
+        if(support_agent_is_closing_message($body)&&$hadClosePrompt){
             support_chat_close_with_feedback($pdo,$conversationId,'bot','Agente de suporte',true);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(support_agent_is_deferred_no_help($body)){
+            $name=trim((string)($conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?'Combinado, '.$first.'. ':'Combinado. ').'Fique a vontade para assistir as aulas no seu ritmo. Quando precisar, e so me chamar por aqui.',false,false,true);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(support_agent_is_closing_message($body)||support_agent_is_resolution_update($body)){
+            $name=trim((string)($conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?'Que otimo, '.$first.'. ':'Que otimo. ').'Posso ajudar com mais alguma coisa?',false,false);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
             support_agent_finish_message($pdo,$messageId);return;
         }
         $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
