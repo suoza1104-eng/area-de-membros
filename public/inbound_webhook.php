@@ -116,7 +116,7 @@ if ((string)($ihw['evento'] ?? '') === 'FIREPAY') {
         echo json_encode(['ok'=>false,'message'=>$e->getMessage()], JSON_UNESCAPED_UNICODE);
     } catch (Throwable $e) {
         $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='erro',erro_msg=:message,processado_em=NOW() WHERE id=:id")
-            ->execute([':message'=>'Falha interna ao processar Firepay', ':id'=>$recId]);
+            ->execute([':message'=>'Falha interna ao processar Firepay: ' . $e->getMessage(), ':id'=>$recId]);
         app_log('Falha no webhook Firepay', ['inbound_id'=>(int)$ihw['id'],'receipt_id'=>$recId,'error'=>$e->getMessage()]);
         http_response_code(500);
         echo json_encode(['ok'=>false,'message'=>'Falha ao processar webhook Firepay']);

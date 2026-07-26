@@ -118,6 +118,37 @@ function firepay_offer_candidates(array $payload): array
     return array_values(array_unique(array_filter($candidates, static fn($v) => trim((string)$v) !== '')));
 }
 
+function firepay_ensure_hotmart_compat_schema(PDO $pdo): void
+{
+    foreach ([
+        "ALTER TABLE hotmart_sales_live ADD COLUMN payment_type VARCHAR(40) NULL AFTER price_name",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN installments_number INT UNSIGNED NULL AFTER payment_type",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN sale_origin VARCHAR(100) NULL AFTER installments_number",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN sales_channel VARCHAR(40) NOT NULL DEFAULT 'hotmart' AFTER sale_origin",
+        "ALTER TABLE hotmart_sales_live ADD KEY idx_hotmart_live_payment (payment_type)",
+    ] as $migration) {
+        try { $pdo->exec($migration); } catch (Throwable $e) {}
+    }
+}
+
+function firepay_find_matching_user(PDO $pdo, string $emailNorm, string $phoneNorm): array
+{
+    if ($emailNorm !== '') {
+        $stmt = $pdo->prepare(
+            "SELECT id, nome, email, telefone, utm_source, utm_medium, utm_campaign, utm_term, utm_content
+             FROM users
+             WHERE LOWER(TRIM(email)) = :email
+             ORDER BY id DESC
+             LIMIT 1"
+        );
+        $stmt->execute([':email' => $emailNorm]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) return ['user' => $row, 'method' => 'email'];
+    }
+
+    return hotmart_find_matching_user($pdo, '', $phoneNorm);
+}
+
 function firepay_try_grant_lifetime(PDO $pdo, array $payload, string $transactionCode, string $status, string $email, string $phoneRaw, ?array $matchedUser): array
 {
     foreach (firepay_offer_candidates($payload) as $offerCode) {
@@ -144,6 +175,7 @@ function firepay_try_grant_lifetime(PDO $pdo, array $payload, string $transactio
 function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, int $inboundWebhookId): array
 {
     metrics_ensure_schema($pdo);
+    firepay_ensure_hotmart_compat_schema($pdo);
     firepay_ensure_schema($pdo);
 
     $transactionId = firepay_scalar($payload, 'id');
@@ -160,7 +192,7 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
     $email = normalize_email_value($client['email'] ?? '');
     $phoneRaw = firepay_scalar($client, 'phone');
     $phoneNorm = normalize_phone_value($phoneRaw);
-    $matched = hotmart_find_matching_user($pdo, $email, $phoneNorm);
+    $matched = firepay_find_matching_user($pdo, $email, $phoneNorm);
     $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
     $receivedAt = date('Y-m-d H:i:s');
     $fingerprint = hash('sha256', $inboundWebhookId . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
