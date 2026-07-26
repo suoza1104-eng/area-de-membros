@@ -177,6 +177,7 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
     metrics_ensure_schema($pdo);
     firepay_ensure_hotmart_compat_schema($pdo);
     firepay_ensure_schema($pdo);
+    course_access_ensure_schema($pdo);
 
     $transactionId = firepay_scalar($payload, 'id');
     if ($transactionId === '') throw new InvalidArgumentException('Firepay: id da transacao ausente.');
@@ -271,7 +272,7 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
             $lifetimeAttempt = firepay_try_grant_lifetime($pdo, $payload, $transactionCode, $providerStatus, $email, $phoneRaw, $matchedUser);
         }
 
-        $pdo->commit();
+        if ($pdo->inTransaction()) $pdo->commit();
         return ['transaction_id'=>$transactionId, 'normalized_status'=>$normalizedStatus,
             'matched_user_id'=>(int)($matchedUser['id'] ?? 0), 'match_method'=>(string)($matched['method'] ?? 'none'),
             'lifetime_granted'=>!empty($lifetimeAttempt['granted']), 'lifetime_attempt'=>$lifetimeAttempt];
