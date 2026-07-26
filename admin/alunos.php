@@ -358,6 +358,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Throwable $e) {
             $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
         }
+    } elseif ($acao === 'remover_vitalicio') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            if ($uid <= 0) throw new RuntimeException('Aluno invalido.');
+            $stUser = $pdo->prepare("SELECT id FROM users WHERE id = :id LIMIT 1");
+            $stUser->execute([':id' => $uid]);
+            if (!$stUser->fetchColumn()) throw new RuntimeException('Aluno nao encontrado.');
+            $del = $pdo->prepare("DELETE FROM course_lifetime_access WHERE user_id = :uid");
+            $del->execute([':uid' => $uid]);
+            if (function_exists('remover_tag_usuario')) {
+                remover_tag_usuario($uid, 'ACESSO_VITALICIO');
+                remover_tag_usuario($uid, 'INSCRICAO_VITALICIA');
+            }
+            $msgPost = 'Acesso vitalicio removido. Registros apagados: ' . (int)$del->rowCount() . '.';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
     } elseif ($acao === 'gerar_cert_manual') {
         $uid = (int)($_POST['uid'] ?? 0);
         if ($uid <= 0) {
