@@ -1,0 +1,12 @@
+<IfModule mod_security2.c>
+  <Files "firepay_webhook.php">
+    SecRuleEngine Off
+  </Files>
+</IfModule>
+
+<IfModule mod_security.c>
+  <Files "firepay_webhook.php">
+    SecFilterEngine Off
+    SecFilterScanPOST Off
+  </Files>
+</IfModule>
