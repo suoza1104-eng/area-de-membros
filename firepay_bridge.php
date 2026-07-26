@@ -1,0 +1,124 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * Ponte temporaria para webhooks Firepay.
+ *
+ * Instalar este arquivo no dominio/VPS que nao esta atras do ModSecurity da
+ * HostGator, por exemplo:
+ * https://professoremersonleite.site/firepay_bridge.php
+ */
+
+const FIREPAY_BRIDGE_TARGET = 'https://professoremersonleite.com/area_membros/firepay_mcqdc.php';
+const FIREPAY_BRIDGE_LOG = __DIR__ . '/firepay_bridge.log';
+
+header('Content-Type: application/json; charset=utf-8');
+
+function bridge_log(string $message, array $context = []): void
+{
+    $line = '[' . date('Y-m-d H:i:s') . '] ' . $message;
+    if ($context) {
+        $line .= ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    @file_put_contents(FIREPAY_BRIDGE_LOG, $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+}
+
+function bridge_json_response(int $status, array $body): void
+{
+    http_response_code($status);
+    echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function bridge_sanitize_payload(array $payload): array
+{
+    // Campos operacionais que nao sao usados para liberar acesso e podem
+    // aumentar a chance de bloqueio por WAF ao repassar para a HostGator.
+    unset($payload['pix_copia_cola'], $payload['deny_reason']);
+    return $payload;
+}
+
+function bridge_forward(string $jsonBody): array
+{
+    if (!function_exists('curl_init')) {
+        return ['ok' => false, 'status' => 0, 'body' => '', 'error' => 'curl indisponivel'];
+    }
+
+    $ch = curl_init(FIREPAY_BRIDGE_TARGET);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $jsonBody,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'User-Agent: FirepayBridge/1.0',
+            'X-Firepay-Bridge: professoremersonleite.site',
+        ],
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_FOLLOWLOCATION => false,
+    ]);
+
+    $body = (string)curl_exec($ch);
+    $error = curl_error($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    return [
+        'ok' => $status >= 200 && $status < 300,
+        'status' => $status,
+        'body' => $body,
+        'error' => $error,
+    ];
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+    bridge_json_response(405, ['ok' => false, 'message' => 'Use POST']);
+}
+
+$rawBody = file_get_contents('php://input') ?: '';
+if (trim($rawBody) === '') {
+    bridge_log('payload vazio');
+    bridge_json_response(400, ['ok' => false, 'message' => 'Payload vazio']);
+}
+
+$payload = json_decode($rawBody, true);
+if (!is_array($payload)) {
+    bridge_log('json invalido', ['sha256' => hash('sha256', $rawBody)]);
+    bridge_json_response(400, ['ok' => false, 'message' => 'JSON invalido']);
+}
+
+$transactionId = isset($payload['id']) && is_scalar($payload['id']) ? (string)$payload['id'] : '';
+$status = isset($payload['status']) && is_scalar($payload['status']) ? (string)$payload['status'] : '';
+$forwardBody = json_encode(bridge_sanitize_payload($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if (!is_string($forwardBody) || $forwardBody === '') {
+    bridge_log('falha ao recodificar payload', ['transaction' => $transactionId]);
+    bridge_json_response(400, ['ok' => false, 'message' => 'Falha ao preparar payload']);
+}
+
+$result = bridge_forward($forwardBody);
+bridge_log('firepay encaminhado', [
+    'transaction' => $transactionId,
+    'status' => $status,
+    'target_status' => $result['status'],
+    'ok' => $result['ok'],
+    'error' => $result['error'],
+]);
+
+if (!$result['ok']) {
+    bridge_json_response(502, [
+        'ok' => false,
+        'message' => 'Falha ao encaminhar webhook',
+        'target_status' => $result['status'],
+        'target_error' => $result['error'],
+        'target_body' => substr($result['body'], 0, 500),
+    ]);
+}
+
+$decodedTarget = json_decode($result['body'], true);
+if (is_array($decodedTarget)) {
+    bridge_json_response(200, ['ok' => true, 'bridge' => true, 'target' => $decodedTarget]);
+}
+
+bridge_json_response(200, ['ok' => true, 'bridge' => true, 'target_body' => $result['body']]);
