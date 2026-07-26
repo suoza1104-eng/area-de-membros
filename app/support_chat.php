@@ -263,14 +263,37 @@ function support_chat_first_name(array $conv): string
     return $name!==''?(explode(' ',$name)[0]??''):'';
 }
 
+function support_chat_render_template(string $text,array $conv): string
+{
+    $name=trim((string)($conv['user_name']??''));
+    $first=support_chat_first_name($conv);
+    $vars=[
+        'nome'=>$name,
+        'primeiro_nome'=>$first,
+        'email'=>trim((string)($conv['user_email']??'')),
+        'telefone'=>trim((string)($conv['user_phone']??'')),
+        'id_aluno'=>(string)($conv['user_id']??''),
+        'turma'=>trim((string)($conv['user_turma']??$conv['codigo_turma']??$conv['turma']??'')),
+        'codigo_turma'=>trim((string)($conv['user_turma']??$conv['codigo_turma']??$conv['turma']??'')),
+    ];
+    $map=[];
+    foreach($vars as $key=>$value){
+        $map['{{'.$key.'}}']=$value;
+        $map['{'.$key.'}']=$value;
+    }
+    $rendered=strtr($text,$map);
+    $rendered=(string)preg_replace('/[ \t]+([,.;!?])/u','$1',$rendered);
+    $rendered=(string)preg_replace('/^\s*[,;]\s*/u','',$rendered);
+    return trim($rendered);
+}
+
 function support_chat_random_followup(PDO $pdo,array $conv): string
 {
     $raw=(string)get_setting('support_chat_followup_variations_json','');
     $items=json_decode($raw,true);
     if(!is_array($items)||!$items)$items=['Te ajudo em algo mais, {primeiro_nome}?','Posso ajudar com mais alguma coisa, {primeiro_nome}?'];
     $text=(string)$items[array_rand($items)];
-    $first=support_chat_first_name($conv);
-    return trim(str_replace('{primeiro_nome}',$first!==''?$first:'',str_replace(', {primeiro_nome}', $first!==''?', {primeiro_nome}':'', $text)));
+    return support_chat_render_template($text,$conv);
 }
 
 function support_agent_is_closing_message(string $body): bool
@@ -473,6 +496,7 @@ function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $a
     if($sendClosing){
         $message=trim((string)get_setting('support_chat_closing_message','Obrigado pelo contato. Fico a disposicao sempre que precisar.'));
         if($message==='')$message='Obrigado pelo contato. Fico a disposicao sempre que precisar.';
+        $message=support_chat_render_template($message,$conv);
         support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,$message,[],[
             'feedback'=>['prompt'=>'Como foi seu atendimento?','scale'=>[0,1,2,3,4,5],'conversation_id'=>$conversationId],
         ]);
@@ -497,6 +521,7 @@ function support_chat_close_for_human_inactivity(PDO $pdo,int $conversationId): 
     $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
     $message=trim((string)get_setting('support_chat_human_idle_message','Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.'));
     if($message==='')$message='Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.';
+    $message=support_chat_render_template($message,$conv);
     support_chat_send($pdo,$conversationId,'bot','support_inactivity','Central de suporte',$message,[],['closed_by_inactivity'=>true]);
     $pdo->prepare("UPDATE support_conversations SET status='closed',stage='agent',assigned_to=NULL,assigned_name=NULL,closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
     support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),'bot','support_inactivity','Central de suporte','human_inactivity',['previous_assigned_name'=>(string)($conv['assigned_name']??'')]);
@@ -644,7 +669,8 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
 
 function support_chat_detail(PDO $pdo,int $conversationId): ?array
 {
-    $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.id=:id LIMIT 1");
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.id=:id LIMIT 1");
     $st->execute(['id'=>$conversationId]);$row=$st->fetch(PDO::FETCH_ASSOC);if(!$row)return null;return array_merge($row,support_chat_user_app_status($pdo,(int)($row['user_id']??0)));
 }
 
