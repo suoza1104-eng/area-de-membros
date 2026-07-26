@@ -7,6 +7,7 @@ proteger_aluno();
 $pdo = getPDO();
 support_chat_ensure_schema($pdo);
 support_chat_auto_close_idle($pdo);
+support_chat_touch_student_presence($pdo, (int)($_SESSION['aluno_id'] ?? 0));
 
 if (empty($_SESSION['support_chat_public_csrf'])) {
     $_SESSION['support_chat_public_csrf'] = bin2hex(random_bytes(24));

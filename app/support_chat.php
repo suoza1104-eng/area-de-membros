@@ -665,7 +665,7 @@ function support_chat_user_app_status(PDO $pdo,int $userId): array
 function support_chat_touch_student_presence(PDO $pdo,int $userId): void
 {
     if($userId<=0||!support_chat_table_exists($pdo,'support_conversations'))return;
-    try{$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE user_id=:u AND status<>'closed'")->execute(['u'=>$userId]);}catch(Throwable $ignored){}
+    try{$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE user_id=:u")->execute(['u'=>$userId]);}catch(Throwable $ignored){}
 }
 
 function support_chat_presence_status(PDO $pdo,int $userId,string $conversationSeenAt=''): array
