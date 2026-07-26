@@ -96,7 +96,7 @@ if ((string)($ihw['evento'] ?? '') === 'FIREPAY') {
             $rawBody !== '' ? $rawBody : (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             (int)$ihw['id']
         );
-        $isMapped = ($result['normalized_status'] ?? '') === 'APPROVED';
+        $isMapped = ($result['normalized_status'] ?? '') !== 'UNKNOWN';
         $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status=:status,user_id=:user_id,erro_msg=:message,processado_em=NOW() WHERE id=:id")
             ->execute([
                 ':status'=>$isMapped ? 'processado' : 'ignorado',
@@ -108,7 +108,7 @@ if ((string)($ihw['evento'] ?? '') === 'FIREPAY') {
             ->execute([':id'=>(int)$ihw['id']]);
         http_response_code(200);
         echo json_encode(['ok'=>true,'processed'=>$recId,'transaction'=>$result['transaction_id'],
-            'status'=>$result['normalized_status']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            'status'=>$result['normalized_status'], 'lifetime_granted'=>!empty($result['lifetime_granted'])], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     } catch (InvalidArgumentException $e) {
         $pdo->prepare("UPDATE inbound_webhook_recebimentos SET status='erro',erro_msg=:message,processado_em=NOW() WHERE id=:id")
             ->execute([':message'=>$e->getMessage(), ':id'=>$recId]);

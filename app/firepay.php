@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/metrics.php';
+require_once __DIR__ . '/course_access.php';
 
 function firepay_ensure_schema(PDO $pdo): void
 {
@@ -73,6 +74,11 @@ function firepay_normalized_status(string $status): string
 {
     $value = strtolower(trim($status));
     if ($value === 'paid') return 'APPROVED';
+    if (in_array($value, ['waiting', 'waiting gateway', 'waiting_gateway', 'overdue', 'expired'], true)) return 'PENDING';
+    if (in_array($value, ['failed', 'canceled', 'cancelled'], true)) return 'CANCELED';
+    if ($value === 'chargeback') return 'CHARGEBACK';
+    if ($value === 'refunded') return 'REFUNDED';
+    if ($value === 'abandoned') return 'ABANDONED';
     return 'UNKNOWN';
 }
 
@@ -80,6 +86,55 @@ function firepay_scalar(array $data, string $key): string
 {
     $value = $data[$key] ?? '';
     return is_scalar($value) ? trim((string)$value) : '';
+}
+
+function firepay_add_offer_candidate(array &$candidates, string $value, string $prefix = ''): void
+{
+    $value = trim($value);
+    if ($value === '') return;
+    foreach (course_access_offer_codes($value) as $part) {
+        $candidates[] = $part;
+        if ($prefix !== '') $candidates[] = $prefix . ':' . $part;
+    }
+}
+
+function firepay_offer_candidates(array $payload): array
+{
+    $product = is_array($payload['product'] ?? null) ? $payload['product'] : [];
+    $orderBumps = is_array($payload['order_bumps'] ?? null) ? $payload['order_bumps'] : [];
+    if (!$orderBumps && is_array($payload['order_bump'] ?? null)) $orderBumps = [$payload['order_bump']];
+
+    $candidates = [];
+    foreach ($orderBumps as $bump) {
+        if (!is_array($bump)) continue;
+        firepay_add_offer_candidate($candidates, firepay_scalar($bump, 'product_id'), 'bump');
+        firepay_add_offer_candidate($candidates, firepay_scalar($bump, 'product_id'), 'order_bump');
+    }
+    firepay_add_offer_candidate($candidates, firepay_scalar($payload, 'checkout_id'), 'checkout');
+    firepay_add_offer_candidate($candidates, firepay_scalar($product, 'id'), 'product');
+    firepay_add_offer_candidate($candidates, firepay_scalar($product, 'integration_id'), 'integration');
+    firepay_add_offer_candidate($candidates, firepay_scalar($product, 'turmas'), 'turma');
+
+    return array_values(array_unique(array_filter($candidates, static fn($v) => trim((string)$v) !== '')));
+}
+
+function firepay_try_grant_lifetime(PDO $pdo, array $payload, string $transactionCode, string $status, string $email, string $phoneRaw, ?array $matchedUser): array
+{
+    foreach (firepay_offer_candidates($payload) as $offerCode) {
+        $attempt = course_access_try_grant_lifetime_purchase($pdo, [
+            'user_id' => isset($matchedUser['id']) ? (int)$matchedUser['id'] : null,
+            'offer_code' => $offerCode,
+            'transaction_code' => $transactionCode,
+            'status' => $status,
+            'event' => 'FIREPAY_PAID',
+            'email' => $email,
+            'phone' => $phoneRaw,
+            'payload' => $payload,
+            'source' => 'firepay',
+        ]);
+        if (!empty($attempt['granted'])) return $attempt;
+    }
+    return ['granted' => false, 'reason' => 'no_firepay_offer_candidate_matched', 'candidates' => firepay_offer_candidates($payload)];
 }
 
 /**
@@ -118,8 +173,8 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
             ON DUPLICATE KEY UPDATE processed_at=NOW(),process_message='Evento repetido; transacao mantida idempotente'");
         $event->execute([
             ':inbound'=>$inboundWebhookId, ':fingerprint'=>$fingerprint, ':transaction'=>$transactionId,
-            ':provider_status'=>$providerStatus, ':process_status'=>$normalizedStatus === 'APPROVED' ? 'success' : 'ignored',
-            ':message'=>$normalizedStatus === 'APPROVED' ? 'Venda Firepay paga processada' : 'Status ainda nao mapeado; payload preservado',
+            ':provider_status'=>$providerStatus, ':process_status'=>$normalizedStatus !== 'UNKNOWN' ? 'success' : 'ignored',
+            ':message'=>$normalizedStatus === 'APPROVED' ? 'Venda Firepay paga processada' : ($normalizedStatus !== 'UNKNOWN' ? 'Status Firepay mapeado sem liberar venda aprovada' : 'Status ainda nao mapeado; payload preservado'),
             ':payload'=>$rawPayload,
         ]);
 
@@ -160,6 +215,7 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
             ':order_bumps'=>json_encode($orderBumps, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ':payload'=>$rawPayload,
         ]);
 
+        $lifetimeAttempt = ['granted' => false, 'reason' => 'payment_not_approved'];
         if ($normalizedStatus === 'APPROVED') {
             $transactionCode = 'firepay:' . $transactionId;
             $gross = ((int)($payload['price'] ?? 0)) / 100;
@@ -180,11 +236,13 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
                     ':installments'=>(int)($payload['installments'] ?? 0) ?: null,
                     ':origin'=>firepay_scalar($origin, 'slug') ?: firepay_scalar($origin, 'description') ?: null,
                     ':transaction'=>$transactionCode]);
+            $lifetimeAttempt = firepay_try_grant_lifetime($pdo, $payload, $transactionCode, $providerStatus, $email, $phoneRaw, $matchedUser);
         }
 
         $pdo->commit();
         return ['transaction_id'=>$transactionId, 'normalized_status'=>$normalizedStatus,
-            'matched_user_id'=>(int)($matchedUser['id'] ?? 0), 'match_method'=>(string)($matched['method'] ?? 'none')];
+            'matched_user_id'=>(int)($matchedUser['id'] ?? 0), 'match_method'=>(string)($matched['method'] ?? 'none'),
+            'lifetime_granted'=>!empty($lifetimeAttempt['granted']), 'lifetime_attempt'=>$lifetimeAttempt];
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;

@@ -14,9 +14,10 @@ Primeira etapa implantada no código em 04/07/2026:
 - associação com usuário existente por telefone e, depois, e-mail;
 - processamento financeiro de `status: paid` como `APPROVED`;
 - espelhamento de vendas pagas nos relatórios atuais com canal `firepay`;
-- preservação, sem aprovação automática, de qualquer status ainda desconhecido.
+- preservação, sem aprovação automática, de qualquer status ainda desconhecido;
+- liberação de acesso vitalício para aluno existente quando uma venda `paid` traz um identificador Firepay cadastrado nos códigos de oferta vitalícia da turma.
 
-Nesta etapa a integração não cria matrícula nem libera acesso automaticamente. Essa consequência será adicionada depois que a relação entre `integration_id`, produto e turma for validada com eventos reais.
+Nesta etapa a integração financeira não cria matrícula nova para comprador inexistente. Ela relaciona aluno existente por telefone/e-mail, registra a venda e libera acesso vitalício quando algum identificador aceito bate com a turma do aluno.
 
 ## Objetivo
 
@@ -58,6 +59,8 @@ Documentação informada: https://fpy.gitbook.io/firepay/configuracoes/integraco
 | `order_bumps` | Itens adicionais da compra | tabela/JSON de itens da transação |
 | `presented_orderbump` | Order bump apresentado | metadado comercial |
 | `presented_upsell` | Upsell apresentado | metadado comercial |
+
+Para liberação vitalícia, o adaptador testa os seguintes candidatos contra `turmas.lifetime_offer_codes`: `order_bumps[].product_id`, `bump:{product_id}`, `order_bump:{product_id}`, `checkout_id`, `checkout:{checkout_id}`, `product.id`, `product:{id}`, cada item de `product.integration_id`, `integration:{id}`, cada item de `product.turmas` e `turma:{id}`.
 
 Os campos `formatted_price`, `formatted_product_price` e `formatted_interest_fee` são apenas representações para exibição. Cálculos e relatórios devem usar os valores inteiros em centavos.
 
@@ -101,7 +104,7 @@ Os relatórios não devem depender diretamente dos textos particulares de cada p
 - `CHARGEBACK` — contestação/estorno;
 - `ABANDONED` — carrinho abandonado.
 
-No exemplo recebido, `paid` será mapeado para `APPROVED`. Os demais valores Firepay ainda precisam ser confirmados com payloads/documentação específica. Carrinho abandonado é evento comercial, não venda, e não deve compor faturamento.
+No exemplo recebido, `paid` será mapeado para `APPROVED`. Também são reconhecidos `waiting`, `waiting gateway`, `overdue` e `expired` como `PENDING`; `failed` e `canceled` como `CANCELED`; `chargeback` como `CHARGEBACK`; `refunded` como `REFUNDED`; e `abandoned` como `ABANDONED`. Carrinho abandonado é evento comercial, não venda, e não deve compor faturamento.
 
 ## Processamento seguro do webhook
 
