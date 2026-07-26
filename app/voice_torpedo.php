@@ -819,7 +819,6 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
     ];
     $audioUrl = trim((string)($args['audio_url'] ?? ''));
     if (!empty($args['answering_machine_detection'])) $body['answering_machine_detection'] = 'detect';
-    if ($audioUrl !== '') $body['audio_url'] = $audioUrl;
     if (!empty($args['time_limit_secs'])) $body['time_limit_secs'] = max(10, min(14400, (int)$args['time_limit_secs']));
     if (!empty($args['timeout_secs'])) $body['timeout_secs'] = max(5, min(120, (int)$args['timeout_secs']));
     $settings = [
@@ -884,6 +883,25 @@ function voice_telnyx_speak_attempt(PDO $pdo, array $attempt, array $payload = [
     $result = voice_telnyx_request($pdo, 'POST', '/v2/calls/' . rawurlencode($callControlId) . '/actions/speak', $body);
     $history = voice_config_array($attempt['provider_response_json'] ?? '{}');
     $history['last_speak_command'] = ['http_status'=>$result['status'],'ok'=>$result['ok'],'sent_at'=>date('Y-m-d H:i:s')];
+    $pdo->prepare("UPDATE voice_call_attempts SET provider_response_json=:r WHERE id=:id")
+        ->execute(['r'=>voice_json($history),'id'=>(int)$attempt['id']]);
+    return $result;
+}
+
+function voice_telnyx_playback_attempt(PDO $pdo, array $attempt, array $payload = []): array
+{
+    $settings = voice_config_array($attempt['settings_json'] ?? '{}');
+    $audioUrl = trim((string)($settings['audio_url'] ?? ''));
+    $callControlId = trim((string)($payload['call_control_id'] ?? $attempt['call_control_id'] ?? ''));
+    if ($audioUrl === '' || $callControlId === '') return ['skipped'=>'missing_audio_or_call_control'];
+    $body = [
+        'audio_url' => $audioUrl,
+        'client_state' => base64_encode(voice_json(['attempt_id'=>(int)$attempt['id'],'action'=>'playback_start'])),
+        'command_id' => bin2hex(random_bytes(16)),
+    ];
+    $result = voice_telnyx_request($pdo, 'POST', '/v2/calls/' . rawurlencode($callControlId) . '/actions/playback_start', $body);
+    $history = voice_config_array($attempt['provider_response_json'] ?? '{}');
+    $history['last_playback_command'] = ['http_status'=>$result['status'],'ok'=>$result['ok'],'sent_at'=>date('Y-m-d H:i:s'),'audio_url'=>$audioUrl];
     $pdo->prepare("UPDATE voice_call_attempts SET provider_response_json=:r WHERE id=:id")
         ->execute(['r'=>voice_json($history),'id'=>(int)$attempt['id']]);
     return $result;
@@ -1090,9 +1108,13 @@ function voice_apply_attempt_event(PDO $pdo, int $attemptId, string $event, arra
             $st->execute(['id'=>$attemptId]);
             $attempt = $st->fetch(PDO::FETCH_ASSOC) ?: [];
             $settings = voice_config_array($attempt['settings_json'] ?? '{}');
-            if (($settings['message_mode'] ?? 'text_to_speech') !== 'audio_url') voice_telnyx_speak_attempt($pdo, $attempt, $payload);
+            if (($settings['message_mode'] ?? 'text_to_speech') === 'audio_url') {
+                voice_telnyx_playback_attempt($pdo, $attempt, $payload);
+            } else {
+                voice_telnyx_speak_attempt($pdo, $attempt, $payload);
+            }
         } catch (Throwable $e) {
-            $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['speak_error'=>$e->getMessage()]),'id'=>$attemptId]);
+            $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['audio_command_error'=>$e->getMessage()]),'id'=>$attemptId]);
         }
     }
     if ($userId > 0) {
