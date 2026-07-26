@@ -876,10 +876,11 @@ function voice_telnyx_speak_attempt(PDO $pdo, array $attempt, array $payload = [
         'payload' => $message,
         'payload_type' => 'text',
         'language' => (string)($settings['language'] ?? 'pt-BR'),
+        'voice' => trim((string)($settings['voice'] ?? '')) ?: 'female',
+        'service_level' => 'basic',
         'client_state' => base64_encode(voice_json(['attempt_id'=>(int)$attempt['id'],'action'=>'speak'])),
         'command_id' => bin2hex(random_bytes(16)),
     ];
-    if (trim((string)($settings['voice'] ?? '')) !== '') $body['voice'] = trim((string)$settings['voice']);
     $result = voice_telnyx_request($pdo, 'POST', '/v2/calls/' . rawurlencode($callControlId) . '/actions/speak', $body);
     $history = voice_config_array($attempt['provider_response_json'] ?? '{}');
     $history['last_speak_command'] = ['http_status'=>$result['status'],'ok'=>$result['ok'],'sent_at'=>date('Y-m-d H:i:s')];
