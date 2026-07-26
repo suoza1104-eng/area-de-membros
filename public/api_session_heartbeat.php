@@ -5,6 +5,7 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/support_chat.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate');
@@ -28,6 +29,7 @@ if ($userId <= 0) {
 
 // A escrita/fechamento atualiza a atividade do arquivo de sessão.
 $_SESSION['aluno_last_activity'] = time();
+try { support_chat_touch_student_presence(getPDO(), $userId); } catch (Throwable $ignored) {}
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 echo json_encode([

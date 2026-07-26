@@ -636,7 +636,10 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
     $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma,
         (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
         (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
-        FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC,c.id DESC LIMIT 200");$st->execute($params);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];
+        FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC,c.id DESC LIMIT 200");$st->execute($params);$rows=$st->fetchAll(PDO::FETCH_ASSOC)?:[];
+    foreach($rows as &$row)$row=array_merge($row,support_chat_presence_status($pdo,(int)($row['user_id']??0),(string)($row['student_last_seen_at']??'')));
+    unset($row);
+    return $rows;
 }
 
 function support_chat_detail(PDO $pdo,int $conversationId): ?array
@@ -648,14 +651,47 @@ function support_chat_detail(PDO $pdo,int $conversationId): ?array
 function support_chat_user_app_status(PDO $pdo,int $userId): array
 {
     $status=['app_installed'=>0,'push_enabled'=>0];
-    if($userId<=0||!support_chat_table_exists($pdo,'push_devices'))return $status;
-    try{
-        $st=$pdo->prepare("SELECT MAX(installed_at IS NOT NULL AND status='active') app_installed,MAX(status='active' AND notification_permission='granted' AND token IS NOT NULL) push_enabled FROM push_devices WHERE user_id=:u");
-        $st->execute(['u'=>$userId]);$row=$st->fetch(PDO::FETCH_ASSOC)?:[];
-        $status['app_installed']=(int)($row['app_installed']??0)>0?1:0;
-        $status['push_enabled']=(int)($row['push_enabled']??0)>0?1:0;
-    }catch(Throwable $ignored){}
-    return $status;
+    if($userId>0&&support_chat_table_exists($pdo,'push_devices')){
+        try{
+            $st=$pdo->prepare("SELECT MAX(installed_at IS NOT NULL AND status='active') app_installed,MAX(status='active' AND notification_permission='granted' AND token IS NOT NULL) push_enabled FROM push_devices WHERE user_id=:u");
+            $st->execute(['u'=>$userId]);$row=$st->fetch(PDO::FETCH_ASSOC)?:[];
+            $status['app_installed']=(int)($row['app_installed']??0)>0?1:0;
+            $status['push_enabled']=(int)($row['push_enabled']??0)>0?1:0;
+        }catch(Throwable $ignored){}
+    }
+    return array_merge($status,support_chat_presence_status($pdo,$userId));
+}
+
+function support_chat_touch_student_presence(PDO $pdo,int $userId): void
+{
+    if($userId<=0||!support_chat_table_exists($pdo,'support_conversations'))return;
+    try{$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE user_id=:u AND status<>'closed'")->execute(['u'=>$userId]);}catch(Throwable $ignored){}
+}
+
+function support_chat_presence_status(PDO $pdo,int $userId,string $conversationSeenAt=''): array
+{
+    $last=trim($conversationSeenAt);
+    if($userId>0){
+        try{
+            $st=$pdo->prepare("SELECT MAX(student_last_seen_at) FROM support_conversations WHERE user_id=:u");
+            $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
+            if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+        }catch(Throwable $ignored){}
+        if(support_chat_table_exists($pdo,'push_devices')&&support_chat_column_exists($pdo,'push_devices','last_seen_at')){
+            try{
+                $st=$pdo->prepare("SELECT MAX(last_seen_at) FROM push_devices WHERE user_id=:u AND status='active'");
+                $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
+                if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+            }catch(Throwable $ignored){}
+        }
+    }
+    $ts=$last!==''?strtotime($last):0;
+    $seconds=$ts>0?max(0,time()-$ts):null;
+    $threshold=max(60,min(1800,(int)get_setting('support_chat_online_threshold_seconds','180')));
+    $online=$seconds!==null&&$seconds<=$threshold;
+    $label=$online?'Online':'Offline';
+    if(!$online&&$ts>0)$label.=' - visto '.date('d/m H:i',$ts);
+    return ['student_online'=>$online?1:0,'student_presence_label'=>$label,'student_last_seen_at'=>$ts>0?date('Y-m-d H:i:s',$ts):null,'student_last_seen_seconds'=>$seconds];
 }
 
 function support_chat_assign_conversation(PDO $pdo,int $conversationId,string $assignedName,string $actorId,string $actorName,string $reason='manual'): bool
@@ -731,6 +767,8 @@ function support_chat_send(PDO $pdo,int $conversationId,string $senderType,strin
     support_chat_log_event($pdo,'message_sent',$conversationId,0,$senderType,$senderId,$senderName,$type,['message_id'=>$id,'has_attachment'=>!empty($attachment)]);
     $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),stage=IF(status='closed','agent',stage),assigned_to=IF(status='closed',NULL,assigned_to),assigned_name=IF(status='closed',NULL,assigned_name),closed_at=IF(status='closed',NULL,closed_at),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
         ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
+    if($student)$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    elseif($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET admin_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
     if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
     if(!$student && get_setting('support_chat_student_enabled','0')==='1') {
         try { support_chat_push_student($pdo,$conversationId,$id,$body!==''?$body:'Você recebeu um novo anexo.'); }
@@ -799,6 +837,8 @@ function support_chat_mark_read(PDO $pdo,int $conversationId,string $viewer): vo
 function support_chat_typing(PDO $pdo,int $conversationId,string $actor,string $name): void
 {
     $pdo->prepare("INSERT INTO support_typing(conversation_id,actor_type,actor_name,expires_at) VALUES(:c,:a,:n,DATE_ADD(NOW(),INTERVAL 4 SECOND)) ON DUPLICATE KEY UPDATE actor_name=VALUES(actor_name),expires_at=VALUES(expires_at)")->execute(['c'=>$conversationId,'a'=>$actor,'n'=>$name]);
+    if($actor==='student')$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    elseif($actor==='admin')$pdo->prepare("UPDATE support_conversations SET admin_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
 }
 
 function support_chat_typing_state(PDO $pdo,int $conversationId,string $exclude): array
