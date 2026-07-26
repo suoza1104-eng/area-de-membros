@@ -312,6 +312,12 @@ function voice_config_array(?string $json): array
     return is_array($data) ? $data : [];
 }
 
+function voice_text_limit(string $value, int $limit): string
+{
+    if ($limit <= 0) return '';
+    return function_exists('mb_substr') ? mb_substr($value, 0, $limit) : substr($value, 0, $limit);
+}
+
 function voice_provider(PDO $pdo, string $provider = VOICE_PROVIDER_TELNYX): array
 {
     voice_ensure_schema($pdo);
@@ -369,6 +375,30 @@ function voice_normalize_e164(string $phone, string $countryCode = '55'): string
     if (!str_starts_with($digits, $countryCode)) $digits = $countryCode . $digits;
     $e164 = '+' . $digits;
     return preg_match('/^\+[1-9]\d{7,14}$/', $e164) ? $e164 : '';
+}
+
+function voice_destination_country(string $phone): string
+{
+    $digits = preg_replace('/\D+/', '', $phone) ?? '';
+    if (str_starts_with($digits, '55')) return 'BR';
+    if (str_starts_with($digits, '1')) return 'US';
+    return '';
+}
+
+function voice_destination_allowed_by_config(array $provider, string $to): bool
+{
+    $allowed = trim((string)($provider['public']['allowed_destinations'] ?? ''));
+    if ($allowed === '') return true;
+    $country = voice_destination_country($to);
+    $tokens = preg_split('/[\s,;]+/', strtoupper($allowed), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    foreach ($tokens as $token) {
+        $token = trim($token);
+        if ($token === '*') return true;
+        if ($country !== '' && $token === $country) return true;
+        if (str_starts_with($token, '+') && str_starts_with($to, $token)) return true;
+        if (ctype_digit($token) && str_starts_with($to, '+' . $token)) return true;
+    }
+    return false;
 }
 
 function voice_user_phone(array $user): string
@@ -596,7 +626,8 @@ function voice_public_key_parseable(string $publicKey): bool
     $publicKey = trim($publicKey);
     if ($publicKey === '') return false;
     $key = ctype_xdigit($publicKey) ? @hex2bin($publicKey) : base64_decode($publicKey, true);
-    return $key !== false && strlen((string)$key) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES;
+    $expectedBytes = defined('SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES') ? SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES : 32;
+    return $key !== false && strlen((string)$key) === $expectedBytes;
 }
 
 function voice_http_health(string $url, int $timeout = 8): array
@@ -613,7 +644,7 @@ function voice_http_health(string $url, int $timeout = 8): array
     $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $err = curl_error($ch);
     curl_close($ch);
-    return ['ok'=>$status >= 200 && $status < 300, 'status'=>$status, 'error'=>$err, 'body'=>is_string($body) ? mb_substr($body, 0, 300) : ''];
+    return ['ok'=>$status >= 200 && $status < 300, 'status'=>$status, 'error'=>$err, 'body'=>is_string($body) ? voice_text_limit($body, 300) : ''];
 }
 
 function voice_diagnostic_item(string $key, string $label, string $status, string $detail = '', array $meta = []): array
@@ -644,7 +675,18 @@ function voice_telnyx_diagnostics(PDO $pdo): array
     } elseif ($apiOk) {
         try {
             $r = voice_telnyx_request($pdo, 'GET', '/v2/call_control_applications/' . rawurlencode($connectionId), [], $provider);
+            $data = is_array($r['body']['data'] ?? null) ? $r['body']['data'] : [];
             $items[] = voice_diagnostic_item('connection_id', 'Connection ID existe', $r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Call Control Application encontrada.' : 'HTTP ' . (int)$r['status']);
+            if ($r['ok']) {
+                $channelLimit = (int)($data['outbound']['channel_limit'] ?? 0);
+                $localConcurrency = max(1, (int)($cfg['concurrency_limit'] ?? 1));
+                $items[] = voice_diagnostic_item(
+                    'connection_outbound_channel_limit',
+                    'Connection permite chamadas simultaneas',
+                    $channelLimit >= $localConcurrency ? 'ok' : 'warning',
+                    $channelLimit > 0 ? ('Limite Telnyx: ' . $channelLimit . '. Concorrencia local: ' . $localConcurrency . '.') : 'A API nao retornou limite outbound da Connection.'
+                );
+            }
         } catch (Throwable $e) {
             $items[] = voice_diagnostic_item('connection_id', 'Connection ID existe', 'error', $e->getMessage());
         }
@@ -659,6 +701,17 @@ function voice_telnyx_diagnostics(PDO $pdo): array
             $data = is_array($r['body']['data'] ?? null) ? $r['body']['data'] : [];
             $enabled = array_key_exists('enabled', $data) ? (bool)$data['enabled'] : true;
             $items[] = voice_diagnostic_item('outbound_profile', 'Outbound Voice Profile existe', $r['ok'] && $enabled ? 'ok' : 'error', $r['ok'] ? ($enabled ? 'Perfil ativo para saida.' : 'Perfil encontrado, mas desativado.') : 'HTTP ' . (int)$r['status']);
+            if ($r['ok']) {
+                $defaultCountry = preg_replace('/\D+/', '', (string)($cfg['default_country_code'] ?? '55')) ?: '55';
+                $wanted = $defaultCountry === '55' ? 'BR' : strtoupper(voice_destination_country('+' . $defaultCountry) ?: $defaultCountry);
+                $whitelist = is_array($data['whitelisted_destinations'] ?? null) ? array_map('strtoupper', array_map('strval', $data['whitelisted_destinations'])) : [];
+                if ($whitelist) {
+                    $allowed = in_array($wanted, $whitelist, true);
+                    $items[] = voice_diagnostic_item('outbound_profile_destinations', 'Outbound permite destino ' . $wanted, $allowed ? 'ok' : 'error', $allowed ? ('Destino liberado no perfil: ' . implode(', ', $whitelist)) : ('Adicione ' . $wanted . ' em Allowed Destinations do Outbound Voice Profile. Hoje: ' . implode(', ', $whitelist)));
+                } else {
+                    $items[] = voice_diagnostic_item('outbound_profile_destinations', 'Outbound permite destino BR', 'warning', 'A API nao retornou whitelisted_destinations; se aparecer D13, libere BR no Outbound Voice Profile.');
+                }
+            }
         } catch (Throwable $e) {
             $items[] = voice_diagnostic_item('outbound_profile', 'Outbound Voice Profile existe', 'error', $e->getMessage());
         }
@@ -720,6 +773,17 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
     $from = voice_normalize_e164((string)($args['from'] ?? $cfg['default_from_number'] ?? ''), $country);
     $to = voice_normalize_e164((string)($args['to'] ?? ''), $country);
     if ($from === '' || $to === '') throw new InvalidArgumentException('Numero de origem ou destino invalido em E.164.');
+    if (!voice_destination_allowed_by_config($provider, $to)) {
+        throw new RuntimeException('Destino nao permitido nas configuracoes locais de voz. Inclua o pais/prefixo em Destinos permitidos antes de ligar.');
+    }
+    $localConcurrency = max(1, (int)($cfg['concurrency_limit'] ?? 1));
+    $activeStatuses = ['api_requested','api_accepted','initiated','ringing','answered','playing'];
+    $in = implode(',', array_fill(0, count($activeStatuses), '?'));
+    $active = $pdo->prepare("SELECT COUNT(*) FROM voice_call_attempts WHERE status IN ($in) AND created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)");
+    $active->execute($activeStatuses);
+    if ((int)$active->fetchColumn() >= $localConcurrency) {
+        throw new RuntimeException('Ja existe chamada de voz ativa no limite de concorrencia configurado. Aguarde finalizar antes de iniciar outra.');
+    }
     $blocked = $pdo->prepare("SELECT id FROM voice_suppression_list WHERE phone_e164=:p AND (permanent=1 OR expires_at>NOW()) LIMIT 1");
     $blocked->execute(['p'=>$to]);
     if ($blocked->fetchColumn()) throw new RuntimeException('Telefone esta na lista de bloqueio de voz.');
@@ -735,14 +799,15 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
         'command_id' => $commandId,
         'client_state' => base64_encode(voice_json(['idempotency_key'=>$idem,'campaign_id'=>(int)($args['campaign_id'] ?? 0),'recipient_id'=>(int)($args['recipient_id'] ?? 0),'user_id'=>(int)($args['user_id'] ?? 0)])),
     ];
+    $audioUrl = trim((string)($args['audio_url'] ?? ''));
     if (!empty($args['answering_machine_detection'])) $body['answering_machine_detection'] = 'detect';
-    if (!empty($args['audio_url'])) $body['audio_url'] = (string)$args['audio_url'];
+    if ($audioUrl !== '') $body['audio_url'] = $audioUrl;
     if (!empty($args['time_limit_secs'])) $body['time_limit_secs'] = max(10, min(14400, (int)$args['time_limit_secs']));
     if (!empty($args['timeout_secs'])) $body['timeout_secs'] = max(5, min(120, (int)$args['timeout_secs']));
     $settings = [
         'message_mode'=>(string)($args['message_mode'] ?? 'text_to_speech'),
         'message'=>(string)($args['message'] ?? ''),
-        'audio_url'=>(string)($args['audio_url'] ?? ''),
+        'audio_url'=>$audioUrl,
         'voice'=>(string)($args['voice'] ?? $cfg['default_voice'] ?? ''),
         'language'=>(string)($args['language'] ?? $cfg['default_language'] ?? 'pt-BR'),
     ];
@@ -812,7 +877,8 @@ function voice_send_test_call(PDO $pdo, string $to, string $message, string $aud
     $to = voice_normalize_e164($to, (string)($provider['public']['default_country_code'] ?? '55'));
     if ($to === '') throw new InvalidArgumentException('Telefone de teste invalido.');
     if (!voice_allowed_test_number($provider, $to)) throw new RuntimeException('Inclua este telefone em Numeros autorizados para teste antes de ligar.');
-    $mode = trim($audioUrl) !== '' ? 'audio_url' : 'text_to_speech';
+    $audioUrl = trim($audioUrl);
+    $mode = $audioUrl !== '' ? 'audio_url' : 'text_to_speech';
     $result = voice_create_telnyx_call($pdo, [
         'to'=>$to,
         'audio_url'=>$mode === 'audio_url' ? $audioUrl : '',
