@@ -872,20 +872,36 @@ function voice_telnyx_speak_attempt(PDO $pdo, array $attempt, array $payload = [
     $message = trim((string)($settings['message'] ?? ''));
     $callControlId = trim((string)($payload['call_control_id'] ?? $attempt['call_control_id'] ?? ''));
     if ($message === '' || $callControlId === '') return ['skipped'=>'missing_tts_or_call_control'];
+    $language = (string)($settings['language'] ?? 'pt-BR');
+    $voice = trim((string)($settings['voice'] ?? ''));
+    if ($voice === '') {
+        $voice = $language === 'pt-BR' ? 'AWS.Polly.Camila-Neural' : 'female';
+    }
     $body = [
         'payload' => $message,
         'payload_type' => 'text',
-        'language' => (string)($settings['language'] ?? 'pt-BR'),
-        'voice' => trim((string)($settings['voice'] ?? '')) ?: 'female',
-        'service_level' => 'basic',
+        'language' => $language,
+        'voice' => $voice,
+        'service_level' => $voice === 'female' || $voice === 'male' ? 'basic' : 'premium',
         'client_state' => base64_encode(voice_json(['attempt_id'=>(int)$attempt['id'],'action'=>'speak'])),
         'command_id' => bin2hex(random_bytes(16)),
     ];
     $result = voice_telnyx_request($pdo, 'POST', '/v2/calls/' . rawurlencode($callControlId) . '/actions/speak', $body);
     $history = voice_config_array($attempt['provider_response_json'] ?? '{}');
-    $history['last_speak_command'] = ['http_status'=>$result['status'],'ok'=>$result['ok'],'sent_at'=>date('Y-m-d H:i:s')];
+    $history['last_speak_command'] = [
+        'http_status'=>$result['status'],
+        'ok'=>$result['ok'],
+        'sent_at'=>date('Y-m-d H:i:s'),
+        'voice'=>$voice,
+        'language'=>$language,
+        'response'=>$result['body'] ?? voice_text_limit((string)($result['raw'] ?? ''), 1000),
+    ];
     $pdo->prepare("UPDATE voice_call_attempts SET provider_response_json=:r WHERE id=:id")
         ->execute(['r'=>voice_json($history),'id'=>(int)$attempt['id']]);
+    if (!$result['ok']) {
+        $detail = voice_error_summary(voice_json(['status'=>$result['status'],'body'=>$result['raw']]), voice_json($result['body'] ?? []));
+        throw new RuntimeException('Telnyx recusou o TTS: HTTP ' . (int)$result['status'] . ($detail !== '' ? ' - ' . $detail : ''));
+    }
     return $result;
 }
 
@@ -902,9 +918,19 @@ function voice_telnyx_playback_attempt(PDO $pdo, array $attempt, array $payload 
     ];
     $result = voice_telnyx_request($pdo, 'POST', '/v2/calls/' . rawurlencode($callControlId) . '/actions/playback_start', $body);
     $history = voice_config_array($attempt['provider_response_json'] ?? '{}');
-    $history['last_playback_command'] = ['http_status'=>$result['status'],'ok'=>$result['ok'],'sent_at'=>date('Y-m-d H:i:s'),'audio_url'=>$audioUrl];
+    $history['last_playback_command'] = [
+        'http_status'=>$result['status'],
+        'ok'=>$result['ok'],
+        'sent_at'=>date('Y-m-d H:i:s'),
+        'audio_url'=>$audioUrl,
+        'response'=>$result['body'] ?? voice_text_limit((string)($result['raw'] ?? ''), 1000),
+    ];
     $pdo->prepare("UPDATE voice_call_attempts SET provider_response_json=:r WHERE id=:id")
         ->execute(['r'=>voice_json($history),'id'=>(int)$attempt['id']]);
+    if (!$result['ok']) {
+        $detail = voice_error_summary(voice_json(['status'=>$result['status'],'body'=>$result['raw']]), voice_json($result['body'] ?? []));
+        throw new RuntimeException('Telnyx recusou o audio: HTTP ' . (int)$result['status'] . ($detail !== '' ? ' - ' . $detail : ''));
+    }
     return $result;
 }
 
