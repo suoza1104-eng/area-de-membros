@@ -1195,9 +1195,28 @@ function support_agent_lesson_completed_by_order(array $payload,int $order): boo
     return false;
 }
 
+function support_agent_join_pt(array $items): string
+{
+    $items=array_values(array_filter(array_map('trim',$items),static fn($v)=>$v!==''));
+    $count=count($items);if($count===0)return '';if($count===1)return $items[0];if($count===2)return $items[0].' e '.$items[1];
+    return implode(', ',array_slice($items,0,-1)).' e '.$items[$count-1];
+}
+
+function support_agent_missing_lesson_labels(array $missing): array
+{
+    $labels=[];
+    foreach($missing as $m){
+        if(!is_array($m))continue;
+        $order=(int)($m['ordem']??0);$title=trim((string)($m['titulo']??''));
+        if($order>0)$labels[]='aula '.$order;
+        elseif($title!=='')$labels[]=$title;
+    }
+    return array_values(array_unique($labels));
+}
+
 function support_agent_certificate_answer(array $payload): string
 {
-    $cert=$payload['certificado']??[];$course=$payload['curso']??[];$student=$payload['aluno']??[];
+    $cert=$payload['certificado']??[];$course=$payload['curso']??[];$student=$payload['aluno']??[];$links=$payload['links']??[];
     $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';
     $prefix=$first!==''?$first.', ':'';
     if(!empty($cert['tem_certificado_emitido'])){
@@ -1210,11 +1229,15 @@ function support_agent_certificate_answer(array $payload): string
     if($lessonsOk&&$liveOk&&$lesson5Ok){
         $url=trim((string)($cert['link_emitir']??''));if($url!=='')return $prefix."analisei seu progresso: as aulas obrigatorias estao concluidas, a aula 5 consta como concluida e encontrei registro de live/aula ao vivo. Agora voce precisa emitir o certificado pela tela abaixo, usando a senha da aula 5 e a senha da aula ao vivo quando forem solicitadas.\n".$url;
     }
-    $parts=[];if($required<=0)$parts[]='nao consegui confirmar a lista de aulas obrigatorias no seu cadastro';elseif(!$lessonsOk){$parts[]="voce concluiu {$done} de {$required} aulas obrigatorias";if(is_array($missing)&&$missing){$names=[];foreach(array_slice($missing,0,6) as $m)$names[]=trim((string)($m['titulo']??''));$names=array_values(array_filter($names));if($names)$parts[]='aulas pendentes: '.implode(', ',$names);}}
-    if(!$lesson5Ok)$parts[]='a aula 5 ainda nao consta como concluida; ela e importante porque nela voce recebe uma das senhas';
-    if(!$liveOk)$parts[]='nao encontrei no sistema a confirmacao da sua participacao na aula ao vivo/live; a outra senha vem da live';
-    if(!$parts)$parts[]='ainda nao encontrei no sistema todos os criterios marcados como concluidos';
-    return $prefix."seu certificado ainda nao aparece como emitido. Pelo status atual, para conseguir emitir falta: ".implode('; ',$parts).". Quando concluir esses pontos, acesse a tela de certificado e use a senha da aula 5 junto com a senha da aula ao vivo.";
+    $pending=[];$missingLabels=is_array($missing)?support_agent_missing_lesson_labels($missing):[];
+    if($required<=0)$pending[]='confirmar a lista de aulas obrigatorias no seu cadastro';
+    elseif(!$lessonsOk)$pending[]=$missingLabels?('concluir '.support_agent_join_pt($missingLabels)):("concluir as aulas obrigatorias que faltam ({$done}/{$required})");
+    if(!$liveOk)$pending[]='assistir a aula ao vivo';
+    if(!$lesson5Ok&&!in_array('aula 5',$missingLabels,true))$pending[]='concluir a aula 5, onde fica uma parte da senha';
+    $trail=trim((string)($links['area_do_aluno']??''));if($trail==='')$trail=trim((string)($links['acesso_direto_area_membros']??''));
+    $msg=$prefix."seu certificado ainda nao aparece como emitido. Para liberar a emissao, falta ".support_agent_join_pt($pending?:['concluir os requisitos do certificado']).". Depois disso, use a senha completa: a parte da aula 5 junto com a parte da aula ao vivo.";
+    if($trail!=='')$msg.="\n\nPara finalizar as aulas, acesse por aqui:\n".$trail;
+    return $msg;
 }
 
 function support_agent_certificate_flow(PDO $pdo,int $conversationId,int $messageId,array $conv,array $payload,string $body,bool $firstAgentReply): bool
