@@ -309,6 +309,7 @@ try { $turmas = $pdo->query("SELECT codigo FROM turmas ORDER BY janela_inicio DE
 
 $webhookBaseUrl = rtrim(BASE_URL, '/') . '/inbound_webhook.php?t=';
 $firepayWebhookBaseUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/fp.php?t=';
+$firepayMcqdcWebhookUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/firepay_mcqdc.php';
 
 $currentMenu = 'inbound_webhooks';
 $page_title  = 'Webhooks de Entrada';
@@ -595,6 +596,7 @@ require_once __DIR__ . '/_header.php';
 <script>
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const IW_FIREPAY_WEBHOOK_BASE = <?= json_encode($firepayWebhookBaseUrl) ?>;
+const IW_FIREPAY_MCQDC_WEBHOOK_URL = <?= json_encode($firepayMcqdcWebhookUrl) ?>;
 const EV_CLS = {
     'INSCRITO':'ev-inscrito','INSCRICAO_GRATUITA':'ev-inscrito','INSCRICAO_VITALICIA':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
     'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
@@ -610,7 +612,9 @@ async function iwCarregar() {
         return;
     }
     cont.innerHTML = j.data.map(w => {
-        const url = (w.evento === 'FIREPAY' ? IW_FIREPAY_WEBHOOK_BASE : IW_WEBHOOK_BASE) + w.token;
+        const url = (w.evento === 'FIREPAY' && w.nome === 'FIREPAY - MCQDC')
+            ? IW_FIREPAY_MCQDC_WEBHOOK_URL
+            : ((w.evento === 'FIREPAY' ? IW_FIREPAY_WEBHOOK_BASE : IW_WEBHOOK_BASE) + w.token);
         const evCls = EV_CLS[w.evento] || 'ev-tag';
         return `<div class="iw-card">
             <div class="iw-card-top">
