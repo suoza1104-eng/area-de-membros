@@ -1,12 +1,12 @@
 <IfModule mod_security2.c>
-  <Files "firepay_webhook.php">
+  <FilesMatch "^(inbound_webhook|firepay_webhook)\.php$">
     SecRuleEngine Off
-  </Files>
+  </FilesMatch>
 </IfModule>
 
 <IfModule mod_security.c>
-  <Files "firepay_webhook.php">
+  <FilesMatch "^(inbound_webhook|firepay_webhook)\.php$">
     SecFilterEngine Off
     SecFilterScanPOST Off
-  </Files>
+  </FilesMatch>
 </IfModule>
