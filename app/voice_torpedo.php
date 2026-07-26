@@ -284,8 +284,23 @@ function voice_ensure_schema(PDO $pdo): void
 
 function voice_secret_key(): string
 {
-    $seed = (defined('DB_PASS') ? DB_PASS : '') . '|' . (defined('APP_VERSION') ? APP_VERSION : 'voice');
+    $seed = (defined('DB_PASS') ? DB_PASS : '') . '|voice_credentials_v1';
     return hash('sha256', $seed, true);
+}
+
+function voice_legacy_secret_keys(): array
+{
+    $dbPass = defined('DB_PASS') ? DB_PASS : '';
+    $keys = [voice_secret_key()];
+    foreach (['v29', 'voice'] as $legacyVersion) {
+        $legacy = hash('sha256', $dbPass . '|' . $legacyVersion, true);
+        if (!in_array($legacy, $keys, true)) $keys[] = $legacy;
+    }
+    if (defined('APP_VERSION')) {
+        $current = hash('sha256', $dbPass . '|' . APP_VERSION, true);
+        if (!in_array($current, $keys, true)) $keys[] = $current;
+    }
+    return $keys;
 }
 
 function voice_encrypt_secret(string $plain): string
@@ -302,8 +317,11 @@ function voice_decrypt_secret(string $encoded): string
     if ($encoded === '') return '';
     $raw = base64_decode($encoded, true);
     if ($raw === false || strlen($raw) <= 16) return '';
-    $plain = openssl_decrypt(substr($raw, 16), 'aes-256-cbc', voice_secret_key(), OPENSSL_RAW_DATA, substr($raw, 0, 16));
-    return $plain === false ? '' : $plain;
+    foreach (voice_legacy_secret_keys() as $key) {
+        $plain = openssl_decrypt(substr($raw, 16), 'aes-256-cbc', $key, OPENSSL_RAW_DATA, substr($raw, 0, 16));
+        if ($plain !== false) return $plain;
+    }
+    return '';
 }
 
 function voice_config_array(?string $json): array
