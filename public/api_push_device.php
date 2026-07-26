@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 ini_set('display_errors', '0');
 require_once __DIR__ . '/../app/push_notifications.php';
+require_once __DIR__ . '/../app/support_chat.php';
 header('Content-Type: application/json; charset=UTF-8');
 header('Cache-Control: no-store');
 
@@ -31,6 +32,7 @@ if (strlen($token) > 4096 || ($action === 'register' && $token === '')) push_api
 try {
     $pdo = getPDO();
     push_ensure_schema($pdo);
+    support_chat_touch_student_presence($pdo, $userId);
     $hash = $token !== '' ? hash('sha256', $token) : null;
     if ($action === 'disable') {
         $pdo->prepare("UPDATE push_devices SET status='revoked',notification_permission=:permission,last_seen_at=NOW() WHERE client_id=:client AND user_id=:uid")

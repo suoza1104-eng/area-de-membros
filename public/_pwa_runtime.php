@@ -17,6 +17,15 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
         clientId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2));
         localStorage.setItem('push_client_id', clientId);
     }
+    function appPresenceHeartbeat() {
+        if (document.visibilityState && document.visibilityState !== 'visible') return;
+        fetch('api_session_heartbeat.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        }).catch(function(){});
+    }
     <?php if ($__pwaMessagingReady): ?>
     window.areaMembrosEnablePush = async function () {
         if (!('Notification' in window)) throw new Error('Este navegador não oferece notificações.');
@@ -49,6 +58,9 @@ $__pwaMessagingReady = $__pwaFirebaseConfig['apiKey'] !== '' && $__pwaFirebaseCo
     };
     <?php endif; ?>
     window.addEventListener('load', function () {
+        appPresenceHeartbeat();
+        window.setInterval(appPresenceHeartbeat, 60 * 1000);
+        document.addEventListener('visibilitychange', appPresenceHeartbeat);
         navigator.serviceWorker.register('pwa-sw.php', {scope: './'}).then(function (registration) {
             window.__areaMembrosServiceWorker = registration;
             <?php if ($__pwaMessagingReady): ?>

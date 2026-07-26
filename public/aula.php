@@ -1021,8 +1021,8 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
             headers: {'X-Requested-With': 'XMLHttpRequest'}
         }).catch(function(){});
     }
-    window.setTimeout(heartbeat, 60 * 1000);
-    window.setInterval(heartbeat, 5 * 60 * 1000);
+    heartbeat();
+    window.setInterval(heartbeat, 60 * 1000);
 })();
 
 // Botão "Marcar aula como concluída"
