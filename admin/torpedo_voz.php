@@ -21,6 +21,51 @@ $syncResult = null;
 
 function vv_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function vv_check(string $csrf): void { if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) throw new RuntimeException('Sessao expirada. Recarregue a pagina.'); }
+function vv_voice_status_label(string $status): string {
+    return ['api_requested'=>'Pedido enviado','api_accepted'=>'Aceita pela Telnyx','initiated'=>'Chamada iniciada','ringing'=>'Chamando','answered'=>'Atendida','playing'=>'Audio em execucao','finished'=>'Finalizada','failed'=>'Falhou','created'=>'Criada'][$status] ?? $status;
+}
+function vv_voice_event_label(string $event, string $normalized = ''): string {
+    $key = $normalized !== '' ? $normalized : $event;
+    return [
+        'initiated'=>'Chamada criada na operadora','ringing'=>'Telefone chamando','answered'=>'Aluno atendeu','answered_human'=>'Atendimento humano detectado','answered_machine'=>'Caixa postal detectada',
+        'audio_started'=>'Audio comecou a tocar','audio_completed'=>'Audio terminou','completed'=>'Chamada encerrada','busy'=>'Destino ocupado','no_answer'=>'Nao atendeu','rejected'=>'Chamada rejeitada','failed'=>'Chamada falhou','interacted'=>'Aluno pressionou uma tecla',
+        'call.initiated'=>'Chamada criada na operadora','call.ringing'=>'Telefone chamando','call.answered'=>'Aluno atendeu','call.speak.started'=>'TTS comecou','call.speak.ended'=>'TTS terminou','call.playback.started'=>'Audio comecou','call.playback.ended'=>'Audio terminou','call.hangup'=>'Chamada encerrada','call.cost'=>'Custo calculado',
+    ][$key] ?? $event;
+}
+function vv_voice_event_detail(array $event): string {
+    $normalized=(string)($event['normalized_event'] ?? '');$type=(string)($event['event_type'] ?? '');
+    return [
+        'initiated'=>'A Telnyx aceitou iniciar a ligacao e devolveu os identificadores da chamada.',
+        'ringing'=>'O telefone de destino recebeu toque. Ainda nao significa que alguem atendeu.',
+        'answered'=>'A chamada foi atendida. A partir daqui o sistema tenta tocar o audio ou TTS.',
+        'audio_started'=>'O audio/TTS foi iniciado dentro da chamada.',
+        'audio_completed'=>'O audio/TTS chegou ao fim. O sistema solicita o encerramento da chamada em seguida.',
+        'completed'=>'A chamada foi encerrada pela Telnyx ou pelo comando de desligar do sistema.',
+        'busy'=>'O destino retornou ocupado.',
+        'no_answer'=>'A chamada terminou sem atendimento.',
+        'rejected'=>'A chamada foi recusada pelo destino ou pela rede.',
+        'failed'=>'A chamada falhou antes de concluir o fluxo.',
+        'interacted'=>'A chamada recebeu uma interacao do aluno por tecla/DTMF.',
+    ][$normalized] ?? ('Evento recebido da Telnyx: ' . ($type ?: 'sem tipo informado') . '.');
+}
+function vv_voice_stage_defs(): array {
+    return [
+        ['key'=>'api','label'=>'Pedido enviado','field'=>'created_at','hint'=>'O sistema pediu a chamada para a Telnyx.'],
+        ['key'=>'initiated','label'=>'Operadora iniciou','field'=>'started_at','event'=>'initiated','hint'=>'A Telnyx iniciou a ligacao.'],
+        ['key'=>'ringing','label'=>'Chamou no telefone','field'=>'ringing_at','event'=>'ringing','hint'=>'O telefone recebeu toque.'],
+        ['key'=>'answered','label'=>'Foi atendida','field'=>'answered_at','event'=>'answered','hint'=>'Alguem atendeu a chamada.'],
+        ['key'=>'audio_started','label'=>'Audio iniciou','field'=>'audio_started_at','event'=>'audio_started','hint'=>'O audio/TTS comecou a tocar.'],
+        ['key'=>'audio_completed','label'=>'Audio terminou','field'=>'audio_ended_at','event'=>'audio_completed','hint'=>'O audio/TTS chegou ao final.'],
+        ['key'=>'ended','label'=>'Ligacao encerrou','field'=>'ended_at','event'=>'completed','hint'=>'A chamada terminou ou falhou.'],
+    ];
+}
+function vv_voice_stage_done(array $call, array $events, array $stage): bool {
+    if (!empty($stage['field']) && trim((string)($call[$stage['field']] ?? '')) !== '') return true;
+    $want=(string)($stage['event'] ?? '');if($want==='')return false;
+    foreach($events as $e) if((string)($e['normalized_event'] ?? '')===$want) return true;
+    if($want==='completed' && in_array((string)($call['status'] ?? ''), ['finished','failed'], true)) return true;
+    return false;
+}
 
 $message = '';
 $error = '';
@@ -131,6 +176,18 @@ $calls = $pdo->query("SELECT * FROM voice_call_attempts ORDER BY id DESC LIMIT 2
 $failedCalls = $pdo->query("SELECT * FROM voice_call_attempts WHERE status='failed' OR error_json IS NOT NULL ORDER BY id DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $events = $pdo->query("SELECT * FROM voice_events ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $webhooks = $pdo->query("SELECT * FROM voice_webhook_logs ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$eventsByAttempt = [];
+foreach ($events as $e) $eventsByAttempt[(int)($e['attempt_id'] ?? 0)][] = $e;
+$webhooksByEvent = [];
+foreach ($webhooks as $w) if (!empty($w['event_id'])) $webhooksByEvent[(string)$w['event_id']][] = $w;
+$usersById = [];
+$voiceUserIds = array_values(array_unique(array_filter(array_map(static fn($c)=>(int)($c['user_id'] ?? 0), $calls))));
+if ($voiceUserIds) {
+    $in = implode(',', array_fill(0, count($voiceUserIds), '?'));
+    $stUsers = $pdo->prepare("SELECT id,nome,email,telefone FROM users WHERE id IN ($in)");
+    $stUsers->execute($voiceUserIds);
+    foreach ($stUsers->fetchAll(PDO::FETCH_ASSOC) ?: [] as $u) $usersById[(int)$u['id']] = $u;
+}
 $suppression = $pdo->query("SELECT * FROM voice_suppression_list ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $daily = $pdo->query("SELECT DATE(created_at) d,COUNT(*) c,SUM(status='finished') done,SUM(answered_by='human') human FROM voice_call_attempts WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $statusRows = $pdo->query("SELECT status,COUNT(*) c FROM voice_call_attempts GROUP BY status ORDER BY c DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -140,7 +197,7 @@ $failoverUrl = rtrim(BASE_URL, '/') . '/telnyx_voice_webhook_failover.php';
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.vv{display:grid;gap:14px}.vv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.vv-head h1{font-size:22px}.vv-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.vv-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.vv-nav a.active,.vv-nav a:hover{background:var(--primary-dim);color:var(--primary)}.vv-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.vv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.vv-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.vv-kpi strong{display:block;font-size:25px}.vv-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.vv-field label{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.vv-field input,.vv-field select,.vv-field textarea{width:100%;padding:9px 11px;border:1px solid var(--border-light);border-radius:8px;background:var(--bg);color:var(--text)}.vv-field-hint{display:block;margin-top:5px;color:var(--muted);font-size:11px;line-height:1.4;text-transform:none}.vv-option-wrap{grid-column:span 2}.vv-option-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px}.vv-option{display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:start;min-height:92px;padding:10px;border:1px solid var(--border);border-radius:9px;background:#071020}.vv-option input{width:16px;height:16px;margin-top:2px}.vv-option strong{display:block;font-size:11px;color:var(--text);line-height:1.25}.vv-option span{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.3}.vv-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.vv-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.vv-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.vv-table{overflow:auto}.vv-table table{width:100%;border-collapse:collapse}.vv-table th,.vv-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.vv-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.vv-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.vv-pill.ok{background:var(--success-dim);color:#86efac}.vv-pill.bad{background:var(--danger-dim);color:#fca5a5}.vv-pill.warn{background:var(--warning-dim);color:#facc15}.vv-code{display:block;padding:9px;border:1px solid var(--border);border-radius:8px;background:#071020;color:#bae6fd;word-break:break-all;font-size:12px}.vv-note{font-size:11px;color:var(--muted);line-height:1.45}.vv-split{display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);gap:14px}.vv-diag{display:grid;gap:8px;margin-top:12px}.vv-diag-row{display:grid;grid-template-columns:28px minmax(180px,1fr) minmax(180px,2fr);gap:10px;align-items:start;padding:10px;border:1px solid var(--border);border-radius:10px;background:#071020}.vv-diag-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}.vv-diag-icon.ok{background:var(--success-dim);color:#86efac}.vv-diag-icon.error{background:var(--danger-dim);color:#fca5a5}.vv-diag-icon.pending{background:var(--bg-hover);color:#94a3b8}.vv-diag-icon.warning{background:var(--warning-dim);color:#facc15}.vv-diag-label{font-weight:700}.vv-diag-detail{color:var(--muted);font-size:11px}@media(max-width:1200px){.vv-option-grid{grid-template-columns:repeat(2,minmax(180px,1fr))}}@media(max-width:900px){.vv-head,.vv-split{display:grid}.vv-actions{width:100%}.vv-diag-row{grid-template-columns:28px 1fr}.vv-diag-detail{grid-column:2}.vv-option-wrap{grid-column:auto}.vv-option-grid{grid-template-columns:1fr}}
+.vv{display:grid;gap:14px}.vv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.vv-head h1{font-size:22px}.vv-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.vv-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.vv-nav a.active,.vv-nav a:hover{background:var(--primary-dim);color:var(--primary)}.vv-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.vv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.vv-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.vv-kpi strong{display:block;font-size:25px}.vv-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.vv-field label{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.vv-field input,.vv-field select,.vv-field textarea{width:100%;padding:9px 11px;border:1px solid var(--border-light);border-radius:8px;background:var(--bg);color:var(--text)}.vv-field-hint{display:block;margin-top:5px;color:var(--muted);font-size:11px;line-height:1.4;text-transform:none}.vv-option-wrap{grid-column:span 2}.vv-option-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px}.vv-option{display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:start;min-height:92px;padding:10px;border:1px solid var(--border);border-radius:9px;background:#071020}.vv-option input{width:16px;height:16px;margin-top:2px}.vv-option strong{display:block;font-size:11px;color:var(--text);line-height:1.25}.vv-option span{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.3}.vv-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.vv-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.vv-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.vv-table{overflow:auto}.vv-table table{width:100%;border-collapse:collapse}.vv-table th,.vv-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.vv-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.vv-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.vv-pill.ok{background:var(--success-dim);color:#86efac}.vv-pill.bad{background:var(--danger-dim);color:#fca5a5}.vv-pill.warn{background:var(--warning-dim);color:#facc15}.vv-code{display:block;padding:9px;border:1px solid var(--border);border-radius:8px;background:#071020;color:#bae6fd;word-break:break-all;font-size:12px}.vv-note{font-size:11px;color:var(--muted);line-height:1.45}.vv-split{display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);gap:14px}.vv-diag{display:grid;gap:8px;margin-top:12px}.vv-diag-row{display:grid;grid-template-columns:28px minmax(180px,1fr) minmax(180px,2fr);gap:10px;align-items:start;padding:10px;border:1px solid var(--border);border-radius:10px;background:#071020}.vv-diag-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}.vv-diag-icon.ok{background:var(--success-dim);color:#86efac}.vv-diag-icon.error{background:var(--danger-dim);color:#fca5a5}.vv-diag-icon.pending{background:var(--bg-hover);color:#94a3b8}.vv-diag-icon.warning{background:var(--warning-dim);color:#facc15}.vv-diag-label{font-weight:700}.vv-diag-detail{color:var(--muted);font-size:11px}.vv-call-list{display:grid;gap:10px}.vv-call{border:1px solid var(--border);border-radius:12px;background:#071020;overflow:hidden}.vv-call summary{display:grid;grid-template-columns:28px minmax(180px,1.2fr) minmax(260px,2fr) minmax(120px,.5fr);gap:12px;align-items:center;padding:12px;cursor:pointer;list-style:none}.vv-call summary::-webkit-details-marker{display:none}.vv-arrow{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--bg-hover);color:var(--primary);font-weight:800}.vv-call[open] .vv-arrow{transform:rotate(90deg)}.vv-call-title strong{display:block}.vv-call-title span,.vv-call-meta,.vv-step span,.vv-event-detail{color:var(--muted);font-size:11px}.vv-stepper{display:grid;grid-template-columns:repeat(7,minmax(75px,1fr));gap:7px}.vv-step{min-height:60px;border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.025)}.vv-step.done{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.08)}.vv-step.bad{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.08)}.vv-step b{display:block;font-size:10px}.vv-step i{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;margin-bottom:5px;background:var(--bg-hover);font-style:normal}.vv-step.done i{background:var(--success-dim);color:#86efac}.vv-step.bad i{background:var(--danger-dim);color:#fca5a5}.vv-call-body{border-top:1px solid var(--border);padding:12px;display:grid;gap:12px}.vv-event-list{display:grid;gap:8px}.vv-event{display:grid;grid-template-columns:130px minmax(160px,1fr) minmax(220px,2fr) 90px;gap:10px;padding:9px;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.025)}.vv-event-label{font-weight:700}.vv-muted-box{padding:10px;border:1px dashed var(--border);border-radius:9px;color:var(--muted);font-size:12px}@media(max-width:1200px){.vv-option-grid{grid-template-columns:repeat(2,minmax(180px,1fr))}.vv-call summary{grid-template-columns:28px 1fr}.vv-stepper{grid-template-columns:repeat(3,minmax(90px,1fr))}.vv-event{grid-template-columns:1fr}}@media(max-width:900px){.vv-head,.vv-split{display:grid}.vv-actions{width:100%}.vv-diag-row{grid-template-columns:28px 1fr}.vv-diag-detail{grid-column:2}.vv-option-wrap{grid-column:auto}.vv-option-grid{grid-template-columns:1fr}.vv-stepper{grid-template-columns:1fr}}
 </style>
 <div class="vv">
   <div class="vv-head">
@@ -228,7 +285,51 @@ include __DIR__ . '/_header.php';
 <?php elseif($tab === 'calls' || $tab === 'reports'): ?>
   <section class="vv-card vv-table"><div class="card-header-title">Logs de chamadas</div><p class="vv-note">Falhas vindas da Telnyx aparecem aqui com codigo e detalhe legivel para diagnostico.</p><table><thead><tr><th>ID</th><th>Destino</th><th>Origem</th><th>Status</th><th>Humano/maquina</th><th>Dura.</th><th>Custo</th><th>Criada</th><th>Erro</th></tr></thead><tbody><?php foreach($calls as $c): $err=voice_error_summary((string)($c['error_json'] ?? ''), (string)($c['provider_response_json'] ?? '')); ?><tr><td>#<?=(int)$c['id']?></td><td><?=vv_h(voice_mask_phone($c['to_number']))?></td><td><?=vv_h($c['from_number'])?></td><td><span class="vv-pill <?=$c['status']==='failed'?'bad':''?>"><?=vv_h($c['status'])?></span></td><td><?=vv_h($c['answered_by'] ?: '-')?></td><td><?=vv_h($c['duration_seconds'] ?: '-')?></td><td><?=vv_h($c['cost'] ?: '-')?></td><td><?=vv_h($c['created_at'])?></td><td class="text-muted"><?=vv_h($err ?: '-')?></td></tr><?php endforeach; ?><?php if(!$calls): ?><tr><td colspan="9">Nenhuma chamada registrada.</td></tr><?php endif; ?></tbody></table></section>
 <?php elseif($tab === 'webhooks'): ?>
-  <section class="vv-split"><div class="vv-card vv-table"><div class="card-header-title">Eventos normalizados</div><table><thead><tr><th>Evento</th><th>Normalizado</th><th>Attempt</th><th>Recebido</th></tr></thead><tbody><?php foreach($events as $e): ?><tr><td><?=vv_h($e['event_type'])?></td><td><?=vv_h($e['normalized_event'])?></td><td><?=vv_h($e['attempt_id'] ?: '-')?></td><td><?=vv_h($e['received_at'])?></td></tr><?php endforeach; ?><?php if(!$events): ?><tr><td colspan="4">Nenhum evento.</td></tr><?php endif; ?></tbody></table></div><div class="vv-card vv-table"><div class="card-header-title">Logs de webhook</div><table><thead><tr><th>ID evento</th><th>Ass.</th><th>HTTP</th><th>Status</th><th>Erro</th></tr></thead><tbody><?php foreach($webhooks as $w): ?><tr><td><?=vv_h($w['event_id'] ?: '-')?></td><td><?=!empty($w['signature_valid'])?'OK':'-'?></td><td><?=(int)$w['http_status']?></td><td><?=vv_h($w['processing_status'])?></td><td class="text-muted"><?=vv_h($w['error'])?></td></tr><?php endforeach; ?><?php if(!$webhooks): ?><tr><td colspan="5">Nenhum webhook recebido.</td></tr><?php endif; ?></tbody></table></div></section>
+  <section class="vv-card">
+    <div class="card-header-title">Linha do tempo das chamadas</div>
+    <p class="vv-note">Cada chamada aparece em uma linha. Abra a seta para ver o passo a passo, os eventos recebidos da Telnyx e os webhooks ligados a esta chamada.</p>
+    <div class="vv-call-list mt-3">
+      <?php foreach(array_slice($calls,0,80) as $c): $aid=(int)$c['id'];$callEvents=$eventsByAttempt[$aid] ?? [];$user=$usersById[(int)($c['user_id'] ?? 0)] ?? [];$doneSteps=0;$steps=vv_voice_stage_defs();foreach($steps as $s)if(vv_voice_stage_done($c,$callEvents,$s))$doneSteps++;$err=voice_error_summary((string)($c['error_json'] ?? ''), (string)($c['provider_response_json'] ?? ''));$isBad=(string)$c['status']==='failed'||$err!==''; ?>
+        <details class="vv-call">
+          <summary>
+            <span class="vv-arrow">&rsaquo;</span>
+            <span class="vv-call-title"><strong>#<?=$aid?> - <?=vv_h($user['nome'] ?? voice_mask_phone((string)$c['to_number']))?></strong><span><?=vv_h(voice_mask_phone((string)$c['to_number']))?> · criada em <?=vv_h($c['created_at'])?></span></span>
+            <span class="vv-stepper">
+              <?php foreach($steps as $s): $done=vv_voice_stage_done($c,$callEvents,$s);$bad=$isBad&&$s['key']==='ended'; ?>
+                <span class="vv-step <?=$done?'done':($bad?'bad':'')?>"><i><?=$done?'ok':($bad?'!':'-')?></i><b><?=vv_h($s['label'])?></b><span><?=vv_h($done?($c[$s['field']] ?? ''):$s['hint'])?></span></span>
+              <?php endforeach; ?>
+            </span>
+            <span class="vv-call-meta"><span class="vv-pill <?=$isBad?'bad':((string)$c['status']==='finished'?'ok':'warn')?>"><?=vv_h(vv_voice_status_label((string)$c['status']))?></span><br><?=$doneSteps?>/<?=count($steps)?> etapas</span>
+          </summary>
+          <div class="vv-call-body">
+            <div class="vv-actions">
+              <span class="vv-pill">Origem: <?=vv_h(voice_mask_phone((string)$c['from_number']))?></span>
+              <span class="vv-pill">Destino: <?=vv_h(voice_mask_phone((string)$c['to_number']))?></span>
+              <span class="vv-pill">Duração: <?=vv_h($c['duration_seconds'] ?: '-')?>s</span>
+              <span class="vv-pill">Custo: <?=vv_h($c['cost'] ?: '-')?></span>
+              <span class="vv-pill">Atendido por: <?=vv_h($c['answered_by'] ?: 'nao detectado')?></span>
+            </div>
+            <?php if($err): ?><div class="vv-error"><?=vv_h($err)?></div><?php endif; ?>
+            <div>
+              <div class="card-header-title">Eventos desta chamada</div>
+              <div class="vv-event-list mt-2">
+                <?php foreach(array_reverse($callEvents) as $e): $eventHooks=$webhooksByEvent[(string)($e['provider_event_id'] ?? '')] ?? []; ?>
+                  <div class="vv-event">
+                    <div><?=vv_h($e['received_at'])?></div>
+                    <div><div class="vv-event-label"><?=vv_h(vv_voice_event_label((string)$e['event_type'], (string)$e['normalized_event']))?></div><span class="vv-note"><?=vv_h($e['event_type'])?></span></div>
+                    <div class="vv-event-detail"><?=vv_h(vv_voice_event_detail($e))?><br>Gatilho central: <?=vv_h(['initiated'=>'VOICE_CALL_INITIATED','ringing'=>'VOICE_CALL_RINGING','answered'=>'VOICE_CALL_ANSWERED','answered_human'=>'VOICE_CALL_HUMAN','answered_machine'=>'VOICE_CALL_MACHINE','audio_started'=>'VOICE_CALL_AUDIO_STARTED','audio_completed'=>'VOICE_CALL_AUDIO_COMPLETED','busy'=>'VOICE_CALL_BUSY','no_answer'=>'VOICE_CALL_NOT_ANSWERED','rejected'=>'VOICE_CALL_REJECTED','failed'=>'VOICE_CALL_FAILED','completed'=>'VOICE_CALL_COMPLETED','interacted'=>'VOICE_CALL_DTMF_RECEIVED'][(string)$e['normalized_event']] ?? 'sem gatilho central')?><?php foreach($eventHooks as $hook): ?><br>Webhook: assinatura <?=!empty($hook['signature_valid'])?'OK':'nao validada'?>, HTTP <?=(int)$hook['http_status']?>, status <?=vv_h($hook['processing_status'])?><?=trim((string)$hook['error'])!==''?' - '.vv_h($hook['error']):''?><?php endforeach; ?></div>
+                    <div><span class="vv-pill <?=!empty($eventHooks)?'ok':'warn'?>"><?=count($eventHooks)?> webhook</span></div>
+                  </div>
+                <?php endforeach; ?>
+                <?php if(!$callEvents): ?><div class="vv-muted-box">Ainda nao chegou nenhum evento da Telnyx para esta chamada. Ela pode ter sido criada agora ou o webhook pode nao ter retornado.</div><?php endif; ?>
+              </div>
+            </div>
+          </div>
+        </details>
+      <?php endforeach; ?>
+      <?php if(!$calls): ?><div class="vv-muted-box">Nenhuma chamada registrada.</div><?php endif; ?>
+    </div>
+  </section>
   <section class="vv-card vv-table"><div class="card-header-title">Falhas recentes de chamadas</div><table><thead><tr><th>Attempt</th><th>Destino</th><th>Origem</th><th>Status</th><th>Erro</th><th>Data</th></tr></thead><tbody><?php foreach($failedCalls as $c): $err=voice_error_summary((string)($c['error_json'] ?? ''), (string)($c['provider_response_json'] ?? '')); ?><tr><td>#<?=(int)$c['id']?></td><td><?=vv_h(voice_mask_phone($c['to_number']))?></td><td><?=vv_h(voice_mask_phone($c['from_number']))?></td><td><span class="vv-pill bad"><?=vv_h($c['status'])?></span></td><td class="text-muted"><?=vv_h($err ?: '-')?></td><td><?=vv_h($c['created_at'])?></td></tr><?php endforeach; ?><?php if(!$failedCalls): ?><tr><td colspan="6">Nenhuma falha recente.</td></tr><?php endif; ?></tbody></table></section>
 <?php elseif($tab === 'suppression'): ?>
   <section class="vv-card"><div class="card-header-title">Lista de bloqueio</div><form method="post" class="vv-form-grid"><input type="hidden" name="csrf" value="<?=vv_h($csrf)?>"><input type="hidden" name="action" value="add_suppression"><label class="vv-field"><label>Telefone</label><input name="phone_e164" placeholder="+5531999999999"></label><label class="vv-field"><label>Motivo</label><input name="reason" value="manual"></label><label class="vv-field"><label>Notas</label><input name="notes"></label><div><button class="btn btn-danger mt-3" <?=$canWrite?'':'disabled'?>>Nao ligar novamente</button></div></form></section>

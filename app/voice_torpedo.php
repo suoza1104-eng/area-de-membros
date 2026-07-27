@@ -1145,45 +1145,49 @@ function voice_apply_attempt_event(PDO $pdo, int $attemptId, string $event, arra
         'failed'=>['status'=>'failed','final'=>'failed'],
         'completed'=>['status'=>'finished','final'=>'completed'],
     ];
-    $m = $map[$event] ?? [];
-    if (!$m) return;
-    $sets = ['status=:status'];
-    $params = ['status'=>$m['status'],'id'=>$attemptId];
-    if (!empty($m['field'])) $sets[] = $m['field'] . '=COALESCE(' . $m['field'] . ',NOW())';
-    if (!empty($m['answered_by'])) { $sets[] = "answered_by=:answered_by"; $params['answered_by'] = $m['answered_by']; }
-    if (!empty($m['final'])) $sets[] = "ended_at=COALESCE(ended_at,NOW())";
-    if (isset($payload['hangup_cause'])) { $sets[] = "hangup_cause=:hangup_cause"; $params['hangup_cause'] = (string)$payload['hangup_cause']; }
-    if (isset($payload['hangup_source'])) { $sets[] = "hangup_source=:hangup_source"; $params['hangup_source'] = (string)$payload['hangup_source']; }
-    $pdo->prepare("UPDATE voice_call_attempts SET " . implode(',', $sets) . " WHERE id=:id")->execute($params);
-    if ($event === 'answered') {
-        try {
-            $st = $pdo->prepare("SELECT * FROM voice_call_attempts WHERE id=:id LIMIT 1");
-            $st->execute(['id'=>$attemptId]);
-            $attempt = $st->fetch(PDO::FETCH_ASSOC) ?: [];
-            $settings = voice_config_array($attempt['settings_json'] ?? '{}');
-            if (($settings['message_mode'] ?? 'text_to_speech') === 'audio_url') {
-                voice_telnyx_playback_attempt($pdo, $attempt, $payload);
-            } else {
-                voice_telnyx_speak_attempt($pdo, $attempt, $payload);
+    $m = $map[$event] ?? null;
+    if ($m) {
+        $sets = ['status=:status'];
+        $params = ['status'=>$m['status'],'id'=>$attemptId];
+        if (!empty($m['field'])) $sets[] = $m['field'] . '=COALESCE(' . $m['field'] . ',NOW())';
+        if (!empty($m['answered_by'])) { $sets[] = "answered_by=:answered_by"; $params['answered_by'] = $m['answered_by']; }
+        if (!empty($m['final'])) $sets[] = "ended_at=COALESCE(ended_at,NOW())";
+        if (isset($payload['hangup_cause'])) { $sets[] = "hangup_cause=:hangup_cause"; $params['hangup_cause'] = (string)$payload['hangup_cause']; }
+        if (isset($payload['hangup_source'])) { $sets[] = "hangup_source=:hangup_source"; $params['hangup_source'] = (string)$payload['hangup_source']; }
+        $pdo->prepare("UPDATE voice_call_attempts SET " . implode(',', $sets) . " WHERE id=:id")->execute($params);
+        if ($event === 'answered') {
+            try {
+                $st = $pdo->prepare("SELECT * FROM voice_call_attempts WHERE id=:id LIMIT 1");
+                $st->execute(['id'=>$attemptId]);
+                $attempt = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+                $settings = voice_config_array($attempt['settings_json'] ?? '{}');
+                if (($settings['message_mode'] ?? 'text_to_speech') === 'audio_url') {
+                    voice_telnyx_playback_attempt($pdo, $attempt, $payload);
+                } else {
+                    voice_telnyx_speak_attempt($pdo, $attempt, $payload);
+                }
+            } catch (Throwable $e) {
+                $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['audio_command_error'=>$e->getMessage()]),'id'=>$attemptId]);
             }
-        } catch (Throwable $e) {
-            $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['audio_command_error'=>$e->getMessage()]),'id'=>$attemptId]);
-        }
-    } elseif ($event === 'audio_completed') {
-        try {
-            $st = $pdo->prepare("SELECT * FROM voice_call_attempts WHERE id=:id AND ended_at IS NULL LIMIT 1");
-            $st->execute(['id'=>$attemptId]);
-            $attempt = $st->fetch(PDO::FETCH_ASSOC) ?: [];
-            if ($attempt) voice_telnyx_hangup_attempt($pdo, $attempt, $payload);
-        } catch (Throwable $e) {
-            $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['hangup_command_error'=>$e->getMessage()]),'id'=>$attemptId]);
+        } elseif ($event === 'audio_completed') {
+            try {
+                $st = $pdo->prepare("SELECT * FROM voice_call_attempts WHERE id=:id AND ended_at IS NULL LIMIT 1");
+                $st->execute(['id'=>$attemptId]);
+                $attempt = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+                if ($attempt) voice_telnyx_hangup_attempt($pdo, $attempt, $payload);
+            } catch (Throwable $e) {
+                $pdo->prepare("UPDATE voice_call_attempts SET error_json=:e WHERE id=:id")->execute(['e'=>voice_json(['hangup_command_error'=>$e->getMessage()]),'id'=>$attemptId]);
+            }
         }
     }
     if ($userId > 0) {
         $code = [
+            'initiated'=>'VOICE_CALL_INITIATED',
+            'ringing'=>'VOICE_CALL_RINGING',
             'answered'=>'VOICE_CALL_ANSWERED',
             'answered_human'=>'VOICE_CALL_HUMAN',
             'answered_machine'=>'VOICE_CALL_MACHINE',
+            'audio_started'=>'VOICE_CALL_AUDIO_STARTED',
             'audio_completed'=>'VOICE_CALL_AUDIO_COMPLETED',
             'busy'=>'VOICE_CALL_BUSY',
             'no_answer'=>'VOICE_CALL_NOT_ANSWERED',
