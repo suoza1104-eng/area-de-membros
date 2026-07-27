@@ -82,6 +82,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'meta_form_utms' => [
+            'label' => 'UTMs de formularios Meta',
+            'description' => 'Importa leads da planilha Google de formularios Meta e preenche UTMs vazias dos alunos por telefone ou email.',
+            'script' => __DIR__ . '/../cron/processar_meta_form_utms.php',
+            'interval' => 60,
+            'timeout' => 300,
+        ],
     ];
 }
 
