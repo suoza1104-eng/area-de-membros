@@ -32,10 +32,53 @@ function bridge_json_response(int $status, array $body): void
 
 function bridge_sanitize_payload(array $payload): array
 {
-    // Campos operacionais que nao sao usados para liberar acesso e podem
-    // aumentar a chance de bloqueio por WAF ao repassar para a HostGator.
-    unset($payload['pix_copia_cola'], $payload['deny_reason']);
-    return $payload;
+    // Repassa somente os campos usados pelo processador local. O payload
+    // completo da Firepay pode conter PIX copia/cola, endereco, documento e
+    // textos longos que frequentemente disparam WAF/ModSecurity.
+    $keep = [
+        'id', 'checkout_id', 'type', 'status', 'payment_method', 'payment_gateway',
+        'price_currency', 'price', 'product_price', 'interest_fee', 'installments',
+        'tenant_id', 'link',
+    ];
+    $sanitized = [];
+    foreach ($keep as $key) {
+        if (array_key_exists($key, $payload)) $sanitized[$key] = $payload[$key];
+    }
+
+    if (isset($payload['product']) && is_array($payload['product'])) {
+        $sanitized['product'] = [];
+        foreach (['id', 'name', 'slug', 'integration_id', 'integration_delivery_type', 'turmas'] as $key) {
+            if (array_key_exists($key, $payload['product'])) $sanitized['product'][$key] = $payload['product'][$key];
+        }
+    }
+
+    if (isset($payload['client']) && is_array($payload['client'])) {
+        $sanitized['client'] = [];
+        foreach (['name', 'email', 'phone'] as $key) {
+            if (array_key_exists($key, $payload['client'])) $sanitized['client'][$key] = $payload['client'][$key];
+        }
+    }
+
+    if (isset($payload['origin']) && is_array($payload['origin'])) {
+        $sanitized['origin'] = [];
+        foreach (['description', 'slug'] as $key) {
+            if (array_key_exists($key, $payload['origin'])) $sanitized['origin'][$key] = $payload['origin'][$key];
+        }
+    }
+
+    if (isset($payload['order_bumps']) && is_array($payload['order_bumps'])) {
+        $sanitized['order_bumps'] = [];
+        foreach ($payload['order_bumps'] as $bump) {
+            if (!is_array($bump)) continue;
+            $item = [];
+            foreach (['product_id', 'id', 'name'] as $key) {
+                if (array_key_exists($key, $bump)) $item[$key] = $bump[$key];
+            }
+            if ($item) $sanitized['order_bumps'][] = $item;
+        }
+    }
+
+    return $sanitized;
 }
 
 function bridge_forward(string $jsonBody): array
