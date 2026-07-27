@@ -66,6 +66,17 @@ function vv_voice_stage_done(array $call, array $events, array $stage): bool {
     if($want==='completed' && in_array((string)($call['status'] ?? ''), ['finished','failed'], true)) return true;
     return false;
 }
+function vv_voice_stage_inferred(array $call, array $events, array $stage): bool {
+    if (($stage['key'] ?? '') !== 'ringing' || vv_voice_stage_done($call,$events,$stage)) return false;
+    if (trim((string)($call['answered_at'] ?? '')) !== '') return true;
+    foreach($events as $e) if(in_array((string)($e['normalized_event'] ?? ''), ['answered','audio_started','audio_completed','completed'], true)) return true;
+    return false;
+}
+function vv_voice_stage_text(array $call, array $events, array $stage): string {
+    if (vv_voice_stage_done($call,$events,$stage)) return trim((string)($call[$stage['field'] ?? ''] ?? '')) ?: 'Evento recebido';
+    if (vv_voice_stage_inferred($call,$events,$stage)) return 'Inferido: foi atendida';
+    return (string)($stage['hint'] ?? '');
+}
 
 $message = '';
 $error = '';
@@ -289,14 +300,14 @@ include __DIR__ . '/_header.php';
     <div class="card-header-title">Linha do tempo das chamadas</div>
     <p class="vv-note">Cada chamada aparece em uma linha. Abra a seta para ver o passo a passo, os eventos recebidos da Telnyx e os webhooks ligados a esta chamada.</p>
     <div class="vv-call-list mt-3">
-      <?php foreach(array_slice($calls,0,80) as $c): $aid=(int)$c['id'];$callEvents=$eventsByAttempt[$aid] ?? [];$user=$usersById[(int)($c['user_id'] ?? 0)] ?? [];$doneSteps=0;$steps=vv_voice_stage_defs();foreach($steps as $s)if(vv_voice_stage_done($c,$callEvents,$s))$doneSteps++;$err=voice_error_summary((string)($c['error_json'] ?? ''), (string)($c['provider_response_json'] ?? ''));$isBad=(string)$c['status']==='failed'||$err!==''; ?>
+      <?php foreach(array_slice($calls,0,80) as $c): $aid=(int)$c['id'];$callEvents=$eventsByAttempt[$aid] ?? [];$user=$usersById[(int)($c['user_id'] ?? 0)] ?? [];$doneSteps=0;$steps=vv_voice_stage_defs();foreach($steps as $s)if(vv_voice_stage_done($c,$callEvents,$s)||vv_voice_stage_inferred($c,$callEvents,$s))$doneSteps++;$err=voice_error_summary((string)($c['error_json'] ?? ''), (string)($c['provider_response_json'] ?? ''));$isBad=(string)$c['status']==='failed'||$err!==''; ?>
         <details class="vv-call">
           <summary>
             <span class="vv-arrow">&rsaquo;</span>
-            <span class="vv-call-title"><strong>#<?=$aid?> - <?=vv_h($user['nome'] ?? voice_mask_phone((string)$c['to_number']))?></strong><span><?=vv_h(voice_mask_phone((string)$c['to_number']))?> · criada em <?=vv_h($c['created_at'])?></span></span>
+            <span class="vv-call-title"><strong>#<?=$aid?> - <?=vv_h($user['nome'] ?? (string)$c['to_number'])?></strong><span><?=vv_h($c['to_number'])?> · criada em <?=vv_h($c['created_at'])?></span></span>
             <span class="vv-stepper">
-              <?php foreach($steps as $s): $done=vv_voice_stage_done($c,$callEvents,$s);$bad=$isBad&&$s['key']==='ended'; ?>
-                <span class="vv-step <?=$done?'done':($bad?'bad':'')?>"><i><?=$done?'ok':($bad?'!':'-')?></i><b><?=vv_h($s['label'])?></b><span><?=vv_h($done?($c[$s['field']] ?? ''):$s['hint'])?></span></span>
+              <?php foreach($steps as $s): $done=vv_voice_stage_done($c,$callEvents,$s);$inferred=vv_voice_stage_inferred($c,$callEvents,$s);$bad=$isBad&&$s['key']==='ended'; ?>
+                <span class="vv-step <?=($done||$inferred)?'done':($bad?'bad':'')?>"><i><?=($done||$inferred)?'ok':($bad?'!':'-')?></i><b><?=vv_h($s['label'])?></b><span><?=vv_h(vv_voice_stage_text($c,$callEvents,$s))?></span></span>
               <?php endforeach; ?>
             </span>
             <span class="vv-call-meta"><span class="vv-pill <?=$isBad?'bad':((string)$c['status']==='finished'?'ok':'warn')?>"><?=vv_h(vv_voice_status_label((string)$c['status']))?></span><br><?=$doneSteps?>/<?=count($steps)?> etapas</span>
@@ -304,7 +315,7 @@ include __DIR__ . '/_header.php';
           <div class="vv-call-body">
             <div class="vv-actions">
               <span class="vv-pill">Origem: <?=vv_h(voice_mask_phone((string)$c['from_number']))?></span>
-              <span class="vv-pill">Destino: <?=vv_h(voice_mask_phone((string)$c['to_number']))?></span>
+              <span class="vv-pill">Destino: <?=vv_h($c['to_number'])?></span>
               <span class="vv-pill">Duração: <?=vv_h($c['duration_seconds'] ?: '-')?>s</span>
               <span class="vv-pill">Custo: <?=vv_h($c['cost'] ?: '-')?></span>
               <span class="vv-pill">Atendido por: <?=vv_h($c['answered_by'] ?: 'nao detectado')?></span>
