@@ -25,6 +25,7 @@ function mfu_ensure_schema(PDO $pdo): void {
             sheet_row INT NOT NULL,
             lead_id VARCHAR(80) NULL,
             user_id INT NULL,
+            user_name VARCHAR(190) NULL,
             match_method VARCHAR(20) NULL,
             status VARCHAR(30) NOT NULL,
             email VARCHAR(190) NULL,
@@ -33,6 +34,10 @@ function mfu_ensure_schema(PDO $pdo): void {
             utm_medium VARCHAR(255) NULL,
             utm_campaign VARCHAR(255) NULL,
             utm_content VARCHAR(255) NULL,
+            existing_utm_source VARCHAR(255) NULL,
+            existing_utm_medium VARCHAR(255) NULL,
+            existing_utm_campaign VARCHAR(255) NULL,
+            existing_utm_content VARCHAR(255) NULL,
             message VARCHAR(500) NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uk_mfu_sheet_row (sheet_row),
@@ -40,6 +45,16 @@ function mfu_ensure_schema(PDO $pdo): void {
             KEY idx_mfu_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    foreach ([
+        "ALTER TABLE meta_form_utm_logs ADD COLUMN user_name VARCHAR(190) NULL AFTER user_id",
+        "ALTER TABLE meta_form_utm_logs ADD COLUMN existing_utm_source VARCHAR(255) NULL AFTER utm_content",
+        "ALTER TABLE meta_form_utm_logs ADD COLUMN existing_utm_medium VARCHAR(255) NULL AFTER existing_utm_source",
+        "ALTER TABLE meta_form_utm_logs ADD COLUMN existing_utm_campaign VARCHAR(255) NULL AFTER existing_utm_medium",
+        "ALTER TABLE meta_form_utm_logs ADD COLUMN existing_utm_content VARCHAR(255) NULL AFTER existing_utm_campaign",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
 
     $done = true;
 }
@@ -152,13 +167,11 @@ function mfu_blank_utm_condition(): string {
     return "COALESCE(NULLIF(TRIM(utm_source),''),NULLIF(TRIM(utm_medium),''),NULLIF(TRIM(utm_campaign),''),NULLIF(TRIM(utm_content),'')) IS NULL";
 }
 
-function mfu_load_blank_utm_users(PDO $pdo): array {
-    $blank = mfu_blank_utm_condition();
+function mfu_load_users_for_matching(PDO $pdo): array {
     $expr = mfu_user_phone_expr();
     $rows = $pdo->query("
-        SELECT id, email, {$expr} AS phone_norm
+        SELECT id, nome, email, {$expr} AS phone_norm, utm_source, utm_medium, utm_campaign, utm_content
           FROM users
-         WHERE {$blank}
          ORDER BY id DESC
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -170,7 +183,16 @@ function mfu_load_blank_utm_users(PDO $pdo): array {
         if ($id <= 0) continue;
         $email = mfu_normalize_email((string)($user['email'] ?? ''));
         $phone = mfu_normalize_phone((string)($user['phone_norm'] ?? ''));
-        $item = ['id' => $id, 'email' => $email, 'phone_norm' => $phone];
+        $item = [
+            'id' => $id,
+            'nome' => (string)($user['nome'] ?? ''),
+            'email' => $email,
+            'phone_norm' => $phone,
+            'utm_source' => (string)($user['utm_source'] ?? ''),
+            'utm_medium' => (string)($user['utm_medium'] ?? ''),
+            'utm_campaign' => (string)($user['utm_campaign'] ?? ''),
+            'utm_content' => (string)($user['utm_content'] ?? ''),
+        ];
         $byId[$id] = $item;
         if ($phone !== '' && !isset($byPhone[$phone])) $byPhone[$phone] = $item;
         if ($email !== '' && !isset($byEmail[$email])) $byEmail[$email] = $item;
@@ -195,16 +217,28 @@ function mfu_find_blank_utm_user(array $users, string $phoneNorm, string $email)
     return ['user' => null, 'method' => null];
 }
 
+function mfu_user_has_any_utm(array $user): bool {
+    foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'] as $key) {
+        if (trim((string)($user[$key] ?? '')) !== '') return true;
+    }
+    return false;
+}
+
 function mfu_log(PDO $pdo, array $data): void {
     $st = $pdo->prepare("
         INSERT INTO meta_form_utm_logs
-            (sheet_row, lead_id, user_id, match_method, status, email, phone_norm,
-             utm_source, utm_medium, utm_campaign, utm_content, message)
+            (sheet_row, lead_id, user_id, user_name, match_method, status, email, phone_norm,
+             utm_source, utm_medium, utm_campaign, utm_content,
+             existing_utm_source, existing_utm_medium, existing_utm_campaign, existing_utm_content,
+             message)
         VALUES
-            (:sheet_row, :lead_id, :user_id, :match_method, :status, :email, :phone_norm,
-             :utm_source, :utm_medium, :utm_campaign, :utm_content, :message)
+            (:sheet_row, :lead_id, :user_id, :user_name, :match_method, :status, :email, :phone_norm,
+             :utm_source, :utm_medium, :utm_campaign, :utm_content,
+             :existing_utm_source, :existing_utm_medium, :existing_utm_campaign, :existing_utm_content,
+             :message)
         ON DUPLICATE KEY UPDATE
             user_id=VALUES(user_id),
+            user_name=VALUES(user_name),
             match_method=VALUES(match_method),
             status=VALUES(status),
             email=VALUES(email),
@@ -213,12 +247,17 @@ function mfu_log(PDO $pdo, array $data): void {
             utm_medium=VALUES(utm_medium),
             utm_campaign=VALUES(utm_campaign),
             utm_content=VALUES(utm_content),
+            existing_utm_source=VALUES(existing_utm_source),
+            existing_utm_medium=VALUES(existing_utm_medium),
+            existing_utm_campaign=VALUES(existing_utm_campaign),
+            existing_utm_content=VALUES(existing_utm_content),
             message=VALUES(message)
     ");
     $st->execute([
         ':sheet_row' => (int)($data['sheet_row'] ?? 0),
         ':lead_id' => ($data['lead_id'] ?? '') !== '' ? (string)$data['lead_id'] : null,
         ':user_id' => !empty($data['user_id']) ? (int)$data['user_id'] : null,
+        ':user_name' => ($data['user_name'] ?? '') !== '' ? substr((string)$data['user_name'], 0, 190) : null,
         ':match_method' => ($data['match_method'] ?? '') !== '' ? (string)$data['match_method'] : null,
         ':status' => (string)($data['status'] ?? 'unknown'),
         ':email' => ($data['email'] ?? '') !== '' ? (string)$data['email'] : null,
@@ -227,8 +266,97 @@ function mfu_log(PDO $pdo, array $data): void {
         ':utm_medium' => ($data['utm_medium'] ?? '') !== '' ? (string)$data['utm_medium'] : null,
         ':utm_campaign' => ($data['utm_campaign'] ?? '') !== '' ? (string)$data['utm_campaign'] : null,
         ':utm_content' => ($data['utm_content'] ?? '') !== '' ? (string)$data['utm_content'] : null,
+        ':existing_utm_source' => ($data['existing_utm_source'] ?? '') !== '' ? (string)$data['existing_utm_source'] : null,
+        ':existing_utm_medium' => ($data['existing_utm_medium'] ?? '') !== '' ? (string)$data['existing_utm_medium'] : null,
+        ':existing_utm_campaign' => ($data['existing_utm_campaign'] ?? '') !== '' ? (string)$data['existing_utm_campaign'] : null,
+        ':existing_utm_content' => ($data['existing_utm_content'] ?? '') !== '' ? (string)$data['existing_utm_content'] : null,
         ':message' => ($data['message'] ?? '') !== '' ? substr((string)$data['message'], 0, 500) : null,
     ]);
+}
+
+function mfu_sheet_rows_by_number(PDO $pdo): array {
+    $sheetUrl = mfu_setting($pdo, 'meta_form_utms_sheet_url', MFU_DEFAULT_SHEET_URL);
+    $rows = mfu_decode_csv(mfu_fetch_csv(mfu_csv_url($sheetUrl)));
+    $out = [];
+    foreach ($rows as $row) {
+        $sheetRow = (int)($row['_sheet_row'] ?? 0);
+        if ($sheetRow > 0) $out[$sheetRow] = $row;
+    }
+    return $out;
+}
+
+function mfu_reclassify_legacy_logs(PDO $pdo, int $limit = 5000): array {
+    mfu_ensure_schema($pdo);
+    $sheetRows = mfu_sheet_rows_by_number($pdo);
+    $usersForMatching = mfu_load_users_for_matching($pdo);
+    $limit = max(1, min(20000, $limit));
+    $logs = $pdo->query("
+        SELECT id, sheet_row
+          FROM meta_form_utm_logs
+         WHERE status IN ('not_found_or_has_utm','not_updated')
+         ORDER BY id ASC
+         LIMIT {$limit}
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $stats = ['checked' => 0, 'already_has_utm' => 0, 'not_found' => 0, 'not_updated' => 0, 'missing_sheet_row' => 0];
+    foreach ($logs as $logRow) {
+        $stats['checked']++;
+        $sheetRow = (int)($logRow['sheet_row'] ?? 0);
+        $row = $sheetRows[$sheetRow] ?? null;
+        if (!$row) {
+            $stats['missing_sheet_row']++;
+            continue;
+        }
+
+        $email = mfu_normalize_email(mfu_first($row, ['email', 'e-mail', 'mail']));
+        $phone = mfu_normalize_phone(mfu_first($row, ['phone_number', 'telefone', 'phone', 'celular']));
+        $match = mfu_find_blank_utm_user($usersForMatching, $phone, $email);
+        $user = $match['user'];
+        if (!$user) {
+            $pdo->prepare("
+                UPDATE meta_form_utm_logs
+                   SET status='not_found',
+                       match_method=NULL,
+                       user_id=NULL,
+                       user_name=NULL,
+                       message='Nenhum aluno encontrado por telefone ou email.'
+                 WHERE id=:id
+            ")->execute([':id' => (int)$logRow['id']]);
+            $stats['not_found']++;
+            continue;
+        }
+
+        if (mfu_user_has_any_utm($user)) {
+            $pdo->prepare("
+                UPDATE meta_form_utm_logs
+                   SET status='already_has_utm',
+                       user_id=:user_id,
+                       user_name=:user_name,
+                       match_method=:match_method,
+                       existing_utm_source=:utm_source,
+                       existing_utm_medium=:utm_medium,
+                       existing_utm_campaign=:utm_campaign,
+                       existing_utm_content=:utm_content,
+                       message='Aluno encontrado, mas ja tinha pelo menos uma UTM preenchida.'
+                 WHERE id=:id
+            ")->execute([
+                ':user_id' => (int)$user['id'],
+                ':user_name' => substr((string)($user['nome'] ?? ''), 0, 190) ?: null,
+                ':match_method' => (string)$match['method'],
+                ':utm_source' => trim((string)($user['utm_source'] ?? '')) ?: null,
+                ':utm_medium' => trim((string)($user['utm_medium'] ?? '')) ?: null,
+                ':utm_campaign' => trim((string)($user['utm_campaign'] ?? '')) ?: null,
+                ':utm_content' => trim((string)($user['utm_content'] ?? '')) ?: null,
+                ':id' => (int)$logRow['id'],
+            ]);
+            $stats['already_has_utm']++;
+            continue;
+        }
+
+        $stats['not_updated']++;
+    }
+
+    return $stats;
 }
 
 function mfu_process_google_sheet(PDO $pdo, int $limit = 200, bool $dryRun = false): array {
@@ -238,14 +366,16 @@ function mfu_process_google_sheet(PDO $pdo, int $limit = 200, bool $dryRun = fal
     $source = trim(mfu_setting($pdo, 'meta_form_utms_source', MFU_DEFAULT_SOURCE)) ?: MFU_DEFAULT_SOURCE;
     $lastRow = max(1, (int)mfu_setting($pdo, 'meta_form_utms_last_row', '1'));
     $rows = mfu_decode_csv(mfu_fetch_csv(mfu_csv_url($sheetUrl)));
-    $blankUsers = mfu_load_blank_utm_users($pdo);
+    $usersForMatching = mfu_load_users_for_matching($pdo);
 
     $stats = [
         'downloaded_rows' => count($rows),
         'last_row_before' => $lastRow,
         'checked' => 0,
         'updated' => 0,
-        'not_found_or_has_utm' => 0,
+        'already_has_utm' => 0,
+        'not_found' => 0,
+        'not_updated' => 0,
         'missing_key_or_utm' => 0,
         'last_row_after' => $lastRow,
         'dry_run' => $dryRun,
@@ -294,11 +424,28 @@ function mfu_process_google_sheet(PDO $pdo, int $limit = 200, bool $dryRun = fal
             continue;
         }
 
-        $match = mfu_find_blank_utm_user($blankUsers, $phone, $email);
+        $match = mfu_find_blank_utm_user($usersForMatching, $phone, $email);
         $user = $match['user'];
         if (!$user) {
-            $stats['not_found_or_has_utm']++;
-            if (!$dryRun) mfu_log($pdo, $log + ['status' => 'not_found_or_has_utm', 'message' => 'Nenhum aluno encontrado com UTMs vazias por telefone ou email.']);
+            $stats['not_found']++;
+            if (!$dryRun) mfu_log($pdo, $log + ['status' => 'not_found', 'message' => 'Nenhum aluno encontrado por telefone ou email.']);
+            $stats['last_row_after'] = $sheetRow;
+            continue;
+        }
+
+        if (mfu_user_has_any_utm($user)) {
+            $stats['already_has_utm']++;
+            if (!$dryRun) mfu_log($pdo, $log + [
+                'user_id' => (int)$user['id'],
+                'user_name' => (string)($user['nome'] ?? ''),
+                'match_method' => (string)$match['method'],
+                'status' => 'already_has_utm',
+                'existing_utm_source' => (string)($user['utm_source'] ?? ''),
+                'existing_utm_medium' => (string)($user['utm_medium'] ?? ''),
+                'existing_utm_campaign' => (string)($user['utm_campaign'] ?? ''),
+                'existing_utm_content' => (string)($user['utm_content'] ?? ''),
+                'message' => 'Aluno encontrado, mas ja tinha pelo menos uma UTM preenchida.',
+            ]);
             $stats['last_row_after'] = $sheetRow;
             continue;
         }
@@ -312,15 +459,16 @@ function mfu_process_google_sheet(PDO $pdo, int $limit = 200, bool $dryRun = fal
                 ':id' => (int)$user['id'],
             ]);
             $changed = $upd->rowCount() > 0;
-            if ($changed) mfu_forget_loaded_user($blankUsers, (int)$user['id']);
+            if ($changed) mfu_forget_loaded_user($usersForMatching, (int)$user['id']);
             mfu_log($pdo, $log + [
                 'user_id' => (int)$user['id'],
+                'user_name' => (string)($user['nome'] ?? ''),
                 'match_method' => (string)$match['method'],
                 'status' => $changed ? 'updated' : 'not_updated',
                 'message' => $changed ? 'UTMs atribuidas a partir da planilha Meta Forms.' : 'Aluno encontrado, mas nao estava mais com UTMs vazias.',
             ]);
             if ($changed) $stats['updated']++;
-            else $stats['not_found_or_has_utm']++;
+            else $stats['not_updated']++;
         } else {
             $stats['updated']++;
         }
