@@ -509,6 +509,8 @@ function voice_save_telnyx_config(PDO $pdo, array $data, string $actor): void
         'timezone' => trim((string)($data['timezone'] ?? 'America/Sao_Paulo')) ?: 'America/Sao_Paulo',
         'allowed_destinations' => trim((string)($data['allowed_destinations'] ?? '+55')),
         'test_allowed_numbers' => trim((string)($data['test_allowed_numbers'] ?? '')),
+        'test_default_phone' => voice_normalize_e164((string)($data['test_default_phone'] ?? ($current['public']['test_default_phone'] ?? '')), preg_replace('/\D+/', '', (string)($data['default_country_code'] ?? '55')) ?: '55'),
+        'test_default_audio_media_id' => max(0, (int)($data['test_default_audio_media_id'] ?? ($current['public']['test_default_audio_media_id'] ?? 0))),
         'record_calls_default' => !empty($data['record_calls_default']) ? 1 : 0,
         'transcribe_calls_default' => !empty($data['transcribe_calls_default']) ? 1 : 0,
         'amd_default' => !empty($data['amd_default']) ? 1 : 0,
@@ -519,9 +521,40 @@ function voice_save_telnyx_config(PDO $pdo, array $data, string $actor): void
     ];
     $enabled = !empty($data['enabled']) ? 1 : 0;
     $env = in_array(($data['environment'] ?? 'test'), ['test','production'], true) ? (string)$data['environment'] : 'test';
+    $allowed = preg_split('/[\s,;]+/', (string)$public['test_allowed_numbers'], -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    if ($public['test_default_phone'] !== '' && !in_array($public['test_default_phone'], $allowed, true)) {
+        $allowed[] = $public['test_default_phone'];
+        $public['test_allowed_numbers'] = implode(', ', $allowed);
+    }
     $pdo->prepare("UPDATE voice_providers SET enabled=:e,environment=:env,encrypted_credentials=:cred,public_configuration=:cfg,updated_by=:actor,connection_status=IF(connection_status='authenticated','authenticated','pending') WHERE provider='telnyx'")
         ->execute(['e'=>$enabled,'env'=>$env,'cred'=>voice_json($credentials),'cfg'=>voice_json($public),'actor'=>$actor]);
     voice_audit($pdo, $actor, 'provider_config_saved', 'voice_provider', 'telnyx', [], ['enabled'=>$enabled,'environment'=>$env]);
+}
+
+function voice_save_test_defaults(PDO $pdo, string $phone, int $audioMediaId, string $actor): array
+{
+    voice_ensure_schema($pdo);
+    $provider = voice_provider($pdo);
+    $public = (array)($provider['public'] ?? []);
+    $country = (string)($public['default_country_code'] ?? '55');
+    $normalized = voice_normalize_e164($phone, $country);
+    if ($phone !== '' && $normalized === '') throw new InvalidArgumentException('Telefone autorizado invalido.');
+    if ($audioMediaId > 0) {
+        $st = $pdo->prepare("SELECT id FROM voice_media WHERE id=:id AND status='active' LIMIT 1");
+        $st->execute(['id'=>$audioMediaId]);
+        if (!$st->fetchColumn()) throw new InvalidArgumentException('Audio selecionado nao esta disponivel.');
+    }
+    $public['test_default_phone'] = $normalized;
+    $public['test_default_audio_media_id'] = max(0, $audioMediaId);
+    $allowed = preg_split('/[\s,;]+/', (string)($public['test_allowed_numbers'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    if ($normalized !== '' && !in_array($normalized, $allowed, true)) {
+        $allowed[] = $normalized;
+        $public['test_allowed_numbers'] = implode(', ', $allowed);
+    }
+    $pdo->prepare("UPDATE voice_providers SET public_configuration=:cfg,updated_by=:actor WHERE provider='telnyx'")
+        ->execute(['cfg'=>voice_json($public),'actor'=>$actor]);
+    voice_audit($pdo, $actor, 'test_defaults_saved', 'voice_provider', 'telnyx', [], ['phone'=>voice_mask_phone($normalized),'audio_media_id'=>$audioMediaId]);
+    return $public;
 }
 
 function voice_audit(PDO $pdo, string $actor, string $action, string $entityType, string $entityId = '', array $before = [], array $after = []): void
@@ -960,13 +993,19 @@ function voice_telnyx_hangup_attempt(PDO $pdo, array $attempt, array $payload = 
     return $result;
 }
 
-function voice_send_test_call(PDO $pdo, string $to, string $message, string $audioUrl, string $actor): array
+function voice_send_test_call(PDO $pdo, string $to, string $message, string $audioUrl, string $actor, int $audioMediaId = 0): array
 {
     $provider = voice_provider($pdo);
     $to = voice_normalize_e164($to, (string)($provider['public']['default_country_code'] ?? '55'));
     if ($to === '') throw new InvalidArgumentException('Telefone de teste invalido.');
     if (!voice_allowed_test_number($provider, $to)) throw new RuntimeException('Inclua este telefone em Numeros autorizados para teste antes de ligar.');
     $audioUrl = trim($audioUrl);
+    if ($audioMediaId > 0 && $audioUrl === '') {
+        $st = $pdo->prepare("SELECT public_url FROM voice_media WHERE id=:id AND status='active' LIMIT 1");
+        $st->execute(['id'=>$audioMediaId]);
+        $audioUrl = trim((string)$st->fetchColumn());
+        if ($audioUrl === '') throw new InvalidArgumentException('Audio selecionado nao esta disponivel.');
+    }
     $mode = $audioUrl !== '' ? 'audio_url' : 'text_to_speech';
     $result = voice_create_telnyx_call($pdo, [
         'to'=>$to,
