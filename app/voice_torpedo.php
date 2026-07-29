@@ -386,11 +386,24 @@ function voice_normalize_e164(string $phone, string $countryCode = '55'): string
 {
     $phone = trim($phone);
     if ($phone === '') return '';
-    if (preg_match('/^\+[1-9]\d{7,14}$/', $phone)) return $phone;
+    $countryCode = preg_replace('/\D+/', '', $countryCode) ?: '55';
     $digits = preg_replace('/\D+/', '', $phone) ?? '';
     if ($digits === '') return '';
     if (str_starts_with($digits, '00')) $digits = substr($digits, 2);
-    if (!str_starts_with($digits, $countryCode)) $digits = $countryCode . $digits;
+    if ($countryCode === '55') {
+        if (str_starts_with($digits, '055')) $digits = substr($digits, 1);
+        if (!str_starts_with($digits, '55')) $digits = '55' . $digits;
+        $national = substr($digits, 2);
+        if (strlen($national) === 10) {
+            $ddd = substr($national, 0, 2);
+            $subscriber = substr($national, 2);
+            if (preg_match('/^[6-9]\d{7}$/', $subscriber)) $digits = '55' . $ddd . '9' . $subscriber;
+        }
+        $national = substr($digits, 2);
+        if (!preg_match('/^[1-9]\d(?:[2-5]\d{7}|9\d{8})$/', $national)) return '';
+    } elseif (!str_starts_with($digits, $countryCode)) {
+        $digits = $countryCode . $digits;
+    }
     $e164 = '+' . $digits;
     return preg_match('/^\+[1-9]\d{7,14}$/', $e164) ? $e164 : '';
 }
@@ -821,9 +834,13 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
     if (empty($provider['enabled'])) throw new RuntimeException('Provedor Telnyx esta inativo.');
     $cfg = (array)$provider['public'];
     $country = (string)($cfg['default_country_code'] ?? '55');
-    $from = voice_normalize_e164((string)($args['from'] ?? $cfg['default_from_number'] ?? ''), $country);
-    $to = voice_normalize_e164((string)($args['to'] ?? ''), $country);
-    if ($from === '' || $to === '') throw new InvalidArgumentException('Numero de origem ou destino invalido em E.164.');
+    $rawFrom = trim((string)($args['from'] ?? ''));
+    if ($rawFrom === '') $rawFrom = (string)($cfg['default_from_number'] ?? '');
+    $rawTo = (string)($args['to'] ?? '');
+    $from = voice_normalize_e164($rawFrom, $country);
+    $to = voice_normalize_e164($rawTo, $country);
+    if ($from === '') throw new InvalidArgumentException('Numero de origem invalido para Telnyx: ' . voice_mask_phone($rawFrom) . '. Configure em E.164, exemplo +5531999999999.');
+    if ($to === '') throw new InvalidArgumentException('Numero de destino invalido para Telnyx: ' . voice_mask_phone($rawTo) . '. Use DDD + telefone ou E.164, exemplo +5531999999999.');
     if (!voice_destination_allowed_by_config($provider, $to)) {
         throw new RuntimeException('Destino nao permitido nas configuracoes locais de voz. Inclua o pais/prefixo em Destinos permitidos antes de ligar.');
     }
@@ -858,6 +875,10 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
         'message_mode'=>(string)($args['message_mode'] ?? 'text_to_speech'),
         'message'=>(string)($args['message'] ?? ''),
         'audio_url'=>$audioUrl,
+        'raw_from'=>$rawFrom,
+        'raw_to'=>$rawTo,
+        'normalized_from'=>$from,
+        'normalized_to'=>$to,
         'voice'=>(string)($args['voice'] ?? $cfg['default_voice'] ?? ''),
         'language'=>(string)($args['language'] ?? $cfg['default_language'] ?? 'pt-BR'),
     ];
@@ -1040,7 +1061,7 @@ function voice_automation_start_call(PDO $pdo, array $config, array $user, array
     if ($mode === 'audio_url' && $audioUrl === '') throw new RuntimeException('Selecione um audio da biblioteca ou configure uma URL de audio no bloco de voz.');
     if ($mode !== 'audio_url' && trim($message) === '') throw new RuntimeException('Configure a mensagem TTS no bloco de voz.');
     return voice_create_telnyx_call($pdo, [
-        'to'=>$to,
+        'to'=>$phone,
         'from'=>(string)($config['fromNumber'] ?? ''),
         'audio_url'=>$mode === 'audio_url' ? $audioUrl : '',
         'message_mode'=>$mode,
