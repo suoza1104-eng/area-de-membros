@@ -251,7 +251,6 @@ $funnelStages = [
     ['key'=>'answered','label'=>'Foi atendida','count'=>$answeredCalls],
     ['key'=>'audio_started','label'=>'Audio iniciou','count'=>(int)$pdo->query("SELECT COUNT(*) FROM voice_call_attempts WHERE audio_started_at IS NOT NULL OR audio_ended_at IS NOT NULL")->fetchColumn()],
     ['key'=>'audio_completed','label'=>'Audio terminou','count'=>(int)$pdo->query("SELECT COUNT(*) FROM voice_call_attempts WHERE audio_ended_at IS NOT NULL")->fetchColumn()],
-    ['key'=>'ended','label'=>'Ligacao encerrou','count'=>(int)$pdo->query("SELECT COUNT(*) FROM voice_call_attempts WHERE ended_at IS NOT NULL OR status IN ('finished','failed')")->fetchColumn()],
 ];
 foreach ($funnelStages as $i => $stage) {
     $base = $i === 0 ? max(1, $totalCalls) : max(1, (int)$funnelStages[$i - 1]['count']);
