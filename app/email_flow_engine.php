@@ -302,12 +302,17 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
             'voice_answered' => '(answered_at IS NOT NULL OR answered_by IS NOT NULL)',
             'voice_human' => "answered_by='human'",
             'voice_machine' => "answered_by='machine'",
-            'voice_not_answered' => "hangup_cause LIKE '%timeout%'",
+            'voice_not_answered' => "((answered_at IS NULL AND answered_by IS NULL AND status IN ('finished','failed')) OR hangup_cause LIKE '%timeout%' OR hangup_cause LIKE '%no_answer%' OR hangup_cause LIKE '%busy%' OR hangup_cause LIKE '%rejected%')",
             'voice_audio_completed' => 'audio_ended_at IS NOT NULL',
             default => '',
         };
         if ($field === 'voice_dtmf') {
-            if ($scope === 'all') {
+            if ($scope === 'latest') {
+                $st = $pdo->prepare("SELECT id FROM voice_call_attempts WHERE user_id=:u ORDER BY id DESC LIMIT 1");
+                $st->execute(['u' => $userId]);
+                $attemptId = (int)$st->fetchColumn();
+                $match = $attemptId > 0 && email_flow_exists($pdo, "SELECT 1 FROM voice_events WHERE attempt_id=:a AND normalized_event='interacted'", ['a' => $attemptId]);
+            } elseif ($scope === 'all') {
                 $st = $pdo->prepare("SELECT COUNT(*) total,SUM(normalized_event='interacted') matched FROM voice_events WHERE user_id=:u");
                 $st->execute(['u' => $userId]);
                 $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'matched' => 0];
@@ -316,7 +321,9 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
                 $match = email_flow_exists($pdo, "SELECT 1 FROM voice_events WHERE user_id=:u AND normalized_event='interacted'{$campaignSql}", $params);
             }
         } elseif ($predicate !== '') {
-            if ($scope === 'all') {
+            if ($scope === 'latest') {
+                $match = email_flow_exists($pdo, "SELECT 1 FROM (SELECT * FROM voice_call_attempts WHERE user_id=:u ORDER BY id DESC LIMIT 1) last_voice WHERE {$predicate}", ['u' => $userId]);
+            } elseif ($scope === 'all') {
                 $st = $pdo->prepare("SELECT COUNT(*) total,SUM({$predicate}) matched FROM voice_call_attempts WHERE user_id=:u");
                 $st->execute(['u' => $userId]);
                 $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'matched' => 0];
