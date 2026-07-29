@@ -72,7 +72,11 @@ function telegram_ensure_schema(PDO $pdo): void
         group_id BIGINT UNSIGNED NULL,
         name VARCHAR(180) NOT NULL,
         trigger_type VARCHAR(40) NOT NULL DEFAULT 'scheduled',
+        message_kind VARCHAR(30) NOT NULL DEFAULT 'text',
         message_text TEXT NOT NULL,
+        media_url VARCHAR(1000) NULL,
+        buttons_json LONGTEXT NULL,
+        parse_mode VARCHAR(20) NULL,
         send_at DATETIME NULL,
         repeat_minutes INT UNSIGNED NOT NULL DEFAULT 0,
         status VARCHAR(30) NOT NULL DEFAULT 'active',
@@ -85,6 +89,10 @@ function telegram_ensure_schema(PDO $pdo): void
         KEY idx_tg_auto_next (next_run_at),
         KEY idx_tg_auto_group (group_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    telegram_add_column_if_missing($pdo, 'telegram_auto_messages', 'message_kind', "ALTER TABLE telegram_auto_messages ADD COLUMN message_kind VARCHAR(30) NOT NULL DEFAULT 'text' AFTER trigger_type");
+    telegram_add_column_if_missing($pdo, 'telegram_auto_messages', 'media_url', "ALTER TABLE telegram_auto_messages ADD COLUMN media_url VARCHAR(1000) NULL AFTER message_text");
+    telegram_add_column_if_missing($pdo, 'telegram_auto_messages', 'buttons_json', "ALTER TABLE telegram_auto_messages ADD COLUMN buttons_json LONGTEXT NULL AFTER media_url");
+    telegram_add_column_if_missing($pdo, 'telegram_auto_messages', 'parse_mode', "ALTER TABLE telegram_auto_messages ADD COLUMN parse_mode VARCHAR(20) NULL AFTER buttons_json");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS telegram_ai_rules (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -120,6 +128,15 @@ function telegram_ensure_schema(PDO $pdo): void
         KEY idx_tg_ai_group (group_id),
         KEY idx_tg_ai_event (event_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function telegram_add_column_if_missing(PDO $pdo, string $table, string $column, string $sql): void
+{
+    try {
+        $st = $pdo->prepare("SHOW COLUMNS FROM `{$table}` LIKE :column");
+        $st->execute(['column'=>$column]);
+        if (!$st->fetch(PDO::FETCH_ASSOC)) $pdo->exec($sql);
+    } catch (Throwable $e) {}
 }
 
 function telegram_setting(string $key, string $default = ''): string
@@ -181,6 +198,7 @@ function telegram_api_request(string $method, array $payload = []): array
 
 function telegram_install_webhook(): array
 {
+    telegram_refresh_bot_profile();
     return telegram_api_request('setWebhook', [
         'url' => telegram_webhook_url(),
         'secret_token' => telegram_webhook_secret(),
@@ -189,15 +207,68 @@ function telegram_install_webhook(): array
     ]);
 }
 
+function telegram_refresh_bot_profile(): array
+{
+    $res = telegram_api_request('getMe');
+    $bot = is_array($res['result'] ?? null) ? $res['result'] : [];
+    if (!empty($bot['username'])) telegram_set_setting('bot_username', (string)$bot['username']);
+    if (!empty($bot['id'])) telegram_set_setting('bot_id', (string)$bot['id']);
+    return $bot;
+}
+
+function telegram_private_bot_url(): string
+{
+    $username = telegram_setting('bot_username');
+    return $username !== '' ? 'https://t.me/' . ltrim($username, '@') : '';
+}
+
+function telegram_reply_markup(array|string|null $buttons): ?array
+{
+    if (is_string($buttons)) $buttons = json_decode($buttons, true);
+    if (!is_array($buttons) || !$buttons) return null;
+    $rows = [];
+    foreach ($buttons as $button) {
+        if (!is_array($button)) continue;
+        $text = trim((string)($button['text'] ?? ''));
+        $url = trim((string)($button['url'] ?? ''));
+        if ($text === '' || $url === '') continue;
+        if (!preg_match('~^(https://|tg://)~i', $url)) continue;
+        $rows[] = [['text'=>mb_substr($text, 0, 64), 'url'=>$url]];
+    }
+    return $rows ? ['inline_keyboard'=>$rows] : null;
+}
+
 function telegram_send_message(int|string $chatId, string $text): array
 {
-    $text = trim($text);
-    if ($text === '') throw new InvalidArgumentException('Mensagem vazia.');
-    return telegram_api_request('sendMessage', [
-        'chat_id' => $chatId,
-        'text' => mb_substr($text, 0, 3900),
-        'disable_web_page_preview' => true,
-    ]);
+    return telegram_send_rich_message($chatId, ['message_kind'=>'text','message_text'=>$text]);
+}
+
+function telegram_send_rich_message(int|string $chatId, array $message, array $ctx = []): array
+{
+    $kind = in_array((string)($message['message_kind'] ?? 'text'), ['text','photo','video'], true) ? (string)$message['message_kind'] : 'text';
+    $text = trim(telegram_render_vars((string)($message['message_text'] ?? ''), $ctx));
+    $mediaUrl = trim(telegram_render_vars((string)($message['media_url'] ?? ''), $ctx));
+    $buttons = telegram_reply_markup($message['buttons_json'] ?? null);
+    $parseMode = in_array((string)($message['parse_mode'] ?? ''), ['HTML','MarkdownV2'], true) ? (string)$message['parse_mode'] : null;
+    if ($text === '' && $kind === 'text') throw new InvalidArgumentException('Mensagem vazia.');
+    $payload = ['chat_id'=>$chatId];
+    if ($buttons) $payload['reply_markup'] = $buttons;
+    if ($parseMode) $payload['parse_mode'] = $parseMode;
+    if ($kind === 'photo') {
+        if ($mediaUrl === '') throw new InvalidArgumentException('Informe a URL da imagem.');
+        $payload['photo'] = $mediaUrl;
+        if ($text !== '') $payload['caption'] = mb_substr($text, 0, 1024);
+        return telegram_api_request('sendPhoto', $payload);
+    }
+    if ($kind === 'video') {
+        if ($mediaUrl === '') throw new InvalidArgumentException('Informe a URL do video.');
+        $payload['video'] = $mediaUrl;
+        if ($text !== '') $payload['caption'] = mb_substr($text, 0, 1024);
+        return telegram_api_request('sendVideo', $payload);
+    }
+    $payload['text'] = mb_substr($text, 0, 3900);
+    $payload['disable_web_page_preview'] = true;
+    return telegram_api_request('sendMessage', $payload);
 }
 
 function telegram_ban_member(int|string $chatId, int|string $userId, bool $deleteMessages = false): array
@@ -350,7 +421,7 @@ function telegram_run_auto_messages(PDO $pdo, int $groupId, string $trigger, arr
     $chatId = (string)$groupChat->fetchColumn();
     if ($chatId === '') return;
     foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-        telegram_send_message($chatId, telegram_render_vars((string)$row['message_text'], $ctx));
+        telegram_send_rich_message($chatId, $row, $ctx);
         $pdo->prepare('UPDATE telegram_auto_messages SET sent_count=sent_count+1,last_sent_at=NOW(),updated_at=NOW() WHERE id=:id')->execute(['id'=>(int)$row['id']]);
     }
 }
@@ -393,6 +464,45 @@ function telegram_call_openai(string $text, string $prompt): array
     $json = json_decode(telegram_ai_output_text(is_array($decoded) ? $decoded : []), true);
     if (!is_array($json)) throw new RuntimeException('IA retornou formato invalido.');
     return $json;
+}
+
+function telegram_generate_message_ai(string $instruction, array $context = []): array
+{
+    $instruction = trim($instruction);
+    if ($instruction === '') throw new InvalidArgumentException('Descreva o que a IA deve criar.');
+    $apiKey = trim((string)get_setting('whatsapp_ai_openai_api_key', ''));
+    if ($apiKey === '') $apiKey = trim((string)get_setting('openai_api_key', ''));
+    if ($apiKey === '') throw new RuntimeException('Chave OpenAI nao configurada.');
+    $payload = [
+        'model' => trim((string)get_setting('telegram_ai_model', 'gpt-5.4-mini')) ?: 'gpt-5.4-mini',
+        'input' => [
+            ['role'=>'system','content'=>'Voce cria mensagens para grupos Telegram de alunos. Seja direto, humano, com bom ritmo, sem exagerar em emojis. Pode usar variaveis: {{nome}}, {{username}}, {{grupo}}, {{chat_id}}, {{telegram_id}}. Retorne apenas JSON: {"name":"...","message":"...","button_suggestions":[{"text":"...","url":"https://..."}]}'],
+            ['role'=>'user','content'=>json_encode(['instruction'=>$instruction,'context'=>$context], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ],
+        'max_output_tokens' => 900,
+    ];
+    $ch = curl_init('https://api.openai.com/v1/responses');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER=>true,
+        CURLOPT_POST=>true,
+        CURLOPT_HTTPHEADER=>['Authorization: Bearer ' . $apiKey, 'Content-Type: application/json'],
+        CURLOPT_POSTFIELDS=>json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT=>45,
+    ]);
+    $raw = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    if ($raw === false || $raw === '') throw new RuntimeException('Falha OpenAI: ' . $err);
+    $decoded = json_decode((string)$raw, true);
+    if ($code < 200 || $code >= 300) throw new RuntimeException('OpenAI HTTP ' . $code . ': ' . substr((string)($decoded['error']['message'] ?? $raw), 0, 800));
+    $json = json_decode(telegram_ai_output_text(is_array($decoded) ? $decoded : []), true);
+    if (!is_array($json)) throw new RuntimeException('IA retornou formato invalido.');
+    return [
+        'name' => mb_substr(trim((string)($json['name'] ?? 'Mensagem criada com IA')), 0, 180),
+        'message' => trim((string)($json['message'] ?? '')),
+        'button_suggestions' => is_array($json['button_suggestions'] ?? null) ? array_slice($json['button_suggestions'], 0, 4) : [],
+    ];
 }
 
 function telegram_evaluate_ai(PDO $pdo, int $eventId, int $groupId, int $telegramUserId, string $text, array $ctx): void
@@ -461,7 +571,7 @@ function telegram_process_due(PDO $pdo, int $limit = 50): array
             $chatIds = [];
             if (!empty($m['chat_id'])) $chatIds[] = (string)$m['chat_id'];
             else $chatIds = array_map('strval', $pdo->query("SELECT chat_id FROM telegram_groups WHERE status='active'")->fetchAll(PDO::FETCH_COLUMN) ?: []);
-            foreach ($chatIds as $chatId) telegram_send_message($chatId, (string)$m['message_text']);
+            foreach ($chatIds as $chatId) telegram_send_rich_message($chatId, $m);
             $next = (int)$m['repeat_minutes'] > 0 ? date('Y-m-d H:i:s', time() + ((int)$m['repeat_minutes'] * 60)) : null;
             $status = $next ? 'active' : 'sent';
             $pdo->prepare("UPDATE telegram_auto_messages SET status=:status,sent_count=sent_count+1,last_sent_at=NOW(),next_run_at=:next,updated_at=NOW() WHERE id=:id")->execute(['status'=>$status,'next'=>$next,'id'=>(int)$m['id']]);
