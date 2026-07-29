@@ -52,6 +52,7 @@ $PAGINAS = [
     'meta_leads'       => 'Meta Leads Qualificados',
     'manychat'         => 'Manychat',
     'torpedo_voz'      => 'Torpedo de Voz',
+    'telegram'         => 'Telegram',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'   => 'Configurações WhatsApp',
     'whatsapp_monitor'  => 'WhatsApp Monitor',

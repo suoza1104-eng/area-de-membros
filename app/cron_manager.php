@@ -68,6 +68,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'telegram' => [
+            'label' => 'Telegram',
+            'description' => 'Processa mensagens programadas e acoes de IA/moderacao dos grupos Telegram.',
+            'script' => __DIR__ . '/../cron/processar_telegram.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
         'email_marketing' => [
             'label' => 'E-mail marketing',
             'description' => 'Processa campanhas e etapas de e-mail vencidas pelo Amazon SES.',
