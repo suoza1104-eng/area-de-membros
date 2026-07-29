@@ -24,23 +24,35 @@ $aiDraft = null;
 
 function tg_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function tg_dt($v): string { $s=trim((string)$v); if($s==='') return ''; $t=strtotime($s); return $t?date('d/m/Y H:i:s',$t):$s; }
+function tg_json_attr($v): string { return tg_h(json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR)); }
 function tg_check(string $csrf): void { if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) throw new RuntimeException('Sessao expirada. Recarregue a pagina.'); }
 function tg_redirect(string $tab, string $msg = ''): void { header('Location: telegram.php?tab=' . rawurlencode($tab) . ($msg !== '' ? '&msg=' . rawurlencode($msg) : '')); exit; }
 function tg_build_buttons(array $post): array {
     $buttons = [];
+    $types = is_array($post['button_type'] ?? null) ? $post['button_type'] : [];
     $labels = is_array($post['button_text'] ?? null) ? $post['button_text'] : [];
     $urls = is_array($post['button_url'] ?? null) ? $post['button_url'] : [];
+    $payloads = is_array($post['button_payload'] ?? null) ? $post['button_payload'] : [];
     foreach ($labels as $i => $label) {
         $text = trim((string)$label);
+        $type = in_array((string)($types[$i] ?? 'url'), ['url','private_bot','callback'], true) ? (string)$types[$i] : 'url';
         $url = trim((string)($urls[$i] ?? ''));
-        if ($text === '' || $url === '') continue;
-        if (!preg_match('~^(https://|tg://)~i', $url)) throw new RuntimeException('Botao "' . $text . '" precisa usar URL https:// ou tg://.');
-        $buttons[] = ['text'=>mb_substr($text, 0, 64), 'url'=>$url];
-    }
-    if (!empty($post['add_private_button'])) {
-        $private = telegram_private_bot_url();
-        if ($private === '') throw new RuntimeException('Instale o webhook ou salve o token para detectar o usuario do bot antes de criar botao privado.');
-        $buttons[] = ['text'=>trim((string)($post['private_button_text'] ?? 'Falar com o bot')) ?: 'Falar com o bot', 'url'=>$private];
+        $payload = trim((string)($payloads[$i] ?? ''));
+        if ($text === '') continue;
+        $button = ['type'=>$type, 'text'=>mb_substr($text, 0, 64)];
+        if ($type === 'private_bot') {
+            $private = telegram_private_bot_url();
+            if ($private === '') throw new RuntimeException('Salve o token e instale o webhook para detectar o usuario do bot antes de criar botao privado.');
+            $button['url'] = $payload !== '' ? $private . '?start=' . rawurlencode(mb_substr($payload, 0, 64)) : $private;
+        } elseif ($type === 'callback') {
+            if ($payload === '') throw new RuntimeException('Botao "' . $text . '" precisa de uma acao/comando.');
+            $button['callback_data'] = mb_substr($payload, 0, 64);
+        } else {
+            if ($url === '') continue;
+            if (!preg_match('~^(https://|tg://)~i', $url)) throw new RuntimeException('Botao "' . $text . '" precisa usar URL https:// ou tg://.');
+            $button['url'] = $url;
+        }
+        $buttons[] = $button;
     }
     return array_slice($buttons, 0, 8);
 }
@@ -86,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             telegram_send_message(trim((string)$_POST['chat_id']), trim((string)$_POST['message']));
             tg_redirect('groups', 'Mensagem de teste enviada.');
         } elseif ($action === 'save_auto_message') {
+            $id = (int)($_POST['id'] ?? 0);
             $groupId = (int)($_POST['group_id'] ?? 0);
             $trigger = (string)($_POST['trigger_type'] ?? 'scheduled');
             if (!in_array($trigger, ['scheduled','member_joined','member_left'], true)) $trigger = 'scheduled';
@@ -95,26 +108,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $buttons = tg_build_buttons($_POST);
             $sendAt = trim((string)($_POST['send_at'] ?? ''));
             $next = $trigger === 'scheduled' ? ($sendAt !== '' ? date('Y-m-d H:i:s', strtotime($sendAt)) : date('Y-m-d H:i:s')) : null;
+            $params = [
+                'group_id'=>$groupId > 0 ? $groupId : null,
+                'name'=>mb_substr(trim((string)($_POST['name'] ?? 'Mensagem Telegram')),0,180),
+                'trigger'=>$trigger,
+                'kind'=>$kind,
+                'text'=>trim((string)($_POST['message_text'] ?? '')),
+                'media'=>$mediaUrl !== '' ? $mediaUrl : null,
+                'buttons'=>$buttons ? json_encode($buttons, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+                'parse_mode'=>in_array((string)($_POST['parse_mode'] ?? ''), ['HTML','MarkdownV2'], true) ? (string)$_POST['parse_mode'] : null,
+                'send_at'=>$next,
+                'repeat'=>max(0,(int)($_POST['repeat_minutes'] ?? 0)),
+                'next'=>$next,
+            ];
+            if ($id > 0) {
+                $params['id'] = $id;
+                $pdo->prepare("UPDATE telegram_auto_messages SET group_id=:group_id,name=:name,trigger_type=:trigger,message_kind=:kind,message_text=:text,media_url=:media,buttons_json=:buttons,parse_mode=:parse_mode,send_at=:send_at,repeat_minutes=:repeat,next_run_at=:next,updated_at=NOW() WHERE id=:id")->execute($params);
+                tg_redirect('messages', 'Mensagem atualizada.');
+            }
             $pdo->prepare("INSERT INTO telegram_auto_messages (group_id,name,trigger_type,message_kind,message_text,media_url,buttons_json,parse_mode,send_at,repeat_minutes,status,next_run_at,created_at,updated_at)
-                VALUES (:group_id,:name,:trigger,:kind,:text,:media,:buttons,:parse_mode,:send_at,:repeat,'active',:next,NOW(),NOW())")
-                ->execute([
-                    'group_id'=>$groupId > 0 ? $groupId : null,
-                    'name'=>mb_substr(trim((string)($_POST['name'] ?? 'Mensagem Telegram')),0,180),
-                    'trigger'=>$trigger,
-                    'kind'=>$kind,
-                    'text'=>trim((string)($_POST['message_text'] ?? '')),
-                    'media'=>$mediaUrl !== '' ? $mediaUrl : null,
-                    'buttons'=>$buttons ? json_encode($buttons, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
-                    'parse_mode'=>in_array((string)($_POST['parse_mode'] ?? ''), ['HTML','MarkdownV2'], true) ? (string)$_POST['parse_mode'] : null,
-                    'send_at'=>$next,
-                    'repeat'=>max(0,(int)($_POST['repeat_minutes'] ?? 0)),
-                    'next'=>$next,
-                ]);
+                VALUES (:group_id,:name,:trigger,:kind,:text,:media,:buttons,:parse_mode,:send_at,:repeat,'active',:next,NOW(),NOW())")->execute($params);
             tg_redirect('messages', 'Mensagem automatica criada.');
         } elseif ($action === 'toggle_auto_message') {
             $id = (int)($_POST['id'] ?? 0);
             $pdo->prepare("UPDATE telegram_auto_messages SET status=IF(status='active','paused','active'),updated_at=NOW() WHERE id=:id")->execute(['id'=>$id]);
             tg_redirect('messages', 'Status atualizado.');
+        } elseif ($action === 'clone_auto_message') {
+            $id = (int)($_POST['id'] ?? 0);
+            $pdo->prepare("INSERT INTO telegram_auto_messages (group_id,name,trigger_type,message_kind,message_text,media_url,buttons_json,parse_mode,send_at,repeat_minutes,status,next_run_at,created_at,updated_at)
+                SELECT group_id,CONCAT(name,' (copia)'),trigger_type,message_kind,message_text,media_url,buttons_json,parse_mode,send_at,repeat_minutes,'paused',next_run_at,NOW(),NOW()
+                FROM telegram_auto_messages WHERE id=:id")->execute(['id'=>$id]);
+            tg_redirect('messages', 'Mensagem clonada como rascunho pausado.');
         } elseif ($action === 'delete_auto_message') {
             $pdo->prepare("DELETE FROM telegram_auto_messages WHERE id=:id")->execute(['id'=>(int)$_POST['id']]);
             tg_redirect('messages', 'Mensagem removida.');
@@ -154,7 +178,7 @@ $stats = [
     'messages'=>(int)$pdo->query("SELECT COUNT(*) FROM telegram_events WHERE event_type IN ('message','message_edited') AND received_at>=DATE_SUB(NOW(),INTERVAL 7 DAY)")->fetchColumn(),
     'ai_pending'=>(int)$pdo->query("SELECT COUNT(*) FROM telegram_ai_actions WHERE status IN ('pending','ready')")->fetchColumn(),
 ];
-$autoMessages = $pdo->query("SELECT m.*,g.title group_title,g.chat_id FROM telegram_auto_messages m LEFT JOIN telegram_groups g ON g.id=m.group_id ORDER BY m.id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$autoMessages = $pdo->query("SELECT m.*,g.title group_title,g.chat_id FROM telegram_auto_messages m LEFT JOIN telegram_groups g ON g.id=m.group_id ORDER BY COALESCE(m.next_run_at,m.send_at,m.created_at) ASC,m.id ASC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $aiRules = $pdo->query("SELECT r.*,g.title group_title FROM telegram_ai_rules r LEFT JOIN telegram_groups g ON g.id=r.group_id ORDER BY r.id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $aiActions = $pdo->query("SELECT a.*,g.title group_title,g.chat_id,e.message_text FROM telegram_ai_actions a LEFT JOIN telegram_groups g ON g.id=a.group_id LEFT JOIN telegram_events e ON e.id=a.event_id ORDER BY a.id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $logs = $pdo->query("SELECT e.*,g.title group_title FROM telegram_events e LEFT JOIN telegram_groups g ON g.id=e.group_id ORDER BY e.id DESC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -164,7 +188,7 @@ $tokenMask = telegram_bot_token() !== '' ? substr(telegram_bot_token(), 0, 8) . 
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.tg{display:grid;gap:14px}.tg-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.tg-head h1{font-size:22px}.tg-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.tg-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.tg-nav a.active,.tg-nav a:hover{background:var(--primary-dim);color:var(--primary)}.tg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.tg-subpanel{padding-top:10px;border-top:1px solid var(--border)}.tg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.tg-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-kpi strong{font-size:25px}.tg-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.tg-field label{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-field input,.tg-field select,.tg-field textarea{width:100%;padding:9px 11px;border:1px solid var(--border-light);border-radius:8px;background:var(--bg);color:var(--text)}.tg-field textarea{min-height:96px}.tg-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.tg-table{overflow:auto}.tg-table table{width:100%;border-collapse:collapse}.tg-table th,.tg-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.tg-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.tg-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.tg-pill.ok{background:var(--success-dim);color:#86efac}.tg-pill.warn{background:var(--warning-dim);color:#facc15}.tg-pill.bad{background:var(--danger-dim);color:#fca5a5}.tg-code{display:block;padding:9px;border:1px solid var(--border);border-radius:8px;background:#071020;color:#bae6fd;word-break:break-all;font-size:12px}.tg-note{font-size:11px;color:var(--muted);line-height:1.45}.tg-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.tg-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.tg-wide{grid-column:1/-1}@media(max-width:800px){.tg-head{display:grid}.tg-actions{width:100%}}
+.tg{display:grid;gap:14px}.tg-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.tg-head h1{font-size:22px}.tg-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.tg-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.tg-nav a.active,.tg-nav a:hover{background:var(--primary-dim);color:var(--primary)}.tg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:var(--shadow)}.tg-subpanel{padding-top:10px;border-top:1px solid var(--border)}.tg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.tg-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-kpi strong{font-size:25px}.tg-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.tg-field label{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-field input,.tg-field select,.tg-field textarea{width:100%;padding:9px 11px;border:1px solid var(--border-light);border-radius:8px;background:var(--bg);color:var(--text)}.tg-field textarea{min-height:96px}.tg-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.tg-table{overflow:auto}.tg-table table{width:100%;border-collapse:collapse}.tg-table th,.tg-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.tg-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.tg-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.tg-pill.ok{background:var(--success-dim);color:#86efac}.tg-pill.warn{background:var(--warning-dim);color:#facc15}.tg-pill.bad{background:var(--danger-dim);color:#fca5a5}.tg-code{display:block;padding:9px;border:1px solid var(--border);border-radius:8px;background:#071020;color:#bae6fd;word-break:break-all;font-size:12px}.tg-note{font-size:11px;color:var(--muted);line-height:1.45}.tg-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.tg-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.tg-wide{grid-column:1/-1}.tg-msg-workspace{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,480px);gap:14px;align-items:start}.tg-toolbar{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}.tg-message-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:12px}.tg-message-card{border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;min-height:250px;display:flex;flex-direction:column}.tg-message-card.active{outline:2px solid var(--primary);outline-offset:2px}.tg-message-top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;background:var(--bg-hover);padding:10px 12px}.tg-message-time{font-size:11px;color:var(--muted);line-height:1.35}.tg-card-actions{display:flex;gap:4px}.tg-icon-btn{width:28px;height:28px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);color:var(--text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.tg-icon-btn:hover{border-color:var(--primary);color:var(--primary)}.tg-card-body{padding:12px;display:grid;gap:10px;flex:1}.tg-preview-bubble{background:#dcf8c6;color:#294235;border-radius:8px 8px 2px 8px;padding:10px 11px;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:hidden}.tg-preview-media{height:118px;border-radius:7px;background:linear-gradient(135deg,#d9f0ff,#f6f8fb);display:flex;align-items:center;justify-content:center;color:#4b5563;font-size:12px;border:1px solid rgba(0,0,0,.06)}.tg-preview-buttons{display:grid;gap:5px}.tg-preview-button{border:1px solid rgba(54,119,87,.28);background:rgba(255,255,255,.72);color:#26724a;text-align:center;border-radius:7px;padding:6px;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tg-empty{border:1px dashed var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--muted)}.tg-editor{position:sticky;top:82px}.tg-editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}.tg-editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.tg-button-row{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--bg);display:grid;gap:8px}.tg-button-row-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.tg-button-settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tg-ai-panel{display:none;margin-bottom:12px}.tg-ai-panel.open{display:block}.tg-form-actions{position:sticky;bottom:0;background:var(--bg-card);border-top:1px solid var(--border);padding-top:12px;margin-top:12px}.tg-confirm-form{display:inline}@media(max-width:1100px){.tg-msg-workspace{grid-template-columns:1fr}.tg-editor{position:static}}@media(max-width:800px){.tg-head{display:grid}.tg-actions{width:100%}.tg-editor-grid,.tg-button-settings{grid-template-columns:1fr}.tg-message-list{grid-template-columns:1fr}}
 </style>
 <div class="tg">
   <div class="tg-head">
@@ -214,6 +238,112 @@ include __DIR__ . '/_header.php';
     </form>
   </section>
 <?php elseif($tab==='messages'): ?>
+  <?php
+    $draftButtons = is_array($aiDraft['button_suggestions'] ?? null) ? $aiDraft['button_suggestions'] : [];
+    $initialDraft = ['name'=>$aiDraft['name'] ?? '', 'message'=>$aiDraft['message'] ?? '', 'buttons'=>$draftButtons];
+  ?>
+  <div class="tg-msg-workspace" data-ai-draft="<?=tg_json_attr($initialDraft)?>">
+    <section class="tg-card">
+      <div class="tg-toolbar">
+        <div>
+          <div class="panel-title">Mensagens em ordem cronologica</div>
+          <div class="tg-note"><?=count($autoMessages)?> mensagem(ns) cadastrada(s)</div>
+        </div>
+        <button type="button" class="btn btn-primary" id="tgNewMessage">Nova mensagem</button>
+      </div>
+      <div class="tg-message-list" id="tgMessageList">
+        <?php foreach($autoMessages as $m):
+          $buttons = json_decode((string)($m['buttons_json'] ?? ''), true);
+          if (!is_array($buttons)) $buttons = [];
+          $payload = [
+            'id'=>(int)$m['id'],
+            'name'=>(string)$m['name'],
+            'group_id'=>(int)($m['group_id'] ?? 0),
+            'trigger_type'=>(string)$m['trigger_type'],
+            'message_kind'=>(string)($m['message_kind'] ?? 'text'),
+            'message_text'=>(string)$m['message_text'],
+            'media_url'=>(string)($m['media_url'] ?? ''),
+            'buttons'=>$buttons,
+            'parse_mode'=>(string)($m['parse_mode'] ?? ''),
+            'send_at'=>$m['send_at'] ? date('Y-m-d\TH:i', strtotime((string)$m['send_at'])) : '',
+            'repeat_minutes'=>(int)$m['repeat_minutes'],
+          ];
+        ?>
+          <article class="tg-message-card" data-message="<?=tg_json_attr($payload)?>">
+            <div class="tg-message-top">
+              <div>
+                <strong><?=tg_h($m['name'])?></strong>
+                <div class="tg-message-time"><?=tg_h($m['next_run_at'] ? tg_dt($m['next_run_at']) : ucfirst((string)$m['trigger_type']))?></div>
+              </div>
+              <div class="tg-card-actions">
+                <button type="button" class="tg-icon-btn tg-edit-card" title="Editar">✎</button>
+                <form method="post" class="tg-confirm-form"><input type="hidden" name="csrf" value="<?=tg_h($csrf)?>"><input type="hidden" name="id" value="<?=(int)$m['id']?>"><button class="tg-icon-btn" name="action" value="clone_auto_message" title="Clonar">⧉</button></form>
+                <form method="post" class="tg-confirm-form"><input type="hidden" name="csrf" value="<?=tg_h($csrf)?>"><input type="hidden" name="id" value="<?=(int)$m['id']?>"><button class="tg-icon-btn" name="action" value="toggle_auto_message" title="Pausar ou ativar">Ⅱ</button></form>
+                <form method="post" class="tg-confirm-form" onsubmit="return confirm('Excluir mensagem?')"><input type="hidden" name="csrf" value="<?=tg_h($csrf)?>"><input type="hidden" name="id" value="<?=(int)$m['id']?>"><button class="tg-icon-btn" name="action" value="delete_auto_message" title="Apagar">×</button></form>
+              </div>
+            </div>
+            <div class="tg-card-body">
+              <div class="tg-actions"><span class="tg-pill <?=$m['status']==='active'?'ok':'warn'?>"><?=tg_h($m['status'])?></span><span class="tg-pill"><?=tg_h($m['message_kind'] ?? 'text')?></span><span class="tg-note"><?=tg_h($m['group_title'] ?: 'Todos os grupos')?></span></div>
+              <?php if(($m['message_kind'] ?? 'text') !== 'text'): ?><div class="tg-preview-media"><?=tg_h($m['message_kind'])?><?=!empty($m['media_url'])?' anexado':''?></div><?php endif; ?>
+              <div class="tg-preview-bubble"><?=tg_h(mb_substr((string)$m['message_text'], 0, 520))?></div>
+              <?php if($buttons): ?><div class="tg-preview-buttons"><?php foreach(array_slice($buttons,0,8) as $b): ?><div class="tg-preview-button"><?=tg_h($b['text'] ?? 'Botao')?></div><?php endforeach; ?></div><?php endif; ?>
+              <div class="tg-note">Enviadas: <?=(int)$m['sent_count']?><?=!empty($m['last_sent_at'])?' · Ultimo: '.tg_h(tg_dt($m['last_sent_at'])):''?></div>
+            </div>
+          </article>
+        <?php endforeach; ?>
+        <?php if(!$autoMessages): ?><div class="tg-empty">Nenhuma mensagem cadastrada ainda.</div><?php endif; ?>
+      </div>
+    </section>
+
+    <aside class="tg-card tg-editor">
+      <div class="tg-editor-head">
+        <div><div class="panel-title" id="tgEditorTitle">Configurar mensagem</div><div class="tg-note">Texto, midia, recorrencia e botoes do Telegram.</div></div>
+        <button type="button" class="btn btn-ghost sm" id="tgToggleAi">IA</button>
+      </div>
+      <section class="tg-ai-panel tg-card" id="tgAiPanel">
+        <form method="post" class="tg-form"><input type="hidden" name="csrf" value="<?=tg_h($csrf)?>"><input type="hidden" name="action" value="generate_message_ai">
+          <label class="tg-field"><label>Grupo de contexto</label><select name="group_id"><option value="0">Todos os grupos</option><?php foreach($groups as $g): ?><option value="<?=(int)$g['id']?>"><?=tg_h($g['title'])?></option><?php endforeach; ?></select></label>
+          <label class="tg-field"><label>Objetivo</label><select name="trigger_type"><option value="member_joined">Boas-vindas</option><option value="scheduled">Aviso programado</option><option value="member_left">Recuperar saida</option></select></label>
+          <label class="tg-field tg-wide"><label>Prompt</label><textarea name="ai_prompt" placeholder="Ex: crie uma mensagem com 5 botoes para oferta do produto X, cada botao com uma forma de pagamento.">Crie uma mensagem curta para lembrar os alunos da live de hoje e incentivar a entrarem no horario.</textarea></label>
+          <button class="btn btn-primary" type="submit">Criar com IA</button>
+        </form>
+      </section>
+      <form method="post" enctype="multipart/form-data" id="tgMessageForm">
+        <input type="hidden" name="csrf" value="<?=tg_h($csrf)?>">
+        <input type="hidden" name="action" value="save_auto_message">
+        <input type="hidden" name="id" id="tgMsgId">
+        <div class="tg-editor-grid">
+          <label class="tg-field"><label>Nome interno</label><input name="name" id="tgName" value="<?=tg_h($aiDraft['name'] ?? 'Nova mensagem Telegram')?>" required></label>
+          <label class="tg-field"><label>Grupo</label><select name="group_id" id="tgGroup"><option value="0">Todos os grupos</option><?php foreach($groups as $g): ?><option value="<?=(int)$g['id']?>"><?=tg_h($g['title'])?></option><?php endforeach; ?></select></label>
+          <label class="tg-field"><label>Gatilho</label><select name="trigger_type" id="tgTrigger"><option value="scheduled">Data/hora programada</option><option value="member_joined">Quando entrar</option><option value="member_left">Quando sair</option></select></label>
+          <label class="tg-field"><label>Tipo</label><select name="message_kind" id="tgKind"><option value="text">Mensagem de texto</option><option value="photo">Imagem + legenda</option><option value="video">Video + legenda</option></select></label>
+          <label class="tg-field"><label>Enviar em</label><input type="datetime-local" name="send_at" id="tgSendAt"></label>
+          <label class="tg-field"><label>Repetir a cada X minutos</label><input type="number" name="repeat_minutes" id="tgRepeat" min="0" value="0"></label>
+          <label class="tg-field"><label>Formato</label><select name="parse_mode" id="tgParse"><option value="">Texto simples</option><option value="HTML">HTML Telegram</option><option value="MarkdownV2">MarkdownV2</option></select></label>
+          <label class="tg-field"><label>URL da midia</label><input name="media_url" id="tgMediaUrl" placeholder="https://.../imagem.jpg ou video.mp4"></label>
+          <label class="tg-field tg-wide"><label>Upload da midia</label><input type="file" name="media_file" accept="image/*,video/mp4,video/webm,video/quicktime"></label>
+          <label class="tg-field tg-wide"><label>Mensagem / legenda</label><textarea name="message_text" id="tgText" required><?=tg_h($aiDraft['message'] ?? 'Bem-vindo, {{nome}}. Aula ao vivo chegando.')?></textarea><span class="tg-note">Variaveis: {{nome}}, {{username}}, {{grupo}}, {{chat_id}}, {{telegram_id}}</span></label>
+        </div>
+        <div class="tg-subpanel tg-wide mt-3">
+          <div class="tg-toolbar"><div><div class="panel-title">Botoes</div><div class="tg-note">Cada botao recebe uma funcao propria, dentro do que o Telegram permite.</div></div><button type="button" class="btn btn-ghost sm" id="tgAddButton">Inserir botao</button></div>
+          <div id="tgButtons"></div>
+        </div>
+        <div class="tg-subpanel mt-3">
+          <div class="panel-title">Preview</div>
+          <div class="tg-card-body">
+            <div class="tg-preview-media" id="tgPreviewMedia" style="display:none"></div>
+            <div class="tg-preview-bubble" id="tgPreviewText"></div>
+            <div class="tg-preview-buttons" id="tgPreviewButtons"></div>
+          </div>
+        </div>
+        <div class="tg-form-actions tg-actions">
+          <button class="btn btn-primary" type="submit" id="tgSaveBtn">Salvar mensagem</button>
+          <button type="button" class="btn btn-ghost" id="tgClearForm">Limpar</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+<?php elseif($tab==='messages' && false): ?>
   <section class="tg-card">
     <div class="panel-title">Criar texto com IA</div>
     <form method="post" class="tg-form mt-3"><input type="hidden" name="csrf" value="<?=tg_h($csrf)?>"><input type="hidden" name="action" value="generate_message_ai">
@@ -315,6 +445,79 @@ include __DIR__ . '/_header.php';
       <div><strong>Teste</strong><p class="tg-note">Mande uma mensagem no grupo. O grupo deve aparecer na aba Grupos.</p></div>
     </div>
   </section>
+<?php endif; ?>
+<?php if($tab==='messages'): ?>
+<script>
+(function(){
+  const root=document.querySelector('.tg-msg-workspace'); if(!root) return;
+  const form=document.getElementById('tgMessageForm'), buttonsWrap=document.getElementById('tgButtons');
+  const fields={id:document.getElementById('tgMsgId'),name:document.getElementById('tgName'),group:document.getElementById('tgGroup'),trigger:document.getElementById('tgTrigger'),kind:document.getElementById('tgKind'),sendAt:document.getElementById('tgSendAt'),repeat:document.getElementById('tgRepeat'),parse:document.getElementById('tgParse'),media:document.getElementById('tgMediaUrl'),text:document.getElementById('tgText')};
+  const previewText=document.getElementById('tgPreviewText'), previewMedia=document.getElementById('tgPreviewMedia'), previewButtons=document.getElementById('tgPreviewButtons');
+  const editorTitle=document.getElementById('tgEditorTitle'), saveBtn=document.getElementById('tgSaveBtn');
+  function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  function buttonTemplate(b){
+    const type=b.type||(b.callback_data?'callback':'url'), payload=b.callback_data||'', url=b.url||'';
+    return `<div class="tg-button-row">
+      <div class="tg-button-row-head"><strong>Botao</strong><button type="button" class="tg-icon-btn tg-remove-button" title="Remover">×</button></div>
+      <div class="tg-button-settings">
+        <label class="tg-field"><label>Texto</label><input name="button_text[]" value="${esc(b.text||'')}" placeholder="Ex: Pix"></label>
+        <label class="tg-field"><label>Funcao</label><select name="button_type[]" class="tg-button-type"><option value="url" ${type==='url'?'selected':''}>Abrir link</option><option value="private_bot" ${type==='private_bot'?'selected':''}>Chamar bot</option><option value="callback" ${type==='callback'?'selected':''}>Acao interna</option></select></label>
+        <label class="tg-field tg-button-url"><label>Link</label><input name="button_url[]" value="${esc(type==='url'?url:'')}" placeholder="https://..."></label>
+        <label class="tg-field tg-button-payload"><label>Parametro / comando</label><input name="button_payload[]" value="${esc(type==='callback'?payload:'')}" placeholder="oferta_pix ou start"></label>
+      </div>
+    </div>`;
+  }
+  function syncButtonRows(){
+    buttonsWrap.querySelectorAll('.tg-button-row').forEach(row=>{
+      const type=row.querySelector('.tg-button-type').value;
+      row.querySelector('.tg-button-url').style.display=type==='url'?'block':'none';
+      row.querySelector('.tg-button-payload').style.display=type==='url'?'none':'block';
+    });
+    renderPreview();
+  }
+  function addButton(b={}){ if(buttonsWrap.children.length>=8) return; buttonsWrap.insertAdjacentHTML('beforeend',buttonTemplate(b)); syncButtonRows(); }
+  function renderPreview(){
+    const text=fields.text.value.trim()||'Nenhuma mensagem adicionada.';
+    previewText.textContent=text;
+    const kind=fields.kind.value, media=fields.media.value.trim();
+    previewMedia.style.display=kind==='text'?'none':'flex';
+    previewMedia.textContent=kind==='photo'?(media?'Imagem anexada':'Imagem'):(media?'Video anexado':'Video');
+    previewButtons.innerHTML='';
+    buttonsWrap.querySelectorAll('.tg-button-row').forEach(row=>{
+      const label=row.querySelector('[name="button_text[]"]').value.trim();
+      if(label) previewButtons.insertAdjacentHTML('beforeend',`<div class="tg-preview-button">${esc(label)}</div>`);
+    });
+  }
+  function fill(data, markActive){
+    fields.id.value=data.id||''; fields.name.value=data.name||'Nova mensagem Telegram'; fields.group.value=String(data.group_id||0);
+    fields.trigger.value=data.trigger_type||'scheduled'; fields.kind.value=data.message_kind||'text'; fields.sendAt.value=data.send_at||'';
+    fields.repeat.value=data.repeat_minutes||0; fields.parse.value=data.parse_mode||''; fields.media.value=data.media_url||''; fields.text.value=data.message_text||'';
+    buttonsWrap.innerHTML=''; (Array.isArray(data.buttons)?data.buttons:[]).forEach(addButton);
+    if(!buttonsWrap.children.length) addButton({});
+    editorTitle.textContent=data.id?'Editar mensagem':'Configurar mensagem'; saveBtn.textContent=data.id?'Salvar alteracoes':'Salvar mensagem';
+    document.querySelectorAll('.tg-message-card').forEach(card=>card.classList.toggle('active', markActive && card.dataset.message && JSON.parse(card.dataset.message).id===data.id));
+    syncButtonRows(); renderPreview();
+  }
+  function resetForm(){
+    fill({name:'Nova mensagem Telegram',group_id:0,trigger_type:'scheduled',message_kind:'text',message_text:'',buttons:[],repeat_minutes:0}, false);
+    form.reset(); fields.id.value=''; fields.name.value='Nova mensagem Telegram'; fields.trigger.value='scheduled'; fields.kind.value='text'; fields.repeat.value='0'; buttonsWrap.innerHTML=''; addButton({}); renderPreview();
+  }
+  document.querySelectorAll('.tg-message-card').forEach(card=>{
+    card.addEventListener('click',e=>{ if(e.target.closest('form')) return; fill(JSON.parse(card.dataset.message), true); });
+    const edit=card.querySelector('.tg-edit-card'); if(edit) edit.addEventListener('click',e=>{e.stopPropagation(); fill(JSON.parse(card.dataset.message), true);});
+  });
+  document.getElementById('tgNewMessage').addEventListener('click', resetForm);
+  document.getElementById('tgClearForm').addEventListener('click', resetForm);
+  document.getElementById('tgAddButton').addEventListener('click',()=>addButton({}));
+  buttonsWrap.addEventListener('click',e=>{ if(e.target.closest('.tg-remove-button')){ e.target.closest('.tg-button-row').remove(); renderPreview(); }});
+  buttonsWrap.addEventListener('input',syncButtonRows); buttonsWrap.addEventListener('change',syncButtonRows);
+  ['input','change'].forEach(ev=>form.addEventListener(ev,renderPreview));
+  document.getElementById('tgToggleAi').addEventListener('click',()=>document.getElementById('tgAiPanel').classList.toggle('open'));
+  let draft={}; try{draft=JSON.parse(root.dataset.aiDraft||'{}')}catch(e){}
+  if(draft.message){fill({name:draft.name||'Mensagem criada com IA',group_id:0,trigger_type:'scheduled',message_kind:'text',message_text:draft.message,buttons:draft.buttons||[],repeat_minutes:0},false);}
+  else{resetForm();}
+})();
+</script>
 <?php endif; ?>
 </div>
 <?php include __DIR__ . '/_footer.php'; ?>

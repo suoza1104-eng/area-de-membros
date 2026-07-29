@@ -2,10 +2,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/meta_form_utms.php';
+require_once __DIR__ . '/../app/cron_manager.php';
 proteger_admin();
 
 $pdo = getPDO();
 mfu_ensure_schema($pdo);
+cron_manager_ensure_tables($pdo);
 
 $menu = 'meta_form_utms';
 $page_title = 'UTMs Forms Meta';
@@ -38,6 +40,13 @@ function mfu_admin_rows(PDO $pdo, string $sql, array $params = []): array {
     $st = $pdo->prepare($sql);
     $st->execute($params);
     return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function mfu_admin_datetime(?string $value): string {
+    $value = trim((string)$value);
+    if ($value === '') return 'Nunca';
+    $ts = strtotime($value);
+    return $ts ? date('d/m/Y H:i', $ts) : $value;
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -110,11 +119,42 @@ $campaigns = mfu_admin_rows($pdo, "
      ORDER BY total DESC
      LIMIT 80
 ");
+$dailyRows = mfu_admin_rows($pdo, "
+    SELECT DATE(created_at) dia,
+           COUNT(*) tratados,
+           SUM(CASE WHEN status='updated' THEN 1 ELSE 0 END) receberam_utms
+      FROM meta_form_utm_logs
+     WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+     GROUP BY DATE(created_at)
+     ORDER BY dia ASC
+");
+$dailyByDate = [];
+foreach ($dailyRows as $row) $dailyByDate[(string)$row['dia']] = $row;
+$dailyChart = [];
+$today = new DateTimeImmutable('today');
+for ($i = 29; $i >= 0; $i--) {
+    $date = $today->sub(new DateInterval('P' . $i . 'D'));
+    $key = $date->format('Y-m-d');
+    $row = $dailyByDate[$key] ?? [];
+    $dailyChart[] = [
+        'date' => $key,
+        'label' => $date->format('d/m'),
+        'treated' => (int)($row['tratados'] ?? 0),
+        'updated' => (int)($row['receberam_utms'] ?? 0),
+    ];
+}
+$dailyMax = max(array_map(static fn($r) => max((int)$r['treated'], (int)$r['updated']), $dailyChart) ?: [1]);
+$cronTask = null;
+try {
+    $st = $pdo->prepare("SELECT * FROM cron_managed_tasks WHERE task_key='meta_form_utms' LIMIT 1");
+    $st->execute();
+    $cronTask = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+} catch (Throwable $e) {}
 
 require __DIR__ . '/_header.php';
 ?>
 <style>
-.mfu{display:flex;flex-direction:column;gap:14px}.mfu-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.mfu-head h1{font-size:22px;margin:0}.mfu-head p{font-size:12px;color:var(--muted);margin:4px 0 0}.mfu-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.mfu-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px}.mfu-kpi small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.mfu-kpi strong{display:block;font-size:25px;margin-top:4px;color:var(--text)}.mfu-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px}.mfu-card h2{font-size:15px;margin:0 0 10px}.mfu-filter{display:grid;grid-template-columns:1.2fr repeat(3,minmax(150px,.5fr)) auto;gap:9px;align-items:end}.mfu-filter label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px}.mfu-filter input,.mfu-filter select{width:100%;height:35px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}.mfu-bars{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mfu-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 58px;gap:10px;align-items:center;margin:9px 0;font-size:11px}.mfu-track{height:9px;background:var(--bg);border-radius:99px;overflow:hidden}.mfu-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#38bdf8,#facc15)}.mfu-fill.ok{background:#22c55e}.mfu-fill.warn{background:#f59e0b}.mfu-fill.err{background:#ef4444}.mfu-scroll{overflow:auto;border:1px solid var(--border);border-radius:10px}.mfu-table{width:100%;min-width:1250px;border-collapse:collapse}.mfu-table th,.mfu-table td{padding:9px;border-bottom:1px solid var(--border);vertical-align:top;font-size:10px}.mfu-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);text-align:left;text-transform:uppercase;font-size:9px;letter-spacing:.05em}.mfu-table tr:hover td{background:var(--bg-hover)}.mfu-pill{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:800;border:1px solid}.mfu-pill.ok{color:#86efac;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)}.mfu-pill.warn{color:#fde68a;background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.25)}.mfu-pill.err{color:#fca5a5;background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.25)}.mfu-pill.muted{color:#cbd5e1;background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.2)}.mfu-utm{display:grid;gap:2px;min-width:210px}.mfu-utm div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mfu-utm span{color:var(--muted);font-size:9px;text-transform:uppercase}.mfu-msg{padding:10px 12px;border-radius:9px;font-size:11px}.mfu-msg.ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#86efac}.mfu-msg.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#fca5a5}.mfu-empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}.mfu-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}@media(max-width:1100px){.mfu-grid{grid-template-columns:repeat(2,1fr)}.mfu-filter{grid-template-columns:1fr 1fr}.mfu-bars{grid-template-columns:1fr}}@media(max-width:650px){.mfu-grid,.mfu-filter{grid-template-columns:1fr}.mfu-head{flex-direction:column}.mfu-bar{grid-template-columns:100px 1fr 44px}}
+.mfu{display:flex;flex-direction:column;gap:14px}.mfu-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.mfu-head h1{font-size:22px;margin:0}.mfu-head p{font-size:12px;color:var(--muted);margin:4px 0 0}.mfu-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.mfu-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px}.mfu-kpi small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.mfu-kpi strong{display:block;font-size:25px;margin-top:4px;color:var(--text)}.mfu-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px}.mfu-card h2{font-size:15px;margin:0 0 10px}.mfu-filter{display:grid;grid-template-columns:1.2fr repeat(3,minmax(150px,.5fr)) auto;gap:9px;align-items:end}.mfu-filter label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px}.mfu-filter input,.mfu-filter select{width:100%;height:35px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}.mfu-bars{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mfu-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 58px;gap:10px;align-items:center;margin:9px 0;font-size:11px}.mfu-track{height:9px;background:var(--bg);border-radius:99px;overflow:hidden}.mfu-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#38bdf8,#facc15)}.mfu-fill.ok{background:#22c55e}.mfu-fill.warn{background:#f59e0b}.mfu-fill.err{background:#ef4444}.mfu-cron{display:grid;grid-template-columns:1.1fr repeat(4,minmax(120px,.5fr));gap:10px;align-items:stretch}.mfu-cron-item{background:#07101f;border:1px solid var(--border);border-radius:10px;padding:11px}.mfu-cron-item span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.mfu-cron-item strong{display:block;margin-top:5px;font-size:13px}.mfu-legend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:11px}.mfu-legend span{display:inline-flex;align-items:center;gap:6px}.mfu-legend i{display:block;width:10px;height:10px;border-radius:2px}.mfu-chart-wrap{overflow:auto;padding-top:8px}.mfu-chart{display:grid;grid-template-columns:repeat(30,28px);gap:12px;min-width:1188px;height:230px;align-items:end;padding:10px 4px 0}.mfu-day{height:205px;display:grid;grid-template-rows:1fr auto;gap:8px}.mfu-cols{height:170px;display:flex;align-items:end;justify-content:center;gap:5px;border-bottom:1px solid var(--border)}.mfu-col{width:9px;min-height:2px;border-radius:4px 4px 0 0;background:#38bdf8}.mfu-col.updated{background:#22c55e}.mfu-day small{font-size:9px;color:var(--muted);text-align:center;white-space:nowrap}.mfu-scroll{overflow:auto;border:1px solid var(--border);border-radius:10px}.mfu-table{width:100%;min-width:1250px;border-collapse:collapse}.mfu-table th,.mfu-table td{padding:9px;border-bottom:1px solid var(--border);vertical-align:top;font-size:10px}.mfu-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);text-align:left;text-transform:uppercase;font-size:9px;letter-spacing:.05em}.mfu-table tr:hover td{background:var(--bg-hover)}.mfu-pill{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:800;border:1px solid}.mfu-pill.ok{color:#86efac;background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25)}.mfu-pill.warn{color:#fde68a;background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.25)}.mfu-pill.err{color:#fca5a5;background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.25)}.mfu-pill.muted{color:#cbd5e1;background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.2)}.mfu-utm{display:grid;gap:2px;min-width:210px}.mfu-utm div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mfu-utm span{color:var(--muted);font-size:9px;text-transform:uppercase}.mfu-msg{padding:10px 12px;border-radius:9px;font-size:11px}.mfu-msg.ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#86efac}.mfu-msg.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#fca5a5}.mfu-empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}.mfu-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}@media(max-width:1100px){.mfu-grid{grid-template-columns:repeat(2,1fr)}.mfu-filter{grid-template-columns:1fr 1fr}.mfu-bars{grid-template-columns:1fr}.mfu-cron{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.mfu-grid,.mfu-filter,.mfu-cron{grid-template-columns:1fr}.mfu-head{flex-direction:column}.mfu-bar{grid-template-columns:100px 1fr 44px}}
 </style>
 
 <div class="mfu">
@@ -138,6 +178,42 @@ require __DIR__ . '/_header.php';
     <div class="mfu-kpi"><small>Nao atribuidos</small><strong><?= number_format($totalFailed, 0, ',', '.') ?></strong></div>
     <div class="mfu-kpi"><small>Ja tinham UTM / nao encontrados</small><strong><?= number_format($totalAlready + $totalNotFound, 0, ',', '.') ?></strong></div>
   </div>
+
+  <section class="mfu-card">
+    <h2>Rotina ciclica da planilha</h2>
+    <div class="mfu-cron">
+      <div class="mfu-cron-item"><span>Status</span><strong><?= $cronTask && !empty($cronTask['enabled']) && (string)$cronTask['mode'] !== 'disabled' ? 'Ativa' : 'Inativa' ?></strong></div>
+      <div class="mfu-cron-item"><span>Intervalo</span><strong><?= $cronTask ? (int)$cronTask['interval_minutes'] . ' min' : '60 min' ?></strong></div>
+      <div class="mfu-cron-item"><span>Proxima busca</span><strong><?= mfu_admin_datetime((string)($cronTask['next_run_at'] ?? '')) ?></strong></div>
+      <div class="mfu-cron-item"><span>Ultimo sucesso</span><strong><?= mfu_admin_datetime((string)($cronTask['last_success_at'] ?? '')) ?></strong></div>
+      <div class="mfu-cron-item"><span>Ultimo status</span><strong><?= mfu_admin_h((string)($cronTask['last_status'] ?? 'Aguardando')) ?></strong></div>
+    </div>
+  </section>
+
+  <section class="mfu-card">
+    <div class="mfu-head" style="margin-bottom:4px">
+      <h2>Tratados x receberam UTMs por dia</h2>
+      <div class="mfu-legend"><span><i style="background:#38bdf8"></i>Tratados</span><span><i style="background:#22c55e"></i>Receberam UTMs</span></div>
+    </div>
+    <div class="mfu-chart-wrap">
+      <div class="mfu-chart">
+        <?php foreach ($dailyChart as $day):
+            $treated = (int)$day['treated'];
+            $updated = (int)$day['updated'];
+            $treatedH = $dailyMax > 0 ? max(2, (int)round($treated / $dailyMax * 170)) : 2;
+            $updatedH = $dailyMax > 0 ? max(2, (int)round($updated / $dailyMax * 170)) : 2;
+        ?>
+          <div class="mfu-day" title="<?= mfu_admin_h($day['label'] . ' - tratados: ' . $treated . ' / receberam UTMs: ' . $updated) ?>">
+            <div class="mfu-cols">
+              <div class="mfu-col" style="height:<?= $treatedH ?>px"></div>
+              <div class="mfu-col updated" style="height:<?= $updatedH ?>px"></div>
+            </div>
+            <small><?= mfu_admin_h((string)$day['label']) ?></small>
+          </div>
+        <?php endforeach; ?>
+      </div>
+    </div>
+  </section>
 
   <section class="mfu-card">
     <form class="mfu-filter" method="get">

@@ -254,6 +254,24 @@ function cron_manager_ensure_tables(PDO $pdo): void {
         ");
     } catch (Throwable $e) {}
 
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 60,
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'meta_form_utms'
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 60
+                    OR next_run_at IS NULL
+               )
+        ");
+    } catch (Throwable $e) {}
+
     cron_manager_recover_expired_runs($pdo);
 
     if (cron_manager_token($pdo) === '') {

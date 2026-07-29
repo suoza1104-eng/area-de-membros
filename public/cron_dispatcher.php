@@ -66,6 +66,7 @@ try {
         $result['companion_torpedo_voz'] = cron_manager_execute($pdo, 'torpedo_voz', $source, false);
         $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);
         $result['companion_meta_leads_qualificados'] = cron_manager_execute($pdo, 'meta_leads_qualificados', $source, false);
+        $result['companion_meta_form_utms'] = cron_manager_execute($pdo, 'meta_form_utms', $source, false);
     }
     cron_manager_heartbeat($pdo, $source, $taskKey, (string)($result['reason'] ?? $result['status'] ?? 'ok'), false);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

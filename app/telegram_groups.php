@@ -202,7 +202,7 @@ function telegram_install_webhook(): array
     return telegram_api_request('setWebhook', [
         'url' => telegram_webhook_url(),
         'secret_token' => telegram_webhook_secret(),
-        'allowed_updates' => ['message', 'edited_message', 'chat_member', 'my_chat_member'],
+        'allowed_updates' => ['message', 'edited_message', 'chat_member', 'my_chat_member', 'callback_query'],
         'drop_pending_updates' => false,
     ]);
 }
@@ -231,9 +231,13 @@ function telegram_reply_markup(array|string|null $buttons): ?array
         if (!is_array($button)) continue;
         $text = trim((string)($button['text'] ?? ''));
         $url = trim((string)($button['url'] ?? ''));
-        if ($text === '' || $url === '') continue;
-        if (!preg_match('~^(https://|tg://)~i', $url)) continue;
-        $rows[] = [['text'=>mb_substr($text, 0, 64), 'url'=>$url]];
+        $callback = trim((string)($button['callback_data'] ?? ''));
+        if ($text === '') continue;
+        if ($url !== '' && preg_match('~^(https://|tg://)~i', $url)) {
+            $rows[] = [['text'=>mb_substr($text, 0, 64), 'url'=>$url]];
+        } elseif ($callback !== '') {
+            $rows[] = [['text'=>mb_substr($text, 0, 64), 'callback_data'=>mb_substr($callback, 0, 64)]];
+        }
     }
     return $rows ? ['inline_keyboard'=>$rows] : null;
 }
@@ -373,8 +377,26 @@ function telegram_handle_update(PDO $pdo, array $update): array
     if (isset($update['message']) || isset($update['edited_message'])) {
         return telegram_handle_message($pdo, $updateId, $update['message'] ?? $update['edited_message'], isset($update['edited_message']));
     }
+    if (isset($update['callback_query']) && is_array($update['callback_query'])) {
+        return telegram_handle_callback_query($pdo, $updateId, $update['callback_query']);
+    }
     telegram_record_event($pdo, $updateId, 0, null, 'ignored', null, '', $update);
     return ['ok'=>true,'type'=>'ignored'];
+}
+
+function telegram_handle_callback_query(PDO $pdo, ?int $updateId, array $callback): array
+{
+    $message = is_array($callback['message'] ?? null) ? $callback['message'] : [];
+    $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
+    $user = is_array($callback['from'] ?? null) ? $callback['from'] : [];
+    $groupId = $chat ? telegram_upsert_group($pdo, $chat) : 0;
+    if ($groupId > 0 && $user) telegram_upsert_member($pdo, $groupId, $user, 'member');
+    $text = trim((string)($callback['data'] ?? ''));
+    telegram_record_event($pdo, $updateId, $groupId, isset($user['id']) ? (int)$user['id'] : null, 'button_callback', isset($message['message_id']) ? (int)$message['message_id'] : null, $text, $callback);
+    if (!empty($callback['id'])) {
+        try { telegram_api_request('answerCallbackQuery', ['callback_query_id'=>(string)$callback['id']]); } catch (Throwable $e) {}
+    }
+    return ['ok'=>true,'type'=>'button_callback'];
 }
 
 function telegram_handle_chat_member(PDO $pdo, ?int $updateId, array $cm, bool $botUpdate): array
