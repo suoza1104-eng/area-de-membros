@@ -423,6 +423,32 @@ function telegram_handle_message(PDO $pdo, ?int $updateId, array $message, bool 
     $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
     $user = is_array($message['from'] ?? null) ? $message['from'] : [];
     $groupId = telegram_upsert_group($pdo, $chat);
+    if (!$edited && !empty($message['new_chat_members']) && is_array($message['new_chat_members'])) {
+        $count = 0;
+        foreach ($message['new_chat_members'] as $member) {
+            if (!is_array($member) || empty($member['id'])) continue;
+            telegram_upsert_member($pdo, $groupId, $member, 'member');
+            telegram_record_event($pdo, $updateId, $groupId, (int)$member['id'], 'member_joined', isset($message['message_id']) ? (int)$message['message_id'] : null, '', $message);
+            telegram_run_auto_messages($pdo, $groupId, 'member_joined', ['user'=>$member,'chat'=>$chat,'message'=>$message]);
+            $count++;
+        }
+        if ($groupId > 0 && $count > 0) {
+            $pdo->prepare('UPDATE telegram_groups SET joined_count=joined_count+:count,member_count=member_count+:count,last_event_at=NOW(),updated_at=NOW() WHERE id=:id')
+                ->execute(['count'=>$count,'id'=>$groupId]);
+        }
+        return ['ok'=>true,'type'=>'member_joined','count'=>$count];
+    }
+    if (!$edited && !empty($message['left_chat_member']) && is_array($message['left_chat_member'])) {
+        $member = $message['left_chat_member'];
+        if (!empty($member['id'])) telegram_upsert_member($pdo, $groupId, $member, 'left');
+        telegram_record_event($pdo, $updateId, $groupId, isset($member['id']) ? (int)$member['id'] : null, 'member_left', isset($message['message_id']) ? (int)$message['message_id'] : null, '', $message);
+        if ($groupId > 0) {
+            $pdo->prepare('UPDATE telegram_groups SET left_count=left_count+1,member_count=IF(member_count>0,member_count-1,0),last_event_at=NOW(),updated_at=NOW() WHERE id=:id')
+                ->execute(['id'=>$groupId]);
+            telegram_run_auto_messages($pdo, $groupId, 'member_left', ['user'=>$member,'chat'=>$chat,'message'=>$message]);
+        }
+        return ['ok'=>true,'type'=>'member_left'];
+    }
     telegram_upsert_member($pdo, $groupId, $user, 'member');
     $text = trim((string)($message['text'] ?? $message['caption'] ?? ''));
     $eventId = telegram_record_event($pdo, $updateId, $groupId, isset($user['id']) ? (int)$user['id'] : null, $edited ? 'message_edited' : 'message', isset($message['message_id']) ? (int)$message['message_id'] : null, $text, $message);

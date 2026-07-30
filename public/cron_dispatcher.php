@@ -64,6 +64,7 @@ try {
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
         $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
         $result['companion_torpedo_voz'] = cron_manager_execute($pdo, 'torpedo_voz', $source, false);
+        $result['companion_telegram'] = cron_manager_execute($pdo, 'telegram', $source, false);
         $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);
         $result['companion_meta_leads_qualificados'] = cron_manager_execute($pdo, 'meta_leads_qualificados', $source, false);
         $result['companion_meta_form_utms'] = cron_manager_execute($pdo, 'meta_form_utms', $source, false);
