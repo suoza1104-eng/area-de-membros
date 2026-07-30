@@ -33,13 +33,15 @@ function tg_build_buttons(array $post): array {
     $labels = is_array($post['button_text'] ?? null) ? $post['button_text'] : [];
     $urls = is_array($post['button_url'] ?? null) ? $post['button_url'] : [];
     $payloads = is_array($post['button_payload'] ?? null) ? $post['button_payload'] : [];
+    $widths = is_array($post['button_width'] ?? null) ? $post['button_width'] : [];
     foreach ($labels as $i => $label) {
         $text = trim((string)$label);
         $type = in_array((string)($types[$i] ?? 'url'), ['url','private_bot','callback'], true) ? (string)$types[$i] : 'url';
+        $width = (string)($widths[$i] ?? 'full') === 'half' ? 'half' : 'full';
         $url = trim((string)($urls[$i] ?? ''));
         $payload = trim((string)($payloads[$i] ?? ''));
         if ($text === '') continue;
-        $button = ['type'=>$type, 'text'=>mb_substr($text, 0, 64)];
+        $button = ['type'=>$type, 'text'=>mb_substr($text, 0, 64), 'width'=>$width];
         if ($type === 'private_bot') {
             $private = telegram_private_bot_url();
             if ($private === '') throw new RuntimeException('Salve o token e instale o webhook para detectar o usuario do bot antes de criar botao privado.');
@@ -190,6 +192,10 @@ include __DIR__ . '/_header.php';
 <style>
 .tg{display:grid;gap:14px}.tg-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.tg-head h1{font-size:22px}.tg-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.tg-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.tg-nav a.active,.tg-nav a:hover{background:var(--primary-dim);color:var(--primary)}.tg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:var(--shadow)}.tg-subpanel{padding-top:10px;border-top:1px solid var(--border)}.tg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.tg-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-kpi strong{font-size:25px}.tg-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.tg-field label{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.tg-field input,.tg-field select,.tg-field textarea{width:100%;padding:9px 11px;border:1px solid var(--border-light);border-radius:8px;background:var(--bg);color:var(--text)}.tg-field textarea{min-height:96px}.tg-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.tg-table{overflow:auto}.tg-table table{width:100%;border-collapse:collapse}.tg-table th,.tg-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.tg-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.tg-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.tg-pill.ok{background:var(--success-dim);color:#86efac}.tg-pill.warn{background:var(--warning-dim);color:#facc15}.tg-pill.bad{background:var(--danger-dim);color:#fca5a5}.tg-code{display:block;padding:9px;border:1px solid var(--border);border-radius:8px;background:#071020;color:#bae6fd;word-break:break-all;font-size:12px}.tg-note{font-size:11px;color:var(--muted);line-height:1.45}.tg-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.tg-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.tg-wide{grid-column:1/-1}.tg-msg-workspace{display:grid;grid-template-columns:minmax(340px,1fr) minmax(360px,480px);gap:14px;align-items:start}.tg-toolbar{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}.tg-message-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(278px,1fr));gap:12px}.tg-message-card{border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:visible;min-height:250px;display:flex;flex-direction:column}.tg-message-card.active{outline:2px solid var(--primary);outline-offset:2px}.tg-message-top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;background:var(--bg-hover);padding:10px 12px;border-radius:8px 8px 0 0}.tg-message-top strong{display:block;min-width:0;overflow-wrap:anywhere;line-height:1.25}.tg-message-time{font-size:11px;color:var(--muted);line-height:1.35}.tg-card-actions{display:flex;gap:4px;flex:0 0 auto}.tg-icon-btn{width:28px;height:28px;min-width:28px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);color:var(--text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.tg-icon-btn:hover{border-color:var(--primary);color:var(--primary)}.tg-card-body{padding:12px;display:grid;gap:10px;flex:1}.tg-preview-bubble{background:#dcf8c6;color:#294235;border-radius:8px 8px 2px 8px;padding:10px 11px;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-height:none;overflow:visible}.tg-preview-media{height:118px;border-radius:7px;background:linear-gradient(135deg,#d9f0ff,#f6f8fb);display:flex;align-items:center;justify-content:center;color:#4b5563;font-size:12px;border:1px solid rgba(0,0,0,.06)}.tg-preview-buttons{display:grid;gap:5px}.tg-preview-button{border:1px solid rgba(54,119,87,.28);background:rgba(255,255,255,.72);color:#26724a;text-align:center;border-radius:7px;padding:6px;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tg-empty{border:1px dashed var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--muted)}.tg-editor{position:sticky;top:82px}.tg-editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}.tg-editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.tg-button-row{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--bg);display:grid;gap:8px}.tg-button-row-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.tg-button-settings{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tg-ai-panel{display:none;margin-bottom:12px}.tg-ai-panel.open{display:block}.tg-form-actions{position:sticky;bottom:0;background:var(--bg-card);border-top:1px solid var(--border);padding-top:12px;margin-top:12px}.tg-confirm-form{display:inline}@media(max-width:1100px){.tg-msg-workspace{grid-template-columns:1fr}.tg-editor{position:static}}@media(max-width:800px){.tg-head{display:grid}.tg-actions{width:100%}.tg-editor-grid,.tg-button-settings{grid-template-columns:1fr}.tg-message-list{grid-template-columns:1fr}}
 </style>
+<style>
+.tg-preview-buttons{grid-template-columns:1fr 1fr}
+.tg-preview-button.full{grid-column:1/-1}
+</style>
 <div class="tg">
   <div class="tg-head">
     <div><h1>Telegram</h1><p class="text-muted">Monitoramento de grupos, entradas, saidas, mensagens automaticas, IA e moderacao.</p></div>
@@ -286,7 +292,7 @@ include __DIR__ . '/_header.php';
               <div class="tg-actions"><span class="tg-pill <?=$m['status']==='active'?'ok':'warn'?>"><?=tg_h($m['status'])?></span><span class="tg-pill"><?=tg_h($m['message_kind'] ?? 'text')?></span><span class="tg-note"><?=tg_h($m['group_title'] ?: 'Todos os grupos')?></span></div>
               <?php if(($m['message_kind'] ?? 'text') !== 'text'): ?><div class="tg-preview-media"><?=tg_h($m['message_kind'])?><?=!empty($m['media_url'])?' anexado':''?></div><?php endif; ?>
               <div class="tg-preview-bubble"><?=tg_h(mb_substr((string)$m['message_text'], 0, 520))?></div>
-              <?php if($buttons): ?><div class="tg-preview-buttons"><?php foreach(array_slice($buttons,0,8) as $b): ?><div class="tg-preview-button"><?=tg_h($b['text'] ?? 'Botao')?></div><?php endforeach; ?></div><?php endif; ?>
+              <?php if($buttons): ?><div class="tg-preview-buttons"><?php foreach(array_slice($buttons,0,8) as $b): $bw=(string)($b['width'] ?? 'full') === 'half' ? 'half' : 'full'; ?><div class="tg-preview-button <?=$bw?>"><?=tg_h($b['text'] ?? 'Botao')?></div><?php endforeach; ?></div><?php endif; ?>
               <div class="tg-note">Enviadas: <?=(int)$m['sent_count']?><?=!empty($m['last_sent_at'])?' · Ultimo: '.tg_h(tg_dt($m['last_sent_at'])):''?></div>
             </div>
           </article>
@@ -457,11 +463,13 @@ include __DIR__ . '/_header.php';
   function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
   function buttonTemplate(b){
     const type=b.type||(b.callback_data?'callback':'url'), payload=b.callback_data||'', url=b.url||'';
+    const width=b.width==='half'?'half':'full';
     return `<div class="tg-button-row">
       <div class="tg-button-row-head"><strong>Botao</strong><button type="button" class="tg-icon-btn tg-remove-button" title="Remover">×</button></div>
       <div class="tg-button-settings">
         <label class="tg-field"><label>Texto</label><input name="button_text[]" value="${esc(b.text||'')}" placeholder="Ex: Pix"></label>
         <label class="tg-field"><label>Funcao</label><select name="button_type[]" class="tg-button-type"><option value="url" ${type==='url'?'selected':''}>Abrir link</option><option value="private_bot" ${type==='private_bot'?'selected':''}>Chamar bot</option><option value="callback" ${type==='callback'?'selected':''}>Acao interna</option></select></label>
+        <label class="tg-field"><label>Layout</label><select name="button_width[]" class="tg-button-width"><option value="full" ${width==='full'?'selected':''}>Grande</option><option value="half" ${width==='half'?'selected':''}>Metade</option></select></label>
         <label class="tg-field tg-button-url"><label>Link</label><input name="button_url[]" value="${esc(type==='url'?url:'')}" placeholder="https://..."></label>
         <label class="tg-field tg-button-payload"><label>Parametro / comando</label><input name="button_payload[]" value="${esc(type==='callback'?payload:'')}" placeholder="oferta_pix ou start"></label>
       </div>
@@ -485,7 +493,8 @@ include __DIR__ . '/_header.php';
     previewButtons.innerHTML='';
     buttonsWrap.querySelectorAll('.tg-button-row').forEach(row=>{
       const label=row.querySelector('[name="button_text[]"]').value.trim();
-      if(label) previewButtons.insertAdjacentHTML('beforeend',`<div class="tg-preview-button">${esc(label)}</div>`);
+      const width=row.querySelector('[name="button_width[]"]').value==='half'?'half':'full';
+      if(label) previewButtons.insertAdjacentHTML('beforeend',`<div class="tg-preview-button ${width}">${esc(label)}</div>`);
     });
   }
   function fill(data, markActive){

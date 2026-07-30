@@ -227,18 +227,36 @@ function telegram_reply_markup(array|string|null $buttons): ?array
     if (is_string($buttons)) $buttons = json_decode($buttons, true);
     if (!is_array($buttons) || !$buttons) return null;
     $rows = [];
+    $currentRow = [];
+    $flushRow = static function () use (&$rows, &$currentRow): void {
+        if ($currentRow) {
+            $rows[] = $currentRow;
+            $currentRow = [];
+        }
+    };
     foreach ($buttons as $button) {
         if (!is_array($button)) continue;
         $text = trim((string)($button['text'] ?? ''));
         $url = trim((string)($button['url'] ?? ''));
         $callback = trim((string)($button['callback_data'] ?? ''));
+        $width = (string)($button['width'] ?? 'full') === 'half' ? 'half' : 'full';
         if ($text === '') continue;
+        $item = null;
         if ($url !== '' && preg_match('~^(https://|tg://)~i', $url)) {
-            $rows[] = [['text'=>mb_substr($text, 0, 64), 'url'=>$url]];
+            $item = ['text'=>mb_substr($text, 0, 64), 'url'=>$url];
         } elseif ($callback !== '') {
-            $rows[] = [['text'=>mb_substr($text, 0, 64), 'callback_data'=>mb_substr($callback, 0, 64)]];
+            $item = ['text'=>mb_substr($text, 0, 64), 'callback_data'=>mb_substr($callback, 0, 64)];
+        }
+        if (!$item) continue;
+        if ($width === 'half') {
+            $currentRow[] = $item;
+            if (count($currentRow) >= 2) $flushRow();
+        } else {
+            $flushRow();
+            $rows[] = [$item];
         }
     }
+    $flushRow();
     return $rows ? ['inline_keyboard'=>$rows] : null;
 }
 
