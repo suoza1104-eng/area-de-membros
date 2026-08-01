@@ -356,6 +356,12 @@ function definir_tag_estado_reagendamento(int $user_id, string $estado, string $
  */
 function capturar_fluxos_automacao(string $evento, ?int $user_id = null, array $extra = []): void {
     if ($user_id !== null && $user_id > 0) {
+        static $capturados = [];
+        $payloadKey = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        $captureKey = hash('sha256', strtoupper($evento) . '|' . $user_id . '|' . (string)$payloadKey);
+        if (isset($capturados[$captureKey])) return;
+        $capturados[$captureKey] = true;
+
         try {
             require_once __DIR__ . '/push_flow_engine.php';
             push_flow_capture_event(getPDO(), $evento, $user_id, $extra);
@@ -414,6 +420,8 @@ function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $ex
     }
 
     // Monta dados básicos do usuário (se informado)
+    capturar_fluxos_automacao($evento, $user_id, $extra);
+
     $user = [];
     if ($user_id !== null) {
         $u = buscar_usuario_por_id($user_id);

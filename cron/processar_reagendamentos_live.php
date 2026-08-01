@@ -35,6 +35,7 @@ function rl_cron_user(PDO $pdo, int $userId): array {
 function rl_cron_extra(array $r): array {
     $codigo = (string)($r['new_codigo_turma'] ?: $r['old_codigo_turma']);
     return [
+        'event_id' => 'reagendamento-live-' . (int)$r['id'],
         'reagendamento_id' => (int)$r['id'],
         'codigo_turma' => $codigo,
         'data_live' => rl_cron_dt((string)$r['new_turma_live_at']),
@@ -78,6 +79,67 @@ function rl_cron_reagendamento_acessou(PDO $pdo, array $r): bool {
     }
 }
 
+function rl_cron_processar_filas_automacao(PDO $pdo): array {
+    $out = [];
+    try {
+        require_once __DIR__ . '/../app/automation_flows.php';
+        $out['automacoes'] = automation_flow_process_queue($pdo, 20);
+    } catch (Throwable $e) {
+        $out['automacoes_error'] = $e->getMessage();
+    }
+    try {
+        require_once __DIR__ . '/../app/email_flow_engine.php';
+        $out['email_flows'] = email_flow_process_queue($pdo, 10);
+    } catch (Throwable $e) {
+        $out['email_flows_error'] = $e->getMessage();
+    }
+    try {
+        require_once __DIR__ . '/../app/push_campaigns.php';
+        $out['push_flows'] = push_flow_process_due($pdo, 10, 10);
+    } catch (Throwable $e) {
+        $out['push_flows_error'] = $e->getMessage();
+    }
+    return $out;
+}
+
+function rl_cron_reparar_lembretes_sem_automacao(PDO $pdo, int $limit = 50): array {
+    if (!rl_cron_table_exists($pdo, 'automation_flow_events')) {
+        return ['checked' => 0, 'captured' => 0, 'skipped' => 0];
+    }
+    $limit = max(1, min(200, $limit));
+    $rows = $pdo->query("SELECT r.*
+        FROM reagendamentos_live r
+        WHERE r.sf_sent_at IS NOT NULL
+          AND r.new_turma_live_at >= NOW()
+          AND r.status IN ('reagendado','enviado')
+          AND NOT EXISTS (
+              SELECT 1
+                FROM automation_flow_events e
+               WHERE e.event_code='LIVE_REAGENDAMENTO_LEMBRETE'
+                 AND e.user_id=r.user_id
+                 AND e.payload_json LIKE CONCAT('%\"reagendamento_id\":', r.id, '%')
+          )
+        ORDER BY r.sf_sent_at ASC
+        LIMIT {$limit}")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $done = ['checked' => count($rows), 'captured' => 0, 'skipped' => 0];
+    foreach ($rows as $r) {
+        if (usuario_bloqueado_disparos($pdo, (int)$r['user_id'])) {
+            $done['skipped']++;
+            continue;
+        }
+        capturar_fluxos_automacao('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], rl_cron_extra($r));
+        reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_automacao_reparada', 'sucesso', 'Evento de automacao central capturado para lembrete ja marcado como enviado.', [
+            'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+        ]);
+        $done['captured']++;
+    }
+    if ($done['captured'] > 0) {
+        $done['filas'] = rl_cron_processar_filas_automacao($pdo);
+    }
+    return $done;
+}
+
 if (!rl_cron_table_exists($pdo, 'reagendamentos_live')) {
     echo "Tabela reagendamentos_live nao existe.\n";
     return;
@@ -91,6 +153,7 @@ if ($expireGraceMin > 1440) $expireGraceMin = 1440;
 $dispatchGraceMin = (int)get_setting('reagendar_dispatch_grace_min', '180');
 if ($dispatchGraceMin < 1) $dispatchGraceMin = 1;
 if ($dispatchGraceMin > 1440) $dispatchGraceMin = 1440;
+$repairResult = rl_cron_reparar_lembretes_sem_automacao($pdo, 50);
 
 try {
     $pdo->exec("
@@ -132,18 +195,25 @@ try {
             'atraso_segundos' => $atrasoSeg,
             'atraso_minutos' => round($atrasoSeg / 60, 2),
         ]);
-        $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+        $ok = false;
+        $queueResult = [];
+        if (!usuario_bloqueado_disparos($pdo, (int)$r['user_id'])) {
+            disparar_webhooks('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+            $queueResult = rl_cron_processar_filas_automacao($pdo);
+            $ok = true;
+        }
         if ($ok) {
             $pdo->prepare("UPDATE reagendamentos_live SET status='enviado', sf_sent_at = NOW() WHERE id = :id")->execute([':id' => (int)$r['id']]);
-            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'sucesso', 'SuperFuncionario confirmou o envio.', [
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'sucesso', 'Evento capturado e filas de automacao processadas.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
                 'extra' => $extra,
+                'filas' => $queueResult,
             ]);
             $sent++;
         } else {
             $pdo->prepare("UPDATE reagendamentos_live SET status='reagendado' WHERE id=:id AND status='processando_cron'")
                 ->execute([':id' => (int)$r['id']]);
-            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'falha', 'SuperFuncionario nao confirmou o envio; reagendamento permanece pendente.', [
+            reagendamento_live_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_resultado', 'falha', 'Aluno bloqueado para disparos; reagendamento permanece pendente.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
                 'extra' => $extra,
             ]);
@@ -193,4 +263,4 @@ try {
     echo "Erro expirados: " . $e->getMessage() . "\n";
 }
 
-echo "Lembretes enviados: {$sent}; expirados: {$expired}\n";
+echo "Lembretes enviados: {$sent}; expirados: {$expired}; reparo automacoes: " . json_encode($repairResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
