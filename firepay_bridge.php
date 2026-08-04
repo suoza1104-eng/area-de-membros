@@ -14,6 +14,19 @@ const FIREPAY_BRIDGE_LOG = __DIR__ . '/firepay_bridge.log';
 
 header('Content-Type: application/json; charset=utf-8');
 
+if (in_array(($_SERVER['REQUEST_METHOD'] ?? ''), ['GET', 'HEAD'], true)) {
+    http_response_code(200);
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'HEAD') {
+        echo json_encode([
+            'ok' => true,
+            'bridge' => true,
+            'message' => 'Firepay bridge ativo. Envie webhooks por POST.',
+            'target' => FIREPAY_BRIDGE_TARGET,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    exit;
+}
+
 function bridge_log(string $message, array $context = []): void
 {
     $line = '[' . date('Y-m-d H:i:s') . '] ' . $message;
@@ -21,6 +34,17 @@ function bridge_log(string $message, array $context = []): void
         $line .= ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
     @file_put_contents(FIREPAY_BRIDGE_LOG, $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+}
+
+function bridge_request_context(): array
+{
+    return [
+        'method' => $_SERVER['REQUEST_METHOD'] ?? '',
+        'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? '',
+        'content_type' => $_SERVER['CONTENT_TYPE'] ?? ($_SERVER['HTTP_CONTENT_TYPE'] ?? ''),
+        'content_length' => $_SERVER['CONTENT_LENGTH'] ?? '',
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+    ];
 }
 
 function bridge_json_response(int $status, array $body): void
@@ -122,13 +146,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 $rawBody = file_get_contents('php://input') ?: '';
 if (trim($rawBody) === '') {
-    bridge_log('payload vazio');
-    bridge_json_response(400, ['ok' => false, 'message' => 'Payload vazio']);
+    if ($_POST) {
+        $rawBody = json_encode($_POST, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    }
+    if (trim($rawBody) === '') {
+        $context = bridge_request_context();
+        bridge_log('payload vazio', $context);
+        bridge_json_response(422, [
+            'ok' => false,
+            'bridge' => true,
+            'message' => 'Payload vazio. Webhook nao encaminhado para evitar falso sucesso.',
+        ]);
+    }
 }
 
 $payload = json_decode($rawBody, true);
 if (!is_array($payload)) {
-    bridge_log('json invalido', ['sha256' => hash('sha256', $rawBody)]);
+    bridge_log('json invalido', bridge_request_context() + ['sha256' => hash('sha256', $rawBody), 'sample' => substr($rawBody, 0, 120)]);
     bridge_json_response(400, ['ok' => false, 'message' => 'JSON invalido']);
 }
 
@@ -147,6 +181,7 @@ bridge_log('firepay encaminhado', [
     'target_status' => $result['status'],
     'ok' => $result['ok'],
     'error' => $result['error'],
+    'target_body' => substr($result['body'], 0, 500),
 ]);
 
 if (!$result['ok']) {
