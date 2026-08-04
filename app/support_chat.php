@@ -115,6 +115,9 @@ function support_chat_ensure_schema(PDO $pdo): void
         KEY idx_support_feedback_user (user_id),
         KEY idx_support_feedback_rating (rating)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES ('support_entry_whatsapp_url','')")->execute();
+    } catch (Throwable $ignored) {}
     foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_button_mode'=>'fixed','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_display_name'=>'Suporte FERA','support_chat_sound_enabled'=>'1'] as $key=>$value) {
         $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
         try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
@@ -236,6 +239,8 @@ function support_chat_analytics(PDO $pdo,string $from,string $to,string $bucket=
     }
     $clickSource='('.implode(' UNION ALL ',$clickParts).') click_src';[$clickKey,$clickLabel]=support_chat_bucket_sql($bucket,'click_src.created_at');
     $clicks=support_chat_fetch_pairs($pdo,"SELECT {$clickKey} k,{$clickLabel} label,COUNT(*) total FROM {$clickSource} GROUP BY k,label ORDER BY k",$clickParams);
+    [$entryKey,$entryLabel]=support_chat_bucket_sql($bucket,'created_at');
+    $entry=support_chat_fetch_pairs($pdo,"SELECT {$entryKey} k,{$entryLabel} label,SUM(action_type='chat') chat,SUM(action_type='whatsapp') whatsapp,COUNT(*) total FROM support_events WHERE event_type='support_entry' AND created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
     $started=support_chat_fetch_pairs($pdo,"SELECT {$keyExpr} k,{$labelExpr} label,COUNT(*) total,SUM(channel='app') app,SUM(channel='test') test FROM support_conversations WHERE created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
     [$closedKey,$closedLabel]=support_chat_bucket_sql($bucket,'closed_at');
     $closed=support_chat_fetch_pairs($pdo,"SELECT {$closedKey} k,{$closedLabel} label,COUNT(*) closed_total,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='admin')) closed_human,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=support_conversations.id AND m2.sender_type='admin')) closed_ai FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
@@ -248,13 +253,15 @@ function support_chat_analytics(PDO $pdo,string $from,string $to,string $bucket=
     $one=static fn(string $sql,array $p=[])=> (int)((support_chat_fetch_pairs($pdo,$sql,$p)[0]['n']??0));
     $kpis=[
         'clicks'=>$one("SELECT COUNT(*) n FROM {$clickSource}",$clickParams),
+        'entry_chat'=>$one("SELECT COUNT(*) n FROM support_events WHERE event_type='support_entry' AND action_type='chat' AND created_at BETWEEN :from AND :to",$params),
+        'entry_whatsapp'=>$one("SELECT COUNT(*) n FROM support_events WHERE event_type='support_entry' AND action_type='whatsapp' AND created_at BETWEEN :from AND :to",$params),
         'started'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE created_at BETWEEN :from AND :to",$params),
         'open'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status<>'closed'"),
         'closed'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to",$params),
         'human_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='admin')",$params),
         'ai_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=c.id AND m2.sender_type='admin')",$params),
     ];
-    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'kpis'=>$kpis,'clicks'=>$clicks,'started'=>$started,'closed'=>$closed,'status'=>$status,'agents'=>$agents,'turmas'=>$turmas,'actions'=>$actions,'logs'=>$logs];
+    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'kpis'=>$kpis,'clicks'=>$clicks,'entry'=>$entry,'started'=>$started,'closed'=>$closed,'status'=>$status,'agents'=>$agents,'turmas'=>$turmas,'actions'=>$actions,'logs'=>$logs];
 }
 
 function support_chat_first_name(array $conv): string
