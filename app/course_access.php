@@ -93,6 +93,8 @@ function course_access_checkout_url(string $baseUrl, array $user): string
     if ($name !== '') $params['name'] = $name;
     if ($email !== '') $params['email'] = $email;
     if (strlen($phone) >= 10) {
+        $params['phone'] = '55' . $phone;
+        $params['cellphone'] = '55' . $phone;
         $params['phoneac'] = substr($phone, 0, 2);
         $params['phonenumber'] = substr($phone, 2);
     }
