@@ -47,13 +47,41 @@ function fpb_log(string $message, array $context = []): void
 
 function fpb_request_context(): array
 {
+    $headers = [];
+    if (function_exists('getallheaders')) {
+        $rawHeaders = getallheaders();
+        if (is_array($rawHeaders)) {
+            foreach ($rawHeaders as $key => $value) {
+                $headers[(string)$key] = is_scalar($value) ? (string)$value : json_encode($value);
+            }
+        }
+    }
     return [
         'method' => $_SERVER['REQUEST_METHOD'] ?? '',
         'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? '',
         'content_type' => $_SERVER['CONTENT_TYPE'] ?? ($_SERVER['HTTP_CONTENT_TYPE'] ?? ''),
         'content_length' => $_SERVER['CONTENT_LENGTH'] ?? '',
+        'transfer_encoding' => $_SERVER['HTTP_TRANSFER_ENCODING'] ?? '',
+        'content_encoding' => $_SERVER['HTTP_CONTENT_ENCODING'] ?? '',
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'headers' => $headers,
     ];
+}
+
+function fpb_read_raw_body(): string
+{
+    $raw = file_get_contents('php://input');
+    if (!is_string($raw) || $raw === '') {
+        $stdin = @file_get_contents('php://stdin');
+        if (is_string($stdin) && $stdin !== '') $raw = $stdin;
+    }
+    if (!is_string($raw)) $raw = '';
+    $encoding = strtolower(trim((string)($_SERVER['HTTP_CONTENT_ENCODING'] ?? '')));
+    if ($raw !== '' && in_array($encoding, ['gzip', 'x-gzip'], true) && function_exists('gzdecode')) {
+        $decoded = @gzdecode($raw);
+        if (is_string($decoded) && $decoded !== '') $raw = $decoded;
+    }
+    return $raw;
 }
 
 function fpb_scalar(array $data, string $key): string
@@ -155,17 +183,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     fpb_response(405, ['ok' => false, 'message' => 'Use POST']);
 }
 
-$raw = file_get_contents('php://input') ?: '';
+$raw = fpb_read_raw_body();
 if (trim($raw) === '') {
     if ($_POST) {
         $raw = json_encode($_POST, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
     }
     if (trim($raw) === '') {
         $context = fpb_request_context();
-        fpb_log('payload vazio', $context);
+        $requestId = bin2hex(random_bytes(6));
+        fpb_log('payload vazio rejeitado', $context + ['request_id' => $requestId]);
         fpb_response(422, [
             'ok' => false,
             'bridge' => true,
+            'request_id' => $requestId,
             'message' => 'Payload vazio. Webhook nao encaminhado para evitar falso sucesso.',
         ]);
     }
@@ -173,7 +203,7 @@ if (trim($raw) === '') {
 
 $payload = json_decode($raw, true);
 if (!is_array($payload)) {
-    fpb_log('json invalido', fpb_request_context() + ['sha256' => hash('sha256', $raw), 'sample' => substr($raw, 0, 120)]);
+    fpb_log('json invalido', fpb_request_context() + ['sha256' => hash('sha256', $raw), 'bytes' => strlen($raw), 'sample' => substr($raw, 0, 300)]);
     fpb_response(400, ['ok' => false, 'message' => 'JSON invalido']);
 }
 
@@ -192,6 +222,7 @@ $ok = $result['status'] >= 200 && $result['status'] < 300 && $result['error'] ==
 fpb_log('webhook encaminhado', [
     'transaction' => $transactionId,
     'firepay_status' => $status,
+    'payload_bytes' => strlen($raw),
     'target_status' => $result['status'],
     'ok' => $ok,
     'error' => $result['error'],

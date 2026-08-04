@@ -38,13 +38,41 @@ function bridge_log(string $message, array $context = []): void
 
 function bridge_request_context(): array
 {
+    $headers = [];
+    if (function_exists('getallheaders')) {
+        $rawHeaders = getallheaders();
+        if (is_array($rawHeaders)) {
+            foreach ($rawHeaders as $key => $value) {
+                $headers[(string)$key] = is_scalar($value) ? (string)$value : json_encode($value);
+            }
+        }
+    }
     return [
         'method' => $_SERVER['REQUEST_METHOD'] ?? '',
         'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? '',
         'content_type' => $_SERVER['CONTENT_TYPE'] ?? ($_SERVER['HTTP_CONTENT_TYPE'] ?? ''),
         'content_length' => $_SERVER['CONTENT_LENGTH'] ?? '',
+        'transfer_encoding' => $_SERVER['HTTP_TRANSFER_ENCODING'] ?? '',
+        'content_encoding' => $_SERVER['HTTP_CONTENT_ENCODING'] ?? '',
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'headers' => $headers,
     ];
+}
+
+function bridge_read_raw_body(): string
+{
+    $raw = file_get_contents('php://input');
+    if (!is_string($raw) || $raw === '') {
+        $stdin = @file_get_contents('php://stdin');
+        if (is_string($stdin) && $stdin !== '') $raw = $stdin;
+    }
+    if (!is_string($raw)) $raw = '';
+    $encoding = strtolower(trim((string)($_SERVER['HTTP_CONTENT_ENCODING'] ?? '')));
+    if ($raw !== '' && in_array($encoding, ['gzip', 'x-gzip'], true) && function_exists('gzdecode')) {
+        $decoded = @gzdecode($raw);
+        if (is_string($decoded) && $decoded !== '') $raw = $decoded;
+    }
+    return $raw;
 }
 
 function bridge_json_response(int $status, array $body): void
@@ -144,17 +172,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     bridge_json_response(405, ['ok' => false, 'message' => 'Use POST']);
 }
 
-$rawBody = file_get_contents('php://input') ?: '';
+$rawBody = bridge_read_raw_body();
 if (trim($rawBody) === '') {
     if ($_POST) {
         $rawBody = json_encode($_POST, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
     }
     if (trim($rawBody) === '') {
         $context = bridge_request_context();
-        bridge_log('payload vazio', $context);
+        $requestId = bin2hex(random_bytes(6));
+        bridge_log('payload vazio rejeitado', $context + ['request_id' => $requestId]);
         bridge_json_response(422, [
             'ok' => false,
             'bridge' => true,
+            'request_id' => $requestId,
             'message' => 'Payload vazio. Webhook nao encaminhado para evitar falso sucesso.',
         ]);
     }
@@ -162,7 +192,7 @@ if (trim($rawBody) === '') {
 
 $payload = json_decode($rawBody, true);
 if (!is_array($payload)) {
-    bridge_log('json invalido', bridge_request_context() + ['sha256' => hash('sha256', $rawBody), 'sample' => substr($rawBody, 0, 120)]);
+    bridge_log('json invalido', bridge_request_context() + ['sha256' => hash('sha256', $rawBody), 'bytes' => strlen($rawBody), 'sample' => substr($rawBody, 0, 300)]);
     bridge_json_response(400, ['ok' => false, 'message' => 'JSON invalido']);
 }
 
@@ -178,6 +208,7 @@ $result = bridge_forward($forwardBody);
 bridge_log('firepay encaminhado', [
     'transaction' => $transactionId,
     'status' => $status,
+    'payload_bytes' => strlen($rawBody),
     'target_status' => $result['status'],
     'ok' => $result['ok'],
     'error' => $result['error'],
