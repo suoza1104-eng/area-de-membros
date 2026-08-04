@@ -17,6 +17,16 @@ if ($fallback === '') {
     $fallback = 'https://wa.me/553184297036?text=' . rawurlencode('//QUERO_SUPORTE_MCQDC');
 }
 
+if (!empty($_GET['whatsapp'])) {
+    support_chat_log_event($pdo, 'support_entry', 0, 0, 'visitor', '', 'Visitante', 'whatsapp', [
+        'source' => 'public_suporte_bridge',
+        'target_url' => $fallback,
+        'user_agent' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 180),
+    ]);
+    header('Location: ' . $fallback);
+    exit;
+}
+
 $hadSession = !empty($_SESSION['aluno_id']);
 $userId = (int)($_SESSION['aluno_id'] ?? 0);
 if ($userId <= 0) {
@@ -38,6 +48,7 @@ $externalAttempt = !empty($_GET['external']);
 $fromInAppBrowser = (bool)preg_match('~WhatsApp|FBAN|FBAV|Instagram|Line/|wv\)~i', $ua);
 if (!$externalAttempt && $fromInAppBrowser) {
     $externalUrl = rtrim(BASE_URL, '/') . '/suporte.php?external=1';
+    $whatsappUrl = rtrim(BASE_URL, '/') . '/suporte.php?whatsapp=1';
     $parts = parse_url($externalUrl);
     $intentPath = (string)($parts['host'] ?? '') . (string)($parts['path'] ?? '');
     if (!empty($parts['query'])) {
@@ -64,16 +75,17 @@ if (!$externalAttempt && $fromInAppBrowser) {
     <h1>Abrindo suporte...</h1>
     <p>Vamos tentar abrir sua área de membros fora do navegador do WhatsApp. Se não abrir, use o atendimento pelo WhatsApp.</p>
     <a class="primary" id="openApp" href="<?=htmlspecialchars($externalUrl, ENT_QUOTES, 'UTF-8')?>">Abrir minha área de membros</a>
-    <a class="secondary" href="<?=htmlspecialchars($fallback, ENT_QUOTES, 'UTF-8')?>">Continuar pelo WhatsApp</a>
+    <a class="secondary" href="<?=htmlspecialchars($whatsappUrl, ENT_QUOTES, 'UTF-8')?>">Continuar pelo WhatsApp</a>
 </main>
 <script>
 (function(){
     var external = <?=json_encode($externalUrl, JSON_UNESCAPED_SLASHES)?>;
     var intent = <?=json_encode($intentUrl, JSON_UNESCAPED_SLASHES)?>;
-    var fallback = <?=json_encode($fallback, JSON_UNESCAPED_SLASHES)?>;
     var isAndroid = /Android/i.test(navigator.userAgent);
+    var openUrl = isAndroid ? intent : external;
+    var button = document.getElementById('openApp');
+    if (button) button.href = openUrl;
     setTimeout(function(){ location.href = isAndroid ? intent : external; }, 350);
-    setTimeout(function(){ location.href = fallback; }, 4500);
 })();
 </script>
 </body>
