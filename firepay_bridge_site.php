@@ -19,11 +19,12 @@ declare(strict_types=1);
  *   https://professoremersonleite.site/firepay_bridge_site.php?process_queue=1
  */
 
-const FP_RELAY_VERSION = '2026-08-04.2';
+const FP_RELAY_VERSION = '2026-08-04.3';
 const FP_RELAY_DEFAULT_TARGET = 'https://professoremersonleite.com/area_membros/firepay_mcqdc.php';
 const FP_RELAY_DATA_DIR = __DIR__ . '/firepay_relay_data';
 const FP_RELAY_DB_FILE = FP_RELAY_DATA_DIR . '/firepay_relay.sqlite';
 const FP_RELAY_MAX_ATTEMPTS_PER_RUN = 50;
+const FP_RELAY_MAX_DELIVERY_ATTEMPTS = 3;
 
 date_default_timezone_set('America/Sao_Paulo');
 
@@ -122,7 +123,7 @@ function fp_schema(PDO $pdo): void
             payload_json TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             attempts INTEGER NOT NULL DEFAULT 0,
-            max_attempts INTEGER NOT NULL DEFAULT 30,
+            max_attempts INTEGER NOT NULL DEFAULT 3,
             next_attempt_at TEXT NOT NULL,
             last_attempt_at TEXT NULL,
             sent_at TEXT NULL,
@@ -168,6 +169,7 @@ function fp_schema(PDO $pdo): void
     fp_setting_default($pdo, 'receiver_url', fp_current_receiver_url());
     fp_setting_default($pdo, 'forward_mode', 'sanitized');
     fp_setting_default($pdo, 'last_queue_run_at', '');
+    fp_normalize_queue_attempt_limits($pdo);
 }
 
 function fp_ensure_column(PDO $pdo, string $table, string $column, string $definition): void
@@ -178,6 +180,26 @@ function fp_ensure_column(PDO $pdo, string $table, string $column, string $defin
         if (($col['name'] ?? '') === $column) return;
     }
     $pdo->exec("ALTER TABLE $table ADD COLUMN $column $definition");
+}
+
+function fp_normalize_queue_attempt_limits(PDO $pdo): void
+{
+    $now = fp_now();
+    $pdo->prepare("
+        UPDATE dispatch_queue
+        SET max_attempts = :max_attempts,
+            status = CASE WHEN status IN ('pending','retry') AND attempts >= :max_attempts THEN 'failed' ELSE status END,
+            last_error = CASE
+                WHEN status IN ('pending','retry') AND attempts >= :max_attempts
+                THEN COALESCE(last_error, 'Limite de 3 tentativas atingido')
+                ELSE last_error
+            END,
+            updated_at = :updated_at
+        WHERE max_attempts IS NULL OR max_attempts <> :max_attempts
+    ")->execute([
+        ':max_attempts' => FP_RELAY_MAX_DELIVERY_ATTEMPTS,
+        ':updated_at' => $now,
+    ]);
 }
 
 function fp_setting_default(PDO $pdo, string $key, string $value): void
@@ -424,12 +446,13 @@ function fp_enqueue(PDO $pdo, int $inboundId, array $payload): int
         INSERT INTO dispatch_queue
             (inbound_id, target_url, payload_json, status, attempts, max_attempts, next_attempt_at, created_at, updated_at)
         VALUES
-            (:inbound_id, :target_url, :payload_json, 'pending', 0, 30, :next_attempt_at, :created_at, :updated_at)
+            (:inbound_id, :target_url, :payload_json, 'pending', 0, :max_attempts, :next_attempt_at, :created_at, :updated_at)
     ");
     $stmt->execute([
         ':inbound_id' => $inboundId,
         ':target_url' => $targetUrl,
         ':payload_json' => fp_json($forwardPayload),
+        ':max_attempts' => FP_RELAY_MAX_DELIVERY_ATTEMPTS,
         ':next_attempt_at' => $now,
         ':created_at' => $now,
         ':updated_at' => $now,
@@ -552,7 +575,9 @@ function fp_process_queue(PDO $pdo, int $limit = FP_RELAY_MAX_ATTEMPTS_PER_RUN):
             ':last_attempt_at' => $nowAttempt,
             ':next_attempt_at' => $nextAttempt,
             ':http_status' => $result['status'] ?: null,
-            ':error' => $result['error'] ?: ('HTTP ' . (string)$result['status']),
+            ':error' => $finalFailed
+                ? (($result['error'] ?: ('HTTP ' . (string)$result['status'])) . ' - limite de 3 tentativas atingido')
+                : ($result['error'] ?: ('HTTP ' . (string)$result['status'])),
             ':response_body' => substr((string)$result['body'], 0, 5000),
             ':updated_at' => $nowAttempt,
             ':id' => $queueId,
