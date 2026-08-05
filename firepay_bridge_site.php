@@ -19,7 +19,7 @@ declare(strict_types=1);
  *   https://professoremersonleite.site/firepay_bridge_site.php?process_queue=1
  */
 
-const FP_RELAY_VERSION = '2026-08-04.4';
+const FP_RELAY_VERSION = '2026-08-04.5';
 const FP_RELAY_DEFAULT_TARGET = 'https://professoremersonleite.com/area_membros/firepay_mcqdc.php';
 const FP_RELAY_DATA_DIR = __DIR__ . '/firepay_relay_data';
 const FP_RELAY_DB_FILE = FP_RELAY_DATA_DIR . '/firepay_relay.sqlite';
@@ -454,6 +454,16 @@ function fp_save_inbound(PDO $pdo, string $raw, array $parsed): int
     return (int)$pdo->lastInsertId();
 }
 
+function fp_payload_is_dispatchable(string $raw, array $payload): bool
+{
+    if (trim($raw) !== '') return true;
+    $fields = fp_extract_fields($payload);
+    foreach (['transaction_id', 'firepay_status', 'buyer_email', 'buyer_name', 'product_name'] as $key) {
+        if (trim((string)($fields[$key] ?? '')) !== '') return true;
+    }
+    return false;
+}
+
 function fp_enqueue(PDO $pdo, int $inboundId, array $payload): int
 {
     $mode = fp_get_setting($pdo, 'forward_mode', 'sanitized');
@@ -620,7 +630,17 @@ function fp_receive(): void
     $raw = fp_read_body();
     $parsed = fp_parse_payload($raw);
     $inboundId = fp_save_inbound($pdo, $raw, $parsed);
-    $queueId = fp_enqueue($pdo, $inboundId, is_array($parsed['data']) ? $parsed['data'] : ['raw' => $raw]);
+    $payload = is_array($parsed['data']) ? $parsed['data'] : ['raw' => $raw];
+    if (!fp_payload_is_dispatchable($raw, $payload)) {
+        fp_response_json(422, [
+            'ok' => false,
+            'relay' => true,
+            'version' => FP_RELAY_VERSION,
+            'inbound_id' => $inboundId,
+            'message' => 'Payload vazio recebido e registrado. Nada foi colocado na fila.',
+        ]);
+    }
+    $queueId = fp_enqueue($pdo, $inboundId, $payload);
 
     $stats = fp_process_queue($pdo, 5);
     fp_response_json(200, [
