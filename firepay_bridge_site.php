@@ -19,7 +19,7 @@ declare(strict_types=1);
  *   https://professoremersonleite.site/firepay_bridge_site.php?process_queue=1
  */
 
-const FP_RELAY_VERSION = '2026-08-04.3';
+const FP_RELAY_VERSION = '2026-08-04.4';
 const FP_RELAY_DEFAULT_TARGET = 'https://professoremersonleite.com/area_membros/firepay_mcqdc.php';
 const FP_RELAY_DATA_DIR = __DIR__ . '/firepay_relay_data';
 const FP_RELAY_DB_FILE = FP_RELAY_DATA_DIR . '/firepay_relay.sqlite';
@@ -388,6 +388,25 @@ function fp_dt_br(?string $value): string
     return $ts ? date('d/m/Y H:i:s', $ts) : $value;
 }
 
+function fp_request_list(string $key): array
+{
+    $value = $_GET[$key] ?? [];
+    if (!is_array($value)) $value = $value !== '' ? [$value] : [];
+    return array_values(array_unique(array_filter(array_map(static fn($v) => trim((string)$v), $value), static fn($v) => $v !== '')));
+}
+
+function fp_add_in_clause(array &$where, array &$params, string $expr, string $prefix, array $values): void
+{
+    if (!$values) return;
+    $placeholders = [];
+    foreach (array_values($values) as $idx => $value) {
+        $key = ':' . $prefix . $idx;
+        $placeholders[] = $key;
+        $params[$key] = $value;
+    }
+    $where[] = $expr . ' IN (' . implode(',', $placeholders) . ')';
+}
+
 function fp_save_inbound(PDO $pdo, string $raw, array $parsed): int
 {
     $fields = fp_extract_fields($parsed['data']);
@@ -636,7 +655,7 @@ function fp_dashboard(): void
 {
     $pdo = fp_db();
     $q = trim((string)($_GET['q'] ?? ''));
-    $status = trim((string)($_GET['status'] ?? ''));
+    $statuses = fp_request_list('status');
     $eventType = trim((string)($_GET['event_type'] ?? 'all'));
     if (!in_array($eventType, ['all', 'inbound', 'outbound'], true)) $eventType = 'all';
     $date = trim((string)($_GET['date'] ?? date('Y-m-d')));
@@ -673,17 +692,41 @@ function fp_dashboard(): void
         $inParams[':in_q'] = $search;
         $outParams[':out_q'] = $search;
     }
-    if ($status !== '') {
-        $inWhere[] = "LOWER(COALESCE(i.firepay_status,'')) = LOWER(:in_status)";
-        $outWhere[] = "(LOWER(COALESCE(i.firepay_status,'')) = LOWER(:out_status) OR LOWER(CASE WHEN o.ok=1 THEN 'sent' ELSE 'error' END) = LOWER(:out_status) OR CAST(o.http_status AS TEXT) = :out_status)";
-        $inParams[':in_status'] = $status;
-        $outParams[':out_status'] = $status;
+    if ($statuses) {
+        $statusValues = array_map('strtolower', $statuses);
+        fp_add_in_clause($inWhere, $inParams, "LOWER(COALESCE(i.firepay_status,''))", 'in_status_', $statusValues);
+        $outFirepayPlaceholders = [];
+        $outDeliveryPlaceholders = [];
+        foreach ($statusValues as $idx => $value) {
+            $firepayKey = ':out_firepay_status_' . $idx;
+            $deliveryKey = ':out_delivery_status_' . $idx;
+            $outFirepayPlaceholders[] = $firepayKey;
+            $outDeliveryPlaceholders[] = $deliveryKey;
+            $outParams[$firepayKey] = $value;
+            $outParams[$deliveryKey] = $value;
+        }
+        $outHttpPlaceholders = [];
+        foreach ($statuses as $idx => $value) {
+            $key = ':out_http_status_' . $idx;
+            $outHttpPlaceholders[] = $key;
+            $outParams[$key] = $value;
+        }
+        $outWhere[] = "(
+            LOWER(COALESCE(i.firepay_status,'')) IN (" . implode(',', $outFirepayPlaceholders) . ")
+            OR LOWER(CASE WHEN o.ok=1 THEN 'sent' ELSE 'error' END) IN (" . implode(',', $outDeliveryPlaceholders) . ")
+            OR CAST(o.http_status AS TEXT) IN (" . implode(',', $outHttpPlaceholders) . ")
+        )";
     }
     if ($queueStatus !== '') {
-        $inWhere[] = "q.status = :in_queue_status";
-        $outWhere[] = "q.status = :out_queue_status";
-        $inParams[':in_queue_status'] = $queueStatus;
-        $outParams[':out_queue_status'] = $queueStatus;
+        if ($queueStatus === 'open') {
+            $inWhere[] = "q.status IN ('pending','retry')";
+            $outWhere[] = "q.status IN ('pending','retry')";
+        } else {
+            $inWhere[] = "q.status = :in_queue_status";
+            $outWhere[] = "q.status = :out_queue_status";
+            $inParams[':in_queue_status'] = $queueStatus;
+            $outParams[':out_queue_status'] = $queueStatus;
+        }
     }
 
     $inWhereSql = $inWhere ? 'WHERE ' . implode(' AND ', $inWhere) : '';
@@ -750,9 +793,10 @@ h1{font-size:22px;margin:0}.muted{color:#64748b;font-size:12px}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:7px;padding:8px 11px;background:#fff;color:#172033;text-decoration:none;font-size:12px;font-weight:700}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}.kpi{background:#fff;border:1px solid #dbe3ef;border-radius:8px;padding:12px}.kpi small{color:#64748b;text-transform:uppercase;font-size:10px}.kpi strong{display:block;font-size:24px;margin-top:4px}
 .panel{background:#fff;border:1px solid #dbe3ef;border-radius:8px;padding:12px;margin-bottom:12px}
-.filters{display:grid;grid-template-columns:130px 105px 105px 130px 1fr 145px 130px auto;gap:8px;align-items:end}
+.filters{display:grid;grid-template-columns:130px 105px 105px 130px 1fr 170px 130px auto;gap:8px;align-items:end}
 label{display:block;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:800;margin-bottom:4px}
 input,select{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:9px 10px;background:#fff;color:#172033}
+select[multiple]{min-height:82px;padding:6px}
 table{width:100%;border-collapse:collapse;background:#fff}th,td{border-bottom:1px solid #e5eaf2;padding:9px 8px;text-align:left;font-size:12px;vertical-align:top}th{font-size:10px;color:#64748b;text-transform:uppercase;background:#f8fafc}
 .badge{display:inline-flex;border:1px solid;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:800;background:#fff}
 details summary{cursor:pointer;color:#2563eb;font-weight:700}pre{max-width:680px;max-height:300px;overflow:auto;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:7px;font-size:11px;white-space:pre-wrap}
@@ -770,6 +814,7 @@ details summary{cursor:pointer;color:#2563eb;font-weight:700}pre{max-width:680px
     </div>
     <div class="actions">
       <a class="btn" href="?process_queue=1&dashboard=1">Processar fila</a>
+      <a class="btn" href="?dashboard=1&queue_status=open">Ver fila</a>
       <a class="btn" href="?config=1">Configuracao</a>
       <a class="btn" href="?dashboard=1">Atualizar</a>
     </div>
@@ -790,8 +835,8 @@ details summary{cursor:pointer;color:#2563eb;font-weight:700}pre{max-width:680px
       <div><label>Hora final</label><input type="time" name="time_to" value="<?= fp_html($timeTo) ?>"></div>
       <div><label>Tipo log</label><select name="event_type"><option value="all" <?= $eventType === 'all' ? 'selected' : '' ?>>Entrada e saida</option><option value="inbound" <?= $eventType === 'inbound' ? 'selected' : '' ?>>Recebimentos</option><option value="outbound" <?= $eventType === 'outbound' ? 'selected' : '' ?>>Envios</option></select></div>
       <div><label>Busca</label><input name="q" value="<?= fp_html($q) ?>" placeholder="email, nome, telefone, documento, transacao, produto"></div>
-      <div><label>Status</label><input name="status" value="<?= fp_html($status) ?>" placeholder="paid, waiting, abandoned, sent, 422"></div>
-      <div><label>Status fila</label><select name="queue_status"><option value="">Todos</option><?php foreach (['pending','retry','sent','failed'] as $s): ?><option value="<?= $s ?>" <?= $queueStatus === $s ? 'selected' : '' ?>><?= $s ?></option><?php endforeach; ?></select></div>
+      <div><label>Status</label><select name="status[]" multiple><?php foreach (['paid'=>'Pago','waiting'=>'Aguardando','abandoned'=>'Abandono','sent'=>'Enviado','error'=>'Erro','422'=>'HTTP 422'] as $value => $label): $value = (string)$value; ?><option value="<?= fp_html($value) ?>" <?= in_array($value, $statuses, true) ? 'selected' : '' ?>><?= fp_html($label) ?></option><?php endforeach; ?></select></div>
+      <div><label>Status fila</label><select name="queue_status"><option value="">Todos</option><option value="open" <?= $queueStatus === 'open' ? 'selected' : '' ?>>Na fila</option><?php foreach (['pending','retry','sent','failed'] as $s): ?><option value="<?= $s ?>" <?= $queueStatus === $s ? 'selected' : '' ?>><?= $s ?></option><?php endforeach; ?></select></div>
       <button class="btn" type="submit">Filtrar</button>
     </form>
   </div>
@@ -899,12 +944,12 @@ body{margin:0;background:#f3f6fb;color:#172033;font-family:Inter,Arial,sans-seri
       <div class="row">
         <label>Modo de envio</label>
         <select name="forward_mode">
-          <option value="sanitized" <?= $mode === 'sanitized' ? 'selected' : '' ?>>Sanitizado para o sistema atual</option>
-          <option value="raw" <?= $mode === 'raw' ? 'selected' : '' ?>>JSON completo parseado</option>
+          <option value="sanitized" <?= $mode === 'sanitized' ? 'selected' : '' ?>>Compatibilidade atual - sanitizado</option>
+          <option value="raw" <?= $mode === 'raw' ? 'selected' : '' ?>>Debug/integracao externa - completo</option>
         </select>
         <div class="help">
-          <strong>Sanitizado para o sistema atual:</strong> encaminha apenas os campos que o processador atual usa, reduzindo risco de bloqueio por WAF/ModSecurity e mantendo compatibilidade com o endpoint da area de membros.<br>
-          <strong>JSON completo parseado:</strong> encaminha tudo que chegou depois de interpretar JSON/formulario. Use para depuracao ou quando o destino precisa do payload integral.
+          <strong>Compatibilidade atual - sanitizado:</strong> encaminha apenas os campos que o processador atual usa. E a opcao recomendada para a area de membros, reduzindo risco de bloqueio por WAF/ModSecurity.<br>
+          <strong>Debug/integracao externa - completo:</strong> encaminha tudo que chegou depois de interpretar JSON/formulario. Use quando o destino precisa do payload integral ou para investigar campos da Firepay.
         </div>
       </div>
       <button class="btn" type="submit">Salvar</button>
