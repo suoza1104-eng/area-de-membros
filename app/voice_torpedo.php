@@ -76,7 +76,7 @@ function voice_ensure_schema(PDO $pdo): void
         allowed_end_time TIME NULL,
         allowed_weekdays_json LONGTEXT NULL,
         concurrency_limit INT UNSIGNED NOT NULL DEFAULT 1,
-        calls_per_minute INT UNSIGNED NOT NULL DEFAULT 10,
+        calls_per_minute INT UNSIGNED NOT NULL DEFAULT 1,
         max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 1,
         retry_strategy_json LONGTEXT NULL,
         answering_machine_detection TINYINT(1) NOT NULL DEFAULT 0,
@@ -344,6 +344,13 @@ function voice_provider(PDO $pdo, string $provider = VOICE_PROVIDER_TELNYX): arr
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) throw new RuntimeException('Provedor de voz nao encontrado.');
     $row['public'] = voice_config_array($row['public_configuration'] ?? '{}');
+    if (max(1, (int)($row['public']['concurrency_limit'] ?? 1)) <= 1) {
+        $row['public']['concurrency_limit'] = 1;
+        $row['public']['calls_per_minute'] = min(max(1, (int)($row['public']['calls_per_minute'] ?? 1)), 1);
+        $row['public']['automation_queue_spacing_seconds'] = max(75, (int)($row['public']['automation_queue_spacing_seconds'] ?? 75));
+        $row['public']['automation_concurrency_backoff_step_seconds'] = max(90, (int)($row['public']['automation_concurrency_backoff_step_seconds'] ?? 90));
+        $row['public']['automation_concurrency_backoff_max_seconds'] = max(3600, (int)($row['public']['automation_concurrency_backoff_max_seconds'] ?? 3600));
+    }
     $row['credentials'] = voice_config_array($row['encrypted_credentials'] ?? '{}');
     if (!empty($row['credentials']['api_key'])) $row['credentials']['api_key_plain'] = voice_decrypt_secret((string)$row['credentials']['api_key']);
     return $row;
@@ -432,6 +439,33 @@ function voice_destination_allowed_by_config(array $provider, string $to): bool
     return false;
 }
 
+function voice_is_concurrency_limit_error(string $error): bool
+{
+    $normalized = mb_strtolower($error);
+    return str_contains($normalized, 'limite de concorrencia')
+        || str_contains($normalized, 'chamada de voz ativa')
+        || str_contains($normalized, 'simultane')
+        || str_contains($normalized, 'connection channel limit')
+        || str_contains($normalized, 'over the limit')
+        || str_contains($normalized, 'concurrent')
+        || str_contains($normalized, 'rate limit')
+        || str_contains($normalized, 'too many requests');
+}
+
+function voice_active_statuses(): array
+{
+    return ['api_requested','api_accepted','initiated','ringing','answered','playing'];
+}
+
+function voice_active_call_count(PDO $pdo): int
+{
+    $activeStatuses = voice_active_statuses();
+    $in = implode(',', array_fill(0, count($activeStatuses), '?'));
+    $active = $pdo->prepare("SELECT COUNT(*) FROM voice_call_attempts WHERE status IN ($in) AND created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)");
+    $active->execute($activeStatuses);
+    return (int)$active->fetchColumn();
+}
+
 function voice_user_phone(array $user): string
 {
     foreach (['telefone','phone','celular','whatsapp','telefone_whatsapp'] as $key) {
@@ -512,12 +546,12 @@ function voice_save_telnyx_config(PDO $pdo, array $data, string $actor): void
         'max_retries' => max(0, min(5, (int)($data['max_retries'] ?? 1))),
         'retry_interval_seconds' => max(1, min(3600, (int)($data['retry_interval_seconds'] ?? 30))),
         'concurrency_limit' => max(1, min(500, (int)($data['concurrency_limit'] ?? 1))),
-        'calls_per_minute' => max(1, min(5000, (int)($data['calls_per_minute'] ?? 10))),
+        'calls_per_minute' => max(1, min(5000, (int)($data['calls_per_minute'] ?? 1))),
         'calls_per_hour' => max(1, min(100000, (int)($data['calls_per_hour'] ?? 300))),
         'calls_per_day' => max(1, min(1000000, (int)($data['calls_per_day'] ?? 1000))),
-        'automation_queue_spacing_seconds' => max(0, min(3600, (int)($data['automation_queue_spacing_seconds'] ?? 10))),
-        'automation_concurrency_backoff_step_seconds' => max(1, min(3600, (int)($data['automation_concurrency_backoff_step_seconds'] ?? 30))),
-        'automation_concurrency_backoff_max_seconds' => max(30, min(86400, (int)($data['automation_concurrency_backoff_max_seconds'] ?? 1800))),
+        'automation_queue_spacing_seconds' => max(0, min(3600, (int)($data['automation_queue_spacing_seconds'] ?? 75))),
+        'automation_concurrency_backoff_step_seconds' => max(1, min(3600, (int)($data['automation_concurrency_backoff_step_seconds'] ?? 90))),
+        'automation_concurrency_backoff_max_seconds' => max(30, min(86400, (int)($data['automation_concurrency_backoff_max_seconds'] ?? 3600))),
         'daily_cost_limit' => max(0, (float)($data['daily_cost_limit'] ?? 0)),
         'default_call_limit_secs' => max(10, min(14400, (int)($data['default_call_limit_secs'] ?? 120))),
         'default_timeout_secs' => max(5, min(120, (int)($data['default_timeout_secs'] ?? 30))),
@@ -848,11 +882,7 @@ function voice_create_telnyx_call(PDO $pdo, array $args): array
         throw new RuntimeException('Destino nao permitido nas configuracoes locais de voz. Inclua o pais/prefixo em Destinos permitidos antes de ligar.');
     }
     $localConcurrency = max(1, (int)($cfg['concurrency_limit'] ?? 1));
-    $activeStatuses = ['api_requested','api_accepted','initiated','ringing','answered','playing'];
-    $in = implode(',', array_fill(0, count($activeStatuses), '?'));
-    $active = $pdo->prepare("SELECT COUNT(*) FROM voice_call_attempts WHERE status IN ($in) AND created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)");
-    $active->execute($activeStatuses);
-    if ((int)$active->fetchColumn() >= $localConcurrency) {
+    if (voice_active_call_count($pdo) >= $localConcurrency) {
         throw new RuntimeException('Ja existe chamada de voz ativa no limite de concorrencia configurado. Aguarde finalizar antes de iniciar outra.');
     }
     $blocked = $pdo->prepare("SELECT id FROM voice_suppression_list WHERE phone_e164=:p AND (permanent=1 OR expires_at>NOW()) LIMIT 1");
@@ -1268,7 +1298,10 @@ function voice_apply_attempt_event(PDO $pdo, int $attemptId, string $event, arra
 function voice_process_queue(PDO $pdo, int $limit = 25): array
 {
     voice_ensure_schema($pdo);
-    $done = ['queued'=>0,'started'=>0,'skipped'=>0,'failed'=>0];
+    $provider = voice_provider($pdo);
+    $cfg = (array)($provider['public'] ?? []);
+    $spacing = max(1, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 75)));
+    $done = ['queued'=>0,'started'=>0,'skipped'=>0,'scheduled'=>0,'failed'=>0];
     $rows = $pdo->query("SELECT r.*,c.provider_id,c.phone_number_id,c.message_mode,c.message_template,c.answering_machine_detection,c.status campaign_status,n.phone_e164 from_number
         FROM voice_campaign_recipients r
         JOIN voice_campaigns c ON c.id=r.campaign_id
@@ -1291,7 +1324,14 @@ function voice_process_queue(PDO $pdo, int $limit = 25): array
             $pdo->prepare("UPDATE voice_campaign_recipients SET status='dialing',attempts_count=attempts_count+1,last_called_at=NOW() WHERE id=:id")->execute(['id'=>$row['id']]);
             $done['started']++;
         } catch (Throwable $e) {
-            $pdo->prepare("UPDATE voice_campaign_recipients SET status='failed',failure_message=:e WHERE id=:id")->execute(['e'=>mb_substr($e->getMessage(),0,500),'id'=>$row['id']]);
+            $message = $e->getMessage();
+            if (voice_is_concurrency_limit_error($message)) {
+                $pdo->prepare("UPDATE voice_campaign_recipients SET status='scheduled',scheduled_at=DATE_ADD(NOW(), INTERVAL {$spacing} SECOND),failure_message=:e WHERE id=:id")
+                    ->execute(['e'=>mb_substr($message,0,500),'id'=>$row['id']]);
+                $done['scheduled']++;
+                break;
+            }
+            $pdo->prepare("UPDATE voice_campaign_recipients SET status='failed',failure_message=:e WHERE id=:id")->execute(['e'=>mb_substr($message,0,500),'id'=>$row['id']]);
             $done['failed']++;
         }
         $done['queued']++;

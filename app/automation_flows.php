@@ -297,10 +297,13 @@ function automation_flow_pick_email_variant(array $variants, array $job): array
 
 function automation_flow_is_voice_concurrency_limit_error(string $error): bool
 {
+    if (function_exists('voice_is_concurrency_limit_error')) return voice_is_concurrency_limit_error($error);
     $normalized = mb_strtolower($error);
     return str_contains($normalized, 'limite de concorrencia')
         || str_contains($normalized, 'chamada de voz ativa')
         || str_contains($normalized, 'simultane')
+        || str_contains($normalized, 'connection channel limit')
+        || str_contains($normalized, 'over the limit')
         || str_contains($normalized, 'concurrent')
         || str_contains($normalized, 'rate limit')
         || str_contains($normalized, 'too many requests');
@@ -310,9 +313,9 @@ function automation_flow_reschedule_voice_limit(PDO $pdo, array $job, array $inp
 {
     $provider = voice_provider($pdo);
     $cfg = (array)($provider['public'] ?? []);
-    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 10)));
-    $step = max(1, min(3600, (int)($cfg['automation_concurrency_backoff_step_seconds'] ?? 30)));
-    $max = max($step, min(86400, (int)($cfg['automation_concurrency_backoff_max_seconds'] ?? 1800)));
+    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 75)));
+    $step = max(1, min(3600, (int)($cfg['automation_concurrency_backoff_step_seconds'] ?? 90)));
+    $max = max($step, min(86400, (int)($cfg['automation_concurrency_backoff_max_seconds'] ?? 3600)));
 
     $previousDelay = (int)($input['_voice_limit_delay_seconds'] ?? 0);
     $delay = min($max, max($spacing, $previousDelay + $step));
@@ -343,11 +346,16 @@ function automation_flow_voice_pacing_delay(PDO $pdo): int
 {
     $provider = voice_provider($pdo);
     $cfg = (array)($provider['public'] ?? []);
-    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 10)));
-    $perMinute = max(1, (int)($cfg['calls_per_minute'] ?? 10));
+    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 75)));
+    $perMinute = max(1, (int)($cfg['calls_per_minute'] ?? 1));
     $perHour = max(1, (int)($cfg['calls_per_hour'] ?? 300));
     $perDay = max(1, (int)($cfg['calls_per_day'] ?? 1000));
+    $concurrency = max(1, (int)($cfg['concurrency_limit'] ?? 1));
     $delay = 0;
+
+    if (function_exists('voice_active_call_count') && voice_active_call_count($pdo) >= $concurrency) {
+        $delay = max($delay, max(1, $spacing));
+    }
 
     if ($spacing > 0) {
         $last = (int)$pdo->query("SELECT UNIX_TIMESTAMP(MAX(created_at)) FROM voice_call_attempts WHERE automation_job_id IS NOT NULL")->fetchColumn();
@@ -376,7 +384,7 @@ function automation_flow_schedule_voice_pacing(PDO $pdo, array $job, array $inpu
 {
     $provider = voice_provider($pdo);
     $cfg = (array)($provider['public'] ?? []);
-    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 10)));
+    $spacing = max(0, min(3600, (int)($cfg['automation_queue_spacing_seconds'] ?? 75)));
     $st = $pdo->prepare("SELECT UNIX_TIMESTAMP(MAX(j.available_at)) FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id WHERE r.flow_id=:flow AND j.node_id=:node AND j.status IN ('queued','retry','scheduled','processing')");
     $st->execute(['flow' => (int)$job['flow_id'], 'node' => (string)$job['node_id']]);
     $tail = (int)$st->fetchColumn();
