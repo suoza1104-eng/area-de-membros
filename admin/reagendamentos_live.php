@@ -730,7 +730,9 @@ if (!isset($sortMap[$sort])) $sort = 'quando';
 $orderHistSql = $sortMap[$sort] . ' ' . strtoupper($dir) . ', r.id ' . strtoupper($dir);
 
 $liveEventsReady = rl_table_exists($pdo, 'live_event_recebimentos') && rl_table_exists($pdo, 'live_events');
-$eventExpr = function(string $tipo): string {
+$impactStartExpr = 'COALESCE(r.new_turma_live_at, r.created_at)';
+$eventTimeExpr = 'COALESCE(ler.processado_em, ler.recebido_em)';
+$eventExpr = function(string $tipo) use ($impactStartExpr, $eventTimeExpr): string {
     return "EXISTS (
         SELECT 1
         FROM live_event_recebimentos ler
@@ -738,7 +740,15 @@ $eventExpr = function(string $tipo): string {
         WHERE ler.user_id = r.user_id
           AND ler.status = 'processado'
           AND le.tipo = '$tipo'
-          AND COALESCE(ler.processado_em, ler.recebido_em) >= r.created_at
+          AND $eventTimeExpr >= $impactStartExpr
+          AND NOT EXISTS (
+              SELECT 1
+              FROM reagendamentos_live r2
+              WHERE r2.user_id = r.user_id
+                AND r2.id <> r.id
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) > $impactStartExpr
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) <= $eventTimeExpr
+          )
         LIMIT 1
     )";
 };
@@ -757,7 +767,18 @@ $exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
         WHERE s.matched_user_id = r.user_id
           AND $approvedSalesStatusSql
           AND s.transaction_date IS NOT NULL
-          AND s.transaction_date >= r.created_at
+          AND s.transaction_date >= $impactStartExpr
+          AND EXISTS (
+              SELECT 1
+              FROM live_event_recebimentos ler_acesso
+              JOIN live_events le_acesso ON le_acesso.id = ler_acesso.event_id
+              WHERE ler_acesso.user_id = r.user_id
+                AND ler_acesso.status = 'processado'
+                AND le_acesso.tipo = 'acessou'
+                AND COALESCE(ler_acesso.processado_em, ler_acesso.recebido_em) >= $impactStartExpr
+                AND COALESCE(ler_acesso.processado_em, ler_acesso.recebido_em) <= s.transaction_date
+              LIMIT 1
+          )
           AND EXISTS (
               SELECT 1
               FROM live_event_recebimentos ler_oferta
@@ -765,7 +786,7 @@ $exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
               WHERE ler_oferta.user_id = r.user_id
                 AND ler_oferta.status = 'processado'
                 AND le_oferta.tipo = 'oferta'
-                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) >= r.created_at
+                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) >= $impactStartExpr
                 AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) <= s.transaction_date
               LIMIT 1
           )
@@ -774,8 +795,8 @@ $exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
               FROM reagendamentos_live r2
               WHERE r2.user_id = r.user_id
                 AND r2.id <> r.id
-                AND r2.created_at > r.created_at
-                AND r2.created_at <= s.transaction_date
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) > $impactStartExpr
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) <= s.transaction_date
                 AND EXISTS (
                     SELECT 1
                     FROM live_event_recebimentos ler2
@@ -783,7 +804,7 @@ $exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
                     WHERE ler2.user_id = r2.user_id
                       AND ler2.status = 'processado'
                       AND le2.tipo = 'oferta'
-                      AND COALESCE(ler2.processado_em, ler2.recebido_em) >= r2.created_at
+                      AND COALESCE(ler2.processado_em, ler2.recebido_em) >= COALESCE(r2.new_turma_live_at, r2.created_at)
                       AND COALESCE(ler2.processado_em, ler2.recebido_em) <= s.transaction_date
                     LIMIT 1
                 )
@@ -865,11 +886,11 @@ foreach ($frequencias as $fr) {
 }
 
 try {
-    $st = $pdo->prepare("SELECT DATE(r.created_at) AS dia, COUNT(*) AS total, SUM($exprCompraCurso) AS vendas
+    $st = $pdo->prepare("SELECT DATE($impactStartExpr) AS dia, COUNT(*) AS total, SUM($exprCompraCurso) AS vendas
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
-        GROUP BY DATE(r.created_at)
+        GROUP BY DATE($impactStartExpr)
         ORDER BY dia ASC
         LIMIT 60");
     $st->execute($paramsHist);
@@ -1182,10 +1203,13 @@ require __DIR__ . '/_header.php';
 
 <div class="card rl-chart-card">
     <div class="rl-chart-head">
-        <div class="card-header-title">Reagendamentos por dia</div>
+        <div>
+            <div class="card-header-title">Impacto por data da live reagendada</div>
+            <div class="text-xs text-muted mt-1">Eventos e vendas contam somente quando acontecem apos a data/hora da live reagendada.</div>
+        </div>
         <label class="rl-chart-toggle">
             <input type="checkbox" id="toggleVendasReag" checked>
-            Mostrar vendas dos reagendados
+            Mostrar vendas apos a live
         </label>
     </div>
     <?php if (!$reagPorDia): ?>
@@ -1267,10 +1291,10 @@ require __DIR__ . '/_header.php';
 <div class="rl-pie-grid">
     <?php
         $pieCards = [
-            ['id' => 'pieAcessou', 'titulo' => 'Reagendou e acessou a live', 'ok' => $kpiEntrada, 'total' => $kpiReagFiltrados, 'cor' => '#38bdf8'],
-            ['id' => 'pieOferta', 'titulo' => 'Reagendou e chegou na oferta', 'ok' => $kpiOferta, 'total' => $kpiReagFiltrados, 'cor' => '#f59e0b'],
-            ['id' => 'pieClique', 'titulo' => 'Reagendou e clicou no botao de compra', 'ok' => $kpiCliqueCompra, 'total' => $kpiReagFiltrados, 'cor' => '#a78bfa'],
-            ['id' => 'pieCompraCurso', 'titulo' => 'Reagendou e comprou curso apos a live', 'ok' => $kpiCompraCurso, 'total' => $kpiReagFiltrados, 'cor' => '#22c55e'],
+            ['id' => 'pieAcessou', 'titulo' => 'Acessou a live reagendada', 'ok' => $kpiEntrada, 'total' => $kpiReagFiltrados, 'cor' => '#38bdf8'],
+            ['id' => 'pieOferta', 'titulo' => 'Viu oferta apos a live', 'ok' => $kpiOferta, 'total' => $kpiReagFiltrados, 'cor' => '#f59e0b'],
+            ['id' => 'pieClique', 'titulo' => 'Clicou no botao apos a live', 'ok' => $kpiCliqueCompra, 'total' => $kpiReagFiltrados, 'cor' => '#a78bfa'],
+            ['id' => 'pieCompraCurso', 'titulo' => 'Comprou apos a live', 'ok' => $kpiCompraCurso, 'total' => $kpiReagFiltrados, 'cor' => '#22c55e'],
         ];
     ?>
     <?php foreach ($pieCards as $pc): ?>
@@ -1288,9 +1312,9 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-b"><div class="kpi-label">Links usados</div><div class="kpi-value"><?= number_format($kpiTokensUsados, 0, ',', '.') ?></div></div>
     <div class="kpi kpi-r"><div class="kpi-label">Links expirados</div><div class="kpi-value"><?= number_format($kpiTokensExpirados, 0, ',', '.') ?></div></div>
     <div class="kpi kpi-y"><div class="kpi-label">Reagendamentos</div><div class="kpi-value"><?= number_format($kpiReagFiltrados, 0, ',', '.') ?></div><div class="kpi-sub"><?= number_format($kpiReagTotal, 0, ',', '.') ?> total · <?= number_format($kpiReag7, 0, ',', '.') ?> em 7 dias</div></div>
-    <div class="kpi kpi-b"><div class="kpi-label">Taxa de entrada</div><div class="kpi-value"><?= h(rl_pct($kpiEntrada, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiEntrada, 0, ',', '.') ?> acessaram a live</div></div>
-    <div class="kpi kpi-o"><div class="kpi-label">Taxa ate oferta</div><div class="kpi-value"><?= h(rl_pct($kpiOferta, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiOferta, 0, ',', '.') ?> ficaram ate a oferta</div></div>
-    <div class="kpi kpi-o"><div class="kpi-label">Cliques no botao</div><div class="kpi-value"><?= h(rl_pct($kpiCliqueCompra, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiCliqueCompra, 0, ',', '.') ?> clicaram no CTA</div></div>
+    <div class="kpi kpi-b"><div class="kpi-label">Taxa de entrada</div><div class="kpi-value"><?= h(rl_pct($kpiEntrada, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiEntrada, 0, ',', '.') ?> acessaram apos a live reagendada</div></div>
+    <div class="kpi kpi-o"><div class="kpi-label">Taxa ate oferta</div><div class="kpi-value"><?= h(rl_pct($kpiOferta, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiOferta, 0, ',', '.') ?> viram oferta apos a live</div></div>
+    <div class="kpi kpi-o"><div class="kpi-label">Cliques no botao</div><div class="kpi-value"><?= h(rl_pct($kpiCliqueCompra, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiCliqueCompra, 0, ',', '.') ?> clicaram apos a live</div></div>
     <div class="kpi kpi-g"><div class="kpi-label">Compras curso</div><div class="kpi-value"><?= h(rl_pct($kpiCompraCurso, $kpiReagFiltrados)) ?></div><div class="kpi-sub"><?= number_format($kpiCompraCurso, 0, ',', '.') ?> venda(s) apos a live</div></div>
     <div class="kpi"><div class="kpi-label">Frequencia</div><div class="kpi-value"><?= number_format($kpiMaiorFreq, 0, ',', '.') ?>x</div><div class="kpi-sub"><?= number_format($kpiAlunosUnicos, 0, ',', '.') ?> aluno(s) no filtro</div></div>
     <div class="kpi kpi-o"><div class="kpi-label">Lives disponiveis</div><div class="kpi-value"><?= number_format($kpiLivesDisponiveis, 0, ',', '.') ?></div><div class="kpi-sub">janela de <?= (int)$windowDays ?> dia(s)</div></div>
@@ -2007,7 +2031,7 @@ function buildReagLineChart() {
     var canvas = document.getElementById('reagLineChart');
     if (!canvas || typeof Chart === 'undefined') return;
     var vendasDataset = {
-        label: 'Vendas dos reagendados',
+        label: 'Vendas apos a live',
         data: REAG_CHART_VENDAS,
         borderColor: '#22c55e',
         backgroundColor: 'rgba(34,197,94,.12)',
@@ -2023,7 +2047,7 @@ function buildReagLineChart() {
             labels: REAG_CHART_LABELS,
             datasets: [
                 {
-                    label: 'Reagendamentos',
+                    label: 'Lives reagendadas',
                     data: REAG_CHART_DATA,
                     borderColor: '#facc15',
                     backgroundColor: 'rgba(250,204,21,.14)',
