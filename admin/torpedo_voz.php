@@ -2,10 +2,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/voice_torpedo.php';
+require_once __DIR__ . '/../app/automation_flows.php';
 proteger_admin();
 
 $pdo = getPDO();
 voice_ensure_schema($pdo);
+automation_flows_ensure_schema($pdo);
 $menu = 'torpedo_voz';
 $page_title = 'Torpedo de Voz';
 $actor = (string)($_SESSION['equipe_nome'] ?? 'Administrador');
@@ -83,6 +85,29 @@ function vv_voice_stage_text(array $call, array $events, array $stage): string {
 }
 function vv_media_meta(array $m): array { $meta=json_decode((string)($m['metadata_json'] ?? '{}'), true); return is_array($meta)?$meta:[]; }
 function vv_media_description(array $m): string { $meta=vv_media_meta($m); return trim((string)($meta['description'] ?? '')); }
+function vv_date_ymd(string $value): string { return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) ? $value : ''; }
+function vv_duration_label(int $seconds): string {
+    if ($seconds <= 0) return 'zerada';
+    if ($seconds < 60) return $seconds . 's';
+    $minutes = (int)ceil($seconds / 60);
+    if ($minutes < 60) return $minutes . ' min';
+    $hours = intdiv($minutes, 60); $rest = $minutes % 60;
+    return $hours . 'h' . ($rest > 0 ? ' ' . $rest . 'min' : '');
+}
+function vv_voice_job_label(array $graph, string $nodeId): string {
+    foreach (($graph['nodes'] ?? []) as $node) {
+        if ((string)($node['id'] ?? '') !== $nodeId) continue;
+        $config = is_array($node['config'] ?? null) ? $node['config'] : [];
+        return trim((string)($config['label'] ?? '')) ?: 'Chamada de voz';
+    }
+    return $nodeId;
+}
+function vv_voice_job_is_voice(array $graph, string $nodeId): bool {
+    foreach (($graph['nodes'] ?? []) as $node) {
+        if ((string)($node['id'] ?? '') === $nodeId) return (string)($node['type'] ?? '') === 'voice';
+    }
+    return false;
+}
 
 $message = '';
 $error = '';
@@ -215,6 +240,12 @@ $provider = voice_provider($pdo);
 $cfg = (array)$provider['public'];
 $creds = (array)$provider['credentials'];
 $stats = voice_dashboard_stats($pdo);
+$queueFrom = vv_date_ymd((string)($_GET['queue_from'] ?? '')) ?: date('Y-m-d', strtotime('-7 days'));
+$queueTo = vv_date_ymd((string)($_GET['queue_to'] ?? '')) ?: date('Y-m-d');
+$queueFlowId = max(0, (int)($_GET['queue_flow_id'] ?? 0));
+$queueStatus = (string)($_GET['queue_status'] ?? 'all');
+if (!in_array($queueStatus, ['open','all','completed','failed','scheduled','processing'], true)) $queueStatus = 'all';
+$queueFlowOptions = $pdo->query("SELECT id,name,status FROM automation_flows WHERE status<>'deleted' ORDER BY updated_at DESC LIMIT 300")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $campaigns = $pdo->query("SELECT * FROM voice_campaigns ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $numbers = $pdo->query("SELECT * FROM voice_phone_numbers ORDER BY is_default DESC,id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $media = $pdo->query("SELECT * FROM voice_media WHERE status='active' ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -226,6 +257,140 @@ $eventsByAttempt = [];
 foreach ($events as $e) $eventsByAttempt[(int)($e['attempt_id'] ?? 0)][] = $e;
 $webhooksByEvent = [];
 foreach ($webhooks as $w) if (!empty($w['event_id'])) $webhooksByEvent[(string)$w['event_id']][] = $w;
+$queueOpenStatuses = ['queued'=>true,'retry'=>true,'scheduled'=>true,'processing'=>true];
+$queueRawByJob = [];
+$queueOpenWhere = ["j.status IN ('queued','retry','scheduled','processing')"];
+$queueOpenParams = [];
+if ($queueFlowId > 0) { $queueOpenWhere[] = 'r.flow_id=:q_flow'; $queueOpenParams['q_flow'] = $queueFlowId; }
+if (in_array($queueStatus, ['scheduled','processing'], true)) { $queueOpenWhere[] = 'j.status=:q_status'; $queueOpenParams['q_status'] = $queueStatus; }
+if (in_array($queueStatus, ['all','open','scheduled','processing'], true)) {
+    $queueOpenSql = "SELECT j.id job_id,j.run_id,j.node_id,j.status job_status,j.available_at,j.attempts,j.max_attempts,j.last_error,j.created_at job_created_at,j.updated_at job_updated_at,
+        r.flow_id,r.version_id,r.user_id,r.status run_status,r.started_at run_started_at,r.finished_at run_finished_at,
+        f.name flow_name,f.status flow_status,v.version_number,u.nome,u.email,u.telefone,
+        a.id attempt_id,a.status call_status,a.answered_by,a.created_at call_created_at,a.ended_at call_ended_at,a.duration_seconds,a.error_json
+        FROM automation_flow_jobs j
+        JOIN automation_flow_runs r ON r.id=j.run_id
+        JOIN automation_flows f ON f.id=r.flow_id
+        JOIN automation_flow_versions v ON v.id=r.version_id
+        LEFT JOIN users u ON u.id=r.user_id
+        LEFT JOIN voice_call_attempts a ON a.automation_job_id=j.id
+        WHERE " . implode(' AND ', $queueOpenWhere) . "
+        ORDER BY FIELD(j.status,'processing','queued','retry','scheduled'), j.available_at ASC, j.id ASC
+        LIMIT 500";
+    $queueOpenStmt = $pdo->prepare($queueOpenSql);
+    $queueOpenStmt->execute($queueOpenParams);
+    foreach ($queueOpenStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $queueRawByJob[(int)$row['job_id']] = $row;
+}
+$queueAttemptWhere = ['a.automation_job_id IS NOT NULL'];
+$queueAttemptParams = [];
+if ($queueFlowId > 0) { $queueAttemptWhere[] = 'r.flow_id=:qa_flow'; $queueAttemptParams['qa_flow'] = $queueFlowId; }
+if ($queueFrom !== '') { $queueAttemptWhere[] = 'a.created_at>=:qa_from'; $queueAttemptParams['qa_from'] = $queueFrom . ' 00:00:00'; }
+if ($queueTo !== '') { $queueAttemptWhere[] = 'a.created_at<:qa_to'; $queueAttemptParams['qa_to'] = date('Y-m-d 00:00:00', strtotime($queueTo . ' +1 day')); }
+if ($queueStatus === 'completed') $queueAttemptWhere[] = "j.status='completed'";
+if ($queueStatus === 'failed') $queueAttemptWhere[] = "(j.status='failed' OR a.status='failed' OR a.error_json IS NOT NULL)";
+if (in_array($queueStatus, ['all','completed','failed'], true)) {
+    $queueAttemptSql = "SELECT j.id job_id,j.run_id,j.node_id,j.status job_status,j.available_at,j.attempts,j.max_attempts,j.last_error,j.created_at job_created_at,j.updated_at job_updated_at,
+    r.flow_id,r.version_id,r.user_id,r.status run_status,r.started_at run_started_at,r.finished_at run_finished_at,
+    f.name flow_name,f.status flow_status,v.version_number,u.nome,u.email,u.telefone,
+    a.id attempt_id,a.status call_status,a.answered_by,a.created_at call_created_at,a.ended_at call_ended_at,a.duration_seconds,a.error_json
+    FROM automation_flow_jobs j
+    JOIN automation_flow_runs r ON r.id=j.run_id
+    JOIN automation_flows f ON f.id=r.flow_id
+    JOIN automation_flow_versions v ON v.id=r.version_id
+    LEFT JOIN users u ON u.id=r.user_id
+    JOIN voice_call_attempts a ON a.automation_job_id=j.id
+    WHERE " . implode(' AND ', $queueAttemptWhere) . "
+    ORDER BY a.created_at DESC, j.id DESC
+    LIMIT 300";
+    $queueAttemptStmt = $pdo->prepare($queueAttemptSql);
+    $queueAttemptStmt->execute($queueAttemptParams);
+    foreach ($queueAttemptStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $queueRawByJob[(int)$row['job_id']] = $row;
+}
+$queueRawRows = array_values($queueRawByJob);
+$queueVersionIds = array_values(array_unique(array_filter(array_map(static fn($r)=>(int)($r['version_id'] ?? 0), $queueRawRows))));
+$queueGraphsByVersion = [];
+if ($queueVersionIds) {
+    $in = implode(',', array_fill(0, count($queueVersionIds), '?'));
+    $graphStmt = $pdo->prepare("SELECT id,graph_json FROM automation_flow_versions WHERE id IN ($in)");
+    $graphStmt->execute($queueVersionIds);
+    foreach ($graphStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $graphRow) {
+        $decoded = json_decode((string)($graphRow['graph_json'] ?? ''), true);
+        $queueGraphsByVersion[(int)$graphRow['id']] = is_array($decoded) ? $decoded : [];
+    }
+}
+$queueRows = [];
+$queueByFlow = [];
+$queueSpacing = max(1, (int)($cfg['automation_queue_spacing_seconds'] ?? 75));
+$queuePerMinute = max(1, (int)($cfg['calls_per_minute'] ?? 1));
+$queueSecondsPerCall = max($queueSpacing, (int)ceil(60 / $queuePerMinute));
+foreach ($queueRawRows as $row) {
+    $graph = $queueGraphsByVersion[(int)($row['version_id'] ?? 0)] ?? [];
+    $nodeId = (string)($row['node_id'] ?? '');
+    if (!vv_voice_job_is_voice($graph, $nodeId)) continue;
+    $row['node_label'] = vv_voice_job_label($graph, $nodeId);
+    $flowId = (int)($row['flow_id'] ?? 0);
+    if (!isset($queueByFlow[$flowId])) {
+        $queueByFlow[$flowId] = ['flow_id'=>$flowId,'flow_name'=>(string)($row['flow_name'] ?? 'Fluxo #' . $flowId),'flow_status'=>(string)($row['flow_status'] ?? ''),'pending'=>0,'processing'=>0,'completed'=>0,'failed'=>0,'total'=>0,'calls'=>0,'answered'=>0,'last_call'=>'','latest_available'=>''];
+    }
+    $bucket =& $queueByFlow[$flowId];
+    $bucket['total']++;
+    $status = (string)($row['job_status'] ?? '');
+    if (isset($queueOpenStatuses[$status])) $bucket['pending']++;
+    if ($status === 'processing') $bucket['processing']++;
+    if ($status === 'completed') $bucket['completed']++;
+    if ($status === 'failed') $bucket['failed']++;
+    if (!empty($row['attempt_id'])) $bucket['calls']++;
+    if (trim((string)($row['answered_by'] ?? '')) !== '') $bucket['answered']++;
+    if (trim((string)($row['call_created_at'] ?? '')) !== '' && (string)$row['call_created_at'] > (string)$bucket['last_call']) $bucket['last_call'] = (string)$row['call_created_at'];
+    if (isset($queueOpenStatuses[$status]) && (string)$row['available_at'] > (string)$bucket['latest_available']) $bucket['latest_available'] = (string)$row['available_at'];
+    unset($bucket);
+    $queueRows[] = $row;
+}
+$queueAggWhere = ['a.automation_job_id IS NOT NULL'];
+$queueAggParams = [];
+if ($queueFlowId > 0) { $queueAggWhere[] = 'r.flow_id=:qag_flow'; $queueAggParams['qag_flow'] = $queueFlowId; }
+if ($queueFrom !== '') { $queueAggWhere[] = 'a.created_at>=:qag_from'; $queueAggParams['qag_from'] = $queueFrom . ' 00:00:00'; }
+if ($queueTo !== '') { $queueAggWhere[] = 'a.created_at<:qag_to'; $queueAggParams['qag_to'] = date('Y-m-d 00:00:00', strtotime($queueTo . ' +1 day')); }
+if ($queueStatus === 'completed') $queueAggWhere[] = "j.status='completed'";
+if ($queueStatus === 'failed') $queueAggWhere[] = "(j.status='failed' OR a.status='failed' OR a.error_json IS NOT NULL)";
+if (in_array($queueStatus, ['all','completed','failed'], true)) {
+    $queueAggSql = "SELECT r.flow_id,f.name flow_name,f.status flow_status,
+        COUNT(*) calls,
+        SUM(j.status='completed') completed,
+        SUM(j.status='failed' OR a.status='failed' OR a.error_json IS NOT NULL) failed,
+        SUM(a.answered_at IS NOT NULL OR a.answered_by IS NOT NULL) answered,
+        MAX(a.created_at) last_call
+        FROM voice_call_attempts a
+        JOIN automation_flow_jobs j ON j.id=a.automation_job_id
+        JOIN automation_flow_runs r ON r.id=j.run_id
+        JOIN automation_flows f ON f.id=r.flow_id
+        WHERE " . implode(' AND ', $queueAggWhere) . "
+        GROUP BY r.flow_id,f.name,f.status";
+    $queueAggStmt = $pdo->prepare($queueAggSql);
+    $queueAggStmt->execute($queueAggParams);
+    foreach ($queueAggStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $agg) {
+        $flowId = (int)($agg['flow_id'] ?? 0);
+        if (!isset($queueByFlow[$flowId])) {
+            $queueByFlow[$flowId] = ['flow_id'=>$flowId,'flow_name'=>(string)($agg['flow_name'] ?? 'Fluxo #' . $flowId),'flow_status'=>(string)($agg['flow_status'] ?? ''),'pending'=>0,'processing'=>0,'completed'=>0,'failed'=>0,'total'=>0,'calls'=>0,'answered'=>0,'last_call'=>'','latest_available'=>''];
+        }
+        $queueByFlow[$flowId]['calls'] = (int)($agg['calls'] ?? 0);
+        $queueByFlow[$flowId]['completed'] = (int)($agg['completed'] ?? 0);
+        $queueByFlow[$flowId]['failed'] = (int)($agg['failed'] ?? 0);
+        $queueByFlow[$flowId]['answered'] = (int)($agg['answered'] ?? 0);
+        $queueByFlow[$flowId]['last_call'] = (string)($agg['last_call'] ?? $queueByFlow[$flowId]['last_call']);
+        $queueByFlow[$flowId]['total'] = max((int)$queueByFlow[$flowId]['total'], (int)$queueByFlow[$flowId]['calls'] + (int)$queueByFlow[$flowId]['pending']);
+    }
+}
+$queueOpenTotal = array_sum(array_map(static fn($r)=>(int)$r['pending'], $queueByFlow));
+$queueCompletedTotal = array_sum(array_map(static fn($r)=>(int)$r['completed'], $queueByFlow));
+$queueFailedTotal = array_sum(array_map(static fn($r)=>(int)$r['failed'], $queueByFlow));
+$queueEtaSeconds = $queueOpenTotal > 0 ? $queueOpenTotal * $queueSecondsPerCall : 0;
+foreach ($queueByFlow as &$qf) {
+    $baseTs = max(time(), strtotime((string)$qf['latest_available']) ?: 0);
+    $qf['eta_seconds'] = (int)$qf['pending'] > 0 ? max(0, ($baseTs + ((int)$qf['pending'] * $queueSecondsPerCall)) - time()) : 0;
+}
+unset($qf);
+uasort($queueByFlow, static fn($a,$b)=>[$b['pending'],$b['total']] <=> [$a['pending'],$a['total']]);
 $usersById = [];
 $voiceUserIds = array_values(array_unique(array_filter(array_map(static fn($c)=>(int)($c['user_id'] ?? 0), $calls))));
 if ($voiceUserIds) {
@@ -294,7 +459,7 @@ include __DIR__ . '/_header.php';
     <div class="vv-actions"><span class="vv-pill <?=!empty($provider['enabled'])?'ok':'bad'?>"><?=!empty($provider['enabled'])?'Telnyx ativo':'Telnyx inativo'?></span><span class="vv-pill"><?=vv_h($provider['connection_status'] ?? 'pending')?></span></div>
   </div>
   <nav class="vv-nav">
-    <?php foreach(['overview'=>'Visao geral','campaigns'=>'Campanhas','new'=>'Nova campanha','contacts'=>'Contatos e listas','media'=>'Audios e vozes','numbers'=>'Numeros','ai'=>'IA','calls'=>'Chamadas','reports'=>'Relatorios','settings'=>'Configuracoes','webhooks'=>'Webhooks e logs','suppression'=>'Bloqueio'] as $k=>$label): ?>
+    <?php foreach(['overview'=>'Visao geral','queue'=>'Fila','campaigns'=>'Campanhas','new'=>'Nova campanha','contacts'=>'Contatos e listas','media'=>'Audios e vozes','numbers'=>'Numeros','ai'=>'IA','calls'=>'Chamadas','reports'=>'Relatorios','settings'=>'Configuracoes','webhooks'=>'Webhooks e logs','suppression'=>'Bloqueio'] as $k=>$label): ?>
       <a class="<?=$tab===$k?'active':''?>" href="torpedo_voz.php?tab=<?=$k?>"><?=vv_h($label)?></a>
     <?php endforeach; ?>
   </nav>
@@ -339,6 +504,61 @@ include __DIR__ . '/_header.php';
   const vd=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,vs=<?=json_encode($statusRows,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>;
   if(window.Chart){const colors=['#22c55e','#38bdf8','#facc15','#ef4444','#a78bfa','#f97316','#14b8a6','#94a3b8'];new Chart(vvDaily,{type:'line',data:{labels:vd.map(x=>x.d),datasets:[{label:'Chamadas',data:vd.map(x=>+x.c),borderColor:'#38bdf8',backgroundColor:'rgba(56,189,248,.16)',fill:true,tension:.35},{label:'Concluidas',data:vd.map(x=>+x.done),borderColor:'#22c55e',tension:.35},{label:'Humanos',data:vd.map(x=>+x.human),borderColor:'#facc15',tension:.35}]},options:{maintainAspectRatio:false,plugins:{legend:{labels:{color:'#cbd5e1'}}},scales:{x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}}}}});new Chart(vvStatus,{type:'doughnut',data:{labels:vs.map(x=>x.status),datasets:[{data:vs.map(x=>+x.c),backgroundColor:colors}]},options:{maintainAspectRatio:false,cutout:'64%',plugins:{legend:{position:'bottom',labels:{color:'#cbd5e1'}}}}});new Chart(vvStatusBars,{type:'bar',data:{labels:vs.map(x=>x.status),datasets:[{label:'Chamadas',data:vs.map(x=>+x.c),backgroundColor:colors}]},options:{indexAxis:'y',maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#cbd5e1'},grid:{display:false}}}}})}
   </script>
+<?php elseif($tab === 'queue'): ?>
+  <section class="vv-grid">
+    <div class="vv-card vv-kpi"><small>Na fila agora</small><strong><?=$queueOpenTotal?></strong><span class="vv-note">queued, retry, scheduled e processing</span></div>
+    <div class="vv-card vv-kpi"><small>Concluidos no filtro</small><strong><?=$queueCompletedTotal?></strong><span class="vv-note">Jobs de bloco de voz completos</span></div>
+    <div class="vv-card vv-kpi"><small>Falhas no filtro</small><strong><?=$queueFailedTotal?></strong><span class="vv-note">Jobs de voz com erro final</span></div>
+    <div class="vv-card vv-kpi"><small>Previsao geral</small><strong><?=vv_h(vv_duration_label($queueEtaSeconds))?></strong><span class="vv-note">Base: <?=vv_h($queueSecondsPerCall)?>s por chamada</span></div>
+  </section>
+  <section class="vv-card">
+    <div class="card-header-title">Filtros da fila de automacoes</div>
+    <form method="get" class="vv-form-grid mt-3">
+      <input type="hidden" name="tab" value="queue">
+      <label class="vv-field"><label>De</label><input type="date" name="queue_from" value="<?=vv_h($queueFrom)?>"></label>
+      <label class="vv-field"><label>Ate</label><input type="date" name="queue_to" value="<?=vv_h($queueTo)?>"></label>
+      <label class="vv-field"><label>Fluxo</label><select name="queue_flow_id"><option value="0">Todos os fluxos</option><?php foreach($queueFlowOptions as $f): $fid=(int)$f['id']; ?><option value="<?=$fid?>" <?=$queueFlowId===$fid?'selected':''?>>#<?=$fid?> - <?=vv_h($f['name'])?><?=((string)$f['status']!=='active'?' · '.vv_h($f['status']):'')?></option><?php endforeach; ?></select></label>
+      <label class="vv-field"><label>Status</label><select name="queue_status"><?php foreach(['open'=>'Abertos agora','all'=>'Todos','scheduled'=>'Agendados','processing'=>'Processando','completed'=>'Concluidos','failed'=>'Falhas'] as $k=>$label): ?><option value="<?=$k?>" <?=$queueStatus===$k?'selected':''?>><?=vv_h($label)?></option><?php endforeach; ?></select></label>
+      <div><button class="btn btn-primary mt-3">Filtrar</button></div>
+    </form>
+  </section>
+  <section class="vv-card">
+    <div class="card-header-title">Resumo por fluxo</div>
+    <div class="vv-table mt-3"><table><thead><tr><th>Fluxo</th><th>Fila</th><th>Processando</th><th>Concluidos</th><th>Falhas</th><th>Chamadas criadas</th><th>Atendidas</th><th>Previsao de zerar</th><th>Ultima chamada</th></tr></thead><tbody>
+      <?php foreach($queueByFlow as $flow): ?>
+        <tr>
+          <td><strong>#<?=(int)$flow['flow_id']?> - <?=vv_h($flow['flow_name'])?></strong><div class="vv-note"><?=vv_h($flow['flow_status'])?></div></td>
+          <td><span class="vv-pill <?=((int)$flow['pending']>0?'warn':'ok')?>"><?=(int)$flow['pending']?></span></td>
+          <td><?=(int)$flow['processing']?></td>
+          <td><?=(int)$flow['completed']?></td>
+          <td><span class="vv-pill <?=((int)$flow['failed']>0?'bad':'')?>"><?=(int)$flow['failed']?></span></td>
+          <td><?=(int)$flow['calls']?></td>
+          <td><?=(int)$flow['answered']?></td>
+          <td><?=vv_h(vv_duration_label((int)($flow['eta_seconds'] ?? 0)))?></td>
+          <td><?=vv_h(vv_dt($flow['last_call']) ?: '-')?></td>
+        </tr>
+      <?php endforeach; ?>
+      <?php if(!$queueByFlow): ?><tr><td colspan="9">Nenhum job de chamada de voz encontrado para os filtros atuais.</td></tr><?php endif; ?>
+    </tbody></table></div>
+  </section>
+  <section class="vv-card">
+    <div class="card-header-title">Itens da fila</div>
+    <p class="vv-note">Mostra os blocos de chamada de voz encontrados nas automacoes. Jobs abertos aparecem mesmo fora do periodo para nao esconder pendencias antigas.</p>
+    <div class="vv-table mt-3"><table><thead><tr><th>Quando</th><th>Fluxo e bloco</th><th>Aluno</th><th>Job</th><th>Chamada</th><th>Tentativas</th><th>Erro</th></tr></thead><tbody>
+      <?php foreach($queueRows as $row): $open=isset($queueOpenStatuses[(string)$row['job_status']]); ?>
+        <tr>
+          <td><?=vv_h(vv_dt($row['available_at']))?><div class="vv-note">Criado: <?=vv_h(vv_dt($row['job_created_at']))?></div></td>
+          <td><strong>#<?=(int)$row['flow_id']?> - <?=vv_h($row['flow_name'])?></strong><div class="vv-note"><?=vv_h($row['node_label'])?> · v<?=(int)$row['version_number']?></div></td>
+          <td><?=vv_h(($row['nome'] ?: 'Aluno #' . (int)$row['user_id']))?><div class="vv-note"><?=vv_h($row['email'] ?: $row['telefone'] ?: '')?></div></td>
+          <td><span class="vv-pill <?=$open?'warn':((string)$row['job_status']==='failed'?'bad':'ok')?>"><?=vv_h($row['job_status'])?></span><div class="vv-note">job #<?=(int)$row['job_id']?> · run #<?=(int)$row['run_id']?></div></td>
+          <td><?php if(!empty($row['attempt_id'])): ?><span class="vv-pill"><?=vv_h($row['call_status'] ?: 'created')?></span><div class="vv-note">attempt #<?=(int)$row['attempt_id']?> · <?=vv_h(vv_dt($row['call_created_at']))?></div><?php else: ?>-<div class="vv-note">Ainda nao criou chamada</div><?php endif; ?></td>
+          <td><?=(int)$row['attempts']?> / <?=(int)$row['max_attempts']?></td>
+          <td class="text-muted"><?=vv_h(trim((string)$row['last_error']) !== '' ? mb_substr((string)$row['last_error'],0,180) : '-')?></td>
+        </tr>
+      <?php endforeach; ?>
+      <?php if(!$queueRows): ?><tr><td colspan="7">Nenhum item na fila para os filtros atuais.</td></tr><?php endif; ?>
+    </tbody></table></div>
+  </section>
 <?php elseif($tab === 'settings'): ?>
   <section class="vv-card">
     <div class="card-header"><div><div class="card-header-title">Provedor de voz - Telnyx</div><p class="vv-note">A API key e criptografada no banco. A tela nunca exibe a chave completa.</p></div></div>
