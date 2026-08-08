@@ -486,7 +486,7 @@ function automation_flow_process_job(PDO $pdo, array $job): string
         return 'completed';
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        $err=mb_substr($e->getMessage(),0,1000);$attempt=(int)$job['attempts'];$max=(int)$job['max_attempts'];
+        $err=mb_substr($e->getMessage(),0,1000);
         if ($type === 'voice' && automation_flow_is_voice_concurrency_limit_error($err)) {
             $availableAt = automation_flow_reschedule_voice_limit($pdo, $job, $input, $err);
             $pdo->prepare("UPDATE automation_flow_steps SET status='scheduled',error_message=:e,output_json=:o,finished_at=NOW() WHERE id=:id")
@@ -497,10 +497,18 @@ function automation_flow_process_job(PDO $pdo, array $job): string
                 ]);
             return 'scheduled';
         }
-        if ($attempt < $max) { $pdo->prepare("UPDATE automation_flow_jobs SET status='retry',available_at=DATE_ADD(NOW(),INTERVAL 5 MINUTE),last_error=:e,lease_token=NULL,lease_until=NULL WHERE id=:id AND lease_token=:t")->execute(['e'=>$err,'id'=>$job['id'],'t'=>$job['lease_token']]); $status='retry'; }
-        else { $pdo->prepare("UPDATE automation_flow_jobs SET status='failed',last_error=:e,lease_token=NULL,lease_until=NULL WHERE id=:id AND lease_token=:t")->execute(['e'=>$err,'id'=>$job['id'],'t'=>$job['lease_token']]); $pdo->prepare("UPDATE automation_flow_runs SET status='failed',last_error=:e,finished_at=NOW() WHERE id=:id")->execute(['e'=>$err,'id'=>$job['run_id']]); $status='failed'; }
-        $pdo->prepare("UPDATE automation_flow_steps SET status=:s,error_message=:e,finished_at=NOW() WHERE id=:id")->execute(['s'=>$status,'e'=>$err,'id'=>$stepId]);
-        return $status;
+        $next = $type === 'end' ? null : automation_flow_next($graph, (string)$job['node_id'], 'default');
+        $output = ['error'=>$err,'continued'=>true,'next_node'=>$next];
+        $pdo->beginTransaction();
+        if ($next) $pdo->prepare("INSERT IGNORE INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")->execute(['r'=>$job['run_id'],'n'=>$next]);
+        $pdo->prepare("UPDATE automation_flow_jobs SET status='failed',output_json=:o,last_error=:e,lease_token=NULL,lease_until=NULL WHERE id=:id AND lease_token=:t")
+            ->execute(['o'=>json_encode($output,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'e'=>$err,'id'=>$job['id'],'t'=>$job['lease_token']]);
+        $pdo->prepare("UPDATE automation_flow_steps SET status='failed',error_message=:e,output_json=:o,finished_at=NOW() WHERE id=:id")
+            ->execute(['e'=>$err,'o'=>json_encode($output,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'id'=>$stepId]);
+        $pending=$pdo->prepare("SELECT COUNT(*) FROM automation_flow_jobs WHERE run_id=:r AND status IN ('queued','retry','scheduled','processing')");$pending->execute(['r'=>$job['run_id']]);
+        if ((int)$pending->fetchColumn() === 0) $pdo->prepare("UPDATE automation_flow_runs SET status='completed',last_error=:e,finished_at=NOW() WHERE id=:id")->execute(['e'=>$err,'id'=>$job['run_id']]);
+        $pdo->commit();
+        return 'failed';
     }
 }
 
