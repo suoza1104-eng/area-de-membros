@@ -685,7 +685,7 @@ require_once __DIR__ . '/_header.php';
 .iw-dom-log-top{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px;align-items:start}
 .iw-dom-log-meta{font-size:11px;color:var(--text-muted);line-height:1.4}.iw-dom-log-title{font-weight:800;font-size:13px}
 .iw-dom-log-card details{margin-top:9px}.iw-dom-log-card pre{max-height:260px;overflow:auto;background:#070d18;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;color:var(--text);white-space:pre-wrap}
-.iw-line-chart{width:100%;min-height:280px;overflow:hidden}.iw-line-chart svg{width:100%;height:auto;display:block}.iw-line-chart text{font-size:11px;fill:var(--text-muted)}.iw-line-chart .grid{stroke:rgba(148,163,184,.16);stroke-width:1}.iw-line-chart .line{fill:none;stroke:#60a5fa;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iw-line-chart .area{fill:rgba(96,165,250,.14)}.iw-line-chart .dot{fill:#93c5fd;stroke:#0b1220;stroke-width:2}.iw-line-chart .value{fill:#dbeafe;font-weight:800}
+.iw-line-chart{height:300px;position:relative;margin-top:4px}.iw-line-chart canvas{width:100%!important;height:300px!important}
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
 @media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
 @media(max-width:1000px){.iw-dom-grid{grid-template-columns:1fr}.iw-dom-kpis{grid-template-columns:1fr}}
@@ -1157,6 +1157,7 @@ const IW_PAGARME_TAB = <?= json_encode($pagarmeTab) ?>;
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const IW_FIREPAY_WEBHOOK_BASE = <?= json_encode($firepayWebhookBaseUrl) ?>;
 const IW_FIREPAY_MCQDC_WEBHOOK_URL = <?= json_encode($firepayMcqdcWebhookUrl) ?>;
+let genericDailyChart = null;
 const EV_CLS = {
     'INSCRITO':'ev-inscrito','INSCRICAO_GRATUITA':'ev-inscrito','INSCRICAO_VITALICIA':'ev-inscrito','PRIMEIRO_LOGIN':'ev-login','VIU_AULA':'ev-aula',
     'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
@@ -1432,6 +1433,7 @@ async function genericCarregarOverview() {
         <h2>Ultimos recebimentos</h2>
         <div class="iw-dom-table">${genericRecentTable(j.recent || [])}</div>
       </div>`;
+    renderGenericDailyChart(daily);
 }
 
 function genericRecentTable(rows) {
@@ -1441,27 +1443,66 @@ function genericRecentTable(rows) {
 
 function genericLineChart(rows) {
     if (!rows.length) return '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>';
-    const width = 760, height = 280, padL = 44, padR = 20, padT = 26, padB = 42;
-    const max = Math.max(1, ...rows.map(r => Number(r.qty || 0)));
-    const min = Math.min(0, ...rows.map(r => Number(r.qty || 0)));
-    const span = Math.max(1, max - min);
-    const plotW = width - padL - padR;
-    const plotH = height - padT - padB;
-    const x = i => padL + (rows.length === 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
-    const y = v => padT + (1 - ((Number(v || 0) - min) / span)) * plotH;
-    const points = rows.map((r, i) => [x(i), y(r.qty), Number(r.qty || 0), formatDay(r.day)]);
-    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-    const area = `${line} L${points[points.length - 1][0].toFixed(1)},${(height - padB).toFixed(1)} L${points[0][0].toFixed(1)},${(height - padB).toFixed(1)} Z`;
-    const yTicks = [0, .25, .5, .75, 1].map(t => Math.round(max - t * span));
-    const xStep = Math.max(1, Math.ceil(rows.length / 8));
-    return `<div class="iw-line-chart">
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Recebimentos por dia">
-        ${yTicks.map(v => `<line class="grid" x1="${padL}" x2="${width - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"></line><text x="8" y="${(y(v)+4).toFixed(1)}">${v}</text>`).join('')}
-        <path class="area" d="${area}"></path>
-        <path class="line" d="${line}"></path>
-        ${points.map((p, i) => `<g><title>${esc(p[3])}: ${p[2]}</title><circle class="dot" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${i % xStep === 0 || i === points.length - 1 ? 4 : 3}"></circle>${(i % xStep === 0 || i === points.length - 1) ? `<text text-anchor="middle" x="${p[0].toFixed(1)}" y="${height - 16}">${esc(p[3])}</text>` : ''}${p[2] === max ? `<text class="value" text-anchor="middle" x="${p[0].toFixed(1)}" y="${Math.max(14, p[1] - 10).toFixed(1)}">${p[2]}</text>` : ''}</g>`).join('')}
-      </svg>
-    </div>`;
+    return '<div class="iw-line-chart"><canvas id="genericDailyChart"></canvas></div>';
+}
+
+function renderGenericDailyChart(rows) {
+    const canvas = document.getElementById('genericDailyChart');
+    if (!canvas || !window.Chart || !rows.length) return;
+    if (genericDailyChart) genericDailyChart.destroy();
+    const labels = rows.map(r => formatDay(r.day));
+    const values = rows.map(r => Number(r.qty || 0));
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(56,189,248,.28)');
+    gradient.addColorStop(1, 'rgba(56,189,248,.03)');
+    genericDailyChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Recebimentos',
+                data: values,
+                borderColor: '#38bdf8',
+                backgroundColor: gradient,
+                fill: true,
+                tension: .32,
+                borderWidth: 2.5,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#38bdf8',
+                pointBorderColor: '#0b1220',
+                pointBorderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#0f172a',
+                    borderColor: 'rgba(148,163,184,.25)',
+                    borderWidth: 1,
+                    titleColor: '#e2e8f0',
+                    bodyColor: '#bfdbfe',
+                    callbacks: { label: c => `Recebimentos: ${Number(c.raw || 0).toLocaleString('pt-BR')}` }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#64748b', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+                    grid: { color: 'rgba(148,163,184,.08)', drawBorder: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#64748b', precision: 0 },
+                    grid: { color: 'rgba(148,163,184,.12)', drawBorder: false }
+                }
+            }
+        }
+    });
 }
 
 async function genericCarregarLogs() {
