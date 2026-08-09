@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/funcoes.php';
+require_once __DIR__ . '/course_access.php';
 
 function support_chat_ensure_schema(PDO $pdo): void
 {
@@ -1022,6 +1023,7 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
     $coursePct=$required>0?(int)floor(($done/max(1,$required))*100):0;$issuedCert=null;foreach($certificates as $cert)if(($cert['status']??'')==='emitido'){$issuedCert=$cert;break;}
     $certVerify=$issuedCert&&!empty($issuedCert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$issuedCert['codigo_uid']):'';
     $magicLink=function_exists('gerar_magic_link')?gerar_magic_link($userId,30,false):'';
+    $access=course_access_status($pdo,$userId);
     $now=new DateTimeImmutable('now',new DateTimeZone('America/Sao_Paulo'));
     $liveRaw=(string)($user['turma_live_at']??$user['data_live']??'');
     $liveStatus=support_agent_live_status($liveRaw,$now);
@@ -1038,7 +1040,7 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
             'data_live'=>$liveStatus['data_live_br']!==''?$liveStatus['data_live_br']:$liveRaw,
             'data_live_iso'=>$liveStatus['data_live_iso']??$liveRaw,
             'status_data_live'=>$liveStatus['status']??'ausente',
-            'acesso_vitalicio'=>(int)($user['acesso_vitalicio']??0)===1,
+            'acesso_vitalicio'=>!empty($access['lifetime']),
         ],
         'campos_personalizados_usuario'=>support_agent_user_public_fields($pdo,$user),
         'links'=>[
@@ -1052,6 +1054,17 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
             'grupos_whatsapp'=>$groupLinks,
         ],
         'tags'=>$tags,
+        'acesso'=>[
+            'vitalicio'=>!empty($access['lifetime']),
+            'pago'=>!empty($access['is_paid']),
+            'tipo'=>$access['grant_type']??null,
+            'origem'=>$access['grant_source']??null,
+            'liberado_em'=>$access['lifetime_granted_at']??null,
+            'transacao'=>$access['lifetime_transaction_code']??null,
+            'expirado'=>!empty($access['expired']),
+            'permitido'=>!empty($access['allowed']),
+            'checkout_url'=>$access['checkout_url']??'',
+        ],
         'curso'=>['aulas_obrigatorias'=>$required,'aulas_concluidas'=>$done,'percentual_avanco'=>$coursePct,'aulas_faltantes_obrigatorias'=>$missing,'aulas'=>$lessons,'visualizacoes'=>$views],
         'certificado'=>[
             'tem_certificado_emitido'=>$issuedCert!==null,
