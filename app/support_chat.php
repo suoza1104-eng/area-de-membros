@@ -593,7 +593,7 @@ function support_chat_feedback_ai_analysis(PDO $pdo,array $data): string
 
 function support_agent_default_prompt(string $type): string
 {
-    $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente. Data e live: sempre use payload_aluno.contexto_atual.agora_iso/agora_br e payload_aluno.live.status_data_live antes de falar de aula ao vivo. Se status_data_live.status for passada, nunca diga que a live vai acontecer, esta marcada ou sera no futuro; explique que a data vinculada ja passou e ofereca reagendamento ou humano conforme o caso. Se a data estiver ausente, diga que nao encontrou a data da live e transfira se isso for essencial.";
+    $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente. Data e live: sempre use payload_aluno.contexto_atual.agora_iso/agora_br e payload_aluno.live.status_data_live antes de falar de aula ao vivo. Se o aluno perguntar onde assistir a live, acesso, link, senha ou segunda parte da senha, e a live estiver hoje ou futura, nao transfira para humano: informe a data e explique que a equipe comunica e envia o acesso no grupo no dia do evento. Se status_data_live.status for passada, nunca diga que a live vai acontecer, esta marcada ou sera no futuro; explique que a data vinculada ja passou e ofereca reagendamento ou humano conforme o caso. Se a data estiver ausente, diga que nao encontrou a data da live e transfira se isso for essencial.";
     if($type==='sales')return $common." Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Use compras para reconhecer produtos ja comprados e evitar oferecer como se o aluno nao tivesse comprado. Se nao houver informacao comercial suficiente, colete a duvida e transfira para humano. Nao prometa bonus, desconto, prazo, garantia ou vaga que nao esteja no payload.";
     if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para acesso, primeiro use links.acesso_direto_area_membros ou links.area_do_aluno. Para erro com arquivo, imagem, pagamento, desbloqueio manual ou situacao sem diagnostico no payload, transfira para humano.";
     if($type==='reschedule')return $common." Reagendamento de live: ofereca somente datas presentes em reagendamento.opcoes. Antes de oferecer, confira live.status_data_live: se a live atual ainda for futura, explique a data atual e pergunte se o aluno quer reagendar; se ja passou, ofereca as opcoes disponiveis como nova data. Quando o aluno escolher uma data listada, confirme o reagendamento.";
@@ -1073,6 +1073,47 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
     return $payload;
 }
 
+function support_agent_compact_payload_for_ai(array $payload): array
+{
+    $course=$payload['curso']??[];$cert=$payload['certificado']??[];$live=$payload['live']??[];
+    $lesson5=null;foreach(($course['aulas']??[]) as $lesson){if((int)($lesson['ordem']??0)===5){$lesson5=['id'=>$lesson['id']??null,'titulo'=>$lesson['titulo']??'','ordem'=>$lesson['ordem']??null,'status'=>$lesson['status']??''];break;}}
+    $compact=$payload;
+    $compact['curso']=[
+        'aulas_obrigatorias'=>$course['aulas_obrigatorias']??0,
+        'aulas_concluidas'=>$course['aulas_concluidas']??0,
+        'percentual_avanco'=>$course['percentual_avanco']??0,
+        'aula_5'=>$lesson5,
+        'aulas_faltantes_obrigatorias'=>array_slice(is_array($course['aulas_faltantes_obrigatorias']??null)?$course['aulas_faltantes_obrigatorias']:[],0,12),
+        'visualizacoes_resumo'=>array_slice(is_array($course['visualizacoes']??null)?$course['visualizacoes']:[],0,12),
+    ];
+    $criteria=is_array($cert['criterios_e_pendencias']??null)?$cert['criterios_e_pendencias']:[];
+    if(isset($criteria['aulas_faltantes'])&&is_array($criteria['aulas_faltantes']))$criteria['aulas_faltantes']=array_slice($criteria['aulas_faltantes'],0,12);
+    $compact['certificado']=[
+        'tem_certificado_emitido'=>$cert['tem_certificado_emitido']??false,
+        'pode_iniciar_emissao_agora'=>$cert['pode_iniciar_emissao_agora']??false,
+        'regra_emissao'=>$cert['regra_emissao']??'',
+        'criterios_e_pendencias'=>$criteria,
+        'link_emitir'=>$cert['link_emitir']??'',
+        'link_verificacao'=>$cert['link_verificacao']??'',
+        'pdf_url'=>$cert['pdf_url']??'',
+        'registros'=>array_slice(is_array($cert['registros']??null)?$cert['registros']:[],0,2),
+    ];
+    $compact['live']=[
+        'status_data_live'=>$live['status_data_live']??[],
+        'eventos'=>array_slice(is_array($live['eventos']??null)?$live['eventos']:[],0,8),
+        'reagendamentos'=>array_slice(is_array($live['reagendamentos']??null)?$live['reagendamentos']:[],0,5),
+    ];
+    $compact['tags']=array_slice(is_array($payload['tags']??null)?$payload['tags']:[],0,12);
+    $compact['compras']=array_slice(is_array($payload['compras']??null)?$payload['compras']:[],0,8);
+    $compact['payload_compactado']=true;
+    return $compact;
+}
+
+function support_agent_estimate_context_tokens(array $payload,string $memory,string $body,array $recent=[]): int
+{
+    return (int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen($memory)+strlen($body)+strlen(json_encode($recent,JSON_UNESCAPED_UNICODE)))/4);
+}
+
 function support_agent_available_reschedule_slots(PDO $pdo,int $qty=2): array
 {
     $time=trim((string)get_setting('reagendar_live_time','19:00'));if(!preg_match('/^\d{2}:\d{2}$/',$time))$time='19:00';
@@ -1241,6 +1282,37 @@ function support_agent_is_group_request(string $body): bool
     return str_contains($b,'grupo')||str_contains($b,'whatsapp')||str_contains($b,'wpp');
 }
 
+function support_agent_is_live_access_question(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $hasLive=str_contains($b,'aula ao vivo')||str_contains($b,'live');
+    if(!$hasLive)return false;
+    return str_contains($b,'onde')||str_contains($b,'quando')||str_contains($b,'que dia')||str_contains($b,'qual dia')||str_contains($b,'data')||str_contains($b,'horario')||str_contains($b,'hora')||str_contains($b,'assistir')||str_contains($b,'acesso')||str_contains($b,'link')||str_contains($b,'senha')||str_contains($b,'segunda parte')||str_contains($b,'2a parte')||str_contains($b,'2 parte')||str_contains($b,'cadê')||str_contains($b,'cade');
+}
+
+function support_agent_live_access_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$live=$payload['live']['status_data_live']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $status=(string)($live['status']??($student['status_data_live']??'ausente'));
+    $liveBr=trim((string)($live['data_live_br']??$student['data_live']??''));
+    $group=trim((string)($links['link_grupo_configurado']??''));if($group===''){$groups=$links['grupos_whatsapp']??[];if(is_array($groups)&&isset($groups[0]['invite_url']))$group=trim((string)$groups[0]['invite_url']);}
+    $groupText=$group!==''?" Acompanhe o grupo da turma, porque e por la que a equipe envia os avisos e o acesso:\n".$group:' A equipe vai comunicar no grupo da turma e enviar o acesso por la no dia do evento.';
+    if($status==='futura'){
+        $date=$liveBr!==''?" esta marcada para {$liveBr}":' ainda esta futura';
+        return $prefix."sua aula ao vivo{$date}.{$groupText}\n\nA segunda parte da senha e passada na aula ao vivo. Depois da live, use essa parte junto com a senha da aula 5 para emitir o certificado.";
+    }
+    if($status==='hoje'){
+        $date=$liveBr!==''?" e hoje, {$liveBr}":' e hoje';
+        return $prefix."sua aula ao vivo{$date}.{$groupText}\n\nA segunda parte da senha e passada na aula ao vivo. Fique de olho no grupo para receber o acesso no horario do evento.";
+    }
+    if($status==='passada'){
+        $date=$liveBr!==''?" ({$liveBr})":'';
+        return $prefix."a data da aula ao vivo vinculada ao seu cadastro ja passou{$date}. Nao vou te passar essa data como se ainda fosse acontecer. Vou deixar a equipe conferir se houve nova orientacao ou reagendamento e te avisar por aqui ou pelo grupo.";
+    }
+    return $prefix."nao encontrei uma data confiavel da aula ao vivo no seu cadastro. Vou deixar a equipe conferir e te avisar por aqui ou pelo grupo com a data e o acesso corretos.";
+}
+
 function support_agent_is_greeting_only(string $body): bool
 {
     $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
@@ -1386,6 +1458,12 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
             $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
             support_agent_finish_message($pdo,$messageId);return;
         }
+        if($type==='text'&&support_agent_is_live_access_question($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_aula_ao_vivo',['status_data_live'=>(string)($payload['live']['status_data_live']['status']??'')]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_live_access_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
         $certificateContext=support_agent_is_certificate_request($body)||support_agent_recent_certificate_context($pdo,$conversationId,$messageId);
         if($cfg['certificate']&&$certificateContext){
             support_agent_certificate_flow($pdo,$conversationId,$messageId,$conv,$payload,$body,$firstAgentReply);
@@ -1400,10 +1478,16 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
             support_agent_send_answer($pdo,$conversationId,support_agent_group_answer($payload),$firstAgentReply);
             $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
         }
-        $recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$estimated=(int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen((string)$memory['summary'])+strlen($body))/4)+(int)($memory['token_count']??0);
-        if($estimated>$cfg['max_tokens']){support_agent_handoff($pdo,$conversationId,'Limite de tokens/contexto atingido.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
-        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Regra critica de datas: payload_aluno.contexto_atual.agora_iso/agora_br contem a data atual em Sao Paulo. Antes de falar de live/aula ao vivo, compare com payload_aluno.live.status_data_live. Se status_data_live.status=passada, e proibido dizer que a live vai acontecer, esta marcada, sera ou comeca nessa data; diga que a data cadastrada ja passou e, se apropriado, ofereca reagendamento.opcoes ou action=handoff. Se status=ausente/invalida, nao invente data. Certificado: se a pergunta for sobre certificado, respeite a funcao certificado ativa; quando desativada, apenas oriente pelo link de emissao. Para live, use status_data_live, data_live_iso, data_live_br e eventos de live do payload. Para grupos e acesso, use payload_aluno.links, link_grupo_configurado e payload_aluno.variaveis_configuradas. Use payload_aluno.compras para reconhecer compras/produtos do aluno e evitar respostas comerciais erradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').", certificado=".($cfg['certificate']?'sim':'nao').", grupo=".($cfg['group']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']} reagendamento={$cfg['prompt_reschedule']} certificado={$cfg['prompt_certificate']} grupo={$cfg['prompt_group']}";
-        $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory['summary']??'','payload_aluno'=>$payload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+        $recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$memorySummary=(string)($memory['summary']??'');$aiPayload=$payload;$estimated=support_agent_estimate_context_tokens($aiPayload,$memorySummary,$body,$recent);
+        if($estimated>$cfg['max_tokens']){
+            $aiPayload=support_agent_compact_payload_for_ai($payload);
+            $recent=array_slice($recent,-8);
+            $memorySummary=mb_substr($memorySummary,-3000);
+            $estimated=support_agent_estimate_context_tokens($aiPayload,$memorySummary,$body,$recent);
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','contexto_compactado',['estimated_tokens'=>$estimated,'limit'=>(int)$cfg['max_tokens']]);
+        }
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Regra critica de datas: payload_aluno.contexto_atual.agora_iso/agora_br contem a data atual em Sao Paulo. Antes de falar de live/aula ao vivo, compare com payload_aluno.live.status_data_live. Se o aluno perguntar onde assistir a live, acesso, link, senha da live ou segunda parte da senha, e status_data_live.status for hoje ou futura, responda com a data e diga que a equipe comunica e envia o acesso no grupo no dia do evento; nao use handoff para esse caso. Se status_data_live.status=passada, e proibido dizer que a live vai acontecer, esta marcada, sera ou comeca nessa data; diga que a data cadastrada ja passou e, se apropriado, ofereca reagendamento.opcoes ou action=handoff. Se status=ausente/invalida, nao invente data. Certificado: se a pergunta for sobre certificado, respeite a funcao certificado ativa; quando desativada, apenas oriente pelo link de emissao. Para live, use status_data_live, data_live_iso, data_live_br e eventos de live do payload. Para grupos e acesso, use payload_aluno.links, link_grupo_configurado e payload_aluno.variaveis_configuradas. Use payload_aluno.compras para reconhecer compras/produtos do aluno e evitar respostas comerciais erradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').", certificado=".($cfg['certificate']?'sim':'nao').", grupo=".($cfg['group']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']} reagendamento={$cfg['prompt_reschedule']} certificado={$cfg['prompt_certificate']} grupo={$cfg['prompt_group']}";
+        $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memorySummary,'payload_aluno'=>$aiPayload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
         support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte',(string)($res['intent']??$action),['action'=>$action,'confidence'=>$confidence]);
