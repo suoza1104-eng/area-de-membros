@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/dom_pagamentos.php';
 proteger_admin();
 
 $pdo = getPDO();
@@ -172,6 +173,22 @@ $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
 if ($acao !== '') {
     header('Content-Type: application/json; charset=utf-8');
 
+    if ($acao === 'salvar_dom') {
+        set_setting('dom_pagamentos_enabled', isset($_POST['enabled']) ? '1' : '0');
+        set_setting('dom_pagamentos_environment', in_array(($_POST['environment'] ?? ''), ['production','sandbox'], true) ? (string)$_POST['environment'] : 'production');
+        $apiToken = trim((string)($_POST['api_token'] ?? ''));
+        if ($apiToken !== '') set_setting('dom_pagamentos_api_token', $apiToken);
+        set_setting('dom_pagamentos_require_signature', isset($_POST['require_signature']) ? '1' : '0');
+        set_setting('dom_pagamentos_notes', trim((string)($_POST['notes'] ?? '')));
+        echo json_encode(['ok'=>true]); exit;
+    }
+
+    if ($acao === 'dom_logs') {
+        dom_ensure_schema($pdo);
+        $rows = $pdo->query("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,received_at,processed_at FROM dom_webhook_events ORDER BY id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode(['ok'=>true,'data'=>$rows]); exit;
+    }
+
     if ($acao === 'salvar') {
         $id        = (int)($_POST['id'] ?? 0);
         $nome      = trim((string)($_POST['nome'] ?? ''));
@@ -310,6 +327,14 @@ try { $turmas = $pdo->query("SELECT codigo FROM turmas ORDER BY janela_inicio DE
 $webhookBaseUrl = rtrim(BASE_URL, '/') . '/inbound_webhook.php?t=';
 $firepayWebhookBaseUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/fp.php?t=';
 $firepayMcqdcWebhookUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/firepay_mcqdc.php';
+$domWebhookUrl = rtrim(BASE_URL, '/') . '/dom_webhook.php';
+$view = (string)($_GET['view'] ?? 'generic');
+if (!in_array($view, ['generic','dom'], true)) $view = 'generic';
+$domEnabled = (string)get_setting('dom_pagamentos_enabled', '0') === '1';
+$domEnvironment = (string)get_setting('dom_pagamentos_environment', 'production');
+$domRequireSignature = (string)get_setting('dom_pagamentos_require_signature', '1') === '1';
+$domHasToken = trim((string)get_setting('dom_pagamentos_api_token', '')) !== '';
+$domNotes = (string)get_setting('dom_pagamentos_notes', '');
 
 $currentMenu = 'inbound_webhooks';
 $page_title  = 'Webhooks de Entrada';
@@ -388,8 +413,22 @@ require_once __DIR__ . '/_header.php';
 .iw-direct-title code { color:#60a5fa; font-size:10px; background:rgba(96,165,250,.08); padding:2px 6px; border-radius:999px; }
 .iw-direct-grid { display:grid; grid-template-columns:1fr 110px 110px; gap:8px; }
 .iw-direct-box textarea { min-height:54px; font-size:12px; }
+.iw-tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin:12px 0 18px;padding-bottom:10px}
+.iw-tabs a{padding:8px 12px;border-radius:8px;text-decoration:none;color:var(--text-muted);font-size:12px;font-weight:700}
+.iw-tabs a.active,.iw-tabs a:hover{background:rgba(96,165,250,.12);color:#93c5fd}
+.iw-dom-grid{display:grid;grid-template-columns:minmax(320px,560px) minmax(320px,1fr);gap:16px;align-items:start}
+.iw-dom-card{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:18px}
+.iw-dom-card h2{font-size:16px;margin:0 0 6px}.iw-dom-card p{font-size:12px;color:var(--text-muted);line-height:1.45}
+.iw-dom-url{display:flex;gap:8px;align-items:center;background:#14142a;border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+.iw-dom-url code{flex:1;color:#60a5fa;overflow:auto;white-space:nowrap;background:transparent}
+.iw-dom-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.iw-dom-kpi{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}
+.iw-dom-kpi small{display:block;color:var(--text-muted);font-size:10px;text-transform:uppercase}.iw-dom-kpi strong{font-size:20px}
+.iw-dom-table{overflow:auto}.iw-dom-table table{width:100%;border-collapse:collapse}.iw-dom-table th,.iw-dom-table td{padding:8px 9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.iw-dom-table th{font-size:10px;color:var(--text-muted);text-transform:uppercase}
+.iw-dom-pill{display:inline-flex;padding:2px 8px;border-radius:999px;background:#1f2937;font-size:10px}.iw-dom-pill.ok{background:#14532d;color:#86efac}.iw-dom-pill.warn{background:#3a2e10;color:#fbbf24}.iw-dom-pill.bad{background:#3a1a1a;color:#f87171}
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
 @media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
+@media(max-width:1000px){.iw-dom-grid{grid-template-columns:1fr}.iw-dom-kpis{grid-template-columns:1fr}}
 </style>
 
 <div class="main-content">
@@ -398,8 +437,82 @@ require_once __DIR__ . '/_header.php';
       <h1 class="page-title">Webhooks de Entrada</h1>
       <p class="page-subtitle">URLs que recebem dados de Hotmart, Kiwify, Eduzz e outras plataformas externas</p>
     </div>
+    <?php if ($view === 'generic'): ?>
     <button class="btn btn-primary" onclick="iwNovo()">+ Novo webhook</button>
+    <?php endif; ?>
   </div>
+
+  <nav class="iw-tabs">
+    <a href="inbound_webhooks.php?view=generic" class="<?= $view === 'generic' ? 'active' : '' ?>">Entradas gerais</a>
+    <a href="inbound_webhooks.php?view=dom" class="<?= $view === 'dom' ? 'active' : '' ?>">DOM Pagamentos</a>
+  </nav>
+
+<?php if ($view === 'dom'): ?>
+  <div class="iw-dom-grid">
+    <div class="iw-dom-card">
+      <h2>DOM Pagamentos</h2>
+      <p>Recebe eventos de transacao da DOM, valida a assinatura JWT com o token da API e grava as vendas em <code>payment_sales</code>. Eventos aprovados, reembolso e chargeback tambem alimentam os relatorios de vendas.</p>
+
+      <div class="iw-dom-kpis">
+        <div class="iw-dom-kpi"><small>Status</small><strong><?= $domEnabled ? 'Ativo' : 'Pausado' ?></strong></div>
+        <div class="iw-dom-kpi"><small>Token API</small><strong><?= $domHasToken ? 'OK' : 'Falta' ?></strong></div>
+        <div class="iw-dom-kpi"><small>Assinatura</small><strong><?= $domRequireSignature ? 'Obrigatoria' : 'Opcional' ?></strong></div>
+      </div>
+
+      <div class="form-row">
+        <label>URL para cadastrar na DOM</label>
+        <div class="iw-dom-url">
+          <code id="domWebhookUrl"><?= htmlspecialchars($domWebhookUrl, ENT_QUOTES, 'UTF-8') ?></code>
+          <button class="iw-copy-btn" type="button" onclick="iwCopiar(document.getElementById('domWebhookUrl').textContent,this)">Copiar</button>
+        </div>
+      </div>
+
+      <form id="domConfigForm" onsubmit="return domSalvar(event)">
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" name="enabled" <?= $domEnabled ? 'checked' : '' ?> style="width:auto">
+            <span>Integração DOM ativa</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Ambiente</label>
+          <select name="environment">
+            <option value="production" <?= $domEnvironment === 'production' ? 'selected' : '' ?>>Produção</option>
+            <option value="sandbox" <?= $domEnvironment === 'sandbox' ? 'selected' : '' ?>>Sandbox</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Token da API DOM</label>
+          <input type="password" name="api_token" placeholder="<?= $domHasToken ? 'Configurado - deixe vazio para manter' : 'Cole o token usado para validar o JWT' ?>">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px">A DOM usa este token para assinar o campo <code>signature</code> do webhook.</div>
+        </div>
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" name="require_signature" <?= $domRequireSignature ? 'checked' : '' ?> style="width:auto">
+            <span>Exigir assinatura válida</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Observações internas</label>
+          <textarea name="notes" placeholder="Ex.: conta DOM principal, produtos liberados, contato do suporte..."><?= htmlspecialchars($domNotes, ENT_QUOTES, 'UTF-8') ?></textarea>
+        </div>
+        <button class="btn btn-primary" type="submit">Salvar DOM</button>
+        <span id="domSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
+      </form>
+    </div>
+
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">
+        <div>
+          <h2>Ultimos eventos DOM</h2>
+          <p style="margin:0">Acompanhe assinatura, status e processamento das notificacoes recebidas.</p>
+        </div>
+        <button class="btn btn-sm" type="button" onclick="domCarregarLogs()">Atualizar</button>
+      </div>
+      <div class="iw-dom-table" id="domLogs">Carregando...</div>
+    </div>
+  </div>
+<?php else: ?>
 
   <div class="iw-wrap">
     <div class="iw-list">
@@ -581,6 +694,7 @@ require_once __DIR__ . '/_header.php';
       </div>
     </div>
   </div>
+<?php endif; ?>
 </div>
 
 <div class="iw-recv-modal" id="iwRecvModal">
@@ -594,6 +708,7 @@ require_once __DIR__ . '/_header.php';
 </div>
 
 <script>
+const IW_VIEW = <?= json_encode($view) ?>;
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const IW_FIREPAY_WEBHOOK_BASE = <?= json_encode($firepayWebhookBaseUrl) ?>;
 const IW_FIREPAY_MCQDC_WEBHOOK_URL = <?= json_encode($firepayMcqdcWebhookUrl) ?>;
@@ -602,7 +717,51 @@ const EV_CLS = {
     'CONCLUIU_TRILHA':'ev-trilha','CERT_EMITIDO':'ev-cert','REENVIO_CERTIFICADO':'ev-cert','AGENDAR_RETORNO':'ev-login','TAG_CUSTOM':'ev-tag'
 };
 
-document.addEventListener('DOMContentLoaded', iwCarregar);
+document.addEventListener('DOMContentLoaded', () => {
+    if (IW_VIEW === 'dom') domCarregarLogs();
+    else iwCarregar();
+});
+
+async function domSalvar(ev) {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    fd.append('acao', 'salvar_dom');
+    const j = await (await fetch('inbound_webhooks.php', {method:'POST', body:fd})).json();
+    const msg = document.getElementById('domSaveMsg');
+    if (!j.ok) {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Erro ao salvar';
+        return false;
+    }
+    msg.style.color = '#86efac';
+    msg.textContent = 'Salvo';
+    setTimeout(() => location.href = 'inbound_webhooks.php?view=dom', 500);
+    return false;
+}
+
+async function domCarregarLogs() {
+    const el = document.getElementById('domLogs');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const j = await (await fetch('inbound_webhooks.php?acao=dom_logs')).json();
+    if (!j.ok || !j.data.length) {
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum evento DOM recebido ainda.</div>';
+        return;
+    }
+    el.innerHTML = `<table><thead><tr><th>Recebido</th><th>Evento</th><th>Transacao</th><th>Status</th><th>Assinatura</th><th>Processo</th></tr></thead><tbody>${
+        j.data.map(r => {
+            const processCls = r.process_status === 'success' ? 'ok' : (r.process_status === 'error' ? 'bad' : 'warn');
+            return `<tr>
+                <td>${fmtDate(r.received_at)}</td>
+                <td>${esc(r.event_name || '-')}</td>
+                <td><code>${esc(r.external_transaction_id || '-')}</code></td>
+                <td>${esc(r.provider_status || '-')}</td>
+                <td><span class="iw-dom-pill ${parseInt(r.signature_valid||0)===1?'ok':'warn'}">${parseInt(r.signature_valid||0)===1?'OK':'nao validada'}</span></td>
+                <td><span class="iw-dom-pill ${processCls}">${esc(r.process_status || '-')}</span>${r.process_message?`<div style="font-size:10px;color:#f87171;margin-top:3px">${esc(r.process_message)}</div>`:''}</td>
+            </tr>`;
+        }).join('')
+    }</tbody></table>`;
+}
 
 async function iwCarregar() {
     const j = await (await fetch('inbound_webhooks.php?acao=listar')).json();
