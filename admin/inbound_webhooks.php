@@ -452,6 +452,88 @@ if ($acao !== '') {
         echo json_encode(['ok'=>true,'data'=>$rows]); exit;
     }
 
+    if ($acao === 'generic_overview') {
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $event = trim((string)($_GET['event'] ?? ''));
+        $status = trim((string)($_GET['status'] ?? ''));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+
+        $where = "r.recebido_em BETWEEN :start_dt AND :end_dt";
+        $params = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if ($event !== '') {
+            $where .= " AND w.evento = :event";
+            $params[':event'] = $event;
+        }
+        if (in_array($status, ['pendente','processado','erro','ignorado'], true)) {
+            $where .= " AND r.status = :status";
+            $params[':status'] = $status;
+        }
+
+        $webhookKpi = $pdo->query("SELECT COUNT(*) total, SUM(ativo=1) active, SUM(ativo=0) inactive, COALESCE(SUM(total_recebidos),0) lifetime_received FROM inbound_webhooks")->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $recvStmt = $pdo->prepare("SELECT
+            COUNT(*) total,
+            SUM(r.status='processado') processed,
+            SUM(r.status='erro') errors,
+            SUM(r.status='ignorado') ignored,
+            SUM(r.status='pendente') pending,
+            COUNT(DISTINCT r.user_id) matched_users
+            FROM inbound_webhook_recebimentos r INNER JOIN inbound_webhooks w ON w.id = r.webhook_id WHERE {$where}");
+        $recvStmt->execute($params);
+        $recvKpi = $recvStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $dailyStmt = $pdo->prepare("SELECT DATE(r.recebido_em) day, r.status, COUNT(*) qty
+            FROM inbound_webhook_recebimentos r INNER JOIN inbound_webhooks w ON w.id = r.webhook_id
+            WHERE {$where} GROUP BY DATE(r.recebido_em), r.status ORDER BY day ASC");
+        $dailyStmt->execute($params);
+        $daily = $dailyStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $eventStmt = $pdo->prepare("SELECT w.evento, COUNT(*) qty
+            FROM inbound_webhook_recebimentos r INNER JOIN inbound_webhooks w ON w.id = r.webhook_id
+            WHERE {$where} GROUP BY w.evento ORDER BY qty DESC LIMIT 12");
+        $eventStmt->execute($params);
+        $byEvent = $eventStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $recentStmt = $pdo->prepare("SELECT r.id,r.status,r.user_id,r.erro_msg,r.recebido_em,r.processado_em,w.nome,w.evento,w.ativo
+            FROM inbound_webhook_recebimentos r INNER JOIN inbound_webhooks w ON w.id = r.webhook_id
+            WHERE {$where} ORDER BY r.id DESC LIMIT 12");
+        $recentStmt->execute($params);
+        $recent = $recentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['ok'=>true,'filters'=>['start'=>$start,'end'=>$end,'event'=>$event,'status'=>$status],'webhooks'=>$webhookKpi,'kpi'=>$recvKpi,'daily'=>$daily,'by_event'=>$byEvent,'recent'=>$recent], JSON_UNESCAPED_UNICODE); exit;
+    }
+
+    if ($acao === 'generic_logs') {
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $event = trim((string)($_GET['event'] ?? ''));
+        $status = trim((string)($_GET['status'] ?? ''));
+        $webhookId = (int)($_GET['webhook_id'] ?? 0);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+        $where = "r.recebido_em BETWEEN :start_dt AND :end_dt";
+        $params = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if ($event !== '') {
+            $where .= " AND w.evento = :event";
+            $params[':event'] = $event;
+        }
+        if (in_array($status, ['pendente','processado','erro','ignorado'], true)) {
+            $where .= " AND r.status = :status";
+            $params[':status'] = $status;
+        }
+        if ($webhookId > 0) {
+            $where .= " AND r.webhook_id = :webhook_id";
+            $params[':webhook_id'] = $webhookId;
+        }
+        $st = $pdo->prepare("SELECT r.id,r.webhook_id,r.user_id,r.payload_raw,r.status,r.erro_msg,r.recebido_em,r.processado_em,w.nome,w.evento,w.token,w.ativo
+            FROM inbound_webhook_recebimentos r INNER JOIN inbound_webhooks w ON w.id = r.webhook_id
+            WHERE {$where} ORDER BY r.id DESC LIMIT 150");
+        $st->execute($params);
+        echo json_encode(['ok'=>true,'data'=>$st->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE); exit;
+    }
+
     if ($acao === 'recebimentos') {
         $wid = (int)($_GET['webhook_id'] ?? 0);
         $st = $pdo->prepare("SELECT id,user_id,payload_raw,status,erro_msg,recebido_em,processado_em FROM inbound_webhook_recebimentos WHERE webhook_id = :w ORDER BY id DESC LIMIT 100");
@@ -477,6 +559,8 @@ $domWebhookUrl = rtrim(BASE_URL, '/') . '/dom_webhook.php';
 $pagarmeWebhookUrl = rtrim(BASE_URL, '/') . '/pagarme_webhook.php';
 $view = (string)($_GET['view'] ?? 'generic');
 if (!in_array($view, ['generic','dom','pagarme'], true)) $view = 'generic';
+$genericTab = (string)($_GET['generic_tab'] ?? 'overview');
+if (!in_array($genericTab, ['overview','settings','logs'], true)) $genericTab = 'overview';
 $domTab = (string)($_GET['dom_tab'] ?? 'overview');
 if (!in_array($domTab, ['overview','settings','logs'], true)) $domTab = 'overview';
 $pagarmeTab = (string)($_GET['pagarme_tab'] ?? 'overview');
@@ -492,6 +576,10 @@ $pagarmeHasApiKey = trim((string)get_setting('pagarme_api_key', '')) !== '';
 $pagarmeHasSecret = trim((string)get_setting('pagarme_webhook_secret', '')) !== '';
 $pagarmeNotes = (string)get_setting('pagarme_notes', '');
 $pagarmeWebhookDisplayUrl = $pagarmeHasSecret ? $pagarmeWebhookUrl . '?secret=SEU_SEGREDO_CONFIGURADO' : $pagarmeWebhookUrl;
+$genericEvents = [];
+try { $genericEvents = $pdo->query("SELECT DISTINCT evento FROM inbound_webhooks ORDER BY evento ASC")->fetchAll(PDO::FETCH_COLUMN); } catch (Throwable $e) {}
+$genericWebhooks = [];
+try { $genericWebhooks = $pdo->query("SELECT id,nome,evento FROM inbound_webhooks ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC); } catch (Throwable $e) {}
 
 $currentMenu = 'inbound_webhooks';
 $page_title  = 'Webhooks de Entrada';
@@ -609,7 +697,7 @@ require_once __DIR__ . '/_header.php';
       <h1 class="page-title">Webhooks de Entrada</h1>
       <p class="page-subtitle">URLs que recebem dados de Hotmart, Kiwify, Eduzz e outras plataformas externas</p>
     </div>
-    <?php if ($view === 'generic'): ?>
+    <?php if ($view === 'generic' && $genericTab === 'settings'): ?>
     <button class="btn btn-primary" onclick="iwNovo()">+ Novo webhook</button>
     <?php endif; ?>
   </div>
@@ -821,9 +909,53 @@ require_once __DIR__ . '/_header.php';
     </div>
   <?php endif; ?>
 <?php else: ?>
+  <nav class="iw-dom-subtabs">
+    <a href="inbound_webhooks.php?view=generic&generic_tab=overview" class="<?= $genericTab === 'overview' ? 'active' : '' ?>">Visao geral</a>
+    <a href="inbound_webhooks.php?view=generic&generic_tab=settings" class="<?= $genericTab === 'settings' ? 'active' : '' ?>">Configuracoes</a>
+    <a href="inbound_webhooks.php?view=generic&generic_tab=logs" class="<?= $genericTab === 'logs' ? 'active' : '' ?>">Logs</a>
+  </nav>
+
+  <?php if ($genericTab === 'overview'): ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Visao geral dos webhooks</h2><p>Indicadores das entradas gerais, processamento, erros e volume por evento.</p></div>
+        <button class="btn btn-sm" type="button" onclick="genericCarregarOverview()">Atualizar</button>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="genericOvStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="genericOvEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Evento</label><select id="genericOvEvent"><option value="">Todos</option><?php foreach ($genericEvents as $ev): ?><option value="<?= htmlspecialchars((string)$ev, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string)$ev, ENT_QUOTES, 'UTF-8') ?></option><?php endforeach; ?></select></div>
+        <div class="form-row"><label>Status</label><select id="genericOvStatus"><option value="">Todos</option><option value="processado">Processado</option><option value="pendente">Pendente</option><option value="erro">Erro</option><option value="ignorado">Ignorado</option></select></div>
+        <button class="btn btn-primary" type="button" onclick="genericCarregarOverview()">Filtrar</button>
+      </div>
+      <div id="genericOverview">Carregando...</div>
+    </div>
+  <?php elseif ($genericTab === 'logs'): ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Logs dos webhooks</h2><p>Recebimentos detalhados com status, aluno relacionado, erro e payload completo.</p></div>
+        <button class="btn btn-sm" type="button" onclick="genericCarregarLogs()">Atualizar</button>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="genericLogStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="genericLogEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Webhook</label><select id="genericLogWebhook"><option value="">Todos</option><?php foreach ($genericWebhooks as $wh): ?><option value="<?= (int)$wh['id'] ?>"><?= htmlspecialchars((string)$wh['nome'], ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars((string)$wh['evento'], ENT_QUOTES, 'UTF-8') ?>)</option><?php endforeach; ?></select></div>
+        <div class="form-row"><label>Evento</label><select id="genericLogEvent"><option value="">Todos</option><?php foreach ($genericEvents as $ev): ?><option value="<?= htmlspecialchars((string)$ev, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string)$ev, ENT_QUOTES, 'UTF-8') ?></option><?php endforeach; ?></select></div>
+        <div class="form-row"><label>Status</label><select id="genericLogStatus"><option value="">Todos</option><option value="processado">Processado</option><option value="pendente">Pendente</option><option value="erro">Erro</option><option value="ignorado">Ignorado</option></select></div>
+        <button class="btn btn-primary" type="button" onclick="genericCarregarLogs()">Filtrar</button>
+      </div>
+      <div id="genericLogs">Carregando...</div>
+    </div>
+  <?php else: ?>
 
   <div class="iw-wrap">
     <div class="iw-list">
+      <div class="iw-dom-card" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+          <div><h2>Configuracoes dos webhooks</h2><p>Crie, edite, pause, clone e copie as URLs das entradas gerais.</p></div>
+          <button class="btn btn-primary" onclick="iwNovo()">+ Novo webhook</button>
+        </div>
+      </div>
       <div id="iwListCont"><div class="iw-empty">Carregando…</div></div>
     </div>
 
@@ -1002,6 +1134,7 @@ require_once __DIR__ . '/_header.php';
       </div>
     </div>
   </div>
+  <?php endif; ?>
 <?php endif; ?>
 </div>
 
@@ -1017,6 +1150,7 @@ require_once __DIR__ . '/_header.php';
 
 <script>
 const IW_VIEW = <?= json_encode($view) ?>;
+const IW_GENERIC_TAB = <?= json_encode($genericTab) ?>;
 const IW_DOM_TAB = <?= json_encode($domTab) ?>;
 const IW_PAGARME_TAB = <?= json_encode($pagarmeTab) ?>;
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
@@ -1032,7 +1166,9 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (IW_VIEW === 'dom' && IW_DOM_TAB === 'logs') domCarregarLogs();
     else if (IW_VIEW === 'pagarme' && IW_PAGARME_TAB === 'overview') pagarmeCarregarOverview();
     else if (IW_VIEW === 'pagarme' && IW_PAGARME_TAB === 'logs') pagarmeCarregarLogs();
-    else if (IW_VIEW === 'generic') iwCarregar();
+    else if (IW_VIEW === 'generic' && IW_GENERIC_TAB === 'overview') genericCarregarOverview();
+    else if (IW_VIEW === 'generic' && IW_GENERIC_TAB === 'logs') genericCarregarLogs();
+    else if (IW_VIEW === 'generic' && IW_GENERIC_TAB === 'settings') iwCarregar();
 });
 
 async function domSalvar(ev) {
@@ -1247,6 +1383,100 @@ function domRecentTable(rows) {
 function moneyCents(v) { return (Number(v || 0) / 100).toLocaleString('pt-BR', {style:'currency', currency:'BRL'}); }
 function formatDay(v) { const p=String(v||'').split('-'); return p.length===3 ? `${p[2]}/${p[1]}` : String(v||''); }
 function prettyJson(raw) { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch(e) { return raw || ''; } }
+
+async function genericCarregarOverview() {
+    const el = document.getElementById('genericOverview');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const qs = new URLSearchParams({
+        acao: 'generic_overview',
+        start: document.getElementById('genericOvStart')?.value || '',
+        end: document.getElementById('genericOvEnd')?.value || '',
+        event: document.getElementById('genericOvEvent')?.value || '',
+        status: document.getElementById('genericOvStatus')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
+    if (!j.ok) { el.innerHTML = '<div class="iw-empty">Erro ao carregar dados dos webhooks.</div>'; return; }
+    const w = j.webhooks || {};
+    const k = j.kpi || {};
+    const byEvent = j.by_event || [];
+    const maxEvent = Math.max(1, ...byEvent.map(x => parseInt(x.qty || 0)));
+    const days = {};
+    (j.daily || []).forEach(r => {
+        if (!days[r.day]) days[r.day] = {day:r.day, qty:0};
+        days[r.day].qty += parseInt(r.qty || 0);
+    });
+    const daily = Object.values(days);
+    const maxDay = Math.max(1, ...daily.map(x => x.qty));
+    el.innerHTML = `
+      <div class="iw-dom-kpis">
+        <div class="iw-dom-kpi"><small>Webhooks</small><strong>${w.total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Ativos</small><strong>${w.active || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Recebidos no periodo</small><strong>${k.total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Processados</small><strong>${k.processed || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Erros</small><strong>${k.errors || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Alunos relacionados</small><strong>${k.matched_users || 0}</strong></div>
+      </div>
+      <div class="iw-dom-grid">
+        <div class="iw-dom-card">
+          <h2>Volume por evento</h2>
+          <div class="iw-dom-bars">${byEvent.length ? byEvent.map(r => domBar(r.evento || 'SEM_EVENTO', parseInt(r.qty || 0), maxEvent, '')).join('') : '<div class="iw-empty" style="padding:20px 0">Sem recebimentos no periodo.</div>'}</div>
+        </div>
+        <div class="iw-dom-card">
+          <h2>Recebimentos por dia</h2>
+          <div class="iw-dom-bars">${daily.length ? daily.map(r => domBar(formatDay(r.day), r.qty, maxDay, '')).join('') : '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>'}</div>
+        </div>
+      </div>
+      <div class="iw-dom-card iw-dom-wide" style="margin-top:16px">
+        <h2>Ultimos recebimentos</h2>
+        <div class="iw-dom-table">${genericRecentTable(j.recent || [])}</div>
+      </div>`;
+}
+
+function genericRecentTable(rows) {
+    if (!rows.length) return '<div class="iw-empty" style="padding:20px 0">Nenhum recebimento no periodo.</div>';
+    return `<table><thead><tr><th>Data</th><th>Status</th><th>Webhook</th><th>Evento</th><th>Aluno</th><th>Erro</th></tr></thead><tbody>${rows.map(r => `<tr><td>${fmtDate(r.recebido_em)}</td><td><span class="iw-dom-pill ${genericStatusCls(r.status)}">${esc(r.status || '-')}</span></td><td>${esc(r.nome || '-')}</td><td>${esc(r.evento || '-')}</td><td>${r.user_id ? 'uid ' + r.user_id : '<span style="color:#fbbf24">sem match</span>'}</td><td>${esc(r.erro_msg || '-')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+async function genericCarregarLogs() {
+    const el = document.getElementById('genericLogs');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const qs = new URLSearchParams({
+        acao: 'generic_logs',
+        start: document.getElementById('genericLogStart')?.value || '',
+        end: document.getElementById('genericLogEnd')?.value || '',
+        webhook_id: document.getElementById('genericLogWebhook')?.value || '',
+        event: document.getElementById('genericLogEvent')?.value || '',
+        status: document.getElementById('genericLogStatus')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
+    if (!j.ok || !j.data.length) {
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum recebimento encontrado no filtro.</div>';
+        return;
+    }
+    el.innerHTML = j.data.map(r => {
+        const payload = prettyJson(r.payload_raw || '');
+        return `<div class="iw-dom-log-card">
+            <div class="iw-dom-log-top">
+                <div class="iw-dom-log-meta">${fmtDate(r.recebido_em)}${r.processado_em?`<br>processado ${fmtDate(r.processado_em)}`:''}</div>
+                <div><div class="iw-dom-log-title">${esc(r.nome || '-')}</div><div class="iw-dom-log-meta">evento: ${esc(r.evento || '-')}</div></div>
+                <div><code>#${r.id || '-'}</code>${r.user_id?`<div class="iw-dom-log-meta">uid: ${r.user_id}</div>`:''}${r.erro_msg?`<div style="font-size:11px;color:#f87171;margin-top:5px">${esc(r.erro_msg)}</div>`:''}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                    <span class="iw-dom-pill ${parseInt(r.ativo||0)===1?'ok':'warn'}">${parseInt(r.ativo||0)===1?'webhook ativo':'webhook pausado'}</span>
+                    <span class="iw-dom-pill ${genericStatusCls(r.status)}">${esc(r.status || '-')}</span>
+                </div>
+            </div>
+            <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver payload</summary><pre>${esc(payload)}</pre></details>
+        </div>`;
+    }).join('');
+}
+
+function genericStatusCls(status) {
+    if (status === 'processado') return 'ok';
+    if (status === 'erro') return 'bad';
+    return 'warn';
+}
 
 async function iwCarregar() {
     const j = await (await fetch('inbound_webhooks.php?acao=listar')).json();

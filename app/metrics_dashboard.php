@@ -18,13 +18,15 @@ function md_row(PDO $pdo, string $sql, array $params = []): array
 
 function md_approved_sql(string $alias = 's'): string
 {
-    return "(UPPER(COALESCE({$alias}.webhook_event,'')) IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE')
-        OR UPPER(COALESCE({$alias}.status,'')) IN ('APROVADO','APPROVED','PURCHASE_APPROVED','COMPLETO','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PAID'))";
+    return "(COALESCE(NULLIF({$alias}.sales_channel,''),'hotmart') IN ('hotmart','dom','pagarme')
+        AND (UPPER(COALESCE({$alias}.webhook_event,'')) IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE')
+        OR UPPER(COALESCE({$alias}.status,'')) IN ('APROVADO','APPROVED','PURCHASE_APPROVED','COMPLETO','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PAID')))";
 }
 
 function md_refund_sql(string $alias = 's'): string
 {
-    return "UPPER(COALESCE({$alias}.status,'')) IN ('REEMBOLSADO','REFUNDED','PURCHASE_REFUNDED','CHARGEBACK','PURCHASE_CHARGEBACK')";
+    return "(COALESCE(NULLIF({$alias}.sales_channel,''),'hotmart') IN ('hotmart','dom','pagarme')
+        AND UPPER(COALESCE({$alias}.status,'')) IN ('REEMBOLSADO','REFUNDED','PURCHASE_REFUNDED','CHARGEBACK','PURCHASE_CHARGEBACK'))";
 }
 
 function md_sale_revenue_date_sql(string $alias = 's'): string

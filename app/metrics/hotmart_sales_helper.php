@@ -251,10 +251,10 @@ function hotmart_build_sale_data_from_array(array $data, array $matchedUser = ['
         'transaction_code' => (string)($data['transaction_code'] ?? ''),
         'status' => $status,
         'legacy_status' => (string)($data['legacy_status'] ?? hotmart_legacy_status_from_live($status)),
-        'transaction_date' => $data['transaction_date'] ?: date('Y-m-d H:i:s'),
-        'payment_confirmed_at' => $data['payment_confirmed_at'] ?: null,
-        'refund_or_chargeback_at' => $data['refund_or_chargeback_at'] ?: null,
-        'product_code' => $data['product_code'] ?: null,
+        'transaction_date' => ($data['transaction_date'] ?? null) ?: date('Y-m-d H:i:s'),
+        'payment_confirmed_at' => ($data['payment_confirmed_at'] ?? null) ?: null,
+        'refund_or_chargeback_at' => ($data['refund_or_chargeback_at'] ?? null) ?: null,
+        'product_code' => ($data['product_code'] ?? null) ?: null,
         'product_name' => (string)($data['product_name'] ?? ''),
         'price_code' => (string)($data['price_code'] ?? ''),
         'price_name' => (string)($data['price_name'] ?? ''),
@@ -384,33 +384,33 @@ function hotmart_import_csv(PDO $mainPdo, PDO $sourcePdo, string $filePath, stri
             }
 
             $existing = hotmart_get_existing_sale($mainPdo, $tx);
-            $buyerEmail = trim((string)hotmart_pick($row, $map, ['emaildocomprador','emailcomprador','email'], ''));
+            $buyerEmail = trim((string)hotmart_pick($row, $map, ['emaildoacompradora','emaildocomprador','emailcomprador','email'], ''));
             $buyerPhoneRaw = trim((string)hotmart_pick($row, $map, ['telefonedocomprador','telefonecomprador','telefone','celular'], ''));
             $buyerPhoneNorm = normalize_phone_value($buyerPhoneRaw);
             $matched = hotmart_find_matching_user($sourcePdo, normalize_email_value($buyerEmail), $buyerPhoneNorm);
-            $gross = hotmart_parse_decimal(hotmart_pick($row, $map, ['valordavenda','valorbruto','valor','fullprice','grossrevenue'], '0'));
-            $net = hotmart_parse_decimal(hotmart_pick($row, $map, ['valorliquido','receitaliquida','netrevenue'], (string)$gross));
-            $producer = hotmart_parse_decimal(hotmart_pick($row, $map, ['valordoprodutor','produtorneto','producernet'], (string)$net));
+            $gross = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentobrutosemimpostos','valordecomprasemimpostos','valordavenda','valorbruto','valor','fullprice','grossrevenue'], '0'));
+            $net = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentoliquido','valorliquido','receitaliquida','netrevenue'], (string)$gross));
+            $producer = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentoliquidodoaprodutora','faturamentoliquidodoprodutor','valordoprodutor','produtorneto','producernet'], (string)$net));
 
             $sale = hotmart_build_sale_data_from_array([
                 'webhook_event' => 'CSV_IMPORT',
                 'webhook_event_id' => 'csv:' . md5($fileName . '|' . $lineNo . '|' . $tx),
                 'transaction_code' => $tx,
-                'status' => hotmart_pick($row, $map, ['statusdacompra','status','situacao'], 'Aprovado'),
-                'transaction_date' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datadacompra','datadatransacao','datadepedido','data'], '')) ?: date('Y-m-d H:i:s'),
-                'payment_confirmed_at' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datadeconfirmacao','pagamentoconfirmadoem','paymentconfirmedat'], '')),
+                'status' => hotmart_pick($row, $map, ['statusdatransacao','statusdacompra','status','situacao'], 'Aprovado'),
+                'transaction_date' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datadatransacao','datadacompra','datadepedido','data'], '')) ?: date('Y-m-d H:i:s'),
+                'payment_confirmed_at' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['confirmacaodopagamento','datadeconfirmacao','pagamentoconfirmadoem','paymentconfirmedat'], '')),
                 'refund_or_chargeback_at' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datareembolso','datachargeback'], '')),
                 'product_code' => hotmart_pick($row, $map, ['codigodoproduto','productcode','produtoid'], null),
-                'product_name' => hotmart_pick($row, $map, ['nomedoproduto','produto','productname'], ''),
-                'price_code' => hotmart_pick($row, $map, ['codigodaoferta','pricecode','offercode'], ''),
-                'price_name' => hotmart_pick($row, $map, ['nomedaoferta','oferta','pricename'], ''),
-                'currency' => hotmart_pick($row, $map, ['moeda','currency'], 'BRL'),
+                'product_name' => hotmart_pick($row, $map, ['produto','nomedoproduto','productname'], ''),
+                'price_code' => hotmart_pick($row, $map, ['codigodopreco','codigodaoferta','pricecode','offercode'], ''),
+                'price_name' => hotmart_pick($row, $map, ['nomedestepreco','nomedaoferta','oferta','pricename'], ''),
+                'currency' => hotmart_pick($row, $map, ['moedaderecebimento','moedadecompra','moeda','currency'], 'BRL'),
                 'gross_revenue' => $gross,
                 'net_revenue' => $net,
                 'producer_net' => $producer,
                 'refunded_value' => hotmart_parse_decimal(hotmart_pick($row, $map, ['valorreembolsado'], '0')),
                 'chargeback_value' => hotmart_parse_decimal(hotmart_pick($row, $map, ['valorchargeback'], '0')),
-                'buyer_name' => hotmart_pick($row, $map, ['nomedocomprador','comprador','buyername','nome'], ''),
+                'buyer_name' => hotmart_pick($row, $map, ['compradora','nomedocomprador','comprador','buyername','nome'], ''),
                 'buyer_email' => $buyerEmail,
                 'buyer_phone_raw' => $buyerPhoneRaw,
                 'buyer_phone_norm' => $buyerPhoneNorm,
@@ -437,4 +437,3 @@ function hotmart_import_csv(PDO $mainPdo, PDO $sourcePdo, string $filePath, stri
 
     return ['inserted' => $inserted, 'updated' => $updated, 'errors' => $errors, 'file_name' => $fileName];
 }
-

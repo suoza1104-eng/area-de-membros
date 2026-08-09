@@ -30,6 +30,14 @@ function hmw_producer_net(array $commissions): float {
     }
     return $total;
 }
+function hmw_money_at(array $data, array $path): float {
+    $current=$data;
+    foreach($path as $key){
+        if(!is_array($current)||!array_key_exists($key,$current))return 0.0;
+        $current=$current[$key];
+    }
+    return is_numeric($current)?(float)$current:0.0;
+}
 
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='POST')hmw_reply(405,['ok'=>false,'message'=>'Metodo nao permitido']);
 $token=(string)(get_setting('metrics_hotmart_hottok','')?:'');
@@ -62,7 +70,13 @@ if($transaction===''){
 }
 $email=normalize_email_value($buyer['email']??'');$phoneRaw=trim((string)($buyer['checkout_phone_code']??'').(string)($buyer['checkout_phone']??''));$phone=normalize_phone_value($phoneRaw);
 $matched=hotmart_find_matching_user($pdo,$email,$phone);$status=hmw_status($event,(string)($purchase['status']??''));
-$net=(float)($purchase['price']['value']??0);$gross=(float)($purchase['full_price']['value']??($purchase['original_offer_price']['value']??$net));$producer=hmw_producer_net((array)($data['commissions']??[]));if($producer<=0)$producer=$net;
+$purchasePrice=hmw_money_at($purchase,['price','value']);
+$gross=hmw_money_at($purchase,['full_price','value']);
+if($gross<=0)$gross=hmw_money_at($purchase,['original_offer_price','value']);
+if($gross<=0)$gross=$purchasePrice;
+$producer=hmw_producer_net((array)($data['commissions']??[]));
+$net=$producer>0?$producer:$purchasePrice;
+if($producer<=0)$producer=$net;
 $sale=hotmart_build_sale_data_from_array([
  'webhook_event'=>$event,'webhook_event_id'=>$eventId,'transaction_code'=>$transaction,'status'=>$status,
  'transaction_date'=>hmw_datetime($purchase['order_date']??null),'payment_confirmed_at'=>hmw_datetime($purchase['approved_date']??null),
