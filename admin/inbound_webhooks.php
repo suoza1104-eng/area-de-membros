@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/dom_pagamentos.php';
+require_once __DIR__ . '/../app/pagarme.php';
 proteger_admin();
 
 $pdo = getPDO();
@@ -183,6 +184,17 @@ if ($acao !== '') {
         echo json_encode(['ok'=>true]); exit;
     }
 
+    if ($acao === 'salvar_pagarme') {
+        set_setting('pagarme_enabled', isset($_POST['enabled']) ? '1' : '0');
+        set_setting('pagarme_environment', in_array(($_POST['environment'] ?? ''), ['production','sandbox'], true) ? (string)$_POST['environment'] : 'production');
+        $apiKey = trim((string)($_POST['api_key'] ?? ''));
+        if ($apiKey !== '') set_setting('pagarme_api_key', $apiKey);
+        $secret = trim((string)($_POST['webhook_secret'] ?? ''));
+        if ($secret !== '') set_setting('pagarme_webhook_secret', $secret);
+        set_setting('pagarme_notes', trim((string)($_POST['notes'] ?? '')));
+        echo json_encode(['ok'=>true]); exit;
+    }
+
     if ($acao === 'dom_overview') {
         dom_ensure_schema($pdo);
         $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
@@ -249,6 +261,76 @@ if ($acao !== '') {
             $params[':event'] = $event;
         }
         $st = $pdo->prepare("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,payload_json,received_at,processed_at FROM dom_webhook_events WHERE {$where} ORDER BY id DESC LIMIT 120");
+        $st->execute($params);
+        echo json_encode(['ok'=>true,'data'=>$st->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE); exit;
+    }
+
+    if ($acao === 'pagarme_overview') {
+        pagarme_ensure_schema($pdo);
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $status = strtoupper(trim((string)($_GET['status'] ?? '')));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+        $saleWhere = "provider='pagarme' AND last_received_at BETWEEN :start_dt AND :end_dt";
+        $saleParams = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if ($status !== '') {
+            $saleWhere .= " AND normalized_status = :status";
+            $saleParams[':status'] = $status;
+        }
+
+        $eventStmt = $pdo->prepare("SELECT COUNT(*) FROM pagarme_webhook_events WHERE received_at BETWEEN :start_dt AND :end_dt");
+        $eventStmt->execute([':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59']);
+        $eventsTotal = (int)$eventStmt->fetchColumn();
+
+        $kpiStmt = $pdo->prepare("SELECT
+            COUNT(*) total,
+            SUM(normalized_status='APPROVED') approved,
+            SUM(normalized_status='PENDING') pending,
+            SUM(normalized_status IN ('REFUNDED','CHARGEBACK','CANCELED')) problems,
+            SUM(matched_user_id IS NOT NULL) matched,
+            COALESCE(SUM(CASE WHEN normalized_status='APPROVED' THEN gross_amount_cents ELSE 0 END),0) revenue_cents
+            FROM payment_sales WHERE {$saleWhere}");
+        $kpiStmt->execute($saleParams);
+        $kpi = $kpiStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $dailyStmt = $pdo->prepare("SELECT DATE(last_received_at) day, normalized_status, COUNT(*) qty, COALESCE(SUM(gross_amount_cents),0) cents
+            FROM payment_sales WHERE {$saleWhere} GROUP BY DATE(last_received_at), normalized_status ORDER BY day ASC");
+        $dailyStmt->execute($saleParams);
+        $daily = $dailyStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $statusStmt = $pdo->prepare("SELECT normalized_status status, COUNT(*) qty, COALESCE(SUM(gross_amount_cents),0) cents
+            FROM payment_sales WHERE {$saleWhere} GROUP BY normalized_status ORDER BY qty DESC");
+        $statusStmt->execute($saleParams);
+        $byStatus = $statusStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $recentStmt = $pdo->prepare("SELECT external_transaction_id,normalized_status,gross_amount_cents,product_name,buyer_name,buyer_email,matched_user_id,last_received_at
+            FROM payment_sales WHERE {$saleWhere} ORDER BY last_received_at DESC LIMIT 12");
+        $recentStmt->execute($saleParams);
+        $recent = $recentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['ok'=>true,'filters'=>['start'=>$start,'end'=>$end,'status'=>$status],'events_total'=>$eventsTotal,'kpi'=>$kpi,'daily'=>$daily,'by_status'=>$byStatus,'recent'=>$recent], JSON_UNESCAPED_UNICODE); exit;
+    }
+
+    if ($acao === 'pagarme_logs') {
+        pagarme_ensure_schema($pdo);
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $process = trim((string)($_GET['process'] ?? ''));
+        $event = trim((string)($_GET['event'] ?? ''));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+        $where = "received_at BETWEEN :start_dt AND :end_dt";
+        $params = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if (in_array($process, ['success','ignored','error'], true)) {
+            $where .= " AND process_status = :process";
+            $params[':process'] = $process;
+        }
+        if ($event !== '') {
+            $where .= " AND event_name = :event";
+            $params[':event'] = $event;
+        }
+        $st = $pdo->prepare("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,payload_json,received_at,processed_at FROM pagarme_webhook_events WHERE {$where} ORDER BY id DESC LIMIT 120");
         $st->execute($params);
         echo json_encode(['ok'=>true,'data'=>$st->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE); exit;
     }
@@ -392,15 +474,24 @@ $webhookBaseUrl = rtrim(BASE_URL, '/') . '/inbound_webhook.php?t=';
 $firepayWebhookBaseUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/fp.php?t=';
 $firepayMcqdcWebhookUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/firepay_mcqdc.php';
 $domWebhookUrl = rtrim(BASE_URL, '/') . '/dom_webhook.php';
+$pagarmeWebhookUrl = rtrim(BASE_URL, '/') . '/pagarme_webhook.php';
 $view = (string)($_GET['view'] ?? 'generic');
-if (!in_array($view, ['generic','dom'], true)) $view = 'generic';
+if (!in_array($view, ['generic','dom','pagarme'], true)) $view = 'generic';
 $domTab = (string)($_GET['dom_tab'] ?? 'overview');
 if (!in_array($domTab, ['overview','settings','logs'], true)) $domTab = 'overview';
+$pagarmeTab = (string)($_GET['pagarme_tab'] ?? 'overview');
+if (!in_array($pagarmeTab, ['overview','settings','logs'], true)) $pagarmeTab = 'overview';
 $domEnabled = (string)get_setting('dom_pagamentos_enabled', '0') === '1';
 $domEnvironment = (string)get_setting('dom_pagamentos_environment', 'production');
 $domRequireSignature = (string)get_setting('dom_pagamentos_require_signature', '1') === '1';
 $domHasToken = trim((string)get_setting('dom_pagamentos_api_token', '')) !== '';
 $domNotes = (string)get_setting('dom_pagamentos_notes', '');
+$pagarmeEnabled = (string)get_setting('pagarme_enabled', '0') === '1';
+$pagarmeEnvironment = (string)get_setting('pagarme_environment', 'production');
+$pagarmeHasApiKey = trim((string)get_setting('pagarme_api_key', '')) !== '';
+$pagarmeHasSecret = trim((string)get_setting('pagarme_webhook_secret', '')) !== '';
+$pagarmeNotes = (string)get_setting('pagarme_notes', '');
+$pagarmeWebhookDisplayUrl = $pagarmeHasSecret ? $pagarmeWebhookUrl . '?secret=SEU_SEGREDO_CONFIGURADO' : $pagarmeWebhookUrl;
 
 $currentMenu = 'inbound_webhooks';
 $page_title  = 'Webhooks de Entrada';
@@ -526,6 +617,7 @@ require_once __DIR__ . '/_header.php';
   <nav class="iw-tabs">
     <a href="inbound_webhooks.php?view=generic" class="<?= $view === 'generic' ? 'active' : '' ?>">Entradas gerais</a>
     <a href="inbound_webhooks.php?view=dom" class="<?= $view === 'dom' ? 'active' : '' ?>">DOM Pagamentos</a>
+    <a href="inbound_webhooks.php?view=pagarme" class="<?= $view === 'pagarme' ? 'active' : '' ?>">Pagar.me</a>
   </nav>
 
 <?php if ($view === 'dom'): ?>
@@ -660,6 +752,73 @@ require_once __DIR__ . '/_header.php';
       <div class="iw-dom-table" id="domLogs">Carregando...</div>
     </div>
   </div>
+  <?php endif; ?>
+<?php elseif ($view === 'pagarme'): ?>
+  <nav class="iw-dom-subtabs">
+    <a href="inbound_webhooks.php?view=pagarme&pagarme_tab=overview" class="<?= $pagarmeTab === 'overview' ? 'active' : '' ?>">Visao geral</a>
+    <a href="inbound_webhooks.php?view=pagarme&pagarme_tab=settings" class="<?= $pagarmeTab === 'settings' ? 'active' : '' ?>">Configuracoes</a>
+    <a href="inbound_webhooks.php?view=pagarme&pagarme_tab=logs" class="<?= $pagarmeTab === 'logs' ? 'active' : '' ?>">Logs</a>
+  </nav>
+
+  <?php if ($pagarmeTab === 'overview'): ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Visao geral Pagar.me</h2><p>Indicadores das vendas, cruzamento com alunos e eventos recebidos pelo Pagar.me.</p></div>
+        <span class="iw-dom-pill <?= $pagarmeEnabled ? 'ok' : 'warn' ?>"><?= $pagarmeEnabled ? 'Integracao ativa' : 'Integracao pausada' ?></span>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="pagarmeOvStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="pagarmeOvEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Status</label><select id="pagarmeOvStatus"><option value="">Todos</option><option value="APPROVED">Aprovadas</option><option value="PENDING">Pendentes</option><option value="REFUNDED">Reembolsadas</option><option value="CHARGEBACK">Chargeback</option><option value="CANCELED">Canceladas</option><option value="UNKNOWN">Nao mapeadas</option></select></div>
+        <button class="btn btn-primary" type="button" onclick="pagarmeCarregarOverview()">Filtrar</button>
+      </div>
+      <div id="pagarmeOverview">Carregando...</div>
+    </div>
+  <?php elseif ($pagarmeTab === 'settings'): ?>
+    <div class="iw-dom-grid">
+      <div class="iw-dom-card">
+        <h2>Configuracoes Pagar.me</h2>
+        <p>Configure o recebimento de pagamentos direto do gateway. A API Key fica preparada para consultas futuras; o webhook ja funciona apenas recebendo eventos.</p>
+        <div class="iw-dom-kpis">
+          <div class="iw-dom-kpi"><small>Status</small><strong><?= $pagarmeEnabled ? 'Ativo' : 'Pausado' ?></strong></div>
+          <div class="iw-dom-kpi"><small>API Key</small><strong><?= $pagarmeHasApiKey ? 'OK' : 'Opcional' ?></strong></div>
+          <div class="iw-dom-kpi"><small>Segredo</small><strong><?= $pagarmeHasSecret ? 'OK' : 'Opcional' ?></strong></div>
+        </div>
+        <div class="form-row"><label>URL para cadastrar no Pagar.me</label><div class="iw-dom-url"><code id="pagarmeWebhookUrl"><?= htmlspecialchars($pagarmeWebhookDisplayUrl, ENT_QUOTES, 'UTF-8') ?></code><button class="iw-copy-btn" type="button" onclick="iwCopiar(document.getElementById('pagarmeWebhookUrl').textContent,this)">Copiar</button></div><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Se usar segredo, substitua <code>SEU_SEGREDO_CONFIGURADO</code> pelo valor salvo abaixo ou envie no header <code>X-Pagarme-Webhook-Secret</code>.</div></div>
+        <form id="pagarmeConfigForm" onsubmit="return pagarmeSalvar(event)">
+          <div class="form-row"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" name="enabled" <?= $pagarmeEnabled ? 'checked' : '' ?> style="width:auto"><span>Integracao Pagar.me ativa</span></label></div>
+          <div class="form-row"><label>Ambiente</label><select name="environment"><option value="production" <?= $pagarmeEnvironment === 'production' ? 'selected' : '' ?>>Producao</option><option value="sandbox" <?= $pagarmeEnvironment === 'sandbox' ? 'selected' : '' ?>>Sandbox</option></select></div>
+          <div class="form-row"><label>API Key Pagar.me</label><input type="password" name="api_key" placeholder="<?= $pagarmeHasApiKey ? 'Configurada - deixe vazio para manter' : 'Opcional agora; util para conciliacao futura' ?>"></div>
+          <div class="form-row"><label>Segredo opcional do webhook</label><input type="password" name="webhook_secret" placeholder="<?= $pagarmeHasSecret ? 'Configurado - deixe vazio para manter' : 'Crie uma palavra-chave forte se quiser validar a URL/header' ?>"><div style="font-size:11px;color:var(--text-muted);margin-top:6px">A documentacao aberta de webhook do Pagar.me mostra o payload, mas nao exige assinatura. Este segredo e uma camada nossa para evitar chamadas anonimas.</div></div>
+          <div class="form-row"><label>Observacoes internas</label><textarea name="notes" placeholder="Ex.: conta Pagar.me principal, produtos liberados, ambiente usado..."><?= htmlspecialchars($pagarmeNotes, ENT_QUOTES, 'UTF-8') ?></textarea></div>
+          <button class="btn btn-primary" type="submit">Salvar Pagar.me</button><span id="pagarmeSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
+        </form>
+      </div>
+      <div class="iw-dom-card">
+        <h2>Eventos recomendados</h2>
+        <p>No Pagar.me, cadastre a URL acima e envie eventos de pedido/cobranca para registrar vendas, falhas, reembolsos e chargeback.</p>
+        <div class="iw-dom-bars">
+          <?php foreach (['order.paid','order.payment_failed','order.canceled','charge.paid','charge.pending','charge.payment_failed','charge.refunded','chargeback.received','charge.chargedback (legado ate 30/09/2026)'] as $ev): ?>
+            <div class="iw-dom-url"><code><?= htmlspecialchars($ev, ENT_QUOTES, 'UTF-8') ?></code></div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </div>
+  <?php else: ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Logs Pagar.me</h2><p>Eventos recebidos com segredo, status, processamento e payload completo.</p></div>
+        <button class="btn btn-sm" type="button" onclick="pagarmeCarregarLogs()">Atualizar</button>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="pagarmeLogStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="pagarmeLogEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Processo</label><select id="pagarmeLogProcess"><option value="">Todos</option><option value="success">Sucesso</option><option value="ignored">Ignorado</option><option value="error">Erro</option></select></div>
+        <div class="form-row"><label>Evento</label><input type="text" id="pagarmeLogEvent" placeholder="order.paid"></div>
+        <button class="btn btn-primary" type="button" onclick="pagarmeCarregarLogs()">Filtrar</button>
+      </div>
+      <div id="pagarmeLogs">Carregando...</div>
+    </div>
   <?php endif; ?>
 <?php else: ?>
 
@@ -859,6 +1018,7 @@ require_once __DIR__ . '/_header.php';
 <script>
 const IW_VIEW = <?= json_encode($view) ?>;
 const IW_DOM_TAB = <?= json_encode($domTab) ?>;
+const IW_PAGARME_TAB = <?= json_encode($pagarmeTab) ?>;
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const IW_FIREPAY_WEBHOOK_BASE = <?= json_encode($firepayWebhookBaseUrl) ?>;
 const IW_FIREPAY_MCQDC_WEBHOOK_URL = <?= json_encode($firepayMcqdcWebhookUrl) ?>;
@@ -870,7 +1030,9 @@ const EV_CLS = {
 document.addEventListener('DOMContentLoaded', () => {
     if (IW_VIEW === 'dom' && IW_DOM_TAB === 'overview') domCarregarOverview();
     else if (IW_VIEW === 'dom' && IW_DOM_TAB === 'logs') domCarregarLogs();
-    else if (IW_VIEW !== 'dom') iwCarregar();
+    else if (IW_VIEW === 'pagarme' && IW_PAGARME_TAB === 'overview') pagarmeCarregarOverview();
+    else if (IW_VIEW === 'pagarme' && IW_PAGARME_TAB === 'logs') pagarmeCarregarLogs();
+    else if (IW_VIEW === 'generic') iwCarregar();
 });
 
 async function domSalvar(ev) {
@@ -964,6 +1126,105 @@ async function domCarregarLogs() {
                 <div><code>${esc(r.external_transaction_id || '-')}</code>${r.process_message?`<div style="font-size:11px;color:#f87171;margin-top:5px">${esc(r.process_message)}</div>`:''}</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
                     <span class="iw-dom-pill ${parseInt(r.signature_valid||0)===1?'ok':'warn'}">${parseInt(r.signature_valid||0)===1?'assinatura OK':'nao validada'}</span>
+                    <span class="iw-dom-pill ${processCls}">${esc(r.process_status || '-')}</span>
+                </div>
+            </div>
+            <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver payload</summary><pre>${esc(payload)}</pre></details>
+        </div>`;
+    }).join('');
+}
+
+async function pagarmeSalvar(ev) {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    fd.append('acao', 'salvar_pagarme');
+    const j = await (await fetch('inbound_webhooks.php', {method:'POST', body:fd})).json();
+    const msg = document.getElementById('pagarmeSaveMsg');
+    if (!j.ok) {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Erro ao salvar';
+        return false;
+    }
+    msg.style.color = '#86efac';
+    msg.textContent = 'Salvo';
+    setTimeout(() => location.href = 'inbound_webhooks.php?view=pagarme&pagarme_tab=settings', 500);
+    return false;
+}
+
+async function pagarmeCarregarOverview() {
+    const el = document.getElementById('pagarmeOverview');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const qs = new URLSearchParams({
+        acao: 'pagarme_overview',
+        start: document.getElementById('pagarmeOvStart')?.value || '',
+        end: document.getElementById('pagarmeOvEnd')?.value || '',
+        status: document.getElementById('pagarmeOvStatus')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
+    if (!j.ok) { el.innerHTML = '<div class="iw-empty">Erro ao carregar dados Pagar.me.</div>'; return; }
+    const k = j.kpi || {};
+    const byStatus = j.by_status || [];
+    const maxStatus = Math.max(1, ...byStatus.map(x => parseInt(x.qty || 0)));
+    const days = {};
+    (j.daily || []).forEach(r => {
+        if (!days[r.day]) days[r.day] = {day:r.day, qty:0, cents:0};
+        days[r.day].qty += parseInt(r.qty || 0);
+        days[r.day].cents += parseInt(r.cents || 0);
+    });
+    const daily = Object.values(days);
+    const maxDay = Math.max(1, ...daily.map(x => x.qty));
+    el.innerHTML = `
+      <div class="iw-dom-kpis">
+        <div class="iw-dom-kpi"><small>Eventos recebidos</small><strong>${j.events_total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Transacoes</small><strong>${k.total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Aprovadas</small><strong>${k.approved || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Pendentes</small><strong>${k.pending || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Com aluno cruzado</small><strong>${k.matched || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Faturamento aprovado</small><strong>${moneyCents(k.revenue_cents || 0)}</strong></div>
+      </div>
+      <div class="iw-dom-grid">
+        <div class="iw-dom-card">
+          <h2>Status das transacoes</h2>
+          <div class="iw-dom-bars">${byStatus.length ? byStatus.map(r => domBar(r.status || 'UNKNOWN', parseInt(r.qty || 0), maxStatus, moneyCents(r.cents || 0))).join('') : '<div class="iw-empty" style="padding:20px 0">Sem transacoes no periodo.</div>'}</div>
+        </div>
+        <div class="iw-dom-card">
+          <h2>Volume por dia</h2>
+          <div class="iw-dom-bars">${daily.length ? daily.map(r => domBar(formatDay(r.day), r.qty, maxDay, moneyCents(r.cents))).join('') : '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>'}</div>
+        </div>
+      </div>
+      <div class="iw-dom-card iw-dom-wide" style="margin-top:16px">
+        <h2>Ultimas transacoes</h2>
+        <div class="iw-dom-table">${domRecentTable(j.recent || [])}</div>
+      </div>`;
+}
+
+async function pagarmeCarregarLogs() {
+    const el = document.getElementById('pagarmeLogs');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const qs = new URLSearchParams({
+        acao: 'pagarme_logs',
+        start: document.getElementById('pagarmeLogStart')?.value || '',
+        end: document.getElementById('pagarmeLogEnd')?.value || '',
+        process: document.getElementById('pagarmeLogProcess')?.value || '',
+        event: document.getElementById('pagarmeLogEvent')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
+    if (!j.ok || !j.data.length) {
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum evento Pagar.me recebido no filtro.</div>';
+        return;
+    }
+    el.innerHTML = j.data.map(r => {
+        const processCls = r.process_status === 'success' ? 'ok' : (r.process_status === 'error' ? 'bad' : 'warn');
+        const payload = prettyJson(r.payload_json || '');
+        return `<div class="iw-dom-log-card">
+            <div class="iw-dom-log-top">
+                <div class="iw-dom-log-meta">${fmtDate(r.received_at)}${r.processed_at?`<br>processado ${fmtDate(r.processed_at)}`:''}</div>
+                <div><div class="iw-dom-log-title">${esc(r.event_name || '-')}</div><div class="iw-dom-log-meta">status: ${esc(r.provider_status || '-')}</div></div>
+                <div><code>${esc(r.external_transaction_id || '-')}</code>${r.process_message?`<div style="font-size:11px;color:#f87171;margin-top:5px">${esc(r.process_message)}</div>`:''}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                    <span class="iw-dom-pill ${parseInt(r.signature_valid||0)===1?'ok':'warn'}">${parseInt(r.signature_valid||0)===1?'segredo OK':'nao validado'}</span>
                     <span class="iw-dom-pill ${processCls}">${esc(r.process_status || '-')}</span>
                 </div>
             </div>
