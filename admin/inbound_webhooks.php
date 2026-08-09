@@ -183,10 +183,74 @@ if ($acao !== '') {
         echo json_encode(['ok'=>true]); exit;
     }
 
+    if ($acao === 'dom_overview') {
+        dom_ensure_schema($pdo);
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $status = strtoupper(trim((string)($_GET['status'] ?? '')));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+        $saleWhere = "provider='dom' AND last_received_at BETWEEN :start_dt AND :end_dt";
+        $saleParams = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if ($status !== '') {
+            $saleWhere .= " AND normalized_status = :status";
+            $saleParams[':status'] = $status;
+        }
+
+        $eventStmt = $pdo->prepare("SELECT COUNT(*) FROM dom_webhook_events WHERE received_at BETWEEN :start_dt AND :end_dt");
+        $eventStmt->execute([':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59']);
+        $eventsTotal = (int)$eventStmt->fetchColumn();
+
+        $kpiStmt = $pdo->prepare("SELECT
+            COUNT(*) total,
+            SUM(normalized_status='APPROVED') approved,
+            SUM(normalized_status='PENDING') pending,
+            SUM(normalized_status IN ('REFUNDED','CHARGEBACK','CANCELED')) problems,
+            SUM(matched_user_id IS NOT NULL) matched,
+            COALESCE(SUM(CASE WHEN normalized_status='APPROVED' THEN gross_amount_cents ELSE 0 END),0) revenue_cents
+            FROM payment_sales WHERE {$saleWhere}");
+        $kpiStmt->execute($saleParams);
+        $kpi = $kpiStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $dailyStmt = $pdo->prepare("SELECT DATE(last_received_at) day, normalized_status, COUNT(*) qty, COALESCE(SUM(gross_amount_cents),0) cents
+            FROM payment_sales WHERE {$saleWhere} GROUP BY DATE(last_received_at), normalized_status ORDER BY day ASC");
+        $dailyStmt->execute($saleParams);
+        $daily = $dailyStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $statusStmt = $pdo->prepare("SELECT normalized_status status, COUNT(*) qty, COALESCE(SUM(gross_amount_cents),0) cents
+            FROM payment_sales WHERE {$saleWhere} GROUP BY normalized_status ORDER BY qty DESC");
+        $statusStmt->execute($saleParams);
+        $byStatus = $statusStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $recentStmt = $pdo->prepare("SELECT external_transaction_id,normalized_status,gross_amount_cents,product_name,buyer_name,buyer_email,matched_user_id,last_received_at
+            FROM payment_sales WHERE {$saleWhere} ORDER BY last_received_at DESC LIMIT 12");
+        $recentStmt->execute($saleParams);
+        $recent = $recentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['ok'=>true,'filters'=>['start'=>$start,'end'=>$end,'status'=>$status],'events_total'=>$eventsTotal,'kpi'=>$kpi,'daily'=>$daily,'by_status'=>$byStatus,'recent'=>$recent], JSON_UNESCAPED_UNICODE); exit;
+    }
+
     if ($acao === 'dom_logs') {
         dom_ensure_schema($pdo);
-        $rows = $pdo->query("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,received_at,processed_at FROM dom_webhook_events ORDER BY id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode(['ok'=>true,'data'=>$rows]); exit;
+        $start = trim((string)($_GET['start'] ?? date('Y-m-d', strtotime('-30 days'))));
+        $end = trim((string)($_GET['end'] ?? date('Y-m-d')));
+        $process = trim((string)($_GET['process'] ?? ''));
+        $event = trim((string)($_GET['event'] ?? ''));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+        $where = "received_at BETWEEN :start_dt AND :end_dt";
+        $params = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
+        if (in_array($process, ['success','ignored','error'], true)) {
+            $where .= " AND process_status = :process";
+            $params[':process'] = $process;
+        }
+        if ($event !== '') {
+            $where .= " AND event_name = :event";
+            $params[':event'] = $event;
+        }
+        $st = $pdo->prepare("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,payload_json,received_at,processed_at FROM dom_webhook_events WHERE {$where} ORDER BY id DESC LIMIT 120");
+        $st->execute($params);
+        echo json_encode(['ok'=>true,'data'=>$st->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE); exit;
     }
 
     if ($acao === 'salvar') {
@@ -330,6 +394,8 @@ $firepayMcqdcWebhookUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/'))
 $domWebhookUrl = rtrim(BASE_URL, '/') . '/dom_webhook.php';
 $view = (string)($_GET['view'] ?? 'generic');
 if (!in_array($view, ['generic','dom'], true)) $view = 'generic';
+$domTab = (string)($_GET['dom_tab'] ?? 'overview');
+if (!in_array($domTab, ['overview','settings','logs'], true)) $domTab = 'overview';
 $domEnabled = (string)get_setting('dom_pagamentos_enabled', '0') === '1';
 $domEnvironment = (string)get_setting('dom_pagamentos_environment', 'production');
 $domRequireSignature = (string)get_setting('dom_pagamentos_require_signature', '1') === '1';
@@ -426,9 +492,24 @@ require_once __DIR__ . '/_header.php';
 .iw-dom-kpi small{display:block;color:var(--text-muted);font-size:10px;text-transform:uppercase}.iw-dom-kpi strong{font-size:20px}
 .iw-dom-table{overflow:auto}.iw-dom-table table{width:100%;border-collapse:collapse}.iw-dom-table th,.iw-dom-table td{padding:8px 9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.iw-dom-table th{font-size:10px;color:var(--text-muted);text-transform:uppercase}
 .iw-dom-pill{display:inline-flex;padding:2px 8px;border-radius:999px;background:#1f2937;font-size:10px}.iw-dom-pill.ok{background:#14532d;color:#86efac}.iw-dom-pill.warn{background:#3a2e10;color:#fbbf24}.iw-dom-pill.bad{background:#3a1a1a;color:#f87171}
+.iw-dom-subtabs{display:flex;gap:6px;flex-wrap:wrap;margin:-6px 0 16px}
+.iw-dom-subtabs a{padding:7px 10px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);text-decoration:none;font-size:12px;font-weight:700;background:rgba(255,255,255,.025)}
+.iw-dom-subtabs a.active,.iw-dom-subtabs a:hover{color:#86efac;border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.1)}
+.iw-dom-filters{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:10px;align-items:end;margin:12px 0 14px}
+.iw-dom-filters .form-row{margin:0}.iw-dom-filters button{height:38px}
+.iw-dom-wide{grid-column:1/-1}.iw-dom-bars{display:grid;gap:9px;margin-top:10px}
+.iw-dom-bar{display:grid;grid-template-columns:120px 1fr 70px;gap:10px;align-items:center;font-size:12px}
+.iw-dom-bar-track{height:12px;border-radius:999px;background:#111827;overflow:hidden;border:1px solid var(--border)}
+.iw-dom-bar-fill{height:100%;border-radius:999px;background:#22c55e;min-width:2px}
+.iw-dom-bar-fill.pending{background:#fbbf24}.iw-dom-bar-fill.bad{background:#f87171}.iw-dom-bar-fill.other{background:#60a5fa}
+.iw-dom-log-card{border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.025);padding:12px;margin-bottom:10px}
+.iw-dom-log-top{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px;align-items:start}
+.iw-dom-log-meta{font-size:11px;color:var(--text-muted);line-height:1.4}.iw-dom-log-title{font-weight:800;font-size:13px}
+.iw-dom-log-card details{margin-top:9px}.iw-dom-log-card pre{max-height:260px;overflow:auto;background:#070d18;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;color:var(--text);white-space:pre-wrap}
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
 @media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
 @media(max-width:1000px){.iw-dom-grid{grid-template-columns:1fr}.iw-dom-kpis{grid-template-columns:1fr}}
+@media(max-width:900px){.iw-dom-filters{grid-template-columns:1fr 1fr}.iw-dom-log-top{grid-template-columns:1fr}.iw-dom-bar{grid-template-columns:1fr}}
 </style>
 
 <div class="main-content">
@@ -448,6 +529,73 @@ require_once __DIR__ . '/_header.php';
   </nav>
 
 <?php if ($view === 'dom'): ?>
+  <nav class="iw-dom-subtabs">
+    <a href="inbound_webhooks.php?view=dom&dom_tab=overview" class="<?= $domTab === 'overview' ? 'active' : '' ?>">Visao geral</a>
+    <a href="inbound_webhooks.php?view=dom&dom_tab=settings" class="<?= $domTab === 'settings' ? 'active' : '' ?>">Configuracoes</a>
+    <a href="inbound_webhooks.php?view=dom&dom_tab=logs" class="<?= $domTab === 'logs' ? 'active' : '' ?>">Logs</a>
+  </nav>
+
+  <?php if ($domTab === 'overview'): ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Visao geral DOM</h2><p>Indicadores das vendas e eventos recebidos pela DOM Pagamentos.</p></div>
+        <span class="iw-dom-pill <?= $domEnabled ? 'ok' : 'warn' ?>"><?= $domEnabled ? 'Integracao ativa' : 'Integracao pausada' ?></span>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="domOvStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="domOvEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Status</label><select id="domOvStatus"><option value="">Todos</option><option value="APPROVED">Aprovadas</option><option value="PENDING">Pendentes</option><option value="REFUNDED">Reembolsadas</option><option value="CHARGEBACK">Chargeback</option><option value="CANCELED">Canceladas</option></select></div>
+        <button class="btn btn-primary" type="button" onclick="domCarregarOverview()">Filtrar</button>
+      </div>
+      <div id="domOverview">Carregando...</div>
+    </div>
+  <?php elseif ($domTab === 'settings'): ?>
+    <div class="iw-dom-grid">
+      <div class="iw-dom-card">
+        <h2>Configuracoes DOM</h2>
+        <p>Configure o recebimento de pagamentos, assinatura JWT e URL do webhook.</p>
+        <div class="iw-dom-kpis">
+          <div class="iw-dom-kpi"><small>Status</small><strong><?= $domEnabled ? 'Ativo' : 'Pausado' ?></strong></div>
+          <div class="iw-dom-kpi"><small>Token API</small><strong><?= $domHasToken ? 'OK' : 'Falta' ?></strong></div>
+          <div class="iw-dom-kpi"><small>Assinatura</small><strong><?= $domRequireSignature ? 'Obrigatoria' : 'Opcional' ?></strong></div>
+        </div>
+        <div class="form-row"><label>URL para cadastrar na DOM</label><div class="iw-dom-url"><code id="domWebhookUrl"><?= htmlspecialchars($domWebhookUrl, ENT_QUOTES, 'UTF-8') ?></code><button class="iw-copy-btn" type="button" onclick="iwCopiar(document.getElementById('domWebhookUrl').textContent,this)">Copiar</button></div></div>
+        <form id="domConfigForm" onsubmit="return domSalvar(event)">
+          <div class="form-row"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" name="enabled" <?= $domEnabled ? 'checked' : '' ?> style="width:auto"><span>Integracao DOM ativa</span></label></div>
+          <div class="form-row"><label>Ambiente</label><select name="environment"><option value="production" <?= $domEnvironment === 'production' ? 'selected' : '' ?>>Producao</option><option value="sandbox" <?= $domEnvironment === 'sandbox' ? 'selected' : '' ?>>Sandbox</option></select></div>
+          <div class="form-row"><label>Token da API DOM</label><input type="password" name="api_token" placeholder="<?= $domHasToken ? 'Configurado - deixe vazio para manter' : 'Cole o token usado para validar o JWT' ?>"><div style="font-size:11px;color:var(--text-muted);margin-top:6px">A DOM usa este token para assinar o campo <code>signature</code> do webhook.</div></div>
+          <div class="form-row"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" name="require_signature" <?= $domRequireSignature ? 'checked' : '' ?> style="width:auto"><span>Exigir assinatura valida</span></label></div>
+          <div class="form-row"><label>Observacoes internas</label><textarea name="notes" placeholder="Ex.: conta DOM principal, produtos liberados, contato do suporte..."><?= htmlspecialchars($domNotes, ENT_QUOTES, 'UTF-8') ?></textarea></div>
+          <button class="btn btn-primary" type="submit">Salvar DOM</button><span id="domSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
+        </form>
+      </div>
+      <div class="iw-dom-card">
+        <h2>Eventos recomendados</h2>
+        <p>Na DOM, cadastre a URL acima e marque os eventos de pagamento.</p>
+        <div class="iw-dom-bars">
+          <?php foreach (['CHARGE-APPROVED','CHARGE-PENDING','CHARGE-REFUND','CHARGE-CHARGEBACK','CHARGE-NOT_AUTHORIZED','CHARGE-EXPIRE','CHARGE-REJECTED_ANTIFRAUD'] as $ev): ?>
+            <div class="iw-dom-url"><code><?= htmlspecialchars($ev, ENT_QUOTES, 'UTF-8') ?></code></div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </div>
+  <?php else: ?>
+    <div class="iw-dom-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h2>Logs DOM</h2><p>Eventos recebidos com assinatura, status, processamento e payload completo.</p></div>
+        <button class="btn btn-sm" type="button" onclick="domCarregarLogs()">Atualizar</button>
+      </div>
+      <div class="iw-dom-filters">
+        <div class="form-row"><label>Data inicial</label><input type="date" id="domLogStart" value="<?= date('Y-m-d', strtotime('-30 days')) ?>"></div>
+        <div class="form-row"><label>Data final</label><input type="date" id="domLogEnd" value="<?= date('Y-m-d') ?>"></div>
+        <div class="form-row"><label>Processo</label><select id="domLogProcess"><option value="">Todos</option><option value="success">Sucesso</option><option value="ignored">Ignorado</option><option value="error">Erro</option></select></div>
+        <div class="form-row"><label>Evento</label><input type="text" id="domLogEvent" placeholder="CHARGE-APPROVED"></div>
+        <button class="btn btn-primary" type="button" onclick="domCarregarLogs()">Filtrar</button>
+      </div>
+      <div id="domLogs">Carregando...</div>
+    </div>
+  <?php endif; ?>
+  <?php if (false): ?>
   <div class="iw-dom-grid">
     <div class="iw-dom-card">
       <h2>DOM Pagamentos</h2>
@@ -512,6 +660,7 @@ require_once __DIR__ . '/_header.php';
       <div class="iw-dom-table" id="domLogs">Carregando...</div>
     </div>
   </div>
+  <?php endif; ?>
 <?php else: ?>
 
   <div class="iw-wrap">
@@ -709,6 +858,7 @@ require_once __DIR__ . '/_header.php';
 
 <script>
 const IW_VIEW = <?= json_encode($view) ?>;
+const IW_DOM_TAB = <?= json_encode($domTab) ?>;
 const IW_WEBHOOK_BASE = <?= json_encode($webhookBaseUrl) ?>;
 const IW_FIREPAY_WEBHOOK_BASE = <?= json_encode($firepayWebhookBaseUrl) ?>;
 const IW_FIREPAY_MCQDC_WEBHOOK_URL = <?= json_encode($firepayMcqdcWebhookUrl) ?>;
@@ -718,8 +868,9 @@ const EV_CLS = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-    if (IW_VIEW === 'dom') domCarregarLogs();
-    else iwCarregar();
+    if (IW_VIEW === 'dom' && IW_DOM_TAB === 'overview') domCarregarOverview();
+    else if (IW_VIEW === 'dom' && IW_DOM_TAB === 'logs') domCarregarLogs();
+    else if (IW_VIEW !== 'dom') iwCarregar();
 });
 
 async function domSalvar(ev) {
@@ -735,33 +886,106 @@ async function domSalvar(ev) {
     }
     msg.style.color = '#86efac';
     msg.textContent = 'Salvo';
-    setTimeout(() => location.href = 'inbound_webhooks.php?view=dom', 500);
+    setTimeout(() => location.href = 'inbound_webhooks.php?view=dom&dom_tab=settings', 500);
     return false;
+}
+
+async function domCarregarOverview() {
+    const el = document.getElementById('domOverview');
+    if (!el) return;
+    el.textContent = 'Carregando...';
+    const qs = new URLSearchParams({
+        acao: 'dom_overview',
+        start: document.getElementById('domOvStart')?.value || '',
+        end: document.getElementById('domOvEnd')?.value || '',
+        status: document.getElementById('domOvStatus')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
+    if (!j.ok) { el.innerHTML = '<div class="iw-empty">Erro ao carregar dados DOM.</div>'; return; }
+    const k = j.kpi || {};
+    const byStatus = j.by_status || [];
+    const maxStatus = Math.max(1, ...byStatus.map(x => parseInt(x.qty || 0)));
+    const days = {};
+    (j.daily || []).forEach(r => {
+        if (!days[r.day]) days[r.day] = {day:r.day, qty:0, cents:0};
+        days[r.day].qty += parseInt(r.qty || 0);
+        days[r.day].cents += parseInt(r.cents || 0);
+    });
+    const daily = Object.values(days);
+    const maxDay = Math.max(1, ...daily.map(x => x.qty));
+    el.innerHTML = `
+      <div class="iw-dom-kpis">
+        <div class="iw-dom-kpi"><small>Eventos recebidos</small><strong>${j.events_total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Transacoes</small><strong>${k.total || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Aprovadas</small><strong>${k.approved || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Pendentes</small><strong>${k.pending || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Com aluno cruzado</small><strong>${k.matched || 0}</strong></div>
+        <div class="iw-dom-kpi"><small>Faturamento aprovado</small><strong>${moneyCents(k.revenue_cents || 0)}</strong></div>
+      </div>
+      <div class="iw-dom-grid">
+        <div class="iw-dom-card">
+          <h2>Status das transacoes</h2>
+          <div class="iw-dom-bars">${byStatus.length ? byStatus.map(r => domBar(r.status || 'UNKNOWN', parseInt(r.qty || 0), maxStatus, moneyCents(r.cents || 0))).join('') : '<div class="iw-empty" style="padding:20px 0">Sem transacoes no periodo.</div>'}</div>
+        </div>
+        <div class="iw-dom-card">
+          <h2>Volume por dia</h2>
+          <div class="iw-dom-bars">${daily.length ? daily.map(r => domBar(formatDay(r.day), r.qty, maxDay, moneyCents(r.cents))).join('') : '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>'}</div>
+        </div>
+      </div>
+      <div class="iw-dom-card iw-dom-wide" style="margin-top:16px">
+        <h2>Ultimas transacoes</h2>
+        <div class="iw-dom-table">${domRecentTable(j.recent || [])}</div>
+      </div>`;
 }
 
 async function domCarregarLogs() {
     const el = document.getElementById('domLogs');
     if (!el) return;
     el.textContent = 'Carregando...';
-    const j = await (await fetch('inbound_webhooks.php?acao=dom_logs')).json();
+    const qs = new URLSearchParams({
+        acao: 'dom_logs',
+        start: document.getElementById('domLogStart')?.value || '',
+        end: document.getElementById('domLogEnd')?.value || '',
+        process: document.getElementById('domLogProcess')?.value || '',
+        event: document.getElementById('domLogEvent')?.value || ''
+    });
+    const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
     if (!j.ok || !j.data.length) {
-        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum evento DOM recebido ainda.</div>';
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum evento DOM recebido no filtro.</div>';
         return;
     }
-    el.innerHTML = `<table><thead><tr><th>Recebido</th><th>Evento</th><th>Transacao</th><th>Status</th><th>Assinatura</th><th>Processo</th></tr></thead><tbody>${
-        j.data.map(r => {
-            const processCls = r.process_status === 'success' ? 'ok' : (r.process_status === 'error' ? 'bad' : 'warn');
-            return `<tr>
-                <td>${fmtDate(r.received_at)}</td>
-                <td>${esc(r.event_name || '-')}</td>
-                <td><code>${esc(r.external_transaction_id || '-')}</code></td>
-                <td>${esc(r.provider_status || '-')}</td>
-                <td><span class="iw-dom-pill ${parseInt(r.signature_valid||0)===1?'ok':'warn'}">${parseInt(r.signature_valid||0)===1?'OK':'nao validada'}</span></td>
-                <td><span class="iw-dom-pill ${processCls}">${esc(r.process_status || '-')}</span>${r.process_message?`<div style="font-size:10px;color:#f87171;margin-top:3px">${esc(r.process_message)}</div>`:''}</td>
-            </tr>`;
-        }).join('')
-    }</tbody></table>`;
+    el.innerHTML = j.data.map(r => {
+        const processCls = r.process_status === 'success' ? 'ok' : (r.process_status === 'error' ? 'bad' : 'warn');
+        const payload = prettyJson(r.payload_json || '');
+        return `<div class="iw-dom-log-card">
+            <div class="iw-dom-log-top">
+                <div class="iw-dom-log-meta">${fmtDate(r.received_at)}${r.processed_at?`<br>processado ${fmtDate(r.processed_at)}`:''}</div>
+                <div><div class="iw-dom-log-title">${esc(r.event_name || '-')}</div><div class="iw-dom-log-meta">status: ${esc(r.provider_status || '-')}</div></div>
+                <div><code>${esc(r.external_transaction_id || '-')}</code>${r.process_message?`<div style="font-size:11px;color:#f87171;margin-top:5px">${esc(r.process_message)}</div>`:''}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                    <span class="iw-dom-pill ${parseInt(r.signature_valid||0)===1?'ok':'warn'}">${parseInt(r.signature_valid||0)===1?'assinatura OK':'nao validada'}</span>
+                    <span class="iw-dom-pill ${processCls}">${esc(r.process_status || '-')}</span>
+                </div>
+            </div>
+            <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver payload</summary><pre>${esc(payload)}</pre></details>
+        </div>`;
+    }).join('');
 }
+
+function domBar(label, qty, max, detail) {
+    const cls = String(label).includes('PENDING') ? 'pending' : (String(label).match(/REFUND|CHARGEBACK|CANCELED|error/i) ? 'bad' : (String(label).match(/APPROVED|Aprov/) ? '' : 'other'));
+    const pct = Math.max(2, Math.round((qty / Math.max(1, max)) * 100));
+    return `<div class="iw-dom-bar"><strong>${esc(label)}</strong><div class="iw-dom-bar-track"><div class="iw-dom-bar-fill ${cls}" style="width:${pct}%"></div></div><span>${qty} ${detail ? `<small style="color:var(--text-muted)">(${esc(detail)})</small>` : ''}</span></div>`;
+}
+
+function domRecentTable(rows) {
+    if (!rows.length) return '<div class="iw-empty" style="padding:20px 0">Nenhuma transacao no periodo.</div>';
+    return `<table><thead><tr><th>Data</th><th>Status</th><th>Comprador</th><th>Produto</th><th>Valor</th><th>Aluno</th></tr></thead><tbody>${rows.map(r => `<tr><td>${fmtDate(r.last_received_at)}</td><td><span class="iw-dom-pill ${r.normalized_status==='APPROVED'?'ok':(r.normalized_status==='PENDING'?'warn':'bad')}">${esc(r.normalized_status || '-')}</span></td><td>${esc(r.buyer_name || '-')}<div style="font-size:10px;color:var(--text-muted)">${esc(r.buyer_email || '')}</div></td><td>${esc(r.product_name || '-')}</td><td>${moneyCents(r.gross_amount_cents || 0)}</td><td>${r.matched_user_id ? 'uid ' + r.matched_user_id : '<span style="color:#fbbf24">sem match</span>'}</td></tr>`).join('')}</tbody></table>`;
+}
+
+function moneyCents(v) { return (Number(v || 0) / 100).toLocaleString('pt-BR', {style:'currency', currency:'BRL'}); }
+function formatDay(v) { const p=String(v||'').split('-'); return p.length===3 ? `${p[2]}/${p[1]}` : String(v||''); }
+function prettyJson(raw) { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch(e) { return raw || ''; } }
 
 async function iwCarregar() {
     const j = await (await fetch('inbound_webhooks.php?acao=listar')).json();
