@@ -685,6 +685,7 @@ require_once __DIR__ . '/_header.php';
 .iw-dom-log-top{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px;align-items:start}
 .iw-dom-log-meta{font-size:11px;color:var(--text-muted);line-height:1.4}.iw-dom-log-title{font-weight:800;font-size:13px}
 .iw-dom-log-card details{margin-top:9px}.iw-dom-log-card pre{max-height:260px;overflow:auto;background:#070d18;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;color:var(--text);white-space:pre-wrap}
+.iw-line-chart{width:100%;min-height:280px;overflow:hidden}.iw-line-chart svg{width:100%;height:auto;display:block}.iw-line-chart text{font-size:11px;fill:var(--text-muted)}.iw-line-chart .grid{stroke:rgba(148,163,184,.16);stroke-width:1}.iw-line-chart .line{fill:none;stroke:#60a5fa;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iw-line-chart .area{fill:rgba(96,165,250,.14)}.iw-line-chart .dot{fill:#93c5fd;stroke:#0b1220;stroke-width:2}.iw-line-chart .value{fill:#dbeafe;font-weight:800}
 @media(max-width:700px){.iw-integrations{grid-template-columns:1fr;}}
 @media(max-width:900px){.iw-direct-grid{grid-template-columns:1fr;}}
 @media(max-width:1000px){.iw-dom-grid{grid-template-columns:1fr}.iw-dom-kpis{grid-template-columns:1fr}}
@@ -1424,7 +1425,7 @@ async function genericCarregarOverview() {
         </div>
         <div class="iw-dom-card">
           <h2>Recebimentos por dia</h2>
-          <div class="iw-dom-bars">${daily.length ? daily.map(r => domBar(formatDay(r.day), r.qty, maxDay, '')).join('') : '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>'}</div>
+          ${genericLineChart(daily)}
         </div>
       </div>
       <div class="iw-dom-card iw-dom-wide" style="margin-top:16px">
@@ -1436,6 +1437,31 @@ async function genericCarregarOverview() {
 function genericRecentTable(rows) {
     if (!rows.length) return '<div class="iw-empty" style="padding:20px 0">Nenhum recebimento no periodo.</div>';
     return `<table><thead><tr><th>Data</th><th>Status</th><th>Webhook</th><th>Evento</th><th>Aluno</th><th>Erro</th></tr></thead><tbody>${rows.map(r => `<tr><td>${fmtDate(r.recebido_em)}</td><td><span class="iw-dom-pill ${genericStatusCls(r.status)}">${esc(r.status || '-')}</span></td><td>${esc(r.nome || '-')}</td><td>${esc(r.evento || '-')}</td><td>${r.user_id ? 'uid ' + r.user_id : '<span style="color:#fbbf24">sem match</span>'}</td><td>${esc(r.erro_msg || '-')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+function genericLineChart(rows) {
+    if (!rows.length) return '<div class="iw-empty" style="padding:20px 0">Sem dados diarios.</div>';
+    const width = 760, height = 280, padL = 44, padR = 20, padT = 26, padB = 42;
+    const max = Math.max(1, ...rows.map(r => Number(r.qty || 0)));
+    const min = Math.min(0, ...rows.map(r => Number(r.qty || 0)));
+    const span = Math.max(1, max - min);
+    const plotW = width - padL - padR;
+    const plotH = height - padT - padB;
+    const x = i => padL + (rows.length === 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
+    const y = v => padT + (1 - ((Number(v || 0) - min) / span)) * plotH;
+    const points = rows.map((r, i) => [x(i), y(r.qty), Number(r.qty || 0), formatDay(r.day)]);
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+    const area = `${line} L${points[points.length - 1][0].toFixed(1)},${(height - padB).toFixed(1)} L${points[0][0].toFixed(1)},${(height - padB).toFixed(1)} Z`;
+    const yTicks = [0, .25, .5, .75, 1].map(t => Math.round(max - t * span));
+    const xStep = Math.max(1, Math.ceil(rows.length / 8));
+    return `<div class="iw-line-chart">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Recebimentos por dia">
+        ${yTicks.map(v => `<line class="grid" x1="${padL}" x2="${width - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"></line><text x="8" y="${(y(v)+4).toFixed(1)}">${v}</text>`).join('')}
+        <path class="area" d="${area}"></path>
+        <path class="line" d="${line}"></path>
+        ${points.map((p, i) => `<g><title>${esc(p[3])}: ${p[2]}</title><circle class="dot" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${i % xStep === 0 || i === points.length - 1 ? 4 : 3}"></circle>${(i % xStep === 0 || i === points.length - 1) ? `<text text-anchor="middle" x="${p[0].toFixed(1)}" y="${height - 16}">${esc(p[3])}</text>` : ''}${p[2] === max ? `<text class="value" text-anchor="middle" x="${p[0].toFixed(1)}" y="${Math.max(14, p[1] - 10).toFixed(1)}">${p[2]}</text>` : ''}</g>`).join('')}
+      </svg>
+    </div>`;
 }
 
 async function genericCarregarLogs() {
