@@ -175,6 +175,18 @@ function dom_offer_candidates(array $data): array
     $relations = is_array($data['relations'] ?? null) ? $data['relations'] : [];
     $candidates = [];
 
+    $add = static function ($value) use (&$candidates): void {
+        $value = trim((string)$value);
+        if ($value === '') return;
+        foreach (course_access_offer_codes($value) as $code) $candidates[] = $code;
+    };
+    $addWithPrefix = static function ($value, string $prefix) use (&$candidates, $add): void {
+        $value = trim((string)$value);
+        if ($value === '') return;
+        $add($value);
+        $add($prefix . ':' . $value);
+    };
+
     foreach ([
         $data['cod_external'] ?? '',
         $metadata['offer_code'] ?? '',
@@ -183,13 +195,26 @@ function dom_offer_candidates(array $data): array
         $metadata['produto'] ?? '',
         $relations['id_link_payment'] ?? '',
     ] as $value) {
-        foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+        $add($value);
+    }
+
+    foreach ([$metadata['checkout_id'] ?? '', $metadata['checkout'] ?? '', $relations['id_link_payment'] ?? ''] as $value) {
+        $addWithPrefix($value, 'checkout');
+    }
+    foreach ([$metadata['product_id'] ?? '', $metadata['product'] ?? ''] as $value) {
+        $addWithPrefix($value, 'product');
     }
 
     foreach ($items as $item) {
         if (!is_array($item)) continue;
-        foreach ([$item['reference'] ?? '', $item['externCode'] ?? '', $item['sku'] ?? '', $item['description'] ?? ''] as $value) {
-            foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+        foreach ([$item['reference'] ?? '', $item['externCode'] ?? '', $item['id'] ?? '', $item['description'] ?? ''] as $value) {
+            $add($value);
+        }
+        foreach ([$item['sku'] ?? ''] as $value) {
+            $add($value);
+            if (preg_match('/(?:^|[-_])(\d+)$/', trim((string)$value), $m)) {
+                $addWithPrefix($m[1], 'product');
+            }
         }
     }
 
@@ -198,6 +223,18 @@ function dom_offer_candidates(array $data): array
 
 function dom_try_grant_lifetime(PDO $pdo, array $data, string $transactionCode, string $status, string $email, string $phoneRaw, ?array $matchedUser): array
 {
+    if (isset($matchedUser['id'])) {
+        $existingGrant = course_access_lifetime_entitlement($pdo, (int)$matchedUser['id']);
+        if ($existingGrant && (int)($existingGrant['is_paid'] ?? 0) === 1) {
+            return [
+                'granted' => false,
+                'reason' => 'user_already_has_paid_lifetime',
+                'user_id' => (int)$matchedUser['id'],
+                'transaction_code' => (string)($existingGrant['transaction_code'] ?? ''),
+            ];
+        }
+    }
+
     foreach (dom_offer_candidates($data) as $offerCode) {
         $attempt = course_access_try_grant_lifetime_purchase($pdo, [
             'user_id' => isset($matchedUser['id']) ? (int)$matchedUser['id'] : null,
