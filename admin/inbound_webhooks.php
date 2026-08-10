@@ -250,6 +250,7 @@ if ($acao !== '') {
         $event = trim((string)($_GET['event'] ?? ''));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-30 days'));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+
         $where = "received_at BETWEEN :start_dt AND :end_dt";
         $params = [':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59'];
         if (in_array($process, ['success','ignored','error'], true)) {
@@ -262,7 +263,61 @@ if ($acao !== '') {
         }
         $st = $pdo->prepare("SELECT id,event_name,external_transaction_id,provider_status,signature_valid,process_status,process_message,payload_json,received_at,processed_at FROM dom_webhook_events WHERE {$where} ORDER BY id DESC LIMIT 120");
         $st->execute($params);
-        echo json_encode(['ok'=>true,'data'=>$st->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE); exit;
+        $webhookRows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+        $saleWhere = "ps.provider='dom' AND ps.last_received_at BETWEEN :sale_start_dt AND :sale_end_dt";
+        $saleParams = [':sale_start_dt'=>$start . ' 00:00:00', ':sale_end_dt'=>$end . ' 23:59:59'];
+        if ($event !== '') {
+            $saleWhere .= " AND (ps.transaction_type = :sale_event OR ps.normalized_status = :sale_status OR ps.external_transaction_id LIKE :sale_like OR ps.buyer_email LIKE :sale_like OR ps.buyer_name LIKE :sale_like)";
+            $saleParams[':sale_event'] = $event;
+            $saleParams[':sale_status'] = strtoupper($event);
+            $saleParams[':sale_like'] = '%' . $event . '%';
+        }
+        $saleSt = $pdo->prepare("SELECT
+                ps.id, ps.external_transaction_id, ps.transaction_type, ps.provider_status, ps.normalized_status,
+                ps.gross_amount_cents,
+                COALESCE(ps.net_amount_cents, JSON_UNQUOTE(JSON_EXTRACT(ps.raw_payload_json,'$.liquid_amount')), 0) AS net_amount_cents,
+                COALESCE(ps.fee_amount_cents, 0) AS fee_amount_cents,
+                ps.payment_method, ps.installments, ps.product_name, ps.integration_id, ps.external_checkout_id,
+                ps.buyer_name, ps.buyer_email, ps.buyer_phone, ps.buyer_document, ps.matched_user_id, ps.match_method,
+                ps.first_received_at, ps.last_received_at, ps.raw_payload_json,
+                JSON_UNQUOTE(JSON_EXTRACT(ps.raw_payload_json,'$.metadata')) AS dom_metadata,
+                JSON_UNQUOTE(JSON_EXTRACT(ps.raw_payload_json,'$.items[0].sku')) AS dom_sku,
+                JSON_UNQUOTE(JSON_EXTRACT(ps.raw_payload_json,'$.postbackUrl')) AS dom_postback_url,
+                cla.transaction_code AS lifetime_transaction_code,
+                cla.offer_code AS lifetime_offer_code,
+                cla.source AS lifetime_source,
+                cla.granted_at AS lifetime_granted_at
+            FROM payment_sales ps
+            LEFT JOIN course_lifetime_access cla
+              ON cla.id = (
+                  SELECT cla2.id
+                    FROM course_lifetime_access cla2
+                   WHERE cla2.user_id = ps.matched_user_id
+                     AND cla2.is_paid = 1
+                   ORDER BY cla2.granted_at DESC, cla2.id DESC
+                   LIMIT 1
+              )
+            WHERE {$saleWhere}
+            ORDER BY ps.last_received_at DESC, ps.id DESC
+            LIMIT 120");
+        $saleSt->execute($saleParams);
+        $sales = $saleSt->fetchAll(PDO::FETCH_ASSOC);
+
+        $syncSt = $pdo->prepare("SELECT id,sync_date,trigger_source,status,total_listed,total_synced,total_errors,message,started_at,finished_at
+            FROM dom_api_sync_runs
+            WHERE finished_at BETWEEN :start_dt AND :end_dt
+            ORDER BY id DESC
+            LIMIT 40");
+        $syncSt->execute([':start_dt'=>$start . ' 00:00:00', ':end_dt'=>$end . ' 23:59:59']);
+
+        echo json_encode([
+            'ok'=>true,
+            'data'=>$webhookRows,
+            'webhooks'=>$webhookRows,
+            'sales'=>$sales,
+            'sync_runs'=>$syncSt->fetchAll(PDO::FETCH_ASSOC),
+        ], JSON_UNESCAPED_UNICODE); exit;
     }
 
     if ($acao === 'pagarme_overview') {
@@ -763,7 +818,7 @@ require_once __DIR__ . '/_header.php';
   <?php else: ?>
     <div class="iw-dom-card">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
-        <div><h2>Logs DOM</h2><p>Eventos recebidos com assinatura, status, processamento e payload completo.</p></div>
+        <div><h2>Logs DOM</h2><p>Transacoes sincronizadas pela API, execucoes de rotina, webhooks recebidos e payload completo.</p></div>
         <button class="btn btn-sm" type="button" onclick="domCarregarLogs()">Atualizar</button>
       </div>
       <div class="iw-dom-filters">
@@ -1250,11 +1305,81 @@ async function domCarregarLogs() {
         event: document.getElementById('domLogEvent')?.value || ''
     });
     const j = await (await fetch('inbound_webhooks.php?' + qs.toString())).json();
-    if (!j.ok || !j.data.length) {
-        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum evento DOM recebido no filtro.</div>';
+    if (!j.ok) {
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Erro ao carregar logs DOM.</div>';
         return;
     }
-    el.innerHTML = j.data.map(r => {
+    const sales = j.sales || [];
+    const syncRuns = j.sync_runs || [];
+    const webhooks = j.webhooks || j.data || [];
+    if (!sales.length && !syncRuns.length && !webhooks.length) {
+        el.innerHTML = '<div class="iw-empty" style="padding:24px 0">Nenhum log DOM encontrado no filtro.</div>';
+        return;
+    }
+    el.innerHTML = `
+      <div class="iw-dom-card iw-dom-wide" style="margin:14px 0">
+        <h2>Transacoes sincronizadas</h2>
+        ${sales.length ? sales.map(domTransactionLogCard).join('') : '<div class="iw-empty" style="padding:16px 0">Nenhuma transacao DOM no periodo.</div>'}
+      </div>
+      <div class="iw-dom-card iw-dom-wide" style="margin:14px 0">
+        <h2>Execucoes da API</h2>
+        ${syncRuns.length ? syncRuns.map(domSyncRunCard).join('') : '<div class="iw-empty" style="padding:16px 0">Nenhuma rotina de sincronizacao no periodo.</div>'}
+      </div>
+      <div class="iw-dom-card iw-dom-wide" style="margin:14px 0">
+        <h2>Webhooks brutos</h2>
+        ${webhooks.length ? webhooks.map(domWebhookLogCard).join('') : '<div class="iw-empty" style="padding:16px 0">Nenhum webhook bruto gravado no periodo.</div>'}
+      </div>`;
+}
+
+function domTransactionLogCard(r) {
+    const statusCls = r.normalized_status === 'APPROVED' ? 'ok' : (r.normalized_status === 'PENDING' ? 'warn' : 'bad');
+    const payload = prettyJson(r.raw_payload_json || '');
+    const metadata = prettyJson(r.dom_metadata || '');
+    const net = r.net_amount_cents || 0;
+    const fee = r.fee_amount_cents || 0;
+    const lifetime = r.lifetime_transaction_code
+        ? `<span class="iw-dom-pill ok">vitalicio liberado</span><div class="iw-dom-log-meta">${esc(r.lifetime_transaction_code)}${r.lifetime_offer_code ? ' / oferta ' + esc(r.lifetime_offer_code) : ''}${r.lifetime_granted_at ? '<br>' + fmtDate(r.lifetime_granted_at) : ''}</div>`
+        : (r.normalized_status === 'APPROVED' ? '<span class="iw-dom-pill warn">sem vitalicio</span>' : '<span class="iw-dom-pill warn">aguardando pagamento</span>');
+    return `<div class="iw-dom-log-card">
+        <div class="iw-dom-log-top">
+            <div class="iw-dom-log-meta">${fmtDate(r.last_received_at)}<br>primeiro ${fmtDate(r.first_received_at)}</div>
+            <div>
+                <div class="iw-dom-log-title">${esc(r.buyer_name || '-')}</div>
+                <div class="iw-dom-log-meta">${esc(r.buyer_email || '')}${r.buyer_phone ? '<br>' + esc(r.buyer_phone) : ''}${r.buyer_document ? '<br>doc ' + esc(r.buyer_document) : ''}</div>
+            </div>
+            <div>
+                <code>${esc(r.external_transaction_id || '-')}</code>
+                <div class="iw-dom-log-meta">${esc(r.product_name || '-')}<br>sku ${esc(r.dom_sku || '-')} / checkout ${esc(r.integration_id || r.external_checkout_id || '-')}</div>
+            </div>
+            <div style="text-align:right">
+                <span class="iw-dom-pill ${statusCls}">${esc(r.normalized_status || '-')}</span>
+                <div class="iw-dom-log-meta" style="margin-top:6px">${moneyCents(r.gross_amount_cents || 0)} bruto<br>${moneyCents(net)} liquido<br>${moneyCents(fee)} taxa</div>
+            </div>
+        </div>
+        <div class="iw-dom-log-top" style="grid-template-columns:1fr 1fr 1fr;align-items:start">
+            <div><strong>Aluno</strong><div class="iw-dom-log-meta">${r.matched_user_id ? 'uid ' + esc(r.matched_user_id) : 'sem match'} / ${esc(r.match_method || 'none')}</div></div>
+            <div><strong>Acesso</strong><div>${lifetime}</div></div>
+            <div><strong>Postback original</strong><div class="iw-dom-log-meta">${esc(r.dom_postback_url || '-')}</div></div>
+        </div>
+        <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver metadata</summary><pre>${esc(metadata)}</pre></details>
+        <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver payload completo</summary><pre>${esc(payload)}</pre></details>
+    </div>`;
+}
+
+function domSyncRunCard(r) {
+    const cls = r.status === 'success' ? 'ok' : 'bad';
+    return `<div class="iw-dom-log-card">
+        <div class="iw-dom-log-top">
+            <div class="iw-dom-log-meta">${fmtDate(r.finished_at)}<br>inicio ${fmtDate(r.started_at)}</div>
+            <div><div class="iw-dom-log-title">${esc(r.trigger_source || '-')}</div><div class="iw-dom-log-meta">data sincronizada ${esc(r.sync_date || '-')}</div></div>
+            <div><span class="iw-dom-pill ${cls}">${esc(r.status || '-')}</span></div>
+            <div class="iw-dom-log-meta" style="text-align:right">listadas ${esc(r.total_listed || 0)}<br>sincronizadas ${esc(r.total_synced || 0)}<br>erros ${esc(r.total_errors || 0)}</div>
+        </div>
+        ${r.message ? `<div class="iw-dom-log-meta" style="margin-top:8px">${esc(r.message)}</div>` : ''}
+    </div>`;
+}
+
+function domWebhookLogCard(r) {
         const processCls = r.process_status === 'success' ? 'ok' : (r.process_status === 'error' ? 'bad' : 'warn');
         const payload = prettyJson(r.payload_json || '');
         return `<div class="iw-dom-log-card">
@@ -1269,7 +1394,6 @@ async function domCarregarLogs() {
             </div>
             <details><summary style="cursor:pointer;color:#93c5fd;font-size:12px">Ver payload</summary><pre>${esc(payload)}</pre></details>
         </div>`;
-    }).join('');
 }
 
 async function pagarmeSalvar(ev) {
