@@ -47,6 +47,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 30,
             'timeout' => 900,
         ],
+        'dom_pagamentos' => [
+            'label' => 'DOM Pagamentos',
+            'description' => 'Sincroniza vendas da DOM Pagamentos pela API para cobrir webhooks perdidos ou assinaturas divergentes.',
+            'script' => __DIR__ . '/../cron/processar_dom_pagamentos.php',
+            'interval' => 720,
+            'timeout' => 300,
+        ],
         'fluxos_push' => [
             'label' => 'Fluxos de notificações push',
             'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',

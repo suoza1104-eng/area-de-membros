@@ -6,10 +6,20 @@ require_once __DIR__ . '/course_access.php';
 
 function dom_ensure_schema(PDO $pdo): void
 {
+    static $done = false;
+    if ($done) return;
+
     metrics_ensure_schema($pdo);
     firepay_ensure_schema($pdo);
     firepay_ensure_hotmart_compat_schema($pdo);
     course_access_ensure_schema($pdo);
+
+    foreach ([
+        "ALTER TABLE payment_sales ADD COLUMN net_amount_cents BIGINT NOT NULL DEFAULT 0 AFTER gross_amount_cents",
+        "ALTER TABLE payment_sales ADD COLUMN fee_amount_cents BIGINT NOT NULL DEFAULT 0 AFTER net_amount_cents",
+    ] as $migration) {
+        try { $pdo->exec($migration); } catch (Throwable $e) {}
+    }
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS dom_webhook_events (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -29,12 +39,54 @@ function dom_ensure_schema(PDO $pdo): void
         KEY idx_dom_status (process_status),
         KEY idx_dom_received (received_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dom_api_sync_runs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        sync_date DATE NOT NULL,
+        trigger_source VARCHAR(60) NOT NULL,
+        status ENUM('success','error') NOT NULL,
+        total_listed INT UNSIGNED NOT NULL DEFAULT 0,
+        total_synced INT UNSIGNED NOT NULL DEFAULT 0,
+        total_errors INT UNSIGNED NOT NULL DEFAULT 0,
+        message TEXT NULL,
+        started_at DATETIME NOT NULL,
+        finished_at DATETIME NOT NULL,
+        PRIMARY KEY (id),
+        KEY idx_dom_sync_date (sync_date),
+        KEY idx_dom_sync_finished (finished_at),
+        KEY idx_dom_sync_source (trigger_source)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $done = true;
 }
 
 function dom_scalar(array $data, string $key): string
 {
     $value = $data[$key] ?? '';
     return is_scalar($value) ? trim((string)$value) : '';
+}
+
+function dom_int_cents($value): int
+{
+    if (is_int($value)) return $value;
+    if (is_float($value)) return (int)round($value * 100);
+    $raw = trim((string)$value);
+    if ($raw === '') return 0;
+    if (preg_match('/^-?\d+$/', $raw)) return (int)$raw;
+    $normalized = str_replace(['.', ','], ['', '.'], $raw);
+    if (substr_count($raw, '.') === 1 && strpos($raw, ',') === false) $normalized = $raw;
+    return (int)round(((float)$normalized) * 100);
+}
+
+function dom_api_normalized_status(string $status): string
+{
+    $value = strtolower(trim($status));
+    if ($value === 'paid') return 'APPROVED';
+    if (in_array($value, ['pending', 'capture', 'revision_paid'], true)) return 'PENDING';
+    if (in_array($value, ['refunded', 'pending_refund'], true)) return 'REFUNDED';
+    if (in_array($value, ['chargeback', 'in_mediation', 'dispute_pending'], true)) return 'CHARGEBACK';
+    if (in_array($value, ['failed', 'not_authorized', 'expired', 'cancelled_capture'], true)) return 'CANCELED';
+    return 'UNKNOWN';
 }
 
 function dom_normalized_status(string $event, string $status): string
@@ -136,7 +188,7 @@ function dom_offer_candidates(array $data): array
 
     foreach ($items as $item) {
         if (!is_array($item)) continue;
-        foreach ([$item['reference'] ?? '', $item['description'] ?? ''] as $value) {
+        foreach ([$item['reference'] ?? '', $item['externCode'] ?? '', $item['sku'] ?? '', $item['description'] ?? ''] as $value) {
             foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
         }
     }
@@ -161,6 +213,283 @@ function dom_try_grant_lifetime(PDO $pdo, array $data, string $transactionCode, 
         if (!empty($attempt['granted'])) return $attempt;
     }
     return ['granted' => false, 'reason' => 'no_dom_offer_candidate_matched', 'candidates' => dom_offer_candidates($data)];
+}
+
+function dom_api_request(string $path, array $query = []): array
+{
+    $apiToken = trim((string)get_setting('dom_pagamentos_api_token', ''));
+    if ($apiToken === '') throw new RuntimeException('DOM API: token nao configurado.');
+
+    $environment = (string)get_setting('dom_pagamentos_environment', 'production');
+    $environment = $environment === 'sandbox' ? 'sandbox' : 'production';
+    $url = 'https://apiv3.dompagamentos.com.br/checkout/' . $environment . $path;
+    if ($query) $url .= '?' . http_build_query($query);
+
+    $headers = [
+        'Accept: application/json',
+        'Authorization: Bearer ' . $apiToken,
+        'User-Agent: AreaMembros-DOM-Sync/1.0',
+    ];
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_CONNECTTIMEOUT => 10,
+        ]);
+        $body = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        if ($body === false) throw new RuntimeException('DOM API: falha HTTP ' . $error);
+    } else {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers),
+                'timeout' => 30,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $body = file_get_contents($url, false, $context);
+        $status = 0;
+        foreach (($http_response_header ?? []) as $line) {
+            if (preg_match('/^HTTP\/\S+\s+(\d+)/', $line, $m)) {
+                $status = (int)$m[1];
+                break;
+            }
+        }
+        if ($body === false) throw new RuntimeException('DOM API: falha HTTP via stream.');
+    }
+
+    $decoded = json_decode((string)$body, true);
+    if ($status < 200 || $status >= 300) {
+        throw new RuntimeException('DOM API: HTTP ' . $status . ' ' . substr((string)$body, 0, 500));
+    }
+    if (!is_array($decoded)) throw new RuntimeException('DOM API: resposta JSON invalida.');
+    return $decoded;
+}
+
+function dom_api_detail(string $transactionId): array
+{
+    $transactionId = trim($transactionId);
+    if ($transactionId === '') throw new InvalidArgumentException('DOM API: id ausente.');
+    return dom_api_request('/transactions/' . rawurlencode($transactionId));
+}
+
+function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = 'api_sync'): array
+{
+    dom_ensure_schema($pdo);
+
+    $transactionId = dom_scalar($detail, 'id');
+    if ($transactionId === '') throw new InvalidArgumentException('DOM API: transacao sem id.');
+
+    $providerStatus = dom_scalar($detail, 'status');
+    $normalizedStatus = dom_api_normalized_status($providerStatus);
+    $customer = is_array($detail['customer'] ?? null) ? $detail['customer'] : [];
+    $items = is_array($detail['items'] ?? null) ? $detail['items'] : [];
+    $firstItem = is_array($items[0] ?? null) ? $items[0] : [];
+    $query = dom_parse_jsonish($detail['query_param'] ?? '');
+    $metadata = dom_parse_jsonish($detail['metadata'] ?? '');
+    $relations = is_array($detail['relations'] ?? null) ? $detail['relations'] : [];
+    $email = normalize_email_value($customer['email'] ?? $detail['customer_email'] ?? '');
+    $phoneRaw = dom_scalar($customer, 'mobile_phone') ?: dom_scalar($detail, 'customer_phone');
+    $phoneNorm = normalize_phone_value($phoneRaw);
+    $matched = dom_find_matching_user($pdo, $email, $phoneNorm);
+    $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
+    $transactionCode = 'dom:' . $transactionId;
+    $receivedAt = dom_transaction_datetime($detail);
+    $grossCents = dom_int_cents($detail['amount'] ?? 0);
+    $liquidCents = dom_int_cents($detail['liquid_amount'] ?? 0);
+    $feeDetails = is_array($detail['fee_details'] ?? null) ? $detail['fee_details'] : [];
+    $feeCents = isset($feeDetails['amount']) ? dom_int_cents($feeDetails['amount']) : max(0, $grossCents - $liquidCents);
+    $productCents = dom_int_cents($firstItem['price'] ?? $grossCents);
+    $productName = dom_scalar($firstItem, 'description') ?: dom_scalar($detail, 'product_first') ?: (string)($metadata['product_name'] ?? $metadata['produto'] ?? '');
+    $productRef = dom_scalar($firstItem, 'reference') ?: dom_scalar($firstItem, 'externCode') ?: dom_scalar($firstItem, 'sku');
+    $rawPayload = json_encode($detail, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
+    $fingerprint = hash('sha256', $triggerSource . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
+
+    $pdo->beginTransaction();
+    try {
+        $sale = $pdo->prepare("INSERT INTO payment_sales
+            (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
+             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             first_received_at,last_received_at)
+            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
+             :installments,:payment_method,'dom',NULL,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
+             :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,:checkout_url,NULL,:payload,:received_at,:received_at)
+            ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
+             provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
+             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),payment_method=VALUES(payment_method),
+             external_product_id=VALUES(external_product_id),product_name=VALUES(product_name),integration_id=VALUES(integration_id),
+             origin_description=VALUES(origin_description),buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),
+             buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),matched_user_id=VALUES(matched_user_id),
+             match_method=VALUES(match_method),checkout_url=VALUES(checkout_url),raw_payload_json=VALUES(raw_payload_json),
+             last_received_at=VALUES(last_received_at)");
+        $sale->execute([
+            ':transaction' => $transactionCode,
+            ':checkout' => (string)($relations['id_link_payment'] ?? '') ?: null,
+            ':type' => dom_scalar($detail, 'type') ?: 'api_sync',
+            ':provider_status' => $providerStatus,
+            ':normalized_status' => $normalizedStatus,
+            ':currency' => dom_scalar($detail, 'currency') ?: 'BRL',
+            ':gross' => $grossCents,
+            ':net' => $liquidCents,
+            ':fee' => $feeCents,
+            ':product_amount' => $productCents,
+            ':installments' => (int)(dom_scalar($detail, 'installments') ?: 0) ?: null,
+            ':payment_method' => dom_scalar($detail, 'payment_method') ?: null,
+            ':product_id' => $productRef ?: null,
+            ':product_name' => $productName ?: null,
+            ':integration_id' => (string)($metadata['offer_code'] ?? $metadata['oferta'] ?? $metadata['checkout_id'] ?? '') ?: null,
+            ':origin' => (string)($query['utm_source'] ?? $metadata['platform_integration'] ?? 'dom_api') ?: null,
+            ':buyer_name' => dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name') ?: null,
+            ':buyer_email' => $email ?: null,
+            ':buyer_phone' => $phoneRaw ?: null,
+            ':buyer_document' => dom_scalar($customer, 'document') ?: dom_scalar($detail, 'customer_document') ?: null,
+            ':user_id' => $matchedUser['id'] ?? null,
+            ':match_method' => (string)($matched['method'] ?? 'none'),
+            ':checkout_url' => dom_scalar($detail, 'postbackUrl') ?: null,
+            ':payload' => $rawPayload,
+            ':received_at' => $receivedAt,
+        ]);
+
+        $lifetimeAttempt = ['granted' => false, 'reason' => 'payment_not_approved'];
+        if (in_array($normalizedStatus, ['APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED'], true)) {
+            $legacySale = hotmart_build_sale_data_from_array([
+                'webhook_event' => 'DOM_API_' . $normalizedStatus,
+                'webhook_event_id' => $fingerprint,
+                'transaction_code' => $transactionCode,
+                'status' => $normalizedStatus,
+                'transaction_date' => $receivedAt,
+                'payment_confirmed_at' => $normalizedStatus === 'APPROVED' ? $receivedAt : null,
+                'refund_or_chargeback_at' => in_array($normalizedStatus, ['REFUNDED', 'CHARGEBACK'], true) ? $receivedAt : null,
+                'product_code' => $productRef ?: null,
+                'product_name' => $productName,
+                'price_code' => (string)($relations['id_link_payment'] ?? ''),
+                'price_name' => (string)($metadata['offer_code'] ?? $metadata['oferta'] ?? $metadata['checkout_id'] ?? ''),
+                'currency' => dom_scalar($detail, 'currency') ?: 'BRL',
+                'gross_revenue' => $grossCents / 100,
+                'net_revenue' => $liquidCents > 0 ? $liquidCents / 100 : $grossCents / 100,
+                'producer_net' => $liquidCents > 0 ? $liquidCents / 100 : $grossCents / 100,
+                'refunded_value' => $normalizedStatus === 'REFUNDED' ? dom_int_cents((is_array($detail['refunds'] ?? null) ? ($detail['refunds']['total_refunds'] ?? 0) : 0)) / 100 : 0,
+                'chargeback_value' => $normalizedStatus === 'CHARGEBACK' ? $grossCents / 100 : 0,
+                'buyer_name' => dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name'),
+                'buyer_email' => $email,
+                'buyer_phone_raw' => $phoneRaw,
+                'buyer_phone_norm' => $phoneNorm,
+                'raw_payload_json' => $rawPayload,
+            ], $matched);
+            foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $utm) {
+                if (isset($query[$utm])) $legacySale[$utm] = (string)$query[$utm];
+            }
+            hotmart_upsert_sale_live($pdo, $legacySale);
+            hotmart_upsert_sale_legacy($pdo, $legacySale);
+            $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,
+                sale_origin=:origin,sales_channel='dom' WHERE transaction_code=:transaction")
+                ->execute([
+                    ':payment' => dom_scalar($detail, 'payment_method') ?: null,
+                    ':installments' => (int)(dom_scalar($detail, 'installments') ?: 0) ?: null,
+                    ':origin' => (string)($query['utm_source'] ?? $metadata['platform_integration'] ?? 'dom_api') ?: null,
+                    ':transaction' => $transactionCode,
+                ]);
+
+            if ($normalizedStatus === 'APPROVED') {
+                $lifetimeAttempt = dom_try_grant_lifetime($pdo, $detail, $transactionCode, 'paid', $email, $phoneRaw, $matchedUser);
+            }
+        }
+
+        if ($pdo->inTransaction()) $pdo->commit();
+        return [
+            'transaction_id' => $transactionId,
+            'transaction_code' => $transactionCode,
+            'normalized_status' => $normalizedStatus,
+            'gross_amount_cents' => $grossCents,
+            'net_amount_cents' => $liquidCents,
+            'fee_amount_cents' => $feeCents,
+            'matched_user_id' => (int)($matchedUser['id'] ?? 0),
+            'lifetime_granted' => !empty($lifetimeAttempt['granted']),
+        ];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function dom_sync_transactions_for_date(PDO $pdo, string $date, string $triggerSource = 'scheduled'): array
+{
+    dom_ensure_schema($pdo);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) $date = date('Y-m-d');
+    $started = date('Y-m-d H:i:s');
+    $listed = 0;
+    $synced = 0;
+    $errors = [];
+    $page = 1;
+
+    try {
+        do {
+            $response = dom_api_request('/transactions', [
+                'begin_date' => $date,
+                'end_date' => $date,
+                'type_date' => 'updated',
+                'page' => (string)$page,
+            ]);
+            $items = is_array($response['data'] ?? null) ? $response['data'] : (is_array($response['items'] ?? null) ? $response['items'] : []);
+            $listed += count($items);
+            foreach ($items as $item) {
+                if (!is_array($item)) continue;
+                $id = trim((string)($item['id'] ?? ''));
+                if ($id === '') continue;
+                try {
+                    dom_sync_transaction($pdo, dom_api_detail($id), $triggerSource);
+                    $synced++;
+                } catch (Throwable $e) {
+                    $errors[] = $id . ': ' . $e->getMessage();
+                }
+            }
+            $totalPages = max(1, (int)($response['total_pages'] ?? 1));
+            $page++;
+        } while ($page <= $totalPages && $page <= 50);
+
+        $status = $errors ? 'error' : 'success';
+        $message = $errors ? implode("\n", array_slice($errors, 0, 20)) : 'Sincronizacao DOM concluida.';
+        $pdo->prepare("INSERT INTO dom_api_sync_runs
+            (sync_date,trigger_source,status,total_listed,total_synced,total_errors,message,started_at,finished_at)
+            VALUES (:sync_date,:trigger_source,:status,:listed,:synced,:errors,:message,:started,:finished)")
+            ->execute([
+                ':sync_date' => $date,
+                ':trigger_source' => $triggerSource,
+                ':status' => $status,
+                ':listed' => $listed,
+                ':synced' => $synced,
+                ':errors' => count($errors),
+                ':message' => $message,
+                ':started' => $started,
+                ':finished' => date('Y-m-d H:i:s'),
+            ]);
+
+        return ['ok' => !$errors, 'date' => $date, 'listed' => $listed, 'synced' => $synced, 'errors' => $errors];
+    } catch (Throwable $e) {
+        $pdo->prepare("INSERT INTO dom_api_sync_runs
+            (sync_date,trigger_source,status,total_listed,total_synced,total_errors,message,started_at,finished_at)
+            VALUES (:sync_date,:trigger_source,'error',:listed,:synced,:errors,:message,:started,:finished)")
+            ->execute([
+                ':sync_date' => $date,
+                ':trigger_source' => $triggerSource,
+                ':listed' => $listed,
+                ':synced' => $synced,
+                ':errors' => count($errors) + 1,
+                ':message' => $e->getMessage(),
+                ':started' => $started,
+                ':finished' => date('Y-m-d H:i:s'),
+            ]);
+        throw $e;
+    }
 }
 
 function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): array

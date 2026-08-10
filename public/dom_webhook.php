@@ -43,6 +43,37 @@ try {
     http_response_code(422);
     echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
+    if (strpos($e->getMessage(), 'DOM: assinatura invalida') !== false) {
+        $syncDate = date('Y-m-d');
+        $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+        foreach (['updated_at', 'created_at'] as $field) {
+            if (!empty($data[$field])) {
+                try {
+                    $syncDate = (new DateTimeImmutable((string)$data[$field]))->format('Y-m-d');
+                    break;
+                } catch (Throwable $ignored) {}
+            }
+        }
+
+        try {
+            $sync = dom_sync_transactions_for_date($pdo, $syncDate, 'webhook_signature_failed');
+            app_log('Webhook DOM acionou sincronizacao por API', ['date' => $syncDate, 'sync' => $sync]);
+            http_response_code(200);
+            echo json_encode([
+                'ok' => true,
+                'processed' => false,
+                'sync_triggered' => true,
+                'sync' => $sync,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        } catch (Throwable $syncError) {
+            app_log('Falha na sincronizacao DOM acionada por webhook', [
+                'date' => $syncDate,
+                'signature_error' => $e->getMessage(),
+                'sync_error' => $syncError->getMessage(),
+            ]);
+        }
+    }
     app_log('Falha no webhook DOM Pagamentos', ['error' => $e->getMessage()]);
     http_response_code(500);
     echo json_encode(['ok' => false, 'message' => 'Falha ao processar webhook DOM Pagamentos'], JSON_UNESCAPED_UNICODE);
