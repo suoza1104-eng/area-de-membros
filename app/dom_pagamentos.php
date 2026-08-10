@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/firepay.php';
 require_once __DIR__ . '/course_access.php';
+require_once __DIR__ . '/payment_events.php';
 
 function dom_ensure_schema(PDO $pdo): void
 {
@@ -442,6 +443,43 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
         }
 
         if ($pdo->inTransaction()) $pdo->commit();
+        $paymentEvent = payment_event_register($pdo, [
+            'provider'=>'dom',
+            'normalized_status'=>$normalizedStatus,
+            'transaction_code'=>$transactionCode,
+            'provider_transaction_id'=>$transactionId,
+            'provider_status'=>$providerStatus,
+            'payment_method'=>dom_scalar($detail, 'payment_method'),
+            'currency'=>dom_scalar($detail, 'currency') ?: 'BRL',
+            'gross_amount_cents'=>$grossCents,
+            'net_amount_cents'=>$liquidCents,
+            'fee_amount_cents'=>$feeCents,
+            'installments'=>(int)(dom_scalar($detail, 'installments') ?: 0) ?: null,
+            'product_name'=>$productName,
+            'product_code'=>$productRef,
+            'checkout_id'=>(string)($relations['id_link_payment'] ?? ''),
+            'checkout_url'=>dom_scalar($detail, 'postbackUrl') ?: payment_event_first_value($detail, ['checkout_url','payment_url','url']),
+            'pix_qrcode'=>payment_event_first_value($detail, ['qr_code','pix_qr_code','pix_code','qrcode','copy_paste']),
+            'pix_qrcode_url'=>payment_event_first_value($detail, ['qr_code_url','pix_qr_code_url','pix_url','qrcode_url']),
+            'pix_expires_at'=>payment_event_first_value($detail, ['expires_at','expiration_date','pix_expires_at']),
+            'boleto_url'=>payment_event_first_value($detail, ['boleto_url','pdf','url']),
+            'boleto_line'=>payment_event_first_value($detail, ['line','digitable_line','barcode']),
+            'buyer_name'=>dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name'),
+            'buyer_email'=>$email,
+            'buyer_phone'=>$phoneRaw,
+            'buyer_document'=>dom_scalar($customer, 'document') ?: dom_scalar($detail, 'customer_document'),
+            'user_id'=>(int)($matchedUser['id'] ?? 0),
+            'raw_payload'=>$detail,
+            'metadata'=>[
+                'source'=>'dom_api_sync',
+                'trigger_source'=>$triggerSource,
+                'match_method'=>(string)($matched['method'] ?? 'none'),
+                'query_param'=>$query,
+                'metadata'=>$metadata,
+                'lifetime_attempt'=>$lifetimeAttempt,
+            ],
+            'occurred_at'=>$receivedAt,
+        ]);
         return [
             'transaction_id' => $transactionId,
             'transaction_code' => $transactionCode,
@@ -451,6 +489,7 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
             'fee_amount_cents' => $feeCents,
             'matched_user_id' => (int)($matchedUser['id'] ?? 0),
             'lifetime_granted' => !empty($lifetimeAttempt['granted']),
+            'payment_event' => $paymentEvent,
         ];
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

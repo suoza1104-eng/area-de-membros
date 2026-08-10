@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/metrics.php';
 require_once __DIR__ . '/course_access.php';
+require_once __DIR__ . '/payment_events.php';
 
 function firepay_ensure_schema(PDO $pdo): void
 {
@@ -273,9 +274,46 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
         }
 
         if ($pdo->inTransaction()) $pdo->commit();
+        $paymentEvent = payment_event_register($pdo, [
+            'provider'=>'firepay',
+            'normalized_status'=>$normalizedStatus,
+            'transaction_code'=>'firepay:' . $transactionId,
+            'provider_transaction_id'=>$transactionId,
+            'provider_status'=>$providerStatus,
+            'payment_method'=>firepay_scalar($payload, 'payment_method') ?: null,
+            'currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL',
+            'gross_amount_cents'=>(int)($payload['price'] ?? 0),
+            'net_amount_cents'=>(int)($payload['price'] ?? 0),
+            'fee_amount_cents'=>0,
+            'installments'=>(int)($payload['installments'] ?? 0) ?: null,
+            'product_name'=>firepay_scalar($product, 'name'),
+            'product_code'=>firepay_scalar($product, 'id'),
+            'checkout_id'=>firepay_scalar($payload, 'checkout_id'),
+            'checkout_url'=>firepay_scalar($payload, 'link'),
+            'pix_qrcode'=>payment_event_first_value($payload, ['qr_code','pix_qr_code','pix_code','qrcode','copy_paste']),
+            'pix_qrcode_url'=>payment_event_first_value($payload, ['qr_code_url','pix_qr_code_url','pix_url','qrcode_url']),
+            'pix_expires_at'=>payment_event_first_value($payload, ['expires_at','expiration_date','pix_expires_at']),
+            'boleto_url'=>payment_event_first_value($payload, ['boleto_url','pdf','url']),
+            'boleto_line'=>payment_event_first_value($payload, ['line','digitable_line','barcode']),
+            'buyer_name'=>firepay_scalar($client, 'name'),
+            'buyer_email'=>$email,
+            'buyer_phone'=>$phoneRaw,
+            'buyer_document'=>firepay_scalar($client, 'document'),
+            'user_id'=>(int)($matchedUser['id'] ?? 0),
+            'raw_payload'=>$payload,
+            'metadata'=>[
+                'source'=>'firepay_webhook',
+                'inbound_webhook_id'=>$inboundWebhookId,
+                'match_method'=>(string)($matched['method'] ?? 'none'),
+                'origin'=>firepay_scalar($origin, 'slug') ?: firepay_scalar($origin, 'description'),
+                'lifetime_attempt'=>$lifetimeAttempt,
+            ],
+            'occurred_at'=>$receivedAt,
+        ]);
         return ['transaction_id'=>$transactionId, 'normalized_status'=>$normalizedStatus,
             'matched_user_id'=>(int)($matchedUser['id'] ?? 0), 'match_method'=>(string)($matched['method'] ?? 'none'),
-            'lifetime_granted'=>!empty($lifetimeAttempt['granted']), 'lifetime_attempt'=>$lifetimeAttempt];
+            'lifetime_granted'=>!empty($lifetimeAttempt['granted']), 'lifetime_attempt'=>$lifetimeAttempt,
+            'payment_event'=>$paymentEvent];
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;

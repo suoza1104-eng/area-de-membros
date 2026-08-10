@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/firepay.php';
 require_once __DIR__ . '/course_access.php';
+require_once __DIR__ . '/payment_events.php';
 
 function pagarme_ensure_schema(PDO $pdo): void
 {
@@ -281,6 +282,42 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
         }
 
         if ($pdo->inTransaction()) $pdo->commit();
+        $paymentEvent = payment_event_register($pdo, [
+            'provider'=>'pagarme',
+            'normalized_status'=>$normalizedStatus,
+            'transaction_code'=>$transactionCode,
+            'provider_transaction_id'=>$transactionId,
+            'provider_status'=>$providerStatus,
+            'payment_method'=>pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type'),
+            'currency'=>pagarme_scalar($data, 'currency') ?: pagarme_scalar($charge, 'currency') ?: 'BRL',
+            'gross_amount_cents'=>$amountCents,
+            'net_amount_cents'=>$amountCents,
+            'fee_amount_cents'=>0,
+            'installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
+            'product_name'=>$productName,
+            'product_code'=>pagarme_scalar($firstItem, 'id') ?: pagarme_scalar($firstItem, 'code'),
+            'checkout_id'=>pagarme_scalar($data, 'code'),
+            'checkout_url'=>payment_event_first_value($data, ['checkout_url','payment_url','url']),
+            'pix_qrcode'=>payment_event_first_value($lastTransaction, ['qr_code','pix_qr_code','pix_code','qrcode','copy_paste']),
+            'pix_qrcode_url'=>payment_event_first_value($lastTransaction, ['qr_code_url','pix_qr_code_url','pix_url','qrcode_url']),
+            'pix_expires_at'=>payment_event_first_value($lastTransaction, ['expires_at','expiration_date','pix_expires_at']),
+            'boleto_url'=>payment_event_first_value($lastTransaction, ['boleto_url','pdf','url']),
+            'boleto_line'=>payment_event_first_value($lastTransaction, ['line','digitable_line','barcode']),
+            'buyer_name'=>pagarme_scalar($customer, 'name'),
+            'buyer_email'=>$email,
+            'buyer_phone'=>$phoneRaw,
+            'buyer_document'=>pagarme_scalar($customer, 'document'),
+            'user_id'=>(int)($matchedUser['id'] ?? 0),
+            'raw_payload'=>$payload,
+            'metadata'=>[
+                'source'=>'pagarme_webhook',
+                'event'=>$event,
+                'match_method'=>(string)($matched['method'] ?? 'none'),
+                'account'=>is_array($payload['account'] ?? null) ? ($payload['account']['id'] ?? null) : null,
+                'lifetime_attempt'=>$lifetimeAttempt,
+            ],
+            'occurred_at'=>$receivedAt,
+        ]);
         return [
             'transaction_id'=>$transactionId,
             'transaction_code'=>$transactionCode,
@@ -291,6 +328,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             'match_method'=>(string)($matched['method'] ?? 'none'),
             'lifetime_granted'=>!empty($lifetimeAttempt['granted']),
             'lifetime_attempt'=>$lifetimeAttempt,
+            'payment_event'=>$paymentEvent,
         ];
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
