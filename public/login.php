@@ -35,6 +35,45 @@ function login_dbg(string $msg): void {
     try { @file_put_contents($f, $line, FILE_APPEND | LOCK_EX); } catch (Throwable $e) {}
 }
 
+function am_login_digits(string $value): string {
+    return preg_replace('/\D+/', '', $value) ?: '';
+}
+
+function am_login_password_candidates(string $senha, string $telefone): array {
+    $raw = trim($senha);
+    $digits = am_login_digits($raw);
+    $phoneDigits = am_login_digits($telefone);
+    $candidates = [];
+    foreach ([$raw, $digits] as $value) {
+        if ($value !== '') $candidates[$value] = true;
+    }
+    if ($digits !== '') {
+        if ((strlen($digits) === 10 || strlen($digits) === 11) && !str_starts_with($digits, '55')) {
+            $candidates['55' . $digits] = true;
+        }
+        if (str_starts_with($digits, '55') && (strlen($digits) === 12 || strlen($digits) === 13)) {
+            $candidates[substr($digits, 2)] = true;
+        }
+    }
+    if ($phoneDigits !== '') {
+        $phoneLocal = (str_starts_with($phoneDigits, '55') && (strlen($phoneDigits) === 12 || strlen($phoneDigits) === 13))
+            ? substr($phoneDigits, 2)
+            : $phoneDigits;
+        if ($digits !== '' && ($digits === $phoneLocal || $digits === $phoneDigits)) {
+            $candidates[$phoneDigits] = true;
+            if ($phoneLocal !== '') $candidates[$phoneLocal] = true;
+        }
+    }
+    return array_keys($candidates);
+}
+
+function am_verify_login_password(string $senha, string $hash, string $telefone): bool {
+    foreach (am_login_password_candidates($senha, $telefone) as $candidate) {
+        if (password_verify($candidate, $hash)) return true;
+    }
+    return false;
+}
+
 // Endpoint para ler o log: /login.php?dbg_log=1
 if (!empty($_GET['dbg_log'])) {
     header('Content-Type: text/plain; charset=utf-8');
@@ -292,7 +331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st->execute(['email' => $email]);
         $user = $st->fetch();
 
-        if (!$user || empty($user['senha_hash']) || !password_verify($senha, $user['senha_hash'])) {
+        if (!$user || empty($user['senha_hash']) || !am_verify_login_password($senha, (string)$user['senha_hash'], (string)($user['telefone'] ?? ''))) {
             $mensagemErro = 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
@@ -611,7 +650,7 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
             </div>
 
             <div class="hint-box">
-                Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>11987654321</strong>
+                Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>11987654321</strong>. Se não entrar, tente com <strong>55</strong> antes do DDD.
             </div>
 
             <div class="actions-row">
