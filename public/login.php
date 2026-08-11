@@ -234,18 +234,17 @@ function am_token_table(PDO $pdo): void {
 
 function am_set_token(PDO $pdo, int $userId): void {
     am_token_table($pdo);
-    $pdo->prepare("DELETE FROM remember_tokens WHERE user_id = :uid")->execute([':uid' => $userId]);
+    $existingToken = strtolower(trim((string)($_COOKIE['am_token'] ?? '')));
+    if (preg_match('/^[a-f0-9]{64}$/', $existingToken)) {
+        $pdo->prepare("DELETE FROM remember_tokens WHERE token = :tok")->execute([':tok' => $existingToken]);
+    }
+    try { $pdo->exec("DELETE FROM remember_tokens WHERE expires_at < NOW()"); } catch (Throwable $e) {}
     $token = bin2hex(random_bytes(32));
     $exp   = date('Y-m-d H:i:s', time() + 60 * 60 * 24 * AM_TOKEN_DAYS);
     $pdo->prepare("INSERT INTO remember_tokens (user_id, token, expires_at) VALUES (:uid, :tok, :exp)")
         ->execute([':uid' => $userId, ':tok' => $token, ':exp' => $exp]);
-    setcookie('am_token', $token, [
-        'expires'  => time() + 60 * 60 * 24 * AM_TOKEN_DAYS,
-        'path'     => '/',
-        'secure'   => isset($_SERVER['HTTPS']),
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
+    setcookie('am_token', '', am_host_cookie_options(time() - 3600));
+    setcookie('am_token', $token, am_cookie_options(time() + 60 * 60 * 24 * AM_TOKEN_DAYS));
 }
 
 // ── Magic-link via URL (?am=<token>) ─────────────────────────────────────────
@@ -322,7 +321,8 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
             header('Location: ' . am_resolve_next());
             exit;
         } else {
-            setcookie('am_token', '', time() - 3600, '/');
+            setcookie('am_token', '', am_host_cookie_options(time() - 3600));
+            setcookie('am_token', '', am_cookie_options(time() - 3600));
         }
     } catch (Throwable $e) { /* não impede o fluxo normal */ }
 }
@@ -378,13 +378,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } catch (Throwable $e) { /* não crítico */ }
 
             // Cookie de e-mail para pré-preenchimento
-            setcookie('am_email', $email, [
-                'expires'  => time() + 60 * 60 * 24 * AM_TOKEN_DAYS,
-                'path'     => '/',
-                'secure'   => isset($_SERVER['HTTPS']),
-                'httponly' => false,
-                'samesite' => 'Lax',
-            ]);
+            setcookie('am_email', '', am_host_cookie_options(time() - 3600, false));
+            setcookie('am_email', $email, am_cookie_options(time() + 60 * 60 * 24 * AM_TOKEN_DAYS, false));
 
             header('Location: ' . am_resolve_next());
             exit;

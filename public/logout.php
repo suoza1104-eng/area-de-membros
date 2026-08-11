@@ -9,7 +9,8 @@ if (!empty($_COOKIE['am_token'])) {
         $pdo->prepare("DELETE FROM remember_tokens WHERE token = :tok")
             ->execute([':tok' => $_COOKIE['am_token']]);
     } catch (Throwable $e) {}
-    setcookie('am_token', '', time() - 3600, '/');
+    setcookie('am_token', '', am_host_cookie_options(time() - 3600));
+    setcookie('am_token', '', am_cookie_options(time() - 3600));
 }
 
 unset($_SESSION['aluno_id']);

@@ -12,6 +12,56 @@ $isCli = (PHP_SAPI === 'cli');
 $host = $_SERVER['HTTP_HOST'] ?? '';
 $isLocal = (!$isCli) && (strpos($host, 'localhost') !== false);
 
+function am_cookie_secure(): bool {
+    $https = strtolower((string)($_SERVER['HTTPS'] ?? ''));
+    if ($https !== '' && $https !== 'off') return true;
+    $forwardedProto = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    if ($forwardedProto === 'https') return true;
+    $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?: '';
+    if ($host === 'professoremersonleite.com' || $host === 'www.professoremersonleite.com') return true;
+    return str_starts_with((string)(defined('BASE_URL') ? BASE_URL : ''), 'https://');
+}
+
+function am_cookie_domain(): string {
+    $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?: '';
+    if ($host === 'professoremersonleite.com' || $host === 'www.professoremersonleite.com') {
+        return '.professoremersonleite.com';
+    }
+    return '';
+}
+
+function am_cookie_options(int $expires, bool $httpOnly = true): array {
+    $options = [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => am_cookie_secure(),
+        'httponly' => $httpOnly,
+        'samesite' => 'Lax',
+    ];
+    $domain = am_cookie_domain();
+    if ($domain !== '') $options['domain'] = $domain;
+    return $options;
+}
+
+function am_host_cookie_options(int $expires, bool $httpOnly = true): array {
+    return [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => am_cookie_secure(),
+        'httponly' => $httpOnly,
+        'samesite' => 'Lax',
+    ];
+}
+
+function am_session_cookie_options(int $lifetime): array {
+    $options = am_cookie_options(time() + $lifetime, true);
+    unset($options['expires']);
+    $options['lifetime'] = $lifetime;
+    return $options;
+}
+
 // Erros: mostra apenas em localhost; em produção/CRON, loga sem "quebrar" headers
 ini_set('display_errors', $isLocal ? '1' : '0');
 ini_set('display_startup_errors', $isLocal ? '1' : '0');
@@ -26,13 +76,7 @@ if (!$isCli && session_status() === PHP_SESSION_NONE) {
         // camada de recuperação caso o provedor limpe a sessão antes disso.
         $sessionLifetime = 60 * 60 * 8;
         ini_set('session.gc_maxlifetime', (string)$sessionLifetime);
-        session_set_cookie_params([
-            'lifetime' => $sessionLifetime,
-            'path' => '/',
-            'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
+        session_set_cookie_params(am_session_cookie_options($sessionLifetime));
         session_start();
     }
 }

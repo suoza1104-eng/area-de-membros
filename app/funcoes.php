@@ -66,13 +66,8 @@ function aluno_restaurar_sessao_por_token(): int {
         $pdo->prepare("UPDATE remember_tokens SET expires_at=:expires WHERE token=:token")
             ->execute([':expires' => date('Y-m-d H:i:s', $expiresTs), ':token' => $token]);
         if (!headers_sent()) {
-            setcookie('am_token', $token, [
-                'expires' => $expiresTs,
-                'path' => '/',
-                'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
-                'httponly' => true,
-                'samesite' => 'Lax',
-            ]);
+            setcookie('am_token', '', am_host_cookie_options(time() - 3600));
+            setcookie('am_token', $token, am_cookie_options($expiresTs));
         }
         return $userId;
     } catch (Throwable $e) {
