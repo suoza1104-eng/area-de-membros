@@ -47,6 +47,7 @@ $PAGINAS = [
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
+    'integracoes'      => 'Integrações',
     'webhooks'         => 'Webhooks',
     'integration_hub'  => 'Hub de Integrações',
     'meta_leads'       => 'Meta Leads Qualificados',

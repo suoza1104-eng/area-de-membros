@@ -29,6 +29,15 @@ if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerm
 if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipePerms['inbound_webhooks'])) {
     $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
 }
+if ($__isEquipe && empty($__equipePerms['integracoes'])) {
+    foreach (['webhooks', 'integration_hub', 'superfuncionario', 'manychat'] as $__intPermKey) {
+        if (!empty($__equipePerms[$__intPermKey])) {
+            $__equipePerms['integracoes'] = $__equipePerms[$__intPermKey];
+            break;
+        }
+    }
+    unset($__intPermKey);
+}
 if ($__isEquipe && empty($__equipePerms['automacoes'])) {
     foreach (['email_marketing', 'notificacoes', 'webhooks', 'manychat', 'superfuncionario', 'torpedo_voz', 'telegram'] as $__autoPermKey) {
         if (!empty($__equipePerms[$__autoPermKey])) {
@@ -56,9 +65,10 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'integracoes','webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
+$__sbV['integracoes'] = $__sbV['integracoes'] || $__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['superfuncionario'] || $__sbV['manychat'];
 
 // Informações do usuário logado para o sidebar
 $__sbNome    = $__isEquipe ? ($_SESSION['equipe_nome']  ?? 'Membro') : 'Administrador';
@@ -88,6 +98,7 @@ $titleMap = [
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
+    'integracoes'      => 'Integrações',
     'webhooks'         => 'Webhooks',
     'meta_leads'       => 'Meta Leads Qualificados',
     'meta_form_utms'   => 'UTMs Forms Meta',
@@ -794,11 +805,20 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['meta_leads'] || $__sbV['meta_form_utms'] || $__sbV['superfuncionario'] || $__sbV['manychat'] || $__sbV['torpedo_voz'] || $__sbV['telegram'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['integracoes'] || $__sbV['meta_leads'] || $__sbV['meta_form_utms'] || $__sbV['torpedo_voz'] || $__sbV['telegram'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks']): ?>
+    <?php if ($__sbV['integracoes']): ?>
+    <a href="integracoes.php" class="sb-item <?= in_array($currentMenu, ['integracoes','webhooks','integration_hub','superfuncionario','manychat'], true) ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
+      </svg>
+      Integrações
+    </a>
+    <?php endif; ?>
+
+    <?php if (false && $__sbV['webhooks']): ?>
     <a href="webhooks.php" class="sb-item <?= $currentMenu === 'webhooks' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -807,7 +827,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['integration_hub']): ?>
+    <?php if (false && $__sbV['integration_hub']): ?>
     <a href="integration_hub.php" class="sb-item <?= $currentMenu === 'integration_hub' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
@@ -834,7 +854,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['superfuncionario']): ?>
+    <?php if (false && $__sbV['superfuncionario']): ?>
     <a href="superfuncionario.php" class="sb-item <?= $currentMenu === 'superfuncionario' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
@@ -844,7 +864,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['manychat']): ?>
+    <?php if (false && $__sbV['manychat']): ?>
     <a href="manychat.php" class="sb-item <?= $currentMenu === 'manychat' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/>
