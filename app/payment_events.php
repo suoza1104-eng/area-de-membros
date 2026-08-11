@@ -125,6 +125,44 @@ function payment_event_compact_payload(array $row): array
     return $out;
 }
 
+function payment_event_business_identity(array $data): string
+{
+    $parts = [
+        strtolower(trim((string)($data['product_code'] ?? ''))),
+        strtolower(trim((string)($data['product_name'] ?? ''))),
+        strtolower(trim((string)($data['checkout_id'] ?? ''))),
+        strtolower(trim((string)($data['buyer_email'] ?? ''))),
+        (string)(int)($data['gross_amount_cents'] ?? 0),
+    ];
+    $parts = array_values(array_filter($parts, static fn($value) => $value !== '' && $value !== '0'));
+    return $parts ? hash('sha256', implode('|', $parts)) : '';
+}
+
+function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string $genericEvent, int $grossCents, string $businessIdentity): bool
+{
+    if ($userId < 1 || $genericEvent === '' || $businessIdentity === '') return false;
+    $since = date('Y-m-d H:i:s', time() - 86400);
+    $stmt = $pdo->prepare("SELECT metadata_json FROM student_payment_events
+        WHERE user_id=:user_id
+          AND generic_event_code=:event
+          AND gross_amount_cents=:gross
+          AND triggered_at IS NOT NULL
+          AND last_seen_at>=:since
+        ORDER BY triggered_at DESC
+        LIMIT 20");
+    $stmt->execute([
+        ':user_id'=>$userId,
+        ':event'=>$genericEvent,
+        ':gross'=>$grossCents,
+        ':since'=>$since,
+    ]);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $metadata = json_decode((string)($row['metadata_json'] ?? ''), true);
+        if (is_array($metadata) && hash_equals((string)($metadata['business_identity'] ?? ''), $businessIdentity)) return true;
+    }
+    return false;
+}
+
 function payment_event_register(PDO $pdo, array $data): array
 {
     payment_events_ensure_schema($pdo);
@@ -137,6 +175,8 @@ function payment_event_register(PDO $pdo, array $data): array
     $raw = $data['raw_payload'] ?? null;
     $rawJson = is_array($raw) ? json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR) : (is_string($raw) ? $raw : null);
     $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+    $businessIdentity = payment_event_business_identity($data);
+    if ($businessIdentity !== '') $metadata['business_identity'] = $businessIdentity;
     $metadataJson = $metadata ? json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR) : null;
     $genericEvent = payment_event_codes($provider, $status)[0] ?? '';
     if ($genericEvent === '') return ['registered'=>0,'triggered'=>0,'events'=>[]];
@@ -209,7 +249,15 @@ function payment_event_register(PDO $pdo, array $data): array
         $events[] = $eventCode;
 
         $userId = (int)($data['user_id'] ?? 0);
-        if ($isNew && $userId > 0 && $eventId > 0 && function_exists('capturar_fluxos_automacao')) {
+        $alreadyTriggeredBusiness = payment_event_has_recent_business_trigger(
+            $pdo,
+            $userId,
+            $genericEvent,
+            (int)($data['gross_amount_cents'] ?? 0),
+            $businessIdentity
+        );
+
+        if ($isNew && !$alreadyTriggeredBusiness && $userId > 0 && $eventId > 0 && function_exists('capturar_fluxos_automacao')) {
             $extra = payment_event_compact_payload([
                 'gateway'=>$provider,
                 'evento'=>$eventCode,
