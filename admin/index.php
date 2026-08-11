@@ -340,14 +340,31 @@ try {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS login_events (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT NOT NULL,
+            user_id INT NULL,
             logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             ip VARCHAR(64) NULL,
             user_agent VARCHAR(250) NULL,
+            method VARCHAR(30) NOT NULL DEFAULT 'unknown',
+            success TINYINT(1) NOT NULL DEFAULT 1,
+            failure_reason VARCHAR(80) NULL,
+            email VARCHAR(190) NULL,
             INDEX idx_login_events_user (user_id),
-            INDEX idx_login_events_logged (logged_at)
+            INDEX idx_login_events_logged (logged_at),
+            INDEX idx_login_events_method_success (method, success, logged_at),
+            INDEX idx_login_events_email (email)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    foreach ([
+        "ALTER TABLE login_events MODIFY COLUMN user_id INT NULL",
+        "ALTER TABLE login_events ADD COLUMN method VARCHAR(30) NOT NULL DEFAULT 'unknown'",
+        "ALTER TABLE login_events ADD COLUMN success TINYINT(1) NOT NULL DEFAULT 1",
+        "ALTER TABLE login_events ADD COLUMN failure_reason VARCHAR(80) NULL",
+        "ALTER TABLE login_events ADD COLUMN email VARCHAR(190) NULL",
+        "ALTER TABLE login_events ADD INDEX idx_login_events_method_success (method, success, logged_at)",
+        "ALTER TABLE login_events ADD INDEX idx_login_events_email (email)",
+    ] as $ddl) {
+        try { $pdo->exec($ddl); } catch (Throwable $e) {}
+    }
 } catch (Throwable $e) {}
 try {
     $pdo->exec("
@@ -1105,6 +1122,51 @@ try {
     $alunosLogaram = (int)$stmt->fetchColumn();
 } catch (Throwable $e) { /* coluna pode não existir em instâncias antigas */ }
 $pctLogaram = $totalAlunos > 0 ? round($alunosLogaram / $totalAlunos * 100, 1) : 0;
+
+$loginAccessStats = [
+    'direct' => 0,
+    'password_success' => 0,
+    'password_error' => 0,
+    'legacy_success' => 0,
+    'tracked_total' => 0,
+    'success_rate' => 0.0,
+];
+try {
+    $loginAccessWhere = ['le.logged_at IS NOT NULL'];
+    $loginAccessParams = [];
+    if ($dataDe !== '') {
+        $loginAccessWhere[] = 'le.logged_at >= :la_de';
+        $loginAccessParams['la_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $loginAccessWhere[] = 'le.logged_at <= :la_ate';
+        $loginAccessParams['la_ate'] = $dataAte . ' 23:59:59';
+    }
+    $loginAccessWhere = array_merge($loginAccessWhere, dash_turma_where('u', $turmaColTop, $turmaIds, $codigosTurmaFiltro, $loginAccessParams, 'la'));
+    $loginAccessWhereSql = $loginAccessWhere ? ('WHERE ' . implode(' AND ', $loginAccessWhere)) : '';
+    $stLoginAccess = $pdo->prepare("
+        SELECT
+            SUM(CASE WHEN le.success = 1 AND le.method IN ('magic_link','remember_token') THEN 1 ELSE 0 END) AS direct_access,
+            SUM(CASE WHEN le.success = 1 AND le.method = 'password' THEN 1 ELSE 0 END) AS password_success,
+            SUM(CASE WHEN le.success = 0 AND le.method = 'password' THEN 1 ELSE 0 END) AS password_error,
+            SUM(CASE WHEN le.success = 1 AND (le.method IS NULL OR le.method = '' OR le.method = 'unknown') THEN 1 ELSE 0 END) AS legacy_success
+        FROM login_events le
+        LEFT JOIN users u ON u.id = le.user_id
+        $loginAccessWhereSql
+    ");
+    $stLoginAccess->execute($loginAccessParams);
+    $loginAccessRow = $stLoginAccess->fetch(PDO::FETCH_ASSOC) ?: [];
+    $loginAccessStats['direct'] = (int)($loginAccessRow['direct_access'] ?? 0);
+    $loginAccessStats['password_success'] = (int)($loginAccessRow['password_success'] ?? 0);
+    $loginAccessStats['password_error'] = (int)($loginAccessRow['password_error'] ?? 0);
+    $loginAccessStats['legacy_success'] = (int)($loginAccessRow['legacy_success'] ?? 0);
+    $loginAccessStats['tracked_total'] = $loginAccessStats['direct'] + $loginAccessStats['password_success'] + $loginAccessStats['password_error'];
+    $loginSuccessTotal = $loginAccessStats['direct'] + $loginAccessStats['password_success'];
+    $loginAccessStats['success_rate'] = $loginAccessStats['tracked_total'] > 0
+        ? round($loginSuccessTotal / $loginAccessStats['tracked_total'] * 100, 1)
+        : 0.0;
+} catch (Throwable $e) {}
+
 $alunosComApp = 0;
 $alunosLogaramComApp = 0;
 try {
@@ -2097,7 +2159,133 @@ dashTurmaRender();
     </div>
 </div>
 
+<div class="panel login-access-panel mb-4">
+    <div class="panel-title login-access-title">
+        <div>
+            <span>Acessos ao login</span>
+            <div class="login-access-sub">Eventos registrados no perÃ­odo filtrado</div>
+        </div>
+        <div class="login-success-rate">
+            <strong><?= number_format((float)$loginAccessStats['success_rate'], 1, ',', '.') ?>%</strong>
+            <span>sucesso ao entrar</span>
+        </div>
+    </div>
+    <div class="login-access-grid">
+        <div class="login-access-chart">
+            <canvas id="chartLoginAccess"></canvas>
+        </div>
+        <div class="login-access-metrics">
+            <div class="login-access-metric">
+                <span>Acesso direto</span>
+                <strong><?= number_format((int)$loginAccessStats['direct']) ?></strong>
+                <small>magic link ou cookie lembrado</small>
+            </div>
+            <div class="login-access-metric">
+                <span>Senha correta</span>
+                <strong><?= number_format((int)$loginAccessStats['password_success']) ?></strong>
+                <small>aluno digitou a senha e entrou</small>
+            </div>
+            <div class="login-access-metric is-error">
+                <span>Senha errada</span>
+                <strong><?= number_format((int)$loginAccessStats['password_error']) ?></strong>
+                <small>tentativa manual sem sucesso</small>
+            </div>
+            <?php if ((int)$loginAccessStats['legacy_success'] > 0): ?>
+                <div class="login-access-metric is-muted">
+                    <span>HistÃ³rico sem mÃ©todo</span>
+                    <strong><?= number_format((int)$loginAccessStats['legacy_success']) ?></strong>
+                    <small>eventos antigos antes desta mediÃ§Ã£o</small>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
 <style>
+.login-access-title {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:14px;
+    flex-wrap:wrap;
+}
+.login-access-sub {
+    font-size:11px;
+    color:var(--muted);
+    font-weight:400;
+    margin-top:4px;
+}
+.login-success-rate {
+    text-align:right;
+    color:var(--muted);
+    font-size:11px;
+}
+.login-success-rate strong {
+    display:block;
+    color:#22c55e;
+    font-size:24px;
+    line-height:1;
+}
+.login-access-grid {
+    display:grid;
+    grid-template-columns:minmax(260px,1fr) minmax(260px,1.1fr);
+    gap:18px;
+    align-items:center;
+}
+.login-access-chart {
+    height:260px;
+    position:relative;
+    min-width:0;
+}
+.login-access-metrics {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:10px;
+}
+.login-access-metric {
+    border:1px solid var(--border);
+    border-radius:7px;
+    background:rgba(255,255,255,.02);
+    padding:12px;
+    min-height:92px;
+}
+.login-access-metric span {
+    display:block;
+    color:var(--muted);
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    font-weight:800;
+}
+.login-access-metric strong {
+    display:block;
+    color:var(--text);
+    font-size:24px;
+    line-height:1.15;
+    margin-top:8px;
+}
+.login-access-metric small {
+    display:block;
+    color:var(--muted);
+    font-size:11px;
+    margin-top:6px;
+    line-height:1.35;
+}
+.login-access-metric.is-error strong {
+    color:#fb7185;
+}
+.login-access-metric.is-muted {
+    opacity:.82;
+}
+@media (max-width: 860px) {
+    .login-access-grid,
+    .login-access-metrics {
+        grid-template-columns:1fr;
+    }
+    .login-success-rate {
+        text-align:left;
+    }
+}
 .dash-period-switch {
     display: inline-flex;
     border: 1px solid var(--border);
@@ -2858,6 +3046,53 @@ body.dash-chart-fullscreen {
     Chart.defaults.color = '#64748b';
     Chart.defaults.borderColor = '#1a2540';
     Chart.defaults.font.family = "'Inter', sans-serif";
+
+    const LOGIN_ACCESS_STATS = <?= json_encode($loginAccessStats, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const loginAccessCanvas = document.getElementById('chartLoginAccess');
+    if (loginAccessCanvas) {
+        const labels = ['Acesso direto', 'Senha correta', 'Senha errada'];
+        const values = [
+            Number(LOGIN_ACCESS_STATS.direct || 0),
+            Number(LOGIN_ACCESS_STATS.password_success || 0),
+            Number(LOGIN_ACCESS_STATS.password_error || 0)
+        ];
+        if (Number(LOGIN_ACCESS_STATS.legacy_success || 0) > 0) {
+            labels.push('Historico sem metodo');
+            values.push(Number(LOGIN_ACCESS_STATS.legacy_success || 0));
+        }
+        const total = values.reduce(function(sum, value) { return sum + Number(value || 0); }, 0);
+        new Chart(loginAccessCanvas, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: total > 0 ? values : [1],
+                    backgroundColor: total > 0 ? ['#38bdf8', '#22c55e', '#fb7185', '#64748b'] : ['#1f2937'],
+                    borderColor: '#07101f',
+                    borderWidth: 3,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '64%',
+                plugins: {
+                    legend: { position: 'right', labels: { color:'#94a3b8', boxWidth:10, usePointStyle:true } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                if (total <= 0) return 'Sem eventos no periodo';
+                                const value = Number(ctx.raw || 0);
+                                const pct = total > 0 ? (value / total * 100).toFixed(1).replace('.', ',') : '0,0';
+                                return ctx.label + ': ' + value.toLocaleString('pt-BR') + ' (' + pct + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Inscrições por dia
     const LIVE_RELATIVE_DATA = <?= json_encode($vendasRelativasLive, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;

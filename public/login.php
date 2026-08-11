@@ -116,34 +116,67 @@ if (!empty($_GET['dbg_login'])) {
     exit;
 }
 
+function am_ensure_login_events_schema(PDO $pdo): void {
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS login_events (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NULL,
+                logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ip VARCHAR(64) NULL,
+                user_agent VARCHAR(250) NULL,
+                method VARCHAR(30) NOT NULL DEFAULT 'unknown',
+                success TINYINT(1) NOT NULL DEFAULT 1,
+                failure_reason VARCHAR(80) NULL,
+                email VARCHAR(190) NULL,
+                INDEX idx_login_events_user (user_id),
+                INDEX idx_login_events_logged (logged_at),
+                INDEX idx_login_events_method_success (method, success, logged_at),
+                INDEX idx_login_events_email (email)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        foreach ([
+            "ALTER TABLE login_events MODIFY COLUMN user_id INT NULL",
+            "ALTER TABLE login_events ADD COLUMN method VARCHAR(30) NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE login_events ADD COLUMN success TINYINT(1) NOT NULL DEFAULT 1",
+            "ALTER TABLE login_events ADD COLUMN failure_reason VARCHAR(80) NULL",
+            "ALTER TABLE login_events ADD COLUMN email VARCHAR(190) NULL",
+            "ALTER TABLE login_events ADD INDEX idx_login_events_method_success (method, success, logged_at)",
+            "ALTER TABLE login_events ADD INDEX idx_login_events_email (email)",
+        ] as $ddl) {
+            try { $pdo->exec($ddl); } catch (Throwable $e) {}
+        }
+    } catch (Throwable $e) {
+        login_dbg('login_events schema fail: ' . $e->getMessage());
+    }
+}
+
+function am_log_login_attempt(PDO $pdo, ?int $userId, string $email, string $method, bool $success, string $failureReason = ''): void {
+    try {
+        am_ensure_login_events_schema($pdo);
+        $pdo->prepare("
+            INSERT INTO login_events (user_id, logged_at, ip, user_agent, method, success, failure_reason, email)
+            VALUES (:uid, NOW(), :ip, :ua, :method, :success, :reason, :email)
+        ")->execute([
+            ':uid' => ($userId && $userId > 0) ? $userId : null,
+            ':ip' => substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64) ?: null,
+            ':ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250) ?: null,
+            ':method' => substr($method, 0, 30),
+            ':success' => $success ? 1 : 0,
+            ':reason' => $failureReason !== '' ? substr($failureReason, 0, 80) : null,
+            ':email' => $email !== '' ? substr(strtolower($email), 0, 190) : null,
+        ]);
+    } catch (Throwable $e) {
+        login_dbg('login_events insert fail: ' . $e->getMessage());
+    }
+}
+
 // Helper centralizado: registra evento de login (qualquer caminho)
 // Em primeiro login: marca tag PRIMEIRO_LOGIN + dispara webhook
-function am_touch_login(PDO $pdo, int $userId): void {
+function am_touch_login(PDO $pdo, int $userId, string $method = 'password', string $email = ''): void {
     if ($userId <= 0) { login_dbg('touch_login uid=0, skip'); return; }
     try {
-        try {
-            $pdo->exec("
-                CREATE TABLE IF NOT EXISTS login_events (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id INT NOT NULL,
-                    logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    ip VARCHAR(64) NULL,
-                    user_agent VARCHAR(250) NULL,
-                    INDEX idx_login_events_user (user_id),
-                    INDEX idx_login_events_logged (logged_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            ");
-            $pdo->prepare("
-                INSERT INTO login_events (user_id, logged_at, ip, user_agent)
-                VALUES (:uid, NOW(), :ip, :ua)
-            ")->execute([
-                ':uid' => $userId,
-                ':ip' => substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64) ?: null,
-                ':ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250) ?: null,
-            ]);
-        } catch (Throwable $e) {
-            login_dbg('login_events fail: ' . $e->getMessage());
-        }
+        am_log_login_attempt($pdo, $userId, $email, $method, true);
 
         $st = $pdo->prepare("SELECT last_login_at FROM users WHERE id = :id LIMIT 1");
         $st->execute([':id' => $userId]);
@@ -253,7 +286,7 @@ if (!empty($_GET['am'])) {
                 try { $pdo->prepare("UPDATE magic_links SET used_at = NOW() WHERE id = :id")->execute([':id' => (int)$ml['id']]); }
                 catch (Throwable $e) { login_dbg('used_at fail: ' . $e->getMessage()); }
                 // touch_login PRIMEIRO — garante last_login_at + tag mesmo se set_token falhar
-                try { am_touch_login($pdo, $uid); }
+                try { am_touch_login($pdo, $uid, 'magic_link'); }
                 catch (Throwable $e) { login_dbg('touch_login fail: ' . $e->getMessage()); }
                 try { am_set_token($pdo, $uid); }
                 catch (Throwable $e) { login_dbg('set_token fail: ' . $e->getMessage()); }
@@ -285,7 +318,7 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
         if ($tokRow) {
             $_SESSION['aluno_id'] = (int)$tokRow['user_id'];
             am_set_token($pdo, (int)$tokRow['user_id']); // renova
-            am_touch_login($pdo, (int)$tokRow['user_id']);
+            am_touch_login($pdo, (int)$tokRow['user_id'], 'remember_token');
             header('Location: ' . am_resolve_next());
             exit;
         } else {
@@ -332,11 +365,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user = $st->fetch();
 
         if (!$user || empty($user['senha_hash']) || !am_verify_login_password($senha, (string)$user['senha_hash'], (string)($user['telefone'] ?? ''))) {
+            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, 'password', false, $user ? 'invalid_password' : 'user_not_found');
             $mensagemErro = 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
 
-            am_touch_login($pdo, (int)$user['id']);
+            am_touch_login($pdo, (int)$user['id'], 'password', $email);
 
             // Salva token de auto-login (renova a cada login)
             try {
