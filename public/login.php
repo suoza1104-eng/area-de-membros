@@ -342,7 +342,7 @@ $logoUrl     = $appCfg['logo_url']         ?? '';
 
 $loginHelpUrl = (string)get_setting('login_help_url', '');
 $whatsHelpUrl = (string)get_setting('whatsapp_help_url', '');
-$helpUrl      = trim($loginHelpUrl !== '' ? $loginHelpUrl : $whatsHelpUrl);
+$helpUrl      = trim($whatsHelpUrl !== '' ? $whatsHelpUrl : $loginHelpUrl);
 $mailtoHelp   = 'mailto:suporte@professoremersonleite.com?subject=' . rawurlencode('Não consigo acessar a área de membros');
 
 $mensagemErro = '';
