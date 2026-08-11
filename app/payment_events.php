@@ -96,7 +96,6 @@ function payment_event_datetime_or_null(string $value): ?string
 
 function payment_event_codes(string $provider, string $status): array
 {
-    $provider = strtoupper(trim($provider));
     $status = strtoupper(trim($status));
     $generic = [
         'APPROVED' => 'PAGAMENTO_APROVADO',
@@ -107,8 +106,7 @@ function payment_event_codes(string $provider, string $status): array
         'ABANDONED' => 'CARRINHO_ABANDONADO',
     ][$status] ?? '';
     if ($generic === '') return [];
-    $specific = $status === 'ABANDONED' ? $provider . '_CARRINHO_ABANDONADO' : $provider . '_' . $generic;
-    return array_values(array_unique([$generic, $specific]));
+    return [$generic];
 }
 
 function payment_event_compact_payload(array $row): array
