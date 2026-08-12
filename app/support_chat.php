@@ -814,7 +814,7 @@ function support_agent_default_prompt(string $type): string
 {
     $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente. Estilo de conversa: nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se precisar destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Prefira frases curtas e naturais em vez de topicos. Data e live: sempre use payload_aluno.contexto_atual.agora_iso/agora_br e payload_aluno.live.status_data_live antes de falar de aula ao vivo. Se o aluno perguntar onde assistir a live, acesso, link, senha ou segunda parte da senha, e a live estiver hoje ou futura, nao transfira para humano: informe a data e explique que a equipe comunica e envia o acesso no grupo no dia do evento. Se o aluno relatar problema para assistir/acessar a live, compare a data calendario da live com a data atual: se for hoje, transfira para humano; se nao for hoje e for futura, diga que a aula nao e hoje, informe a data e diga que o acesso sera enviado no grupo no dia da aula; se for passada, diga que ja passou e sugira reagendamento. Se status_data_live.status for passada, nunca diga que a live vai acontecer, esta marcada ou sera no futuro; explique que a data vinculada ja passou e ofereca reagendamento ou humano conforme o caso. Se a data estiver ausente, diga que nao encontrou a data da live e transfira se isso for essencial.";
     if($type==='sales')return $common." Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Use compras para reconhecer produtos ja comprados e evitar oferecer como se o aluno nao tivesse comprado. Se nao houver informacao comercial suficiente, colete a duvida e transfira para humano. Nao prometa bonus, desconto, prazo, garantia ou vaga que nao esteja no payload.";
-    if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para acesso, primeiro use links.acesso_direto_area_membros ou links.area_do_aluno. Para erro com arquivo, imagem, pagamento, desbloqueio manual ou situacao sem diagnostico no payload, transfira para humano.";
+    if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para dificuldade de acessar o curso, primeiro confira payload_aluno.acesso: se permitido=true e expirado=false, oriente login/acesso usando links.acesso_direto_area_membros ou links.area_do_aluno e nao fale de acesso vitalicio como problema. Se expirado=true e vitalicio=false, explique que o periodo gratuito encerrou na data acesso.vence_em_br e use acesso.link_liberar_acesso_vitalicio para liberar o acesso vitalicio. Para erro com arquivo, imagem, pagamento, desbloqueio manual ou situacao sem diagnostico no payload, transfira para humano.";
     if($type==='reschedule')return $common." Reagendamento de live: ofereca somente datas presentes em reagendamento.opcoes. Antes de oferecer, confira live.status_data_live: se a live atual ainda for futura, explique a data atual e pergunte se o aluno quer reagendar; se ja passou, ofereca as opcoes disponiveis como nova data. Quando o aluno escolher uma data listada, confirme o reagendamento.";
     if($type==='certificate')return $common." Certificado: primeiro confira se todas as aulas obrigatorias foram concluidas, se houve live/aula ao vivo e se a aula 5 consta concluida. Para live, use live.status_data_live e live.eventos; nao trate data passada como live futura. Se estiver apto, peca a senha do certificado. Com senha correta, o sistema pode gerar o certificado e enviar o link. Com senha errada, informe que nao conferiu e peca para verificar.";
     if($type==='group')return $common." Grupo de alunos: envie o link do grupo somente quando existir em payload_aluno.links.link_grupo_configurado ou em payload_aluno.links.grupos_whatsapp. Use o codigo_turma para conferir se o link corresponde a turma. Se nao existir link, transfira para humano.";
@@ -861,13 +861,13 @@ function support_agent_default_agents(): array
             'id'=>'access','name'=>'Especialista em Acesso a Plataforma','active'=>true,'power'=>'economy',
             'handoff_threshold'=>0.55,'max_turns'=>8,
             'description'=>'Login, link direto, aula bloqueada, progresso sequencial, erro de acesso e materias.',
-            'prompt'=>'Voce e especialista em acesso a area de membros. Use links.acesso_direto_area_membros, links.area_do_aluno, curso.aulas, progresso e acesso. Ajude com login, link direto e aulas bloqueadas por sequencia. Se o aluno disser que pagou mas aulas pedem pagamento, ou que deveria ter acesso vitalicio e nao tem, direcione para pagamento_vitalicio ou humano. Nao diga que esta tudo liberado se o payload mostrar acesso limitado. Faça uma pergunta por vez.'
+            'prompt'=>'Voce e especialista em acesso a area de membros. Para qualquer dificuldade de acessar o curso, confira primeiro acesso.permitido, acesso.expirado, acesso.vence_em_br, acesso.vitalicio e acesso.link_liberar_acesso_vitalicio. Se o aluno ainda esta no prazo gratuito, oriente o acesso usando links.acesso_direto_area_membros ou links.area_do_aluno e peca a mensagem exata do erro se continuar. Se o prazo gratuito ja encerrou e nao ha vitalicio ativo, nao trate como erro tecnico: explique que o periodo gratuito encerrou na data informada e envie o link para liberar acesso vitalicio. Ajude com login, link direto e aulas bloqueadas por sequencia. Se o aluno disser que pagou mas aulas pedem pagamento, ou que deveria ter acesso vitalicio e nao tem, direcione para pagamento_vitalicio ou humano. Nao diga que esta tudo liberado se o payload mostrar acesso limitado. Faca uma pergunta por vez.'
         ],
         [
             'id'=>'payment_vitalicio','name'=>'Especialista em Pagamento e Vitalicio','active'=>true,'power'=>'strong',
             'handoff_threshold'=>0.65,'max_turns'=>5,
             'description'=>'Compra, pagamento, acesso vitalicio, boleto/Pix/cartao, divergencia de liberacao e reembolso.',
-            'prompt'=>'Voce e especialista em pagamento e acesso vitalicio. Use compras e acesso do payload. Pode explicar status confirmado, pendente ou nao localizado. Se pagamento foi feito recentemente, oriente aguardar confirmacao quando o payload justificar. Se houver reembolso, chargeback, pagamento nao localizado, divergencia entre produto comprado e acesso, ou pedido de reembolso, action=handoff. Nao prometa liberar acesso, estorno, prazo bancario ou compensacao fora do payload.'
+            'prompt'=>'Voce e especialista em pagamento e acesso vitalicio. Use compras e acesso do payload. Acesso vitalicio e uma taxa opcional para liberar novamente o curso quando o periodo gratuito encerra. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio, se existir. Pode explicar status confirmado, pendente ou nao localizado. Se pagamento foi feito recentemente, oriente aguardar confirmacao quando o payload justificar. Se houver reembolso, chargeback, pagamento nao localizado, divergencia entre produto comprado e acesso, ou pedido de reembolso, action=handoff. Nao prometa liberar acesso, estorno, prazo bancario ou compensacao fora do payload.'
         ],
         [
             'id'=>'group','name'=>'Especialista em Grupo WhatsApp','active'=>true,'power'=>'economy',
@@ -897,6 +897,9 @@ function support_agent_default_variable_map(): array
         ['key'=>'pdf_certificado_emitido','label'=>'PDF do certificado emitido','path'=>'certificado.pdf_url','description'=>'URL direta do PDF do certificado, quando o sistema ja gerou o arquivo.'],
         ['key'=>'link_emitir_certificado','label'=>'Link para emitir certificado','path'=>'certificado.link_emitir','description'=>'Use apenas quando nao existe certificado emitido e o aluno ja concluiu as aulas obrigatorias.'],
         ['key'=>'link_acesso','label'=>'Link de acesso direto','path'=>'links.acesso_direto_area_membros','description'=>'Magic link de acesso temporario para o aluno entrar na area de membros.'],
+        ['key'=>'link_liberar_acesso_vitalicio','label'=>'Link para liberar acesso vitalicio','path'=>'acesso.link_liberar_acesso_vitalicio','description'=>'Checkout da taxa opcional que libera o acesso vitalicio quando o prazo gratuito encerrou.'],
+        ['key'=>'vencimento_acesso_gratuito','label'=>'Vencimento do acesso gratuito','path'=>'acesso.vence_em_br','description'=>'Data em que o periodo gratuito do aluno encerra ou encerrou.'],
+        ['key'=>'status_acesso_gratuito','label'=>'Status do acesso gratuito','path'=>'acesso.regra_para_ia','description'=>'Regra de decisao para orientar acesso gratuito ativo versus prazo encerrado.'],
         ['key'=>'data_live','label'=>'Data da live','path'=>'aluno.data_live','description'=>'Data da aula ao vivo vinculada ao aluno.'],
         ['key'=>'status_data_live','label'=>'Status da data da live','path'=>'live.status_data_live.status','description'=>'Indica se a live vinculada esta futura, hoje, passada, ausente ou invalida. Use antes de falar que a live vai acontecer.'],
         ['key'=>'agora_sp','label'=>'Data atual Sao Paulo','path'=>'contexto_atual.agora_br','description'=>'Data e hora atual em Sao Paulo para comparar com aulas ao vivo e prazos.'],
@@ -930,6 +933,11 @@ function support_agent_payload_field_options(): array
         ['path'=>'certificado.criterios_e_pendencias','label'=>'Pendencias do certificado','description'=>'O que falta para o aluno poder emitir certificado.'],
         ['path'=>'certificado.pode_iniciar_emissao_agora','label'=>'Pode emitir agora','description'=>'Indica se o aluno ja cumpre os criterios para emitir.'],
         ['path'=>'links.acesso_direto_area_membros','label'=>'Link de acesso direto','description'=>'Magic link temporario para o aluno acessar a area de membros.'],
+        ['path'=>'acesso.link_liberar_acesso_vitalicio','label'=>'Link liberar acesso vitalicio','description'=>'Checkout para liberar acesso vitalicio quando prazo gratuito encerrou.'],
+        ['path'=>'acesso.vence_em_br','label'=>'Vencimento acesso gratuito','description'=>'Data formatada de vencimento do periodo gratuito.'],
+        ['path'=>'acesso.dias_restantes','label'=>'Dias restantes acesso gratuito','description'=>'Dias aproximados restantes antes do bloqueio por prazo.'],
+        ['path'=>'acesso.expirado','label'=>'Acesso expirado','description'=>'Indica se o prazo gratuito ja encerrou.'],
+        ['path'=>'acesso.permitido','label'=>'Acesso permitido','description'=>'Indica se o aluno ainda pode acessar agora.'],
         ['path'=>'links.grupos_whatsapp.0.invite_url','label'=>'Link do grupo WhatsApp','description'=>'Primeiro link de convite do grupo relacionado ao aluno.'],
         ['path'=>'live.eventos','label'=>'Eventos da live','description'=>'Eventos do aluno na live, como acesso, permanencia e oferta.'],
         ['path'=>'live.reagendamentos','label'=>'Reagendamentos da live','description'=>'Historico de reagendamentos de live do aluno.'],
@@ -1126,7 +1134,7 @@ function support_chat_push_student(PDO $pdo,int $conversationId,int $messageId,s
 function support_agent_prepare_answer(string $answer,bool $firstAgentReply): array
 {
     if(!$firstAgentReply){$clean=preg_replace('/^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[,!.\s]*(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][^.!?\n]{0,70})?[.!?\s]*/iu','',$answer,1);if(is_string($clean)&&trim($clean)!=='')$answer=trim($clean);}
-    $buttons=[];if(preg_match('/https?:\/\/[^\s<>"\']+/iu',$answer,$m)){ $url=rtrim($m[0],".,;:)");$label=(stripos($url,'verificar_certificado')!==false||stripos($url,'uploads/certificates')!==false)?'Ver certificado':(stripos($url,'certificado.php')!==false?'Emitir certificado':'Abrir link');$answer=trim((string)preg_replace('/\s*[:;-]\s*$/u','',str_replace($m[0],'',$answer)));$buttons[]=['label'=>$label,'url'=>$url];if($answer==='')$answer='Use o botao abaixo para abrir o link.'; }
+    $buttons=[];if(preg_match('/https?:\/\/[^\s<>"\']+/iu',$answer,$m)){ $url=rtrim($m[0],".,;:)");$lowerAnswer=mb_strtolower($answer);$label=(stripos($url,'verificar_certificado')!==false||stripos($url,'uploads/certificates')!==false)?'Ver certificado':(stripos($url,'certificado.php')!==false?'Emitir certificado':(str_contains($lowerAnswer,'acesso vitalicio')||str_contains($lowerAnswer,'acesso vitalÃ­cio')?'Liberar acesso vitalicio':'Abrir link'));$answer=trim((string)preg_replace('/\s*[:;-]\s*$/u','',str_replace($m[0],'',$answer)));$buttons[]=['label'=>$label,'url'=>$url];if($answer==='')$answer='Use o botao abaixo para abrir o link.'; }
     return ['body'=>$answer,'metadata'=>$buttons?['buttons'=>$buttons]:[]];
 }
 
@@ -1266,6 +1274,19 @@ function support_agent_configured_variables(PDO $pdo,array $payload): array
     $out=[];foreach(support_agent_variable_map($pdo) as $row){$key=preg_replace('/[^a-z0-9_-]/i','',(string)$row['key']);if($key==='')continue;$out[$key]=['label'=>(string)($row['label']??$key),'path'=>(string)$row['path'],'description'=>(string)($row['description']??''),'value'=>support_agent_path_value($payload,(string)$row['path'])];}return $out;
 }
 
+function support_agent_format_datetime_br($value): string
+{
+    $value=trim((string)$value);if($value==='')return '';
+    try{return (new DateTimeImmutable($value,new DateTimeZone('America/Sao_Paulo')))->format('d/m/Y H:i');}catch(Throwable $e){return $value;}
+}
+
+function support_agent_access_days_remaining($seconds): ?int
+{
+    if($seconds===null||$seconds==='')return null;
+    $seconds=max(0,(int)$seconds);
+    return (int)ceil($seconds/86400);
+}
+
 function support_agent_live_status(string $liveAt,DateTimeImmutable $now): array
 {
     $liveAt=trim($liveAt);
@@ -1329,6 +1350,9 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
     $certVerify=$issuedCert&&!empty($issuedCert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$issuedCert['codigo_uid']):'';
     $magicLink=function_exists('gerar_magic_link')?gerar_magic_link($userId,30,false):'';
     $access=course_access_status($pdo,$userId);
+    $accessExpiresBr=support_agent_format_datetime_br($access['expires_at']??'');
+    $accessStartBr=support_agent_format_datetime_br($access['start_at']??'');
+    $accessDaysRemaining=support_agent_access_days_remaining($access['remaining_seconds']??null);
     $now=new DateTimeImmutable('now',new DateTimeZone('America/Sao_Paulo'));
     $liveRaw=(string)($user['turma_live_at']??$user['data_live']??'');
     $liveStatus=support_agent_live_status($liveRaw,$now);
@@ -1357,6 +1381,7 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
             'link_grupo_configurado'=>$configuredGroupLink,
             'template_grupo_whatsapp'=>$groupTemplate,
             'grupos_whatsapp'=>$groupLinks,
+            'liberar_acesso_vitalicio'=>$access['checkout_url']??'',
         ],
         'tags'=>$tags,
         'acesso'=>[
@@ -1368,7 +1393,19 @@ function support_agent_user_payload(PDO $pdo,int $userId): array
             'transacao'=>$access['lifetime_transaction_code']??null,
             'expirado'=>!empty($access['expired']),
             'permitido'=>!empty($access['allowed']),
+            'controle_prazo_ativo'=>!empty($access['enabled']),
+            'inicio_contagem'=>$access['start_at']??null,
+            'inicio_contagem_br'=>$accessStartBr,
+            'vence_em'=>$access['expires_at']??null,
+            'vence_em_iso'=>$access['expires_at_iso']??null,
+            'vence_em_br'=>$accessExpiresBr,
+            'segundos_restantes'=>$access['remaining_seconds']??null,
+            'dias_restantes'=>$accessDaysRemaining,
+            'dias_gratuitos'=>$access['access_days']??null,
+            'mensagem_bloqueio'=>$access['message']??'',
             'checkout_url'=>$access['checkout_url']??'',
+            'link_liberar_acesso_vitalicio'=>$access['checkout_url']??'',
+            'regra_para_ia'=>'Se permitido=true e expirado=false, o aluno ainda esta no periodo gratuito: oriente login/acesso e nao venda vitalicio. Se expirado=true e vitalicio=false, explique que o periodo gratuito encerrou em vence_em_br e envie link_liberar_acesso_vitalicio.',
         ],
         'curso'=>['aulas_obrigatorias'=>$required,'aulas_concluidas'=>$done,'percentual_avanco'=>$coursePct,'aulas_faltantes_obrigatorias'=>$missing,'aulas'=>$lessons,'visualizacoes'=>$views],
         'certificado'=>[
@@ -1627,7 +1664,7 @@ function support_agent_multi_flow(PDO $pdo,int $conversationId,int $messageId,ar
         'resolved'=>['type'=>'boolean'],
     ],'required'=>['action','confidence','intent','answer','reason','selected_reschedule_iso','memory_summary','tokens_estimate','resolved']];
     $modelCfg=$cfg;$modelCfg['model']=(string)$agent['model'];$modelCfg['max_tokens']=min((int)$cfg['max_tokens'],2600);
-    $system="Voce e um especialista da equipe multiagente da area de membros. Especialista ativo: ".($agent['name']??$target).". Use somente o payload do aluno e o historico da conversa atual. Nao invente. Seja humano, curto e natural. Reconheca a ultima mensagem antes de orientar. Faca uma pergunta por vez. Nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Se o aluno mudar claramente de assunto, action=handoff com reason='voltar_orquestrador'. Se faltar dado ou houver risco, action=handoff. Nao pergunte 'posso ajudar em algo mais' se ainda houver proxima acao. Prompt do especialista: ".(string)($agent['prompt']??'');
+    $system="Voce e um especialista da equipe multiagente da area de membros. Especialista ativo: ".($agent['name']??$target).". Use somente o payload do aluno e o historico da conversa atual. Nao invente. Seja humano, curto e natural. Reconheca a ultima mensagem antes de orientar. Faca uma pergunta por vez. Nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Regra critica de acesso ao curso: antes de falar de acesso vitalicio, confira payload_aluno.acesso. Se acesso.permitido=true e acesso.expirado=false, o aluno ainda esta no periodo gratuito; oriente acesso/login com links.acesso_direto_area_membros ou links.area_do_aluno. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio. Se o aluno mudar claramente de assunto, action=handoff com reason='voltar_orquestrador'. Se faltar dado ou houver risco, action=handoff. Nao pergunte 'posso ajudar em algo mais' se ainda houver proxima acao. Prompt do especialista: ".(string)($agent['prompt']??'');
     $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'memoria'=>$memorySummary,'payload_aluno'=>$payload,'historico_recente'=>$recent,'agente'=>$agent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
     $res=support_agent_call_openai_schema($modelCfg,$input,$schema,'support_agent_specialist',1400);
     $action=(string)($res['action']??'handoff');$agentConfidence=(float)($res['confidence']??0);$threshold=(float)($agent['handoff_threshold']??0.58);
@@ -1689,6 +1726,45 @@ function support_agent_is_live_problem(string $body): bool
     $hasLive=str_contains($b,'aula ao vivo')||str_contains($b,'live');
     if(!$hasLive)return false;
     return (bool)preg_match('/\b(nao consigo|nao estou conseguindo|nao consegui|nao abre|nao abriu|nao aparece|nao funciona|erro|problema|travando|bloqueado|sem acesso|link nao|link quebrado|link errado)\b/u',$b);
+}
+
+function support_agent_is_course_access_problem(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    if(str_contains($b,'live')||str_contains($b,'aula ao vivo'))return false;
+    $problem=(bool)preg_match('/\b(nao consigo|n consigo|nao estou conseguindo|n estou conseguindo|nao consegui|n consegui|nao entra|n entra|nao abre|n abre|nao aparece|n aparece|nao funciona|n funciona|erro|problema|bloqueado|sem acesso|acesso bloqueado|link nao|login|senha)\b/u',$b);
+    $course=str_contains($b,'curso')||str_contains($b,'aula')||str_contains($b,'aulas')||str_contains($b,'area de membros')||str_contains($b,'plataforma')||str_contains($b,'conteudo')||str_contains($b,'trilha')||str_contains($b,'assistir');
+    return $problem&&$course;
+}
+
+function support_agent_course_access_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$access=$payload['acesso']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $direct=trim((string)($links['acesso_direto_area_membros']??''));$trail=trim((string)($links['area_do_aluno']??''));
+    $checkout=trim((string)($access['link_liberar_acesso_vitalicio']??$access['checkout_url']??$links['liberar_acesso_vitalicio']??''));
+    $expires=trim((string)($access['vence_em_br']??''));$days=$access['dias_restantes']??null;
+    if(!empty($access['expirado'])&&empty($access['vitalicio'])){
+        $msg=$prefix.'o acesso gratuito do seu cadastro ja encerrou'.($expires!==''?' em '.$expires:'').'. O acesso vitalicio e uma liberacao opcional para continuar acessando o curso depois do periodo gratuito.';
+        if($checkout!=='')$msg.="\n\nPara liberar o acesso vitalicio, use o link abaixo:\n".$checkout;
+        else $msg.="\n\nNao encontrei o link de liberacao salvo para sua turma, entao vou encaminhar para a equipe conferir.";
+        return $msg;
+    }
+    if(!empty($access['permitido'])||!empty($access['vitalicio'])){
+        $extra='';
+        if(empty($access['vitalicio'])&&$expires!==''){
+            $extra=' Seu acesso gratuito esta ativo ate '.$expires.'.';
+            if($days!==null)$extra.=' Faltam cerca de '.(int)$days.' dia(s).';
+        }
+        if(!empty($access['vitalicio']))$extra=' Seu acesso vitalicio esta ativo.';
+        $url=$direct!==''?$direct:$trail;
+        $msg=$prefix.'seu acesso ao curso consta liberado no sistema.'.$extra;
+        if($url!=='')$msg.="\n\nTente entrar por este link direto:\n".$url;
+        $msg.="\n\nSe mesmo assim nao abrir, me envie a mensagem exata que aparece na tela.";
+        return $msg;
+    }
+    if($direct!==''||$trail!=='')return $prefix."vou te passar o link de acesso e, se continuar travando, me envie a mensagem exata que aparece.\n".($direct!==''?$direct:$trail);
+    return $prefix.'nao encontrei um link confiavel de acesso no seu cadastro. Vou encaminhar para a equipe conferir.';
 }
 
 function support_agent_live_is_calendar_today(array $payload): bool
@@ -1896,6 +1972,12 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
             $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
             support_agent_finish_message($pdo,$messageId);return;
         }
+        if($type==='text'&&support_agent_is_course_access_problem($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_acesso_curso',['expirado'=>!empty($payload['acesso']['expirado']),'permitido'=>!empty($payload['acesso']['permitido']),'vitalicio'=>!empty($payload['acesso']['vitalicio'])]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_course_access_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
         if(empty($cfg['multi'])&&$type==='text'&&support_agent_is_live_access_question($body)){
             support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_aula_ao_vivo',['status_data_live'=>(string)($payload['live']['status_data_live']['status']??'')]);
             support_agent_send_answer($pdo,$conversationId,support_agent_live_access_answer($payload),$firstAgentReply);
@@ -1932,7 +2014,7 @@ function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $
             $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
             support_agent_finish_message($pdo,$messageId);return;
         }
-        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Estilo de conversa: nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Regra critica de datas: payload_aluno.contexto_atual.agora_iso/agora_br contem a data atual em Sao Paulo. Antes de falar de live/aula ao vivo, compare com payload_aluno.live.status_data_live. Se o aluno perguntar onde assistir a live, acesso, link, senha da live ou segunda parte da senha, e status_data_live.status for hoje ou futura, responda com a data e diga que a equipe comunica e envia o acesso no grupo no dia do evento; nao use handoff para esse caso. Se o aluno relatar problema para assistir/acessar a aula ao vivo, compare data_live_iso com agora_iso pelo dia calendario: se for hoje, action=handoff para suporte humano; se nao for hoje e for futura, diga que a aula nao e hoje, informe a data e diga que o acesso sera enviado no grupo no dia da aula; se for passada, diga que ja passou e sugira reagendamento. Se status_data_live.status=passada, e proibido dizer que a live vai acontecer, esta marcada, sera ou comeca nessa data; diga que a data cadastrada ja passou e, se apropriado, ofereca reagendamento.opcoes ou action=handoff. Se status=ausente/invalida, nao invente data. Certificado: se a pergunta for sobre certificado, respeite a funcao certificado ativa; quando desativada, apenas oriente pelo link de emissao. Para live, use status_data_live, data_live_iso, data_live_br e eventos de live do payload. Para grupos e acesso, use payload_aluno.links, link_grupo_configurado e payload_aluno.variaveis_configuradas. Use payload_aluno.compras para reconhecer compras/produtos do aluno e evitar respostas comerciais erradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').", certificado=".($cfg['certificate']?'sim':'nao').", grupo=".($cfg['group']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']} reagendamento={$cfg['prompt_reschedule']} certificado={$cfg['prompt_certificate']} grupo={$cfg['prompt_group']}";
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Estilo de conversa: nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Regra critica de acesso ao curso: antes de falar de acesso vitalicio, confira payload_aluno.acesso. Se acesso.permitido=true e acesso.expirado=false, o aluno ainda esta no periodo gratuito; oriente acesso/login com links.acesso_direto_area_membros ou links.area_do_aluno. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio. Regra critica de datas: payload_aluno.contexto_atual.agora_iso/agora_br contem a data atual em Sao Paulo. Antes de falar de live/aula ao vivo, compare com payload_aluno.live.status_data_live. Se o aluno perguntar onde assistir a live, acesso, link, senha da live ou segunda parte da senha, e status_data_live.status for hoje ou futura, responda com a data e diga que a equipe comunica e envia o acesso no grupo no dia do evento; nao use handoff para esse caso. Se o aluno relatar problema para assistir/acessar a aula ao vivo, compare data_live_iso com agora_iso pelo dia calendario: se for hoje, action=handoff para suporte humano; se nao for hoje e for futura, diga que a aula nao e hoje, informe a data e diga que o acesso sera enviado no grupo no dia da aula; se for passada, diga que ja passou e sugira reagendamento. Se status_data_live.status=passada, e proibido dizer que a live vai acontecer, esta marcada, sera ou comeca nessa data; diga que a data cadastrada ja passou e, se apropriado, ofereca reagendamento.opcoes ou action=handoff. Se status=ausente/invalida, nao invente data. Certificado: se a pergunta for sobre certificado, respeite a funcao certificado ativa; quando desativada, apenas oriente pelo link de emissao. Para live, use status_data_live, data_live_iso, data_live_br e eventos de live do payload. Para grupos e acesso, use payload_aluno.links, link_grupo_configurado e payload_aluno.variaveis_configuradas. Use payload_aluno.compras para reconhecer compras/produtos do aluno e evitar respostas comerciais erradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').", certificado=".($cfg['certificate']?'sim':'nao').", grupo=".($cfg['group']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']} reagendamento={$cfg['prompt_reschedule']} certificado={$cfg['prompt_certificate']} grupo={$cfg['prompt_group']}";
         $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memorySummary,'payload_aluno'=>$aiPayload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
         $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
         if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
