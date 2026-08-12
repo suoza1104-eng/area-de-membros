@@ -146,6 +146,40 @@ function support_chat_ensure_schema(PDO $pdo): void
         KEY idx_support_ai_eval_created (created_at),
         KEY idx_support_ai_eval_score (overall_score)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ai_learning_suggestions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        source_evaluation_id BIGINT UNSIGNED NULL,
+        suggestion_hash CHAR(40) NOT NULL,
+        type VARCHAR(30) NOT NULL DEFAULT 'prompt',
+        target_agent VARCHAR(120) NULL,
+        title VARCHAR(220) NOT NULL,
+        detail LONGTEXT NULL,
+        priority VARCHAR(30) NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        applied_by VARCHAR(150) NULL,
+        applied_at DATETIME NULL,
+        dismissed_by VARCHAR(150) NULL,
+        dismissed_at DATETIME NULL,
+        result_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_support_learning_hash (suggestion_hash),
+        KEY idx_support_learning_status (status,created_at),
+        KEY idx_support_learning_target (target_agent,status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_agent_prompt_versions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        suggestion_id BIGINT UNSIGNED NULL,
+        setting_key VARCHAR(120) NOT NULL,
+        target_agent VARCHAR(120) NULL,
+        old_value LONGTEXT NULL,
+        new_value LONGTEXT NULL,
+        changed_by VARCHAR(150) NULL,
+        change_reason VARCHAR(255) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_support_prompt_versions_setting (setting_key,created_at),
+        KEY idx_support_prompt_versions_suggestion (suggestion_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     try {
         $pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES ('support_entry_whatsapp_url','')")->execute();
     } catch (Throwable $ignored) {}
@@ -597,6 +631,122 @@ function support_agent_evaluate_conversation(PDO $pdo,int $conversationId): void
         ]);
         support_chat_log_event($pdo,'ai_action',$conversationId,$userId,'bot','support_agent',support_agent_display_name($pdo),'quality_evaluation',['overall_score'=>$clamp($res['overall_score']??0)]);
     }catch(Throwable $e){try{support_chat_log_event($pdo,'ai_action',$conversationId,0,'bot','support_agent','Agente de suporte','quality_evaluation_error',['error'=>$e->getMessage()]);}catch(Throwable $ignored){}}
+}
+
+function support_learning_collect_suggestions(PDO $pdo): int
+{
+    support_chat_ensure_schema($pdo);
+    $inserted=0;
+    if(!support_chat_table_exists($pdo,'support_ai_evaluations'))return 0;
+    $rows=$pdo->query("SELECT id,suggestions_json FROM support_ai_evaluations WHERE suggestions_json IS NOT NULL AND suggestions_json<>'' ORDER BY id DESC LIMIT 500")->fetchAll(PDO::FETCH_ASSOC)?:[];
+    $st=$pdo->prepare("INSERT IGNORE INTO support_ai_learning_suggestions(source_evaluation_id,suggestion_hash,type,target_agent,title,detail,priority,status) VALUES(:eid,:hash,:type,:target,:title,:detail,:priority,'pending')");
+    foreach($rows as $row){
+        $items=json_decode((string)($row['suggestions_json']??''),true);
+        if(!is_array($items))continue;
+        foreach($items as $item){
+            if(!is_array($item))continue;
+            $type=mb_substr(preg_replace('/[^a-z0-9_-]/i','',(string)($item['type']??'prompt'))?:'prompt',0,30);
+            if(!in_array($type,['prompt','agent'],true))$type='prompt';
+            $target=mb_substr(trim((string)($item['target_agent']??'')),0,120);
+            $title=mb_substr(trim((string)($item['title']??'')),0,220);
+            $detail=trim((string)($item['detail']??''));
+            $priority=mb_substr(trim((string)($item['priority']??'')),0,30);
+            if($title===''&&$detail==='')continue;
+            $hash=sha1(json_encode([$type,mb_strtolower($target),mb_strtolower($title),mb_strtolower($detail)],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+            $st->execute(['eid'=>(int)$row['id'],'hash'=>$hash,'type'=>$type,'target'=>$target?:null,'title'=>$title?:mb_substr($detail,0,160),'detail'=>$detail,'priority'=>$priority?:null]);
+            $inserted+=(int)$st->rowCount();
+        }
+    }
+    return $inserted;
+}
+
+function support_learning_dashboard(PDO $pdo): array
+{
+    support_learning_collect_suggestions($pdo);
+    $summary=['evaluations'=>0,'pending'=>0,'applied'=>0,'dismissed'=>0,'avg_overall'=>0,'avg_humanization'=>0];
+    try{$summary=array_merge($summary,$pdo->query("SELECT COUNT(*) evaluations,ROUND(AVG(overall_score),2) avg_overall,ROUND(AVG(humanization_score),2) avg_humanization FROM support_ai_evaluations")->fetch(PDO::FETCH_ASSOC)?:[]);}catch(Throwable $ignored){}
+    try{foreach($pdo->query("SELECT status,COUNT(*) total FROM support_ai_learning_suggestions GROUP BY status")->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$summary[(string)$r['status']]=(int)$r['total'];}catch(Throwable $ignored){}
+    $suggestions=[];$versions=[];
+    try{$suggestions=$pdo->query("SELECT * FROM support_ai_learning_suggestions ORDER BY FIELD(status,'pending','applied','dismissed'),FIELD(priority,'alta','high','media','medium','baixa','low'),id DESC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}
+    try{$versions=$pdo->query("SELECT * FROM support_agent_prompt_versions ORDER BY id DESC LIMIT 40")->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}
+    return ['summary'=>$summary,'suggestions'=>$suggestions,'versions'=>$versions];
+}
+
+function support_learning_match_agent_id(array $agents,string $target,string $title='',string $detail=''): string
+{
+    $needle=mb_strtolower(trim($target.' '.$title.' '.$detail));
+    foreach($agents as $agent){
+        $id=(string)($agent['id']??'');$name=mb_strtolower((string)($agent['name']??''));
+        if($id!==''&&(mb_strtolower($id)===mb_strtolower($target)||($target!==''&&str_contains($name,mb_strtolower($target)))))return $id;
+    }
+    if(str_contains($needle,'certificado')||str_contains($needle,'senha'))return 'certificate';
+    if(str_contains($needle,'pagamento')||str_contains($needle,'compra')||str_contains($needle,'pix')||str_contains($needle,'comercial')||str_contains($needle,'vitalicio'))return 'payment_vitalicio';
+    if(str_contains($needle,'acesso')||str_contains($needle,'plataforma')||str_contains($needle,'aula bloqueada'))return 'access';
+    if(str_contains($needle,'live')||str_contains($needle,'aula ao vivo')||str_contains($needle,'reagendamento'))return 'live';
+    if(str_contains($needle,'grupo')||str_contains($needle,'whatsapp'))return 'group';
+    if(str_contains($needle,'contexto')||str_contains($needle,'repeticao')||str_contains($needle,'repetição')||str_contains($needle,'fluxo'))return 'orchestrator';
+    return '';
+}
+
+function support_learning_target_setting(string $target,string $title='',string $detail=''): string
+{
+    $t=mb_strtolower(trim($target.' '.$title.' '.$detail));
+    if($t===''||$t==='bot_atendimento'||$t==='legacy'||$t==='suporte'||$t==='suporte_basico')return 'support_agent_prompt_basic';
+    if(str_contains($t,'cert'))return 'support_agent_prompt_certificate';
+    if(str_contains($t,'live')||str_contains($t,'reag'))return 'support_agent_prompt_reschedule';
+    if(str_contains($t,'grupo')||str_contains($t,'whatsapp'))return 'support_agent_prompt_group';
+    if(str_contains($t,'venda')||str_contains($t,'comercial')||str_contains($t,'pag'))return 'support_agent_prompt_sales';
+    if(str_contains($t,'acesso')||str_contains($t,'tecn'))return 'support_agent_prompt_technical';
+    return 'support_agent_prompt_basic';
+}
+
+function support_learning_apply_suggestion(PDO $pdo,int $suggestionId,string $actorName): array
+{
+    support_chat_ensure_schema($pdo);
+    $st=$pdo->prepare("SELECT * FROM support_ai_learning_suggestions WHERE id=:id LIMIT 1");$st->execute(['id'=>$suggestionId]);$s=$st->fetch(PDO::FETCH_ASSOC);
+    if(!$s)throw new RuntimeException('Sugestao nao encontrada.');
+    if((string)($s['status']??'')!=='pending')throw new RuntimeException('Esta sugestao ja foi revisada.');
+    $type=(string)($s['type']??'prompt');$target=trim((string)($s['target_agent']??''));$title=trim((string)($s['title']??''));$detail=trim((string)($s['detail']??''));
+    $reason=mb_substr($title!==''?$title:'Sugestao aplicada',0,255);
+    $note=trim("Ajuste aprovado pelo aprendizado em ".date('d/m/Y H:i').": ".$reason.($detail!==''?"\nDiretriz: ".$detail:''));
+    if($type==='agent'){
+        $old=(string)get_setting('support_agents_json','');
+        $agents=json_decode($old,true);if(!is_array($agents)||!$agents)$agents=support_agent_default_agents();
+        $base=preg_replace('/[^a-z0-9_]+/i','_',mb_strtolower($target!==''?$target:$title));$base=trim($base,'_')?:'novo_agente';
+        $id=$base;$ids=array_column($agents,'id');$n=2;while(in_array($id,$ids,true))$id=$base.'_'.$n++;
+        $agents[]=['id'=>$id,'name'=>mb_substr($title!==''?$title:'Novo agente sugerido',0,120),'active'=>false,'power'=>'balanced','handoff_threshold'=>0.60,'max_turns'=>6,'description'=>$detail,'prompt'=>$note];
+        $new=json_encode(array_values($agents),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        set_setting('support_agents_json',$new);
+        $settingKey='support_agents_json';
+        $result=['created_agent_id'=>$id,'active'=>false];
+    }else{
+        $oldAgents=(string)get_setting('support_agents_json','');
+        $agents=json_decode($oldAgents,true);if(!is_array($agents)||!$agents)$agents=support_agent_default_agents();
+        $agentId=support_learning_match_agent_id($agents,$target,$title,$detail);
+        if($agentId!==''){
+            $old=$oldAgents;
+            foreach($agents as &$agent){if((string)($agent['id']??'')===$agentId){$agent['prompt']=trim((string)($agent['prompt']??''))."\n\n".$note;break;}}unset($agent);
+            $new=json_encode(array_values($agents),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+            set_setting('support_agents_json',$new);
+            $settingKey='support_agents_json';
+            $result=['setting_key'=>$settingKey,'updated_agent_id'=>$agentId];
+        }else{
+            $settingKey=support_learning_target_setting($target,$title,$detail);
+            $old=(string)get_setting($settingKey,'');
+            $new=trim($old)."\n\n".$note;
+            set_setting($settingKey,$new);
+            $result=['setting_key'=>$settingKey];
+        }
+    }
+    $pdo->prepare("INSERT INTO support_agent_prompt_versions(suggestion_id,setting_key,target_agent,old_value,new_value,changed_by,change_reason) VALUES(:sid,:k,:target,:old,:new,:by,:reason)")->execute(['sid'=>$suggestionId,'k'=>$settingKey,'target'=>$target?:null,'old'=>$old??'','new'=>$new??'','by'=>$actorName,'reason'=>$reason]);
+    $pdo->prepare("UPDATE support_ai_learning_suggestions SET status='applied',applied_by=:by,applied_at=NOW(),result_json=:r WHERE id=:id")->execute(['by'=>$actorName,'r'=>json_encode($result,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'id'=>$suggestionId]);
+    return $result;
+}
+
+function support_learning_dismiss_suggestion(PDO $pdo,int $suggestionId,string $actorName): void
+{
+    support_chat_ensure_schema($pdo);
+    $pdo->prepare("UPDATE support_ai_learning_suggestions SET status='dismissed',dismissed_by=:by,dismissed_at=NOW() WHERE id=:id AND status='pending'")->execute(['by'=>$actorName,'id'=>$suggestionId]);
 }
 
 function support_chat_close_for_human_inactivity(PDO $pdo,int $conversationId): void
