@@ -15,19 +15,27 @@ function h(string $v): string {
 function youtube_embed_src(string $value): string {
     $value = trim($value);
     if ($value === '') return '';
+    $withApi = static function (string $url): string {
+        $originParts = parse_url((string)BASE_URL);
+        $origin = (($originParts['scheme'] ?? 'https') . '://' . ($originParts['host'] ?? 'professoremersonleite.com'));
+        $sep = strpos($url, '?') === false ? '?' : '&';
+        if (stripos($url, 'enablejsapi=') === false) $url .= $sep . 'enablejsapi=1';
+        if (stripos($url, 'origin=') === false) $url .= (strpos($url, '?') === false ? '?' : '&') . 'origin=' . rawurlencode($origin);
+        return $url;
+    };
     if (strpos($value, 'http') !== 0 && strpos($value, '<') === false) {
-        return 'https://www.youtube.com/embed/' . $value;
+        return $withApi('https://www.youtube.com/embed/' . $value);
     }
-    if (stripos($value, 'youtube.com/embed') !== false) return $value;
+    if (stripos($value, 'youtube.com/embed') !== false) return $withApi($value);
     if (strpos($value, 'http') === 0) {
         $parts = parse_url($value);
         $host  = $parts['host'] ?? '';
         $path  = $parts['path'] ?? '';
         $query = $parts['query'] ?? '';
-        if (stripos($host, 'youtu.be') !== false) return 'https://www.youtube.com/embed/' . ltrim((string)$path, '/');
+        if (stripos($host, 'youtu.be') !== false) return $withApi('https://www.youtube.com/embed/' . ltrim((string)$path, '/'));
         if (stripos($host, 'youtube.com') !== false) {
-            if (!empty($query)) { parse_str($query, $q); if (!empty($q['v'])) return 'https://www.youtube.com/embed/' . $q['v']; }
-            if (!empty($path) && strpos($path, '/embed/') !== false) return 'https://www.youtube.com/embed/' . substr($path, strpos($path, '/embed/') + 7);
+            if (!empty($query)) { parse_str($query, $q); if (!empty($q['v'])) return $withApi('https://www.youtube.com/embed/' . $q['v']); }
+            if (!empty($path) && strpos($path, '/embed/') !== false) return $withApi('https://www.youtube.com/embed/' . substr($path, strpos($path, '/embed/') + 7));
         }
     }
     return $value;
@@ -852,6 +860,8 @@ $isCurrentCompleted = isset($progressMap[$lessonId]) && $progressMap[$lessonId][
                 ?>
                 <div class="video-inner">
                     <iframe
+                        id="youtube-player"
+                        data-auto-complete="1"
                         src="<?= h($embedSrc) ?>"
                         title="YouTube video player"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -1116,6 +1126,132 @@ function unlockNextLessonCard(){
             btn.style.opacity = '1';
         });
     });
+})();
+
+// Conclusao automatica para aulas do YouTube ao assistir 80% do video.
+(function(){
+    const frame = document.getElementById('youtube-player');
+    const btn = document.getElementById('btn-concluir-aula');
+    if (!frame || !btn || frame.getAttribute('data-auto-complete') !== '1') return;
+
+    const lessonId = btn.getAttribute('data-lesson-id');
+    if (!lessonId) return;
+
+    let player = null;
+    let timer = null;
+    let completed = false;
+    let completing = false;
+    let maxWatchedSeconds = 0;
+
+    function updateVisual(){
+        btn.classList.remove('pending');
+        btn.classList.add('done');
+        btn.innerHTML = '<span class="icon">&#10003;</span><span>Aula concluida</span>';
+        btn.disabled = true;
+        const current = document.querySelector('.lesson-card.current');
+        if (!current) return;
+        const pillCur = current.querySelector('.lesson-footer-card .status-pill');
+        if (pillCur){
+            pillCur.textContent = 'Concluida';
+            pillCur.classList.remove('status-pending');
+            pillCur.classList.add('status-ok');
+        }
+        let next = current.nextElementSibling;
+        while (next && !next.classList.contains('lesson-card')) next = next.nextElementSibling;
+        if (!next || !next.classList.contains('locked')) return;
+        next.classList.remove('locked');
+        const lock = next.querySelector('.lesson-lock');
+        if (lock) lock.remove();
+        const pill = next.querySelector('.lesson-footer-card .status-pill');
+        if (pill){
+            pill.textContent = 'Pendente';
+            pill.classList.remove('status-ok');
+            pill.classList.add('status-pending');
+        }
+        const btnNext = next.querySelector('.lesson-footer-card .btn-lesson');
+        if (btnNext){
+            btnNext.textContent = 'Ir para a aula';
+            btnNext.classList.remove('disabled');
+        }
+    }
+
+    function autoComplete(source){
+        if (completed || completing) return;
+        completing = true;
+        fetch('api_concluir_aula.php', {
+            method:'POST',
+            credentials:'same-origin',
+            cache:'no-store',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body:'lesson_id='+encodeURIComponent(lessonId)
+                +'&watched_seconds='+encodeURIComponent(Math.max(0, Math.floor(maxWatchedSeconds)))
+                +'&completion_source='+encodeURIComponent(source)
+        })
+        .then(async r => ({status:r.status, data:await r.json().catch(()=>null)}))
+        .then(result => {
+            if (result.data && result.data.ok) {
+                completed = true;
+                updateVisual();
+            }
+        })
+        .catch(function(){})
+        .finally(function(){ completing = false; });
+    }
+
+    function checkProgress(){
+        if (!player || completed) return;
+        let current = 0;
+        let duration = 0;
+        try {
+            current = Number(player.getCurrentTime ? player.getCurrentTime() : 0) || 0;
+            duration = Number(player.getDuration ? player.getDuration() : 0) || 0;
+        } catch(e) {
+            return;
+        }
+        maxWatchedSeconds = Math.max(maxWatchedSeconds, current);
+        if (duration > 0 && current / duration >= 0.8) autoComplete('youtube_80_percent');
+    }
+
+    function startTimer(){
+        if (timer) return;
+        timer = window.setInterval(checkProgress, 2000);
+    }
+
+    function stopTimer(){
+        if (!timer) return;
+        window.clearInterval(timer);
+        timer = null;
+    }
+
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = function(){
+        if (typeof previousReady === 'function') previousReady();
+        if (!window.YT || !window.YT.Player) return;
+        player = new YT.Player('youtube-player', {
+            events: {
+                onStateChange: function(event){
+                    if (!window.YT || !YT.PlayerState) return;
+                    if (event.data === YT.PlayerState.PLAYING) startTimer();
+                    else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.BUFFERING) checkProgress();
+                    else if (event.data === YT.PlayerState.ENDED) {
+                        checkProgress();
+                        autoComplete('youtube_ended');
+                        stopTimer();
+                    }
+                }
+            }
+        });
+    };
+
+    if (!document.querySelector('script[data-youtube-iframe-api]')) {
+        const tag = document.createElement('script');
+        tag.src = 'https://www.youtube.com/iframe_api';
+        tag.async = true;
+        tag.setAttribute('data-youtube-iframe-api', '1');
+        document.head.appendChild(tag);
+    } else if (window.YT && window.YT.Player) {
+        window.onYouTubeIframeAPIReady();
+    }
 })();
 
 // Clique no card inteiro (sem pegar os botões internos)

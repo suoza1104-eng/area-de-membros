@@ -47,6 +47,9 @@ try {
     // este request faz o trabalho lento (banco + webhooks).
     if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
     $lesson_id = (int)($_POST['lesson_id'] ?? 0);
+    $watchedSeconds = max(0, (int)($_POST['watched_seconds'] ?? 0));
+    $completionSource = trim((string)($_POST['completion_source'] ?? 'button'));
+    if ($completionSource === '') $completionSource = 'button';
 
     if ($lesson_id <= 0) {
         json_out(['ok' => false, 'error' => 'invalid_lesson'], 400);
@@ -78,12 +81,13 @@ try {
         INSERT INTO lesson_progress
             (user_id, lesson_id, status, watched_seconds, created_at, completed_at)
         VALUES
-            (:u, :l, 'completed', NULL, NOW(), NOW())
+            (:u, :l, 'completed', :watched_seconds, NOW(), NOW())
         ON DUPLICATE KEY UPDATE
             status = 'completed',
+            watched_seconds = GREATEST(COALESCE(watched_seconds, 0), COALESCE(VALUES(watched_seconds), 0)),
             completed_at = COALESCE(completed_at, NOW())
     ");
-    $save->execute([':u' => $user_id, ':l' => $lesson_id]);
+    $save->execute([':u' => $user_id, ':l' => $lesson_id, ':watched_seconds' => $watchedSeconds > 0 ? $watchedSeconds : null]);
 
     // Tag e webhooks (não devem impedir a conclusão)
     $tagNome = 'VIU_AULA_' . $lesson_id;
@@ -100,7 +104,7 @@ try {
 
     try {
         if (function_exists('disparar_webhooks')) {
-            $eventExtra = ['lesson_id' => $lesson_id, 'origem' => 'api_concluir_aula'];
+            $eventExtra = ['lesson_id' => $lesson_id, 'origem' => 'api_concluir_aula', 'completion_source' => $completionSource, 'watched_seconds' => $watchedSeconds];
             disparar_webhooks($tagNome, $user_id, $eventExtra);
             // Evento genérico usado pelo construtor de fluxos. Mantemos também
             // VIU_AULA_{id} para integrações que dependem da aula específica.
@@ -116,7 +120,9 @@ try {
         'ok' => true,
         'already_completed' => $alreadyCompleted,
         'auth_restored' => $authRestored,
-        'lesson_id' => $lesson_id
+        'lesson_id' => $lesson_id,
+        'watched_seconds' => $watchedSeconds,
+        'completion_source' => $completionSource,
     ], 200);
 
 } catch (Throwable $e) {
