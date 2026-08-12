@@ -381,6 +381,9 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 } catch (Throwable $e) {}
+try {
+    $pdo->exec("ALTER TABLE lesson_progress ADD COLUMN completion_source VARCHAR(40) NULL");
+} catch (Throwable $e) {}
 
 function dash_bucket_expr(string $dateExpr, string $period): string {
     if ($period === 'monthly') return "DATE_FORMAT($dateExpr, '%Y-%m')";
@@ -1098,6 +1101,87 @@ $completionChartData = [];
 foreach ($completionLabels as $label) {
     $completionChartData[] = (int)($completionData[$label] ?? 0);
 }
+
+$lessonCompletionSources = [
+    'button' => ['label' => 'Botao Concluir', 'total' => 0],
+    'youtube_80_percent' => ['label' => 'Automatico por tempo', 'total' => 0],
+    'youtube_ended' => ['label' => 'YouTube ate o fim', 'total' => 0],
+    'legacy_time' => ['label' => 'Legado com tempo', 'total' => 0],
+    'legacy_unknown' => ['label' => 'Legado sem origem', 'total' => 0],
+    'other' => ['label' => 'Outros', 'total' => 0],
+];
+$lessonOpenedPairs = 0;
+$lessonCompletedPairs = 0;
+$lessonCompletionRate = 0.0;
+try {
+    $openParams = [];
+    $openWhere = ['lve.viewed_at IS NOT NULL'];
+    if ($dataDe !== '') {
+        $openWhere[] = 'lve.viewed_at >= :open_de';
+        $openParams['open_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $openWhere[] = 'lve.viewed_at <= :open_ate';
+        $openParams['open_ate'] = $dataAte . ' 23:59:59';
+    }
+    $openWhere = array_merge($openWhere, dash_turma_where('u', $turmaColTop, $turmaIds, $codigosTurmaFiltro, $openParams, 'open_lesson'));
+    $stOpen = $pdo->prepare("
+        SELECT COUNT(DISTINCT lve.user_id, lve.lesson_id)
+          FROM lesson_view_events lve
+          JOIN users u ON u.id = lve.user_id
+         WHERE " . implode(' AND ', $openWhere)
+    );
+    $stOpen->execute($openParams);
+    $lessonOpenedPairs = (int)$stOpen->fetchColumn();
+
+    $doneParams = [];
+    $doneWhere = ["lp.status='completed'", "COALESCE(lp.completed_at, lp.created_at) IS NOT NULL"];
+    if ($dataDe !== '') {
+        $doneWhere[] = 'COALESCE(lp.completed_at, lp.created_at) >= :done_de';
+        $doneParams['done_de'] = $dataDe . ' 00:00:00';
+    }
+    if ($dataAte !== '') {
+        $doneWhere[] = 'COALESCE(lp.completed_at, lp.created_at) <= :done_ate';
+        $doneParams['done_ate'] = $dataAte . ' 23:59:59';
+    }
+    $doneWhere = array_merge($doneWhere, dash_turma_where('u', $turmaColTop, $turmaIds, $codigosTurmaFiltro, $doneParams, 'done_lesson'));
+    $doneWhereSql = implode(' AND ', $doneWhere);
+    $stDone = $pdo->prepare("
+        SELECT COUNT(DISTINCT lp.user_id, lp.lesson_id)
+          FROM lesson_progress lp
+          JOIN users u ON u.id = lp.user_id
+         WHERE {$doneWhereSql}
+    ");
+    $stDone->execute($doneParams);
+    $lessonCompletedPairs = (int)$stDone->fetchColumn();
+    $lessonCompletionRate = $lessonOpenedPairs > 0 ? round($lessonCompletedPairs / $lessonOpenedPairs * 100, 1) : 0.0;
+
+    $sourceExpr = "
+        CASE
+            WHEN lp.completion_source='button' THEN 'button'
+            WHEN lp.completion_source='youtube_80_percent' THEN 'youtube_80_percent'
+            WHEN lp.completion_source='youtube_ended' THEN 'youtube_ended'
+            WHEN COALESCE(lp.completion_source,'')='' AND COALESCE(lp.watched_seconds,0)>0 THEN 'legacy_time'
+            WHEN COALESCE(lp.completion_source,'')='' THEN 'legacy_unknown'
+            ELSE 'other'
+        END
+    ";
+    $stSources = $pdo->prepare("
+        SELECT {$sourceExpr} source_key, COUNT(DISTINCT lp.user_id, lp.lesson_id) total
+          FROM lesson_progress lp
+          JOIN users u ON u.id = lp.user_id
+         WHERE {$doneWhereSql}
+      GROUP BY source_key
+    ");
+    $stSources->execute($doneParams);
+    foreach ($stSources->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $key = (string)($row['source_key'] ?? 'other');
+        if (!isset($lessonCompletionSources[$key])) $key = 'other';
+        $lessonCompletionSources[$key]['total'] += (int)($row['total'] ?? 0);
+    }
+} catch (Throwable $e) {}
+$lessonCompletionSourceLabels = array_values(array_map(static fn($row) => $row['label'], $lessonCompletionSources));
+$lessonCompletionSourceData = array_values(array_map(static fn($row) => (int)$row['total'], $lessonCompletionSources));
 
 $sqlAlguma = "
     SELECT COUNT(DISTINCT u.id)
@@ -2770,6 +2854,48 @@ body.dash-chart-fullscreen {
 </div>
 
 <div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
+        <div>
+            <span>Conclusao de aulas</span>
+            <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:4px">
+                Origem da conclusao e taxa de aulas concluidas em relacao as aulas abertas no periodo
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;text-align:right;font-size:11px;color:var(--muted)">
+            <div><strong style="display:block;color:var(--text);font-size:18px"><?= number_format($lessonOpenedPairs, 0, ',', '.') ?></strong>Aberturas</div>
+            <div><strong style="display:block;color:var(--text);font-size:18px"><?= number_format($lessonCompletedPairs, 0, ',', '.') ?></strong>Conclusoes</div>
+            <div><strong style="display:block;color:var(--success);font-size:18px"><?= number_format($lessonCompletionRate, 1, ',', '.') ?>%</strong>Taxa</div>
+        </div>
+    </div>
+    <?php if ($lessonOpenedPairs > 0 || $lessonCompletedPairs > 0): ?>
+        <div style="display:grid;grid-template-columns:minmax(260px,1fr) minmax(220px,.72fr);gap:18px;align-items:center">
+            <div style="height:300px;position:relative">
+                <canvas id="chartLessonCompletionSources"></canvas>
+            </div>
+            <div style="display:grid;gap:10px">
+                <?php foreach ($lessonCompletionSources as $source): ?>
+                    <?php $sourceTotal = (int)$source['total']; $sourcePct = $lessonCompletedPairs > 0 ? round($sourceTotal / $lessonCompletedPairs * 100, 1) : 0; ?>
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:rgba(15,23,42,.38)">
+                        <div>
+                            <strong style="font-size:13px;color:var(--text)"><?= htmlspecialchars((string)$source['label']) ?></strong>
+                            <div style="height:5px;background:#111827;border-radius:999px;overflow:hidden;margin-top:7px">
+                                <div style="height:5px;width:<?= min(100, $sourcePct) ?>%;background:var(--primary);border-radius:999px"></div>
+                            </div>
+                        </div>
+                        <div style="text-align:right;font-size:11px;color:var(--muted)">
+                            <strong style="display:block;color:var(--text);font-size:15px"><?= number_format($sourceTotal, 0, ',', '.') ?></strong>
+                            <?= number_format($sourcePct, 1, ',', '.') ?>%
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    <?php else: ?>
+        <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Sem aberturas ou conclusoes de aula no filtro atual.</p>
+    <?php endif; ?>
+</div>
+
+<div class="panel mb-4">
     <div class="panel-title">
         Tempo ate concluir 100% das aulas
         <span style="font-size:11px;color:var(--muted);font-weight:400">dias apos inscricao - <?= number_format($completionTotal, 0, ',', '.') ?> aluno(s) concluintes no filtro</span>
@@ -3824,6 +3950,51 @@ body.dash-chart-fullscreen {
 
     var completionLabels = <?= json_encode($completionLabels, JSON_UNESCAPED_UNICODE) ?>;
     var completionData = <?= json_encode($completionChartData) ?>;
+    var lessonCompletionSourceLabels = <?= json_encode($lessonCompletionSourceLabels, JSON_UNESCAPED_UNICODE) ?>;
+    var lessonCompletionSourceData = <?= json_encode($lessonCompletionSourceData) ?>;
+    var lessonCompletionRate = <?= json_encode($lessonCompletionRate) ?>;
+    var lessonOpenedPairs = <?= json_encode($lessonOpenedPairs) ?>;
+    var lessonCompletedPairs = <?= json_encode($lessonCompletedPairs) ?>;
+    var cLessonSources = document.getElementById('chartLessonCompletionSources');
+    if (cLessonSources && (lessonOpenedPairs > 0 || lessonCompletedPairs > 0)) {
+        new Chart(cLessonSources, {
+            type: 'bar',
+            data: {
+                labels: lessonCompletionSourceLabels,
+                datasets: [{
+                    label: 'Conclusoes',
+                    data: lessonCompletionSourceData,
+                    backgroundColor: ['#22c55e','#38bdf8','#14b8a6','#facc15','#64748b','#a78bfa'],
+                    borderRadius: 6,
+                    maxBarThickness: 34
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                var value = Number(ctx.raw || 0);
+                                var pct = lessonCompletedPairs > 0 ? (value / lessonCompletedPairs * 100) : 0;
+                                return value.toLocaleString('pt-BR') + ' conclusao(oes) (' + pct.toLocaleString('pt-BR', {maximumFractionDigits:1}) + '%)';
+                            },
+                            afterBody: function() {
+                                return 'Taxa geral: ' + Number(lessonCompletionRate || 0).toLocaleString('pt-BR', {maximumFractionDigits:1}) + '% de ' + Number(lessonOpenedPairs || 0).toLocaleString('pt-BR') + ' aula(s) aberta(s)';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color:'#94a3b8' }, grid: { display:false } },
+                    y: { beginAtZero:true, ticks:{ color:'#94a3b8', precision:0 }, grid:{ color:'rgba(148,163,184,.12)' } }
+                }
+            }
+        });
+    }
+
     var cCompletion = document.getElementById('chartCompletionLag');
     if (cCompletion && completionData.some(function(v) { return v > 0; })) {
         new Chart(cCompletion, {

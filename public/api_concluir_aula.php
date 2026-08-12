@@ -56,6 +56,9 @@ try {
     }
 
     $pdo = getPDO();
+    try {
+        $pdo->exec("ALTER TABLE lesson_progress ADD COLUMN completion_source VARCHAR(40) NULL");
+    } catch (Throwable $ignored) {}
     $courseAccess = course_access_status($pdo, $user_id);
     if (!empty($courseAccess['expired'])) {
         json_out([
@@ -79,15 +82,16 @@ try {
     // duplicada e a operação continua idempotente.
     $save = $pdo->prepare("
         INSERT INTO lesson_progress
-            (user_id, lesson_id, status, watched_seconds, created_at, completed_at)
+            (user_id, lesson_id, status, watched_seconds, completion_source, created_at, completed_at)
         VALUES
-            (:u, :l, 'completed', :watched_seconds, NOW(), NOW())
+            (:u, :l, 'completed', :watched_seconds, :completion_source, NOW(), NOW())
         ON DUPLICATE KEY UPDATE
             status = 'completed',
             watched_seconds = GREATEST(COALESCE(watched_seconds, 0), COALESCE(VALUES(watched_seconds), 0)),
+            completion_source = COALESCE(completion_source, VALUES(completion_source)),
             completed_at = COALESCE(completed_at, NOW())
     ");
-    $save->execute([':u' => $user_id, ':l' => $lesson_id, ':watched_seconds' => $watchedSeconds > 0 ? $watchedSeconds : null]);
+    $save->execute([':u' => $user_id, ':l' => $lesson_id, ':watched_seconds' => $watchedSeconds > 0 ? $watchedSeconds : null, ':completion_source' => $completionSource]);
 
     // Tag e webhooks (não devem impedir a conclusão)
     $tagNome = 'VIU_AULA_' . $lesson_id;
