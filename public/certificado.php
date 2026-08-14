@@ -89,6 +89,42 @@ foreach ($lessons as $ls) {
 $percent          = $totalObrigatorias > 0 ? (int)round(100 * $totalConcluidas / $totalObrigatorias) : 0;
 $temTudoConcluido = ($totalObrigatorias > 0 && $totalConcluidas >= $totalObrigatorias);
 
+$viuAula05 = false;
+$temTagOfertaMcqdc = false;
+try {
+    $stAula05 = $pdo->prepare("
+        SELECT 1
+          FROM lessons l
+          LEFT JOIN lesson_progress lp
+            ON lp.lesson_id = l.id
+           AND lp.user_id = :uid_lp
+          LEFT JOIN lesson_view_events lve
+            ON lve.lesson_id = l.id
+           AND lve.user_id = :uid_lve
+         WHERE l.ativo = 1
+           AND (l.ordem = 5 OR l.id = 5)
+           AND (lp.id IS NOT NULL OR lve.id IS NOT NULL)
+         LIMIT 1
+    ");
+    $stAula05->execute(['uid_lp' => $userId, 'uid_lve' => $userId]);
+    $viuAula05 = (bool)$stAula05->fetchColumn();
+} catch (Throwable $e) {}
+
+try {
+    $stTagOferta = $pdo->prepare("
+        SELECT 1
+          FROM user_tags ut
+          JOIN tags t ON t.id = ut.tag_id
+         WHERE ut.user_id = :uid
+           AND t.nome = 'ESTAVA_OFERTA_MCQDC'
+         LIMIT 1
+    ");
+    $stTagOferta->execute(['uid' => $userId]);
+    $temTagOfertaMcqdc = (bool)$stTagOferta->fetchColumn();
+} catch (Throwable $e) {}
+
+$certificadoSemSenha = ($percent >= 80 && $viuAula05 && $temTagOfertaMcqdc);
+
 function send_cert_webhook(PDO $pdo, ?string $url, string $evento, array $user, array $extra = []): void {
     if (!$url) return;
     $payload     = ['evento' => $evento, 'user' => ['id' => $user['id'] ?? null, 'nome' => $user['nome'] ?? null, 'email' => $user['email'] ?? null, 'telefone' => $user['telefone'] ?? null], 'extra' => $extra, 'timestamp' => date('c')];
@@ -157,11 +193,6 @@ $senhaConfirmada = '';
 $nomeConfirmacao = trim((string)($user['nome'] ?? ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!$temTudoConcluido) {
-        $erroConclusao = true;
-        $etapa         = 'erro';
-        $mensagemErro  = 'Você ainda não concluiu todas as aulas obrigatórias. Finalize a trilha antes de emitir o certificado.';
-    } else {
         $senhaInformada = trim((string)($_POST['senha_certificado'] ?? ''));
         $senhaConfirmada = $senhaInformada;
         $acao = (string)($_POST['acao'] ?? '');
@@ -203,7 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $senhaEsperada = $senhaFixa !== '' ? $senhaFixa : (defined('SENHA_CERTIFICADO') ? SENHA_CERTIFICADO : '');
         }
 
-        if (!$senhaOkNaSessao && ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '')) {
+        if (!$certificadoSemSenha && !$senhaOkNaSessao && ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '')) {
             $erroSenha    = true;
             $etapa        = 'erro';
             $mensagemErro = $errorHtml;
@@ -298,7 +329,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-    }
 }
 
 $btnLabel = $certCfg['certificado_button_label'] ?? 'Quero receber meu certificado';
@@ -620,12 +650,6 @@ function normalizar_video_url(string $url): string {
         <div class="progress-bar-outer"><div class="progress-bar-inner"></div></div>
         <div class="progress-text"><?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas concluídas (<?= $percent ?>%)</div>
 
-        <?php if (!$temTudoConcluido && $etapa === 'form'): ?>
-            <div class="alert alert-warn">
-                Você ainda não concluiu todas as aulas obrigatórias. Conclua a trilha para emitir o certificado.
-            </div>
-        <?php endif; ?>
-
         <?php if ($etapa === 'erro' && $mensagemErro): ?>
             <div class="alert alert-error"><?= $mensagemErro ?></div>
         <?php endif; ?>
@@ -647,20 +671,24 @@ function normalizar_video_url(string $url): string {
                     <?= h($btnLabel) ?>
                 </a>
             </div>
-        <?php elseif ($temTudoConcluido): ?>
+        <?php elseif ($etapa === 'form'): ?>
             <form method="post" action="" id="certForm">
+                <?php if ($certificadoSemSenha): ?>
+                    <input type="hidden" name="senha_certificado" value="">
+                <?php else: ?>
                 <div class="form-group">
                     <label class="form-label" for="senha_certificado">Senha do certificado</label>
                     <input type="password" id="senha_certificado" name="senha_certificado" autocomplete="off" placeholder="Digite a senha recebida">
                 </div>
+                <?php endif; ?>
                 <button type="submit" class="btn-submit" id="btnEmitir">
                     <span class="spinner" aria-hidden="true"></span>
-                    <span class="btn-text">Validar e emitir certificado</span>
+                    <span class="btn-text"><?= $certificadoSemSenha ? 'Gerar certificado' : 'Validar e emitir certificado' ?></span>
                 </button>
             </form>
         <?php endif; ?>
 
-        <?php if ($etapa === 'form' && !$temTudoConcluido && $incompletoVideoEnabled && $incompletoVideoUrl !== ''): ?>
+        <?php if ($etapa === 'form' && !$certificadoSemSenha && !$temTudoConcluido && $incompletoVideoEnabled && $incompletoVideoUrl !== ''): ?>
             <div class="video-box">
                 <div class="video-inner">
                     <?php if (stripos($incompletoVideoUrl, '<iframe') !== false): ?>
@@ -670,7 +698,7 @@ function normalizar_video_url(string $url): string {
                     <?php endif; ?>
                 </div>
             </div>
-        <?php elseif ($etapa === 'form' && $temTudoConcluido && $introVideoEnabled && $introVideoUrl !== ''): ?>
+        <?php elseif ($etapa === 'form' && ($temTudoConcluido || $certificadoSemSenha) && $introVideoEnabled && $introVideoUrl !== ''): ?>
             <div class="video-box">
                 <div class="video-inner">
                     <?php if (stripos($introVideoUrl, '<iframe') !== false): ?>
@@ -753,7 +781,7 @@ function normalizar_video_url(string $url): string {
         });
     }
 
-    lockForm(form, 'btnEmitir', 'Validando senha...');
+    lockForm(form, 'btnEmitir', <?= json_encode($certificadoSemSenha ? 'Gerando certificado...' : 'Validando senha...', JSON_UNESCAPED_UNICODE) ?>);
     lockForm(confirmForm, 'btnConfirmarNome', 'Gerando certificado...');
 
     if (nameInput) {
