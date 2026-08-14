@@ -2,6 +2,26 @@
 // FILE: app/config.php
 declare(strict_types=1);
 
+// Compatibilidade com hospedagens que ainda executam PHP 7.x. O codigo usa
+// helpers nativos do PHP 8 em varios fluxos, inclusive no login por senha.
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool {
+        if ($needle === '') return true;
+        $length = strlen($needle);
+        return $length <= strlen($haystack) && substr($haystack, -$length) === $needle;
+    }
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+
 // Timezone padrão (evita divergência entre site e CRON)
 date_default_timezone_set('America/Sao_Paulo');
 
