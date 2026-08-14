@@ -64,7 +64,7 @@ function am_login_password_candidates(string $senha, string $telefone): array {
             if ($phoneLocal !== '') $candidates[$phoneLocal] = true;
         }
     }
-    return array_keys($candidates);
+    return array_map('strval', array_keys($candidates));
 }
 
 function am_verify_login_password(string $senha, string $hash, string $telefone): bool {
