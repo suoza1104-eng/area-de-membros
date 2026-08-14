@@ -345,6 +345,7 @@ $whatsHelpUrl = (string)get_setting('whatsapp_help_url', '');
 $helpUrl      = trim($whatsHelpUrl !== '' ? $whatsHelpUrl : $loginHelpUrl);
 $mailtoHelp   = 'mailto:suporte@professoremersonleite.com?subject=' . rawurlencode('Não consigo acessar a área de membros');
 
+$loginIgnorePassword = (int)(get_setting('login_ignore_password', '0') ?: '0') === 1;
 $mensagemErro = '';
 $cookieEmail     = $_COOKIE['am_email'] ?? '';
 $emailForm       = $cookieEmail;
@@ -357,25 +358,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $emailForm = $email;
 
-    if ($email === '' || $senha === '') {
-        $mensagemErro = 'Informe seu e-mail e senha para acessar.';
+    if ($email === '' || (!$loginIgnorePassword && $senha === '')) {
+        $mensagemErro = $loginIgnorePassword ? 'Informe seu e-mail para acessar.' : 'Informe seu e-mail e senha para acessar.';
     } else {
         try {
         $st = $pdo->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
         $st->execute(['email' => $email]);
         $user = $st->fetch();
 
+            $blocked = $user && (int)($user['bloquear'] ?? 0) === 1;
             $passwordOk = $user
-                && !empty($user['senha_hash'])
-                && am_verify_login_password($senha, (string)$user['senha_hash'], (string)($user['telefone'] ?? ''));
+                && !$blocked
+                && (
+                    $loginIgnorePassword
+                    || (!empty($user['senha_hash']) && am_verify_login_password($senha, (string)$user['senha_hash'], (string)($user['telefone'] ?? '')))
+                );
 
         if (!$passwordOk) {
-            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, 'password', false, $user ? 'invalid_password' : 'user_not_found');
-            $mensagemErro = 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
+            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $blocked ? 'blocked_user' : ($user ? 'invalid_password' : 'user_not_found'));
+            $mensagemErro = $blocked ? 'Seu acesso está bloqueado. Fale com a equipe de suporte.' : 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
 
-            am_touch_login($pdo, (int)$user['id'], 'password', $email);
+            am_touch_login($pdo, (int)$user['id'], $loginIgnorePassword ? 'password_bypass' : 'password', $email);
 
             // Salva token de auto-login (renova a cada login)
             try {
@@ -664,7 +669,7 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
     <!-- RIGHT: FORM -->
     <div class="card">
         <div class="card-title">Entrar na área de membros</div>
-        <div class="card-sub">Use o e-mail e a senha que recebeu ao se cadastrar.</div>
+        <div class="card-sub"><?= $loginIgnorePassword ? 'Use o e-mail cadastrado para acessar.' : 'Use o e-mail e a senha que recebeu ao se cadastrar.' ?></div>
 
         <?php if ($mensagemErro): ?>
             <div class="error-box"><?= h($mensagemErro) ?></div>
@@ -684,12 +689,18 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
             <div class="form-group">
                 <label class="form-label" for="senha">Senha</label>
                 <input type="password" id="senha" name="senha"
-                       placeholder="Digite sua senha" required>
+                       placeholder="<?= $loginIgnorePassword ? 'Senha dispensada' : 'Digite sua senha' ?>" <?= $loginIgnorePassword ? '' : 'required' ?>>
             </div>
 
+            <?php if ($loginIgnorePassword): ?>
+            <div class="hint-box">
+                A senha esta temporariamente dispensada. Informe o e-mail cadastrado para entrar.
+            </div>
+            <?php else: ?>
             <div class="hint-box">
                 Dica: sua senha é seu <strong>telefone com DDD</strong>, só números. Ex: <strong>11987654321</strong>. Se não entrar, tente com <strong>55</strong> antes do DDD.
             </div>
+            <?php endif; ?>
 
             <div class="actions-row">
                 <label class="remember-label">

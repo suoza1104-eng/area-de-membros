@@ -78,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection !== 'metrics') {
     $logoUrl          = trim((string)($_POST['logo_url'] ?? ''));
     $certCtaLabel     = trim((string)($_POST['certificado_cta_label'] ?? ''));
     $paidCoursesTitle = trim((string)($_POST['paid_courses_title'] ?? ''));
+    $loginIgnorePassword = !empty($_POST['login_ignore_password']) ? '1' : '0';
 
     if ($courseTitle === '') {
         $mensagemErro = 'Informe o título do curso.';
@@ -106,6 +107,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection !== 'metrics') {
             ]);
 
             $mensagemOk = 'Configurações salvas com sucesso.';
+            set_setting('login_ignore_password', $loginIgnorePassword);
+
             // Recarrega config
             $st = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
             $config = $st->fetch();
@@ -118,6 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection !== 'metrics') {
 $metricsIntegration = metrics_active_integration($pdo) ?: [];
 $metricsRevenueBasis = get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net';
 $hasHotmartToken = (get_setting('metrics_hotmart_hottok', '') ?: '') !== '';
+$loginIgnorePassword = (int)(get_setting('login_ignore_password', '0') ?: '0') === 1;
 
 function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -188,6 +192,15 @@ include __DIR__ . '/_header.php';
                        placeholder="Conheça nossos cursos pagos"
                        value="<?= h($config['paid_courses_title'] ?? 'Conheça nossos cursos pagos') ?>">
             </div>
+
+            <div class="section-label">Login dos alunos</div>
+            <label class="form-group" style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+                <input type="checkbox" name="login_ignore_password" value="1" <?= $loginIgnorePassword ? 'checked' : '' ?> style="margin-top:2px">
+                <span>
+                    <span style="display:block;font-size:13px;font-weight:700;color:var(--text)">Ignorar senha no login</span>
+                    <span style="display:block;font-size:12px;color:var(--muted);line-height:1.45;margin-top:3px">Quando ativado, o aluno entra informando apenas um e-mail cadastrado. Alunos bloqueados continuam sem acesso.</span>
+                </span>
+            </label>
 
             <button type="submit" class="btn btn-primary">Salvar configurações</button>
         </form>
