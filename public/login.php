@@ -361,38 +361,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensagemErro = 'Informe seu e-mail e senha para acessar.';
     } else {
         try {
-            login_dbg('password login start email_hash=' . substr(hash('sha256', strtolower($email)), 0, 12));
         $st = $pdo->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
         $st->execute(['email' => $email]);
         $user = $st->fetch();
-            login_dbg('password login user=' . ($user ? ('uid=' . (int)$user['id']) : 'not_found'));
 
             $passwordOk = $user
                 && !empty($user['senha_hash'])
                 && am_verify_login_password($senha, (string)$user['senha_hash'], (string)($user['telefone'] ?? ''));
-            login_dbg('password login verify=' . ($passwordOk ? 'ok' : 'fail'));
 
         if (!$passwordOk) {
             am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, 'password', false, $user ? 'invalid_password' : 'user_not_found');
             $mensagemErro = 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
-            login_dbg('password login session set uid=' . (int)$user['id']);
 
             am_touch_login($pdo, (int)$user['id'], 'password', $email);
 
             // Salva token de auto-login (renova a cada login)
             try {
                 am_set_token($pdo, (int)$user['id']);
-                login_dbg('password login token set uid=' . (int)$user['id']);
             } catch (Throwable $e) { /* não crítico */ }
 
             // Cookie de e-mail para pré-preenchimento
             setcookie('am_email', '', am_host_cookie_options(time() - 3600, false));
             setcookie('am_email', $email, am_cookie_options(time() + 60 * 60 * 24 * AM_TOKEN_DAYS, false));
-            login_dbg('password login email cookie set uid=' . (int)$user['id']);
 
-            login_dbg('password login redirect uid=' . (int)$user['id']);
             header('Location: ' . am_resolve_next());
             exit;
         }
