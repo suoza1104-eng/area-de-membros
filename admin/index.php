@@ -192,6 +192,47 @@ $pdo = getPDO();
 require_once __DIR__ . '/../app/push_notifications.php';
 push_ensure_schema($pdo);
 
+function dash_get_setting(PDO $pdo, string $key, string $default = ''): string {
+    try {
+        $st = $pdo->prepare("SELECT valor FROM settings WHERE chave = :chave LIMIT 1");
+        $st->execute([':chave' => $key]);
+        $value = $st->fetchColumn();
+        return $value !== false ? (string)$value : $default;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function dash_set_setting(PDO $pdo, string $key, string $value): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+        chave VARCHAR(100) PRIMARY KEY,
+        valor TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $st = $pdo->prepare("
+        INSERT INTO settings (chave, valor) VALUES (:chave, :valor)
+        ON DUPLICATE KEY UPDATE valor = VALUES(valor)
+    ");
+    $st->execute([':chave' => $key, ':valor' => $value]);
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && (string)($_POST['ajax'] ?? '') === 'save_dashboard_tag_chart') {
+    header('Content-Type: application/json; charset=UTF-8');
+    try {
+        $tagId = max(0, (int)($_POST['tag_id'] ?? 0));
+        if ($tagId > 0) {
+            $st = $pdo->prepare("SELECT id FROM tags WHERE id = :id LIMIT 1");
+            $st->execute([':id' => $tagId]);
+            if (!$st->fetchColumn()) throw new RuntimeException('Tag nao encontrada.');
+        }
+        dash_set_setting($pdo, 'dashboard_tag_chart_tag_id', (string)$tagId);
+        echo json_encode(['ok' => true, 'tag_id' => $tagId], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    exit;
+}
+
 // ========================
 // 3) FILTROS (datas / turma)
 // ========================
@@ -487,6 +528,92 @@ function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, str
         }
     }
     return $out;
+}
+
+$tagChartTags = [];
+$tagChartSelectedId = 0;
+$tagChartSelectedName = '';
+$tagChartSeries = ['labels' => [], 'data' => [], 'total' => 0];
+
+try {
+    $tagChartTags = $pdo->query("
+        SELECT t.id, t.nome, COUNT(ut.id) AS total
+          FROM tags t
+          LEFT JOIN user_tags ut ON ut.tag_id = t.id
+         GROUP BY t.id, t.nome
+         ORDER BY t.nome ASC
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $savedTagId = (int)dash_get_setting($pdo, 'dashboard_tag_chart_tag_id', '0');
+    $requestedTagId = isset($_GET['tag_chart_id']) ? max(0, (int)$_GET['tag_chart_id']) : 0;
+    $candidateTagId = $requestedTagId > 0 ? $requestedTagId : $savedTagId;
+    $validTagIds = array_flip(array_map(static fn(array $row): int => (int)$row['id'], $tagChartTags));
+    if ($candidateTagId > 0 && isset($validTagIds[$candidateTagId])) {
+        $tagChartSelectedId = $candidateTagId;
+    } elseif ($tagChartTags) {
+        $tagChartSelectedId = (int)$tagChartTags[0]['id'];
+    }
+
+    foreach ($tagChartTags as $tagRow) {
+        if ((int)$tagRow['id'] === $tagChartSelectedId) {
+            $tagChartSelectedName = (string)$tagRow['nome'];
+            break;
+        }
+    }
+
+    if ($tagChartSelectedId > 0) {
+        $paramsTagChart = ['tag_chart_id' => $tagChartSelectedId];
+        $whereTagChart = ['ut.tag_id = :tag_chart_id', 'ut.created_at IS NOT NULL'];
+        if ($dataDe !== '') {
+            $whereTagChart[] = 'ut.created_at >= :tag_chart_de';
+            $paramsTagChart['tag_chart_de'] = $dataDe . ' 00:00:00';
+        }
+        if ($dataAte !== '') {
+            $whereTagChart[] = 'ut.created_at <= :tag_chart_ate';
+            $paramsTagChart['tag_chart_ate'] = $dataAte . ' 23:59:59';
+        }
+        $whereTagChart = array_merge(
+            $whereTagChart,
+            dash_turma_where('u', $turmaColTop, $turmaIds, $codigosTurmaFiltro, $paramsTagChart, 'tag_chart')
+        );
+        $stTagChart = $pdo->prepare("
+            SELECT DATE(ut.created_at) AS dia, COUNT(DISTINCT ut.user_id) AS total
+              FROM user_tags ut
+              JOIN users u ON u.id = ut.user_id
+             WHERE " . implode(' AND ', $whereTagChart) . "
+             GROUP BY DATE(ut.created_at)
+             ORDER BY dia ASC
+        ");
+        $stTagChart->execute($paramsTagChart);
+        $tagChartByDay = [];
+        foreach ($stTagChart->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $day = (string)($row['dia'] ?? '');
+            if ($day === '') continue;
+            $tagChartByDay[$day] = (int)($row['total'] ?? 0);
+        }
+
+        if ($dataDe !== '' && $dataAte !== '') {
+            $cursor = DateTimeImmutable::createFromFormat('Y-m-d', $dataDe) ?: new DateTimeImmutable($dataDe);
+            $end = DateTimeImmutable::createFromFormat('Y-m-d', $dataAte) ?: new DateTimeImmutable($dataAte);
+            while ($cursor <= $end) {
+                $key = $cursor->format('Y-m-d');
+                $tagChartSeries['labels'][] = dash_bucket_label($key, 'daily');
+                $tagChartSeries['data'][] = (int)($tagChartByDay[$key] ?? 0);
+                $cursor = $cursor->modify('+1 day');
+            }
+        } else {
+            foreach ($tagChartByDay as $day => $total) {
+                $tagChartSeries['labels'][] = dash_bucket_label($day, 'daily');
+                $tagChartSeries['data'][] = (int)$total;
+            }
+        }
+        $tagChartSeries['total'] = array_sum($tagChartSeries['data']);
+    }
+} catch (Throwable $e) {
+    $tagChartTags = [];
+    $tagChartSelectedId = 0;
+    $tagChartSelectedName = '';
+    $tagChartSeries = ['labels' => [], 'data' => [], 'total' => 0];
 }
 
 function dash_lead_engagement_series(PDO $pdo, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma): array {
@@ -3084,6 +3211,35 @@ body.dash-chart-fullscreen {
 </div>
 
 <div class="panel mb-4">
+    <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span>Tags por dia</span>
+        <span style="font-size:11px;color:var(--muted);font-weight:400">
+            <?= $tagChartSelectedName !== '' ? htmlspecialchars($tagChartSelectedName) . ' · ' . number_format((int)$tagChartSeries['total'], 0, ',', '.') . ' aluno(s) no filtro' : 'selecione uma tag para acompanhar' ?>
+        </span>
+        <div style="margin-left:auto;min-width:240px;max-width:420px;flex:1">
+            <select id="tagChartSelect" style="width:100%;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:12px">
+                <?php if (!$tagChartTags): ?>
+                    <option value="">Nenhuma tag encontrada</option>
+                <?php else: ?>
+                    <?php foreach ($tagChartTags as $tagRow): ?>
+                        <option value="<?= (int)$tagRow['id'] ?>" <?= (int)$tagRow['id'] === $tagChartSelectedId ? 'selected' : '' ?>>
+                            <?= htmlspecialchars((string)$tagRow['nome']) ?> (<?= number_format((int)$tagRow['total'], 0, ',', '.') ?>)
+                        </option>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </select>
+        </div>
+    </div>
+    <?php if ($tagChartSelectedId > 0): ?>
+        <div style="height:300px">
+            <canvas id="chartTagsPorDia"></canvas>
+        </div>
+    <?php else: ?>
+        <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhuma tag disponivel.</p>
+    <?php endif; ?>
+</div>
+
+<div class="panel mb-4">
     <div class="panel-title">
         Bloqueios por mes
         <span style="font-size:11px;color:var(--muted);font-weight:400"><?= number_format($totalBloqueiosPeriodo, 0, ',', '.') ?> bloqueio(s) ativado(s) no filtro</span>
@@ -3216,6 +3372,74 @@ body.dash-chart-fullscreen {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    // Tags por dia
+    const TAG_CHART_DATA = <?= json_encode($tagChartSeries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const TAG_CHART_NAME = <?= json_encode($tagChartSelectedName, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const tagChartCanvas = document.getElementById('chartTagsPorDia');
+    if (tagChartCanvas) {
+        new Chart(tagChartCanvas, {
+            type: 'line',
+            data: {
+                labels: TAG_CHART_DATA.labels || [],
+                datasets: [{
+                    label: TAG_CHART_NAME || 'Tag',
+                    data: TAG_CHART_DATA.data || [],
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34,197,94,.14)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    tension: .25,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { color:'#94a3b8', maxRotation: 0, autoSkip: true }, grid: { color:'rgba(255,255,255,.05)' } },
+                    y: { beginAtZero: true, ticks: { color:'#94a3b8', precision: 0 }, grid: { color:'rgba(255,255,255,.05)' } }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const value = Number(ctx.raw || 0);
+                                return value.toLocaleString('pt-BR') + ' aluno(s)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    const tagChartSelect = document.getElementById('tagChartSelect');
+    if (tagChartSelect) {
+        tagChartSelect.addEventListener('change', async function() {
+            const tagId = tagChartSelect.value || '0';
+            tagChartSelect.disabled = true;
+            try {
+                const body = new URLSearchParams({ ajax: 'save_dashboard_tag_chart', tag_id: tagId });
+                const res = await fetch('index.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'Accept': 'application/json' },
+                    body: body.toString()
+                });
+                const json = await res.json().catch(function() { return null; });
+                if (!res.ok || !json || !json.ok) throw new Error((json && (json.error || json.message)) || 'Nao foi possivel salvar a tag.');
+                const url = new URL(window.location.href);
+                url.searchParams.set('tag_chart_id', tagId);
+                window.location.assign(url.toString());
+            } catch (err) {
+                alert(err.message || 'Nao foi possivel salvar a tag.');
+                tagChartSelect.disabled = false;
             }
         });
     }
