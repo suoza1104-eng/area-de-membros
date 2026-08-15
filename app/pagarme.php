@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/firepay.php';
 require_once __DIR__ . '/course_access.php';
 require_once __DIR__ . '/payment_events.php';
+require_once __DIR__ . '/payment_amounts.php';
 
 function pagarme_ensure_schema(PDO $pdo): void
 {
@@ -36,6 +37,26 @@ function pagarme_scalar(array $data, string $key): string
 {
     $value = $data[$key] ?? '';
     return is_scalar($value) ? trim((string)$value) : '';
+}
+
+function pagarme_cents($value): int
+{
+    return payment_amount_cents($value);
+}
+
+function pagarme_find_amount_by_keys($value, array $keys): int
+{
+    return payment_amount_find_by_keys($value, $keys);
+}
+
+function pagarme_fee_cents(array $data, array $charge, array $lastTransaction, int $grossCents, string $paymentMethod): int
+{
+    return payment_amount_fee_cents([$charge, $lastTransaction, $data], $grossCents, 'pagarme', $paymentMethod, '0.98');
+}
+
+function pagarme_net_cents(array $data, array $charge, array $lastTransaction, int $grossCents, int $feeCents): int
+{
+    return payment_amount_net_cents([$charge, $lastTransaction, $data], $grossCents, $feeCents);
 }
 
 function pagarme_normalized_status(string $event, string $status): string
@@ -175,7 +196,10 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
     $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
     $transactionCode = 'pagarme:' . $transactionId;
     $receivedAt = pagarme_datetime($data, $charge);
-    $amountCents = (int)($charge['amount'] ?? $data['amount'] ?? 0);
+    $amountCents = payment_amount_cents($charge['amount'] ?? $data['amount'] ?? 0);
+    $paymentMethod = pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type') ?: null;
+    $feeCents = pagarme_fee_cents($data, $charge, $lastTransaction, $amountCents, (string)$paymentMethod);
+    $netCents = pagarme_net_cents($data, $charge, $lastTransaction, $amountCents, $feeCents);
     $productName = pagarme_scalar($firstItem, 'description');
     $fingerprint = hash('sha256', $event . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
     $secretConfigured = trim((string)get_setting('pagarme_webhook_secret', '')) !== '';
@@ -197,16 +221,17 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
              buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:product_amount,0,
+            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
              :installments,:payment_method,'pagarme',:account,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
              :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),
+             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),
              payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),external_product_id=VALUES(external_product_id),
              product_name=VALUES(product_name),integration_id=VALUES(integration_id),origin_description=VALUES(origin_description),
              buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
@@ -220,9 +245,11 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             ':normalized_status'=>$normalizedStatus,
             ':currency'=>pagarme_scalar($data, 'currency') ?: pagarme_scalar($charge, 'currency') ?: 'BRL',
             ':gross'=>$amountCents,
-            ':product_amount'=>(int)($firstItem['amount'] ?? $amountCents),
+            ':net'=>$netCents,
+            ':fee'=>$feeCents,
+            ':product_amount'=>payment_amount_cents($firstItem['amount'] ?? $amountCents),
             ':installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
-            ':payment_method'=>pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type') ?: null,
+            ':payment_method'=>$paymentMethod,
             ':account'=>is_array($payload['account'] ?? null) ? ($payload['account']['id'] ?? null) : null,
             ':product_id'=>pagarme_scalar($firstItem, 'id') ?: null,
             ':product_name'=>$productName ?: null,
@@ -254,8 +281,8 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
                 'price_name'=>pagarme_scalar($firstItem, 'code'),
                 'currency'=>pagarme_scalar($data, 'currency') ?: pagarme_scalar($charge, 'currency') ?: 'BRL',
                 'gross_revenue'=>$amountCents / 100,
-                'net_revenue'=>$amountCents / 100,
-                'producer_net'=>$amountCents / 100,
+                'net_revenue'=>$netCents / 100,
+                'producer_net'=>$netCents / 100,
                 'refunded_value'=>$normalizedStatus === 'REFUNDED' ? $amountCents / 100 : 0,
                 'chargeback_value'=>$normalizedStatus === 'CHARGEBACK' ? $amountCents / 100 : 0,
                 'buyer_name'=>pagarme_scalar($customer, 'name'),
@@ -271,7 +298,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             hotmart_upsert_sale_legacy($pdo, $legacySale);
             $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,sale_origin=:origin,sales_channel='pagarme' WHERE transaction_code=:transaction")
                 ->execute([
-                    ':payment'=>pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type') ?: null,
+                    ':payment'=>$paymentMethod,
                     ':installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
                     ':origin'=>(string)($data['metadata']['utm_source'] ?? '') ?: 'pagarme',
                     ':transaction'=>$transactionCode,
@@ -288,11 +315,11 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             'transaction_code'=>$transactionCode,
             'provider_transaction_id'=>$transactionId,
             'provider_status'=>$providerStatus,
-            'payment_method'=>pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type'),
+            'payment_method'=>$paymentMethod,
             'currency'=>pagarme_scalar($data, 'currency') ?: pagarme_scalar($charge, 'currency') ?: 'BRL',
             'gross_amount_cents'=>$amountCents,
-            'net_amount_cents'=>$amountCents,
-            'fee_amount_cents'=>0,
+            'net_amount_cents'=>$netCents,
+            'fee_amount_cents'=>$feeCents,
             'installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
             'product_name'=>$productName,
             'product_code'=>pagarme_scalar($firstItem, 'id') ?: pagarme_scalar($firstItem, 'code'),

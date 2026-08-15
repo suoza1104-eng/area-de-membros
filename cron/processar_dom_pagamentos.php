@@ -17,8 +17,8 @@ try {
     $today = date('Y-m-d');
     $yesterday = date('Y-m-d', strtotime('-1 day'));
     $result = [
-        'today' => dom_sync_transactions_for_date($pdo, $today, 'cron_12h'),
-        'yesterday' => dom_sync_transactions_for_date($pdo, $yesterday, 'cron_12h_backfill'),
+        'today' => dom_sync_transactions_for_date($pdo, $today, 'cron_regular'),
+        'yesterday' => dom_sync_transactions_for_date($pdo, $yesterday, 'cron_regular_backfill'),
     ];
     echo json_encode(['ok' => true, 'resultado' => $result], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $e) {

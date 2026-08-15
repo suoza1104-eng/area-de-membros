@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/firepay.php';
 require_once __DIR__ . '/course_access.php';
 require_once __DIR__ . '/payment_events.php';
+require_once __DIR__ . '/payment_amounts.php';
 
 function dom_ensure_schema(PDO $pdo): void
 {
@@ -602,8 +603,12 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
     $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
     $transactionCode = 'dom:' . $transactionId;
     $receivedAt = dom_transaction_datetime($data);
-    $amountCents = (int)($data['amount'] ?? 0);
-    $liquidCents = (int)($data['liquid_amount'] ?? 0);
+    $amountCents = payment_amount_cents($data['amount'] ?? 0);
+    $liquidCents = payment_amount_cents($data['liquid_amount'] ?? 0);
+    $paymentMethod = dom_scalar($data, 'payment_method');
+    $feeCents = payment_amount_fee_cents([$data], $amountCents, 'dom', $paymentMethod);
+    $netCents = $liquidCents > 0 ? min($liquidCents, $amountCents) : payment_amount_net_cents([$data], $amountCents, $feeCents);
+    if ($feeCents <= 0 && $netCents > 0 && $amountCents > $netCents) $feeCents = $amountCents - $netCents;
     $refundedCents = (int)(is_array($data['refunds'] ?? null) ? ($data['refunds']['total_refunds'] ?? 0) : 0);
     $productName = dom_scalar($firstItem, 'description') ?: (string)($metadata['product_name'] ?? $metadata['produto'] ?? '');
     $productRef = dom_scalar($firstItem, 'reference');
@@ -628,16 +633,17 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
              buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:product_amount,0,
+            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
              :installments,:payment_method,'dom',NULL,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
              :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),product_amount_cents=VALUES(product_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             product_amount_cents=VALUES(product_amount_cents),
              installments=VALUES(installments),payment_method=VALUES(payment_method),external_product_id=VALUES(external_product_id),
              product_name=VALUES(product_name),integration_id=VALUES(integration_id),origin_description=VALUES(origin_description),
              buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
@@ -651,9 +657,11 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
             ':normalized_status' => $normalizedStatus,
             ':currency' => dom_scalar($data, 'currency') ?: 'BRL',
             ':gross' => $amountCents,
-            ':product_amount' => (int)($firstItem['price'] ?? $amountCents),
+            ':net' => $netCents,
+            ':fee' => $feeCents,
+            ':product_amount' => payment_amount_cents($firstItem['price'] ?? $amountCents),
             ':installments' => (int)(dom_scalar($data, 'installments') ?: 0) ?: null,
-            ':payment_method' => dom_scalar($data, 'payment_method') ?: null,
+            ':payment_method' => $paymentMethod ?: null,
             ':product_id' => $productRef ?: null,
             ':product_name' => $productName ?: null,
             ':integration_id' => (string)($metadata['offer_code'] ?? $metadata['oferta'] ?? '') ?: null,
@@ -684,8 +692,8 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
                 'price_name' => (string)($metadata['offer_code'] ?? $metadata['oferta'] ?? ''),
                 'currency' => dom_scalar($data, 'currency') ?: 'BRL',
                 'gross_revenue' => $amountCents / 100,
-                'net_revenue' => $liquidCents > 0 ? $liquidCents / 100 : $amountCents / 100,
-                'producer_net' => $liquidCents > 0 ? $liquidCents / 100 : $amountCents / 100,
+                'net_revenue' => $netCents / 100,
+                'producer_net' => $netCents / 100,
                 'refunded_value' => $normalizedStatus === 'REFUNDED' ? $refundedCents / 100 : 0,
                 'chargeback_value' => $normalizedStatus === 'CHARGEBACK' ? $amountCents / 100 : 0,
                 'buyer_name' => dom_scalar($customer, 'name'),

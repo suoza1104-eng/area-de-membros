@@ -51,7 +51,7 @@ function cron_manager_base_definitions(): array {
             'label' => 'DOM Pagamentos',
             'description' => 'Sincroniza vendas da DOM Pagamentos pela API para cobrir webhooks perdidos ou assinaturas divergentes.',
             'script' => __DIR__ . '/../cron/processar_dom_pagamentos.php',
-            'interval' => 720,
+            'interval' => 5,
             'timeout' => 300,
         ],
         'fluxos_push' => [
@@ -258,6 +258,42 @@ function cron_manager_ensure_tables(PDO $pdo): void {
                    next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'meta_leads_qualificados'
                AND interval_minutes > 1
+        ");
+    } catch (Throwable $e) {}
+
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET enabled = 1,
+                   primary_source = 'hosting',
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'metricas_negocio'
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR primary_source <> 'hosting'
+                    OR next_run_at IS NULL
+               )
+        ");
+    } catch (Throwable $e) {}
+
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 5,
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'dom_pagamentos'
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 5
+                    OR next_run_at IS NULL
+               )
         ");
     } catch (Throwable $e) {}
 

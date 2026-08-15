@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/metrics.php';
 require_once __DIR__ . '/course_access.php';
 require_once __DIR__ . '/payment_events.php';
+require_once __DIR__ . '/payment_amounts.php';
 
 function firepay_ensure_schema(PDO $pdo): void
 {
@@ -51,6 +52,13 @@ function firepay_ensure_schema(PDO $pdo): void
         KEY idx_payment_user (matched_user_id),
         KEY idx_payment_received (last_received_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    foreach ([
+        "ALTER TABLE payment_sales ADD COLUMN net_amount_cents BIGINT NOT NULL DEFAULT 0 AFTER gross_amount_cents",
+        "ALTER TABLE payment_sales ADD COLUMN fee_amount_cents BIGINT NOT NULL DEFAULT 0 AFTER net_amount_cents",
+    ] as $migration) {
+        try { $pdo->exec($migration); } catch (Throwable $e) {}
+    }
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS firepay_webhook_events (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -198,6 +206,12 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
     $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
     $receivedAt = date('Y-m-d H:i:s');
     $fingerprint = hash('sha256', $inboundWebhookId . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
+    $paymentMethod = firepay_scalar($payload, 'payment_method');
+    $grossCents = payment_amount_cents($payload['price'] ?? 0);
+    $productCents = payment_amount_cents($payload['product_price'] ?? $grossCents);
+    $interestCents = payment_amount_cents($payload['interest_fee'] ?? 0);
+    $feeCents = payment_amount_fee_cents([$payload], $grossCents, 'firepay', $paymentMethod);
+    $netCents = payment_amount_net_cents([$payload], $grossCents, $feeCents);
 
     $pdo->beginTransaction();
     try {
@@ -214,17 +228,18 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
              buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('firepay',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:product_amount,:interest,
+            VALUES ('firepay',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,:interest,
              :installments,:payment_method,:gateway,:account,:product_id,:product_name,:product_slug,:integration_id,:delivery_type,:classes,
              :origin_description,:origin_slug,:buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,:checkout_url,
              :order_bumps,:payload,NOW(),NOW())
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),product_amount_cents=VALUES(product_amount_cents),interest_amount_cents=VALUES(interest_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             product_amount_cents=VALUES(product_amount_cents),interest_amount_cents=VALUES(interest_amount_cents),
              installments=VALUES(installments),payment_method=VALUES(payment_method),payment_gateway=VALUES(payment_gateway),
              provider_account_id=VALUES(provider_account_id),external_product_id=VALUES(external_product_id),product_name=VALUES(product_name),
              product_slug=VALUES(product_slug),integration_id=VALUES(integration_id),integration_delivery_type=VALUES(integration_delivery_type),
@@ -235,9 +250,9 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
         $sale->execute([
             ':transaction'=>$transactionId, ':checkout'=>firepay_scalar($payload, 'checkout_id') ?: null,
             ':type'=>firepay_scalar($payload, 'type') ?: null, ':provider_status'=>$providerStatus, ':normalized_status'=>$normalizedStatus,
-            ':currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL', ':gross'=>(int)($payload['price'] ?? 0),
-            ':product_amount'=>(int)($payload['product_price'] ?? 0), ':interest'=>(int)($payload['interest_fee'] ?? 0),
-            ':installments'=>(int)($payload['installments'] ?? 0) ?: null, ':payment_method'=>firepay_scalar($payload, 'payment_method') ?: null,
+            ':currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL', ':gross'=>$grossCents,
+            ':net'=>$netCents, ':fee'=>$feeCents, ':product_amount'=>$productCents, ':interest'=>$interestCents,
+            ':installments'=>(int)($payload['installments'] ?? 0) ?: null, ':payment_method'=>$paymentMethod ?: null,
             ':gateway'=>firepay_scalar($payload, 'payment_gateway') ?: null, ':account'=>firepay_scalar($payload, 'tenant_id') ?: null,
             ':product_id'=>firepay_scalar($product, 'id') ?: null, ':product_name'=>firepay_scalar($product, 'name') ?: null,
             ':product_slug'=>firepay_scalar($product, 'slug') ?: null, ':integration_id'=>firepay_scalar($product, 'integration_id') ?: null,
@@ -252,21 +267,22 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
         $lifetimeAttempt = ['granted' => false, 'reason' => 'payment_not_approved'];
         if ($normalizedStatus === 'APPROVED') {
             $transactionCode = 'firepay:' . $transactionId;
-            $gross = ((int)($payload['price'] ?? 0)) / 100;
+            $gross = $grossCents / 100;
+            $net = $netCents / 100;
             $legacySale = hotmart_build_sale_data_from_array([
                 'webhook_event'=>'FIREPAY_PAID', 'webhook_event_id'=>$fingerprint, 'transaction_code'=>$transactionCode,
                 'status'=>'APPROVED', 'transaction_date'=>$receivedAt, 'payment_confirmed_at'=>$receivedAt,
                 'product_code'=>firepay_scalar($product, 'id') ?: null, 'product_name'=>firepay_scalar($product, 'name'),
                 'price_code'=>firepay_scalar($payload, 'checkout_id'), 'price_name'=>firepay_scalar($product, 'integration_id'),
                 'currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL', 'gross_revenue'=>$gross,
-                'net_revenue'=>$gross, 'producer_net'=>$gross, 'buyer_name'=>firepay_scalar($client, 'name'),
+                'net_revenue'=>$net, 'producer_net'=>$net, 'buyer_name'=>firepay_scalar($client, 'name'),
                 'buyer_email'=>$email, 'buyer_phone_raw'=>$phoneRaw, 'buyer_phone_norm'=>$phoneNorm, 'raw_payload_json'=>$rawPayload,
             ], $matched);
             hotmart_upsert_sale_live($pdo, $legacySale);
             hotmart_upsert_sale_legacy($pdo, $legacySale);
             $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,
                 sale_origin=:origin,sales_channel='firepay' WHERE transaction_code=:transaction")
-                ->execute([':payment'=>firepay_scalar($payload, 'payment_method') ?: null,
+                ->execute([':payment'=>$paymentMethod ?: null,
                     ':installments'=>(int)($payload['installments'] ?? 0) ?: null,
                     ':origin'=>firepay_scalar($origin, 'slug') ?: firepay_scalar($origin, 'description') ?: null,
                     ':transaction'=>$transactionCode]);
@@ -280,11 +296,11 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
             'transaction_code'=>'firepay:' . $transactionId,
             'provider_transaction_id'=>$transactionId,
             'provider_status'=>$providerStatus,
-            'payment_method'=>firepay_scalar($payload, 'payment_method') ?: null,
+            'payment_method'=>$paymentMethod ?: null,
             'currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL',
-            'gross_amount_cents'=>(int)($payload['price'] ?? 0),
-            'net_amount_cents'=>(int)($payload['price'] ?? 0),
-            'fee_amount_cents'=>0,
+            'gross_amount_cents'=>$grossCents,
+            'net_amount_cents'=>$netCents,
+            'fee_amount_cents'=>$feeCents,
             'installments'=>(int)($payload['installments'] ?? 0) ?: null,
             'product_name'=>firepay_scalar($product, 'name'),
             'product_code'=>firepay_scalar($product, 'id'),
