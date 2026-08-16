@@ -96,6 +96,23 @@ function automation_flows_ensure_schema(PDO $pdo): void
         KEY idx_afs_status (status),
         KEY idx_afs_started (started_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS automation_flow_cancellation_logs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        flow_id BIGINT UNSIGNED NOT NULL,
+        version_id BIGINT UNSIGNED NOT NULL,
+        run_id BIGINT UNSIGNED NULL,
+        job_id BIGINT UNSIGNED NULL,
+        user_id INT NULL,
+        node_id VARCHAR(80) NULL,
+        event_code VARCHAR(100) NULL,
+        reason VARCHAR(500) NOT NULL,
+        batch_key VARCHAR(190) NULL,
+        payload_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_af_cancel_flow (flow_id,version_id),
+        KEY idx_af_cancel_job (job_id),
+        KEY idx_af_cancel_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 
 function automation_flow_blank_graph(): array
@@ -262,13 +279,64 @@ function automation_flow_claim(PDO $pdo): ?array
     automation_flows_ensure_schema($pdo);
     $token=bin2hex(random_bytes(16));
     $pdo->beginTransaction();
-    $id=(int)$pdo->query("SELECT id FROM automation_flow_jobs WHERE ((status IN ('queued','retry','scheduled') AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW())) ORDER BY available_at,id LIMIT 1 FOR UPDATE")->fetchColumn();
+    $rows=$pdo->query("SELECT j.id,j.node_id,j.available_at,r.user_id,v.graph_json FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id JOIN automation_flow_versions v ON v.id=r.version_id WHERE ((j.status IN ('queued','retry','scheduled') AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW())) ORDER BY j.available_at,j.id LIMIT 300 FOR UPDATE")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $id=automation_flow_pick_claim_id($pdo, $rows);
     if (!$id) { $pdo->commit(); return null; }
     $pdo->prepare("UPDATE automation_flow_jobs SET status='processing',attempts=attempts+1,lease_token=:t,lease_until=DATE_ADD(NOW(),INTERVAL 90 SECOND) WHERE id=:id")->execute(['t'=>$token,'id'=>$id]);
     $pdo->commit();
     $st=$pdo->prepare("SELECT j.*,r.flow_id,r.version_id,r.event_id,r.user_id,r.status run_status,v.graph_json,e.event_code,e.payload_json event_payload,e.payload_json payload_json FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id JOIN automation_flow_versions v ON v.id=r.version_id JOIN automation_flow_events e ON e.id=r.event_id WHERE j.id=:id AND j.lease_token=:t");
     $st->execute(['id'=>$id,'t'=>$token]);
     return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function automation_flow_pick_claim_id(PDO $pdo, array $rows): int
+{
+    if (!$rows) return 0;
+    $best = null;
+    $bestScore = PHP_INT_MAX;
+    foreach ($rows as $idx => $row) {
+        $score = 1000000 + $idx;
+        try {
+            $graph = json_decode((string)($row['graph_json'] ?? ''), true) ?: [];
+            foreach ($graph['nodes'] ?? [] as $node) {
+                if ((string)($node['id'] ?? '') !== (string)($row['node_id'] ?? '') || (string)($node['type'] ?? '') !== 'voice') continue;
+                $tags = automation_flow_voice_preferred_tags(is_array($node['config'] ?? null) ? $node['config'] : []);
+                if ($tags && automation_flow_user_has_any_tag_name($pdo, (int)($row['user_id'] ?? 0), $tags)) $score = $idx;
+                break;
+            }
+        } catch (Throwable $e) {}
+        if ($score < $bestScore) {
+            $bestScore = $score;
+            $best = (int)($row['id'] ?? 0);
+        }
+    }
+    return (int)$best;
+}
+
+function automation_flow_voice_preferred_tags(array $config): array
+{
+    $raw = $config['preferredTags'] ?? [];
+    if (is_string($raw)) $raw = preg_split('/[\r\n,]+/', $raw) ?: [];
+    if (!is_array($raw)) return [];
+    $out = [];
+    foreach ($raw as $tag) {
+        $tag = trim((string)$tag);
+        if ($tag !== '') $out[] = $tag;
+    }
+    return array_values(array_unique($out));
+}
+
+function automation_flow_user_has_any_tag_name(PDO $pdo, int $userId, array $tags): bool
+{
+    if ($userId <= 0 || !$tags) return false;
+    $in = implode(',', array_fill(0, count($tags), '?'));
+    try {
+        $st = $pdo->prepare("SELECT 1 FROM user_tags ut JOIN tags t ON t.id=ut.tag_id WHERE ut.user_id=? AND t.nome IN ($in) LIMIT 1");
+        $st->execute(array_merge([$userId], $tags));
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 function automation_flow_pick_email_variant(array $variants, array $job): array
@@ -406,6 +474,136 @@ function automation_flow_schedule_voice_pacing(PDO $pdo, array $job, array $inpu
     return $availableAt;
 }
 
+function automation_flow_voice_deadline_at(array $config, array $extra): ?DateTimeImmutable
+{
+    $tz = new DateTimeZone('America/Sao_Paulo');
+    $mode = (string)($config['deadlineMode'] ?? '');
+    $custom = trim((string)($config['deadlineAt'] ?? ''));
+    if ($mode === 'custom' || ($mode === '' && $custom !== '')) {
+        $value = str_replace('T', ' ', $custom);
+        try { return new DateTimeImmutable($value, $tz); } catch (Throwable $e) { return null; }
+    }
+    if ($mode === 'live_at') {
+        $raw = trim((string)($extra['live_at'] ?? $extra['data_live'] ?? ''));
+        if ($raw === '') return null;
+        try {
+            $deadline = new DateTimeImmutable($raw, $tz);
+            $offset = (int)($config['deadlineOffsetMinutes'] ?? 0);
+            if ($offset !== 0) $deadline = $deadline->modify(($offset > 0 ? '+' : '') . $offset . ' minutes');
+            return $deadline;
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+    return null;
+}
+
+function automation_flow_payload_batch_key(array $job, array $extra): string
+{
+    $parts = [
+        'flow:' . (int)($job['flow_id'] ?? 0),
+        'version:' . (int)($job['version_id'] ?? 0),
+        'event:' . (string)($job['event_code'] ?? ''),
+        'turma:' . (string)($extra['codigo_turma'] ?? ''),
+        'live:' . (string)($extra['live_at'] ?? $extra['data_live'] ?? ''),
+        'scheduled:' . (string)($extra['_scheduled_flow_id'] ?? ''),
+    ];
+    return implode('|', $parts);
+}
+
+function automation_flow_graph_node_type(array $graph, string $nodeId): string
+{
+    foreach ($graph['nodes'] ?? [] as $node) {
+        if ((string)($node['id'] ?? '') === $nodeId) return (string)($node['type'] ?? 'unknown');
+    }
+    return 'unknown';
+}
+
+function automation_flow_cancel_expired_batch(PDO $pdo, array $job, array $graph, array $extra, int $currentStepId, string $reason): int
+{
+    $statuses = "'queued','retry','scheduled','processing'";
+    $params = [
+        'flow' => (int)$job['flow_id'],
+        'version' => (int)$job['version_id'],
+        'event' => (string)$job['event_code'],
+    ];
+    $where = [
+        'r.flow_id=:flow',
+        'r.version_id=:version',
+        "j.status IN ($statuses)",
+        'e.event_code=:event',
+    ];
+    $jsonFields = [
+        'codigo_turma' => (string)($extra['codigo_turma'] ?? ''),
+        'data_live' => (string)($extra['data_live'] ?? $extra['live_at'] ?? ''),
+        '_scheduled_flow_id' => (string)($extra['_scheduled_flow_id'] ?? ''),
+        '_scheduled_node_id' => (string)($extra['_scheduled_node_id'] ?? ''),
+    ];
+    foreach ($jsonFields as $field => $value) {
+        if ($value === '') continue;
+        $key = 'json_' . preg_replace('/[^a-z0-9_]+/i', '_', $field);
+        $where[] = "JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$." . $field . "'))=:{$key}";
+        $params[$key] = $value;
+    }
+    if (count($where) <= 4) {
+        $where[] = 'j.run_id=:run';
+        $params['run'] = (int)$job['run_id'];
+    }
+    $sql = "SELECT j.id,j.run_id,j.node_id,r.user_id,e.payload_json FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id JOIN automation_flow_events e ON e.id=r.event_id WHERE " . implode(' AND ', $where) . " ORDER BY j.id";
+    $st = $pdo->prepare($sql);
+    $st->execute($params);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if (!$rows) return 0;
+
+    $batchKey = automation_flow_payload_batch_key($job, $extra);
+    $output = json_encode(['canceled'=>true,'reason'=>$reason,'batch_key'=>$batchKey], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $ids = array_map(static fn($r) => (int)$r['id'], $rows);
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    $pdo->prepare("UPDATE automation_flow_jobs SET status='canceled',output_json=?,last_error=?,lease_token=NULL,lease_until=NULL WHERE id IN ($in)")
+        ->execute(array_merge([$output, $reason], $ids));
+
+    $stepInsert = $pdo->prepare("INSERT INTO automation_flow_steps(run_id,job_id,node_id,node_type,status,output_json,error_message,finished_at) VALUES(:run,:job,:node,:type,'canceled',:output,:reason,NOW())");
+    $logInsert = $pdo->prepare("INSERT INTO automation_flow_cancellation_logs(flow_id,version_id,run_id,job_id,user_id,node_id,event_code,reason,batch_key,payload_json) VALUES(:flow,:version,:run,:job,:user,:node,:event,:reason,:batch,:payload)");
+    foreach ($rows as $row) {
+        if ((int)$row['id'] !== (int)$job['id']) {
+            $stepInsert->execute([
+                'run' => (int)$row['run_id'],
+                'job' => (int)$row['id'],
+                'node' => (string)$row['node_id'],
+                'type' => automation_flow_graph_node_type($graph, (string)$row['node_id']),
+                'output' => $output,
+                'reason' => $reason,
+            ]);
+        }
+        $logInsert->execute([
+            'flow' => (int)$job['flow_id'],
+            'version' => (int)$job['version_id'],
+            'run' => (int)$row['run_id'],
+            'job' => (int)$row['id'],
+            'user' => (int)$row['user_id'],
+            'node' => (string)$row['node_id'],
+            'event' => (string)$job['event_code'],
+            'reason' => $reason,
+            'batch' => $batchKey,
+            'payload' => (string)($row['payload_json'] ?? ''),
+        ]);
+    }
+    if ($currentStepId > 0) {
+        $pdo->prepare("UPDATE automation_flow_steps SET status='canceled',output_json=:output,error_message=:reason,finished_at=NOW() WHERE id=:id")
+            ->execute(['output' => $output, 'reason' => $reason, 'id' => $currentStepId]);
+    }
+    $runIds = array_values(array_unique(array_map(static fn($r) => (int)$r['run_id'], $rows)));
+    foreach ($runIds as $runId) {
+        $pending = $pdo->prepare("SELECT COUNT(*) FROM automation_flow_jobs WHERE run_id=:run AND status IN ('queued','retry','scheduled','processing')");
+        $pending->execute(['run' => $runId]);
+        if ((int)$pending->fetchColumn() === 0) {
+            $pdo->prepare("UPDATE automation_flow_runs SET status='canceled',last_error=:reason,finished_at=IF(finished_at IS NULL,NOW(),finished_at) WHERE id=:run AND status='running'")
+                ->execute(['reason' => $reason, 'run' => $runId]);
+        }
+    }
+    return count($rows);
+}
+
 function automation_flow_send_email(PDO $pdo, array $job, array $config, array $user): array
 {
     $variant = null;
@@ -457,6 +655,14 @@ function automation_flow_process_job(PDO $pdo, array $job): string
         } elseif ($type === 'email') $output=automation_flow_send_email($pdo,$job,$config,$user);
         elseif ($type === 'push') $output=push_flow_send_push($pdo,$config,(int)$job['user_id'],$job);
         elseif ($type === 'voice') {
+            $deadline = automation_flow_voice_deadline_at($config, $extra);
+            if ($deadline && $deadline < new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo'))) {
+                $reason = 'Bloco de voz cancelado: limite de execucao ultrapassado em ' . $deadline->format('Y-m-d H:i:s') . '.';
+                $pdo->beginTransaction();
+                $canceled = automation_flow_cancel_expired_batch($pdo, $job, $graph, $extra, $stepId, $reason);
+                $pdo->commit();
+                return 'canceled';
+            }
             $pacingDelay = automation_flow_voice_pacing_delay($pdo);
             if ($pacingDelay > 0) {
                 $availableAt = automation_flow_schedule_voice_pacing($pdo, $job, $input, $pacingDelay, 'Fila de voz aguardando intervalo/limite configurado.');
@@ -514,7 +720,7 @@ function automation_flow_process_job(PDO $pdo, array $job): string
 
 function automation_flow_process_queue(PDO $pdo, int $limit = 50): array
 {
-    $done=['processed'=>0,'completed'=>0,'scheduled'=>0,'retry'=>0,'failed'=>0,'skipped'=>0];
+    $done=['processed'=>0,'completed'=>0,'scheduled'=>0,'retry'=>0,'failed'=>0,'skipped'=>0,'canceled'=>0];
     for ($i=0; $i<$limit; $i++) {
         $job=automation_flow_claim($pdo);
         if (!$job) break;
