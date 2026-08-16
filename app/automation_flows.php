@@ -474,28 +474,20 @@ function automation_flow_schedule_voice_pacing(PDO $pdo, array $job, array $inpu
     return $availableAt;
 }
 
-function automation_flow_voice_deadline_at(array $config, array $extra): ?DateTimeImmutable
+function automation_flow_voice_deadline_at(array $config, array $job): ?DateTimeImmutable
 {
     $tz = new DateTimeZone('America/Sao_Paulo');
-    $mode = (string)($config['deadlineMode'] ?? '');
-    $custom = trim((string)($config['deadlineAt'] ?? ''));
-    if ($mode === 'custom' || ($mode === '' && $custom !== '')) {
-        $value = str_replace('T', ' ', $custom);
-        try { return new DateTimeImmutable($value, $tz); } catch (Throwable $e) { return null; }
+    $duration = max(0, (int)($config['maxQueueDuration'] ?? 0));
+    $enabled = !empty($config['maxQueueEnabled']) || $duration > 0;
+    if (!$enabled || $duration < 1) return null;
+    $unit = in_array(($config['maxQueueUnit'] ?? ''), ['minutes','hours','days'], true) ? (string)$config['maxQueueUnit'] : 'hours';
+    $createdAt = trim((string)($job['created_at'] ?? ''));
+    if ($createdAt === '') return null;
+    try {
+        return (new DateTimeImmutable($createdAt, $tz))->modify('+' . $duration . ' ' . $unit);
+    } catch (Throwable $e) {
+        return null;
     }
-    if ($mode === 'live_at') {
-        $raw = trim((string)($extra['live_at'] ?? $extra['data_live'] ?? ''));
-        if ($raw === '') return null;
-        try {
-            $deadline = new DateTimeImmutable($raw, $tz);
-            $offset = (int)($config['deadlineOffsetMinutes'] ?? 0);
-            if ($offset !== 0) $deadline = $deadline->modify(($offset > 0 ? '+' : '') . $offset . ' minutes');
-            return $deadline;
-        } catch (Throwable $e) {
-            return null;
-        }
-    }
-    return null;
 }
 
 function automation_flow_payload_batch_key(array $job, array $extra): string
@@ -655,9 +647,9 @@ function automation_flow_process_job(PDO $pdo, array $job): string
         } elseif ($type === 'email') $output=automation_flow_send_email($pdo,$job,$config,$user);
         elseif ($type === 'push') $output=push_flow_send_push($pdo,$config,(int)$job['user_id'],$job);
         elseif ($type === 'voice') {
-            $deadline = automation_flow_voice_deadline_at($config, $extra);
+            $deadline = automation_flow_voice_deadline_at($config, $job);
             if ($deadline && $deadline < new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo'))) {
-                $reason = 'Bloco de voz cancelado: limite de execucao ultrapassado em ' . $deadline->format('Y-m-d H:i:s') . '.';
+                $reason = 'Bloco de voz cancelado: tempo maximo na fila ultrapassado em ' . $deadline->format('Y-m-d H:i:s') . '.';
                 $pdo->beginTransaction();
                 $canceled = automation_flow_cancel_expired_batch($pdo, $job, $graph, $extra, $stepId, $reason);
                 $pdo->commit();
