@@ -359,6 +359,12 @@ include __DIR__ . '/_header.php';
   <nav class="af-nav">
     <a class="<?=$view==='overview'?'active':''?>" href="automacoes.php">Visão geral</a>
     <a class="<?=$view==='flows'?'active':''?>" href="automacoes.php?view=flows">Fluxos</a>
+    <a class="<?=$view==='diagnostics'?'active':''?>" href="automacoes.php?view=diagnostics">
+      🔬 Raio-X (Diagnóstico)
+      <?php if ($latestDiag && empty($latestDiag['acknowledged']) && ($latestDiag['status'] ?? 'healthy') !== 'healthy'): ?>
+        <span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;margin-left:4px;padding:2px 6px;"><?=(int)($latestDiag['issues_count'] ?? 0)?></span>
+      <?php endif; ?>
+    </a>
     <a class="<?=$view==='logs'?'active':''?>" href="automacoes.php?view=logs">Logs detalhados</a>
     <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
   </nav>
@@ -384,7 +390,7 @@ include __DIR__ . '/_header.php';
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.25);font-weight:700;padding:8px 14px;border-radius:8px;cursor:pointer;" onclick="openGlobalDiagModal()">🔍 Ver Detalhes das Inconsistências</button>
+        <a href="automacoes.php?view=diagnostics" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.25);font-weight:700;padding:8px 14px;border-radius:8px;text-decoration:none;display:inline-flex;align-items:center;">🔍 Abrir Aba Raio-X</a>
         <form method="post" style="margin:0;">
           <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
           <input type="hidden" name="action" value="acknowledge_diagnostics">
@@ -527,6 +533,233 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
       <?php if(!$flows): ?><div class="af-flow-empty">Nenhum fluxo central criado.</div><?php endif; ?>
     </div>
   </section>
+<?php elseif($view === 'diagnostics'): ?>
+  <section class="af-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+      <div>
+        <h2 style="font-size:18px;margin:0 0 4px 0;color:#fff;">🔬 Central de Raio-X & Diagnóstico de Fluxos</h2>
+        <p class="text-muted text-xs" style="margin:0;">
+          Auditoria contínua automática (07:00, 15:00 e 20:00) avaliando dupla amostragem temporal, desvio de SLAs, torpedos de voz e saúde de infraestrutura.
+        </p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="post" style="margin:0;">
+          <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+          <input type="hidden" name="action" value="run_diagnostics">
+          <button class="btn btn-primary btn-sm" <?=$canWrite?'':'disabled'?> title="Executa a auditoria completa de todos os fluxos e crons agora">🔍 Executar Varredura Agora</button>
+        </form>
+        <?php if($latestDiag && empty($latestDiag['acknowledged']) && ($latestDiag['status'] ?? 'healthy') !== 'healthy'): ?>
+          <form method="post" style="margin:0;">
+            <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+            <input type="hidden" name="action" value="acknowledge_diagnostics">
+            <button class="btn btn-sm" style="background:#ef4444;color:#fff;font-weight:700;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;">✓ Dar Ciência nos Alertas</button>
+          </form>
+        <?php endif; ?>
+      </div>
+    </div>
+
+    <!-- KPIs do Diagnóstico -->
+    <div class="af-grid" style="margin-bottom:18px;">
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Status Geral</small>
+        <strong style="color:<?=($latestDiag['status'] ?? 'healthy') === 'healthy' ? '#86efac' : '#ef4444'?>;">
+          <?=($latestDiag['status'] ?? 'healthy') === 'healthy' ? '🟢 100% Saudável' : '🚨 ' . (int)($latestDiag['issues_count'] ?? 0) . ' Inconsistência(s)'?>
+        </strong>
+        <span class="text-muted text-xs">integridade geral</span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Última Varredura</small>
+        <strong style="font-size:18px;color:#fff;">
+          <?=$latestDiag ? af_h(date('H:i - d/m', strtotime((string)$latestDiag['check_time']))) : '-'?>
+        </strong>
+        <span class="text-muted text-xs"><?=$latestDiag['triggered_by'] ?? 'cron'?></span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Fluxos Monitorados</small>
+        <strong style="color:#38bdf8;"><?=count($flows)?></strong>
+        <span class="text-muted text-xs">ativos no sistema</span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Ciência do Alerta</small>
+        <strong style="font-size:16px;color:<?=$latestDiag && !empty($latestDiag['acknowledged']) ? '#86efac' : '#f59e0b'?>;">
+          <?=$latestDiag && !empty($latestDiag['acknowledged']) ? '✓ Reconhecido' : '⚠️ Pendente'?>
+        </strong>
+        <span class="text-muted text-xs"><?=$latestDiag['acknowledged_by'] ?? '-'?></span>
+      </div>
+    </div>
+
+    <?php if (!empty($latestDiag['infra_issues'])): ?>
+      <div style="margin-bottom:18px;padding:12px 14px;border-radius:10px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;">
+        <strong style="color:#fff;font-size:13px;display:block;margin-bottom:6px;">⚙️ Alertas de Infraestrutura & Crons:</strong>
+        <?php foreach ($latestDiag['infra_issues'] as $iss): ?>
+          <div style="font-size:11px;margin-top:3px;">• <b>[<?=af_h($iss['type'])?>]</b> <?=af_h($iss['message'])?></div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </section>
+
+  <!-- LISTA DE TODOS OS FLUXOS COM RAIO-X COMPLETO -->
+  <div style="display:grid;gap:14px;margin-top:14px;">
+    <?php foreach ($flows as $f): 
+      $fid = (int)$f['id'];
+      $diag = $flowDiagMap[$fid] ?? null;
+      $hasCrit = $diag && (($diag['status'] ?? '') === 'critical');
+      $hasWarn = $diag && (($diag['status'] ?? '') === 'warning');
+      $diagIssues = $diag['issues'] ?? [];
+      $sampleA = $diag['sample_early'] ?? null;
+      $sampleB = $diag['sample_late'] ?? null;
+      $benchmark = $diag['benchmark'] ?? null;
+    ?>
+      <section class="af-card <?=$hasCrit ? 'has-diag-critical' : ($hasWarn ? 'has-diag-warning' : '')?>" style="border:1px solid <?=$hasCrit?'#ef4444':($hasWarn?'#f59e0b':'var(--border)')?>;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;flex-wrap:wrap;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="font-size:16px;color:#fff;"><?=af_h($f['name'])?></strong>
+              <span class="af-pill" style="background:<?=$hasCrit?'#ef4444':($hasWarn?'#f59e0b':'#15803d')?>;color:#fff;font-weight:700;">
+                <?=$hasCrit?'🚨 Inconsistência Detectada':($hasWarn?'⚠️ Atenção':'🟢 Saudável')?>
+              </span>
+            </div>
+            <small class="text-muted" style="display:block;margin-top:2px;">
+              <?=af_h($f['description'] ?: 'Sem descrição')?> · Versão: v<?=(int)$f['version_number']?> · Duração teórica projetada: ~<?=(int)($diag['theoretical_duration_minutes'] ?? 0)?> min
+            </small>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=$fid?>">Editar Fluxo</a>
+            <button type="button" class="btn btn-ghost btn-xs" onclick="openDiagModal(<?=$fid?>)">🔍 Abrir em Modal</button>
+          </div>
+        </div>
+
+        <?php if($diagIssues): ?>
+          <div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;font-size:11px;">
+            <strong style="color:#fff;display:block;margin-bottom:4px;">Inconsistências Identificadas neste Fluxo:</strong>
+            <?php foreach($diagIssues as $iss): ?>
+              <div>• <?=af_h($iss['message'] ?? $iss['type'] ?? '')?></div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+
+        <!-- TESTE 1: DUPLA AMOSTRAGEM -->
+        <div style="margin-bottom:14px;">
+          <strong style="font-size:12px;color:#cbd5e1;text-transform:uppercase;display:block;margin-bottom:8px;">
+            🧪 Teste 1: Dupla Amostragem Temporal (Leads Reais)
+          </strong>
+          <div class="af-diag-grid">
+            <!-- AMOSTRA A -->
+            <div class="af-diag-card">
+              <strong style="display:flex;justify-content:space-between;align-items:center;">
+                Amostra A (Entrou Antes / Maduro)
+              </strong>
+              <?php if($sampleA): ?>
+                <div style="color:var(--muted);font-size:11px;margin:8px 0;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span>Aluno: <b style="color:#fff;"><?=af_h($sampleA['user'] ?? 'ID #'.$sampleA['run_id'])?></b></span>
+                    <span class="af-pill"><?=af_h($sampleA['status'])?></span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">
+                    <div>Início: <b style="color:#cbd5e1;"><?=af_h(!empty($sampleA['started_at']) ? substr((string)$sampleA['started_at'], 5, 11) : '-')?></b></div>
+                    <div>Término: <b style="color:#fff;"><?=af_h(!empty($sampleA['finished_at']) ? substr((string)$sampleA['finished_at'], 5, 11) : 'Em andamento')?></b></div>
+                  </div>
+                </div>
+                <?php if(!empty($sampleA['analysis']['steps'])): ?>
+                  <div class="af-diag-timeline">
+                    <?php foreach($sampleA['analysis']['steps'] as $st): 
+                      $diffCol = ($st['delay_severity'] ?? '') === 'critical' ? '#f87171' : (($st['delay_severity'] ?? '') === 'warning' ? '#facc15' : '#86efac');
+                      $stCol = $st['status'] === 'completed' ? '#86efac' : ($st['status'] === 'failed' ? '#f87171' : '#facc15');
+                    ?>
+                      <div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:5px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                          <span style="font-weight:700;color:#e2e8f0;font-size:11px;">[<?=af_h($st['node_type'])?>] <?=af_h($st['node_id'])?></span>
+                          <span class="af-pill" style="font-size:9px;color:<?=$stCol?>;"><?=af_h($st['status'])?></span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">
+                          <div>Planejado: <b style="color:#cbd5e1;"><?=af_h(!empty($st['planned_at']) ? substr((string)$st['planned_at'], 11, 5) : '-')?></b></div>
+                          <div>Real: <b style="color:#fff;"><?=af_h(!empty($st['finished_at']) ? substr((string)$st['finished_at'], 11, 5) : (!empty($st['started_at']) ? substr((string)$st['started_at'], 11, 5) : '-'))?></b></div>
+                          <div>Diferença: <b style="color:<?=$diffCol?>;"><?=af_h($st['delay_formatted'] ?? '-')?></b></div>
+                        </div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php else: ?><div class="text-muted text-xs">Sem etapas executadas.</div><?php endif; ?>
+              <?php else: ?><div class="text-muted text-xs">Nenhum aluno encontrado nesta janela.</div><?php endif; ?>
+            </div>
+
+            <!-- AMOSTRA B -->
+            <div class="af-diag-card">
+              <strong style="display:flex;justify-content:space-between;align-items:center;">
+                Amostra B (Entrou Depois / Recente)
+              </strong>
+              <?php if($sampleB): ?>
+                <div style="color:var(--muted);font-size:11px;margin:8px 0;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span>Aluno: <b style="color:#fff;"><?=af_h($sampleB['user'] ?? 'ID #'.$sampleB['run_id'])?></b></span>
+                    <span class="af-pill"><?=af_h($sampleB['status'])?></span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">
+                    <div>Início: <b style="color:#cbd5e1;"><?=af_h(!empty($sampleB['started_at']) ? substr((string)$sampleB['started_at'], 5, 11) : '-')?></b></div>
+                    <div>Término: <b style="color:#fff;"><?=af_h(!empty($sampleB['finished_at']) ? substr((string)$sampleB['finished_at'], 5, 11) : 'Em andamento')?></b></div>
+                  </div>
+                </div>
+                <?php if(!empty($sampleB['analysis']['steps'])): ?>
+                  <div class="af-diag-timeline">
+                    <?php foreach($sampleB['analysis']['steps'] as $st): 
+                      $diffCol = ($st['delay_severity'] ?? '') === 'critical' ? '#f87171' : (($st['delay_severity'] ?? '') === 'warning' ? '#facc15' : '#86efac');
+                      $stCol = $st['status'] === 'completed' ? '#86efac' : ($st['status'] === 'failed' ? '#f87171' : '#facc15');
+                    ?>
+                      <div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:5px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                          <span style="font-weight:700;color:#e2e8f0;font-size:11px;">[<?=af_h($st['node_type'])?>] <?=af_h($st['node_id'])?></span>
+                          <span class="af-pill" style="font-size:9px;color:<?=$stCol?>;"><?=af_h($st['status'])?></span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">
+                          <div>Planejado: <b style="color:#cbd5e1;"><?=af_h(!empty($st['planned_at']) ? substr((string)$st['planned_at'], 11, 5) : '-')?></b></div>
+                          <div>Real: <b style="color:#fff;"><?=af_h(!empty($st['finished_at']) ? substr((string)$st['finished_at'], 11, 5) : (!empty($st['started_at']) ? substr((string)$st['started_at'], 11, 5) : '-'))?></b></div>
+                          <div>Diferença: <b style="color:<?=$diffCol?>;"><?=af_h($st['delay_formatted'] ?? '-')?></b></div>
+                        </div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php else: ?><div class="text-muted text-xs">Sem etapas executadas.</div><?php endif; ?>
+              <?php else: ?><div class="text-muted text-xs">Nenhum aluno adicional encontrado.</div><?php endif; ?>
+            </div>
+          </div>
+        </div>
+
+        <!-- TESTE 2: BENCHMARK DE SLA -->
+        <?php if(!empty($benchmark['samples'])): ?>
+          <div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:#081020;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+              <strong style="color:#cbd5e1;text-transform:uppercase;font-size:11px;">📊 Teste 2: Benchmark de SLA (Últimos <?=count($benchmark['samples'])?> Concluídos)</strong>
+              <div>
+                <span>Duração Teórica: <b style="color:#38bdf8;">~<?=(int)$benchmark['theoretical_minutes']?>m</b></span> · 
+                <span>Média Real: <b style="color:<?=((float)$benchmark['avg_duration_minutes'] > (int)$benchmark['theoretical_minutes'] * 2 ? '#f87171' : '#86efac')?>;">~<?=(float)$benchmark['avg_duration_minutes']?>m</b></span>
+              </div>
+            </div>
+            <div class="af-table">
+              <table>
+                <thead><tr><th>Aluno</th><th>Início</th><th>Término Real</th><th>Duração Gasta</th><th>Status do SLA</th></tr></thead>
+                <tbody>
+                  <?php foreach($benchmark['samples'] as $s): 
+                    $dur = (int)($s['duration_minutes'] ?? 0);
+                    $theo = (int)($benchmark['theoretical_minutes'] ?? 0);
+                    $diffM = $theo > 0 ? ($dur - $theo) : 0;
+                    $slaBadge = $diffM > 60 ? '<span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;">+'.$diffM.'m atraso</span>' : ($diffM > 10 ? '<span class="af-pill" style="background:#f59e0b;color:#fff;">+'.$diffM.'m</span>' : '<span class="af-pill" style="background:#15803d;color:#fff;">No prazo</span>');
+                  ?>
+                    <tr>
+                      <td><strong><?=af_h($s['nome'] ?? 'Lead #'.$s['run_id'])?></strong></td>
+                      <td><?=af_h(!empty($s['started_at']) ? substr((string)$s['started_at'], 5, 11) : '-')?></td>
+                      <td><?=af_h(!empty($s['finished_at']) ? substr((string)$s['finished_at'], 5, 11) : '-')?></td>
+                      <td><strong><?=$dur?> min</strong></td>
+                      <td><?=$slaBadge?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        <?php endif; ?>
+      </section>
+    <?php endforeach; ?>
+  </div>
 <?php else: ?>
   <section class="af-grid">
     <div class="af-card af-kpi"><small>Fluxos</small><strong><?=$kpis['flows']?></strong><span class="text-muted text-xs">total criado</span></div>
