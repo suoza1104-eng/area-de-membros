@@ -25,18 +25,49 @@ function json_out(array $data, int $code = 200): void {
 }
 
 try {
-    if (empty($_SESSION['aluno_id'])) {
-        json_out(['ok' => false, 'error' => 'not_logged'], 401);
+    $user_id = (int)($_SESSION['aluno_id'] ?? 0);
+    $authRestored = false;
+    if ($user_id <= 0) {
+        $user_id = aluno_restaurar_sessao_por_token();
+        $authRestored = $user_id > 0;
+    }
+    if ($user_id <= 0) {
+        $basePath = trim((string)parse_url(BASE_URL, PHP_URL_PATH), '/');
+        $nextPath = ($basePath !== '' ? $basePath . '/' : '') . 'aula.php?id=' . (int)($_POST['lesson_id'] ?? 0);
+        json_out([
+            'ok' => false,
+            'error' => 'not_logged',
+            'message' => 'Sua sessão expirou. Entre novamente para concluir a aula.',
+            'login_url' => BASE_URL . '/login.php?next=' . urlencode($nextPath),
+        ], 401);
     }
 
-    $user_id   = (int)$_SESSION['aluno_id'];
+    // Libera o lock da sessao: nada mais grava em $_SESSION aqui, entao
+    // outros cliques/abas do mesmo aluno nao ficam presos na fila enquanto
+    // este request faz o trabalho lento (banco + webhooks).
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
     $lesson_id = (int)($_POST['lesson_id'] ?? 0);
+    $watchedSeconds = max(0, (int)($_POST['watched_seconds'] ?? 0));
+    $completionSource = trim((string)($_POST['completion_source'] ?? 'button'));
+    if ($completionSource === '') $completionSource = 'button';
 
     if ($lesson_id <= 0) {
         json_out(['ok' => false, 'error' => 'invalid_lesson'], 400);
     }
 
     $pdo = getPDO();
+    try {
+        $pdo->exec("ALTER TABLE lesson_progress ADD COLUMN completion_source VARCHAR(40) NULL");
+    } catch (Throwable $ignored) {}
+    $courseAccess = course_access_status($pdo, $user_id);
+    if (!empty($courseAccess['expired'])) {
+        json_out([
+            'ok' => false,
+            'error' => 'access_expired',
+            'message' => 'Seu prazo máximo de acesso terminou. Libere o acesso vitalício para continuar.',
+            'checkout_url' => (string)($courseAccess['checkout_url'] ?? ''),
+        ], 403);
+    }
 
     // Verifica se já existe progresso dessa aula
     $stmt = $pdo->prepare("SELECT id, status FROM lesson_progress WHERE user_id = :u AND lesson_id = :l LIMIT 1");
@@ -45,22 +76,22 @@ try {
 
     $alreadyCompleted = false;
 
-    if ($row) {
-        $alreadyCompleted = (string)($row['status'] ?? '') === 'completed';
+    $alreadyCompleted = $row && (string)($row['status'] ?? '') === 'completed';
 
-        // Se já estava completed, não precisa atualizar (mas é sucesso idempotente)
-        if (!$alreadyCompleted) {
-            $upd = $pdo->prepare("UPDATE lesson_progress SET status='completed', completed_at=NOW() WHERE id = :id");
-            $upd->execute([':id' => (int)$row['id']]);
-        }
-    } else {
-        // Insere novo progresso como completed
-        $ins = $pdo->prepare("
-            INSERT INTO lesson_progress (user_id, lesson_id, status, watched_seconds, created_at, completed_at)
-            VALUES (:u, :l, 'completed', NULL, NOW(), NOW())
-        ");
-        $ins->execute([':u' => $user_id, ':l' => $lesson_id]);
-    }
+    // Upsert atômico: dois cliques/abas simultâneos não geram erro de chave
+    // duplicada e a operação continua idempotente.
+    $save = $pdo->prepare("
+        INSERT INTO lesson_progress
+            (user_id, lesson_id, status, watched_seconds, completion_source, created_at, completed_at)
+        VALUES
+            (:u, :l, 'completed', :watched_seconds, :completion_source, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            status = 'completed',
+            watched_seconds = GREATEST(COALESCE(watched_seconds, 0), COALESCE(VALUES(watched_seconds), 0)),
+            completion_source = COALESCE(completion_source, VALUES(completion_source)),
+            completed_at = COALESCE(completed_at, NOW())
+    ");
+    $save->execute([':u' => $user_id, ':l' => $lesson_id, ':watched_seconds' => $watchedSeconds > 0 ? $watchedSeconds : null, ':completion_source' => $completionSource]);
 
     // Tag e webhooks (não devem impedir a conclusão)
     $tagNome = 'VIU_AULA_' . $lesson_id;
@@ -77,7 +108,11 @@ try {
 
     try {
         if (function_exists('disparar_webhooks')) {
-            disparar_webhooks($tagNome, $user_id, ['lesson_id' => $lesson_id]);
+            $eventExtra = ['lesson_id' => $lesson_id, 'origem' => 'api_concluir_aula', 'completion_source' => $completionSource, 'watched_seconds' => $watchedSeconds];
+            disparar_webhooks($tagNome, $user_id, $eventExtra);
+            // Evento genérico usado pelo construtor de fluxos. Mantemos também
+            // VIU_AULA_{id} para integrações que dependem da aula específica.
+            disparar_webhooks('ASSISTIU_ALGUMA_AULA', $user_id, $eventExtra);
         }
     } catch (Throwable $e) {
         if (function_exists('registrar_log')) {
@@ -88,10 +123,20 @@ try {
     json_out([
         'ok' => true,
         'already_completed' => $alreadyCompleted,
-        'lesson_id' => $lesson_id
+        'auth_restored' => $authRestored,
+        'lesson_id' => $lesson_id,
+        'watched_seconds' => $watchedSeconds,
+        'completion_source' => $completionSource,
     ], 200);
 
 } catch (Throwable $e) {
+    try {
+        log_sistema('error', 'api_concluir_aula', 'Falha ao concluir aula', [
+            'user_id' => $user_id ?? null,
+            'lesson_id' => $lesson_id ?? (int)($_POST['lesson_id'] ?? 0),
+            'erro' => $e->getMessage(),
+        ], $e->getTraceAsString());
+    } catch (Throwable $logError) {}
     // Nunca deixar HTML/Warning quebrar o JSON
     json_out([
         'ok' => false,

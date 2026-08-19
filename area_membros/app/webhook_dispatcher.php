@@ -1,30 +1,80 @@
 <?php
 // FILE: app/webhook_dispatcher.php
 declare(strict_types=1);
+
 /**
  * Monta o payload padrão usado em todos os webhooks.
  *
  * Estrutura:
- *  - evento: código do evento (ex.: CERT_EMITIDO, VIU_AULA_1, etc.)
- *  - user:   dados básicos do aluno (id, nome, email, telefone)
- *  - extra:  dados extras específicos de cada disparo
+ *  - evento:    código do evento (ex.: PAGAMENTO_APROVADO, CERT_EMITIDO, etc.)
+ *  - gateway:   nome do gateway financeiro (hotmart, firepay, dom, pagarme)
+ *  - user:      dados cadastrais do aluno/comprador (id, nome, email, telefone, documento, magic_link)
+ *  - pagamento: dados da transação (valores, taxas, moeda, método, parcelas, produto, links)
+ *  - utm:       origem do tráfego e tags de rastreamento (source, campaign, medium, etc.)
+ *  - extra:     dados extras do contexto completo
  *  - timestamp: data/hora em ISO-8601
  */
 function build_webhook_payload(string $evento, array $user, array $extra = []): array
 {
+    $uid = (int)($user['id'] ?? 0);
+    $magicLink = '';
+    if ($uid > 0 && function_exists('gerar_magic_link')) {
+        try { $magicLink = gerar_magic_link($uid, 30, false); } catch (Throwable $e) {}
+    }
+
+    $meta = is_array($extra['metadata'] ?? null) ? $extra['metadata'] : [];
+
+    // Detecção e conversão de valores financeiros
+    $gross = $extra['valor_bruto'] ?? (isset($extra['gross_amount_cents']) ? ((float)$extra['gross_amount_cents'] / 100) : null);
+    $net = $extra['valor_liquido'] ?? (isset($extra['net_amount_cents']) ? ((float)$extra['net_amount_cents'] / 100) : null);
+    $fee = $extra['taxa'] ?? (isset($extra['fee_amount_cents']) ? ((float)$extra['fee_amount_cents'] / 100) : null);
+
+    $gateway = $extra['gateway'] ?? $extra['provider'] ?? $extra['origem'] ?? ($meta['gateway'] ?? null);
+
     return [
         'evento'    => $evento,
+        'gateway'   => $gateway,
         'user'      => [
-            'id'       => $user['id'] ?? null,
-            'nome'     => $user['nome'] ?? null,
-            'email'    => $user['email'] ?? null,
-            'telefone' => $user['telefone'] ?? null,
+            'id'         => $user['id'] ?? null,
+            'nome'       => $user['nome'] ?? $extra['buyer_name'] ?? null,
+            'email'      => $user['email'] ?? $extra['buyer_email'] ?? null,
+            'telefone'   => $user['telefone'] ?? $extra['buyer_phone'] ?? null,
+            'documento'  => $user['documento'] ?? $user['cpf'] ?? $extra['buyer_document'] ?? null,
+            'magic_link' => $magicLink,
+        ],
+        'pagamento' => [
+            'gateway'             => $gateway,
+            'status'              => $extra['status'] ?? $extra['normalized_status'] ?? null,
+            'metodo'              => $extra['payment_method'] ?? null,
+            'transacao_id'        => $extra['transaction_code'] ?? $extra['provider_transaction_id'] ?? null,
+            'valor_bruto'         => $gross !== null ? round((float)$gross, 2) : null,
+            'valor_liquido'       => $net !== null ? round((float)$net, 2) : null,
+            'taxa'                => $fee !== null ? round((float)$fee, 2) : null,
+            'moeda'               => $extra['currency'] ?? 'BRL',
+            'parcelas'            => $extra['installments'] ?? null,
+            'produto_nome'        => $extra['product_name'] ?? $extra['produto_nome'] ?? null,
+            'produto_id'          => $extra['product_code'] ?? $extra['produto_id'] ?? null,
+            'checkout_id'         => $extra['checkout_id'] ?? null,
+            'checkout_url'        => $extra['checkout_url'] ?? null,
+            'pix_copia_cola'      => $extra['pix_qrcode'] ?? null,
+            'pix_qrcode_url'      => $extra['pix_qrcode_url'] ?? null,
+            'pix_expira_em'       => $extra['pix_expires_at'] ?? null,
+            'boleto_url'          => $extra['boleto_url'] ?? null,
+            'boleto_linha'        => $extra['boleto_line'] ?? null,
+        ],
+        'utm'       => [
+            'source'   => $extra['utm_source'] ?? $meta['utm_source'] ?? $meta['src'] ?? null,
+            'medium'   => $extra['utm_medium'] ?? $meta['utm_medium'] ?? null,
+            'campaign' => $extra['utm_campaign'] ?? $meta['utm_campaign'] ?? null,
+            'content'  => $extra['utm_content'] ?? $meta['utm_content'] ?? null,
+            'term'     => $extra['utm_term'] ?? $meta['utm_term'] ?? null,
+            'src'      => $extra['src'] ?? $meta['src'] ?? null,
+            'sck'      => $extra['sck'] ?? $meta['sck'] ?? null,
         ],
         'extra'     => $extra,
         'timestamp' => date('c'),
     ];
 }
-
 
 /**
  * Enriquecimento automático do payload: adiciona codigo_live (slug da live) quando for possível
@@ -142,6 +192,51 @@ function wh_get_data_live(PDO $pdo, ?string $turmaCodigo): ?string
     }
 }
 
+function wh_format_live_br(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTimeImmutable($value))->format('d/m/Y H:i');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
+function wh_format_live_iso(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    try {
+        return (new DateTimeImmutable($value))->format('Y-m-d H:i:s');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+
+function wh_get_user_live_at(PDO $pdo, array $user): ?string
+{
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId <= 0) return null;
+
+    $cols = [];
+    if (wh_col_exists($pdo, 'users', 'turma_live_at')) $cols[] = 'turma_live_at';
+    if (wh_col_exists($pdo, 'users', 'data_live')) $cols[] = 'data_live';
+    if (!$cols) return null;
+
+    try {
+        $st = $pdo->prepare("SELECT " . implode(',', $cols) . " FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        foreach (['turma_live_at', 'data_live'] as $col) {
+            if (!empty($row[$col])) return (string)$row[$col];
+        }
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    return null;
+}
 
 function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): array
 {
@@ -154,11 +249,24 @@ function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): 
         }
     }
 
-    if (empty($extra['data_live'])) {
-        $dataLive = wh_get_data_live($pdo, $turmaCodigo);
-        if ($dataLive !== null) {
-            $extra['data_live'] = $dataLive;
+    $liveAtual = wh_get_user_live_at($pdo, $user);
+    if ($liveAtual === null && !empty($extra['data_live_iso'])) {
+        $liveAtual = (string)$extra['data_live_iso'];
+    }
+    if ($liveAtual === null && !empty($extra['data_live'])) {
+        $liveAtual = (string)$extra['data_live'];
+    }
+    if ($liveAtual === null) {
+        $liveAtual = wh_get_data_live($pdo, $turmaCodigo);
+    }
+    if ($liveAtual !== null && trim((string)$liveAtual) !== '') {
+        $extra['data_live'] = wh_format_live_br($liveAtual);
+        $extra['data_live_iso'] = wh_format_live_iso($liveAtual);
+        if (!isset($extra['data']) || !is_array($extra['data'])) {
+            $extra['data'] = [];
         }
+        $extra['data']['live'] = $extra['data_live'];
+        $extra['data']['live_iso'] = $extra['data_live_iso'];
     }
 
     // Se existir um bloco de turma no extra, espelha os valores (sem sobrescrever)
@@ -176,7 +284,6 @@ function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): 
 
     return $extra;
 }
-
 
 /**
  * Envia efetivamente o HTTP request e grava log em webhook_logs.
@@ -253,7 +360,9 @@ function enviar_webhook_http(
         CURLOPT_URL            => $url,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_CONNECTTIMEOUT => 5,   // limita a fase de conexao (destino inacessivel)
+        CURLOPT_TIMEOUT        => 15,  // limite total da requisicao
+        CURLOPT_NOSIGNAL       => 1,   // garante que os timeouts sejam respeitados
         CURLOPT_HTTPHEADER     => $headers,
     ]);
 
@@ -324,7 +433,7 @@ function disparar_webhook_configurado(
     $extra = wh_enrich_extra_with_codigo_live($pdo, $user, $extra);
 
     $payload   = build_webhook_payload($evento, $user, $extra);
-$userId    = isset($user['id']) ? (int)$user['id'] : null;
+    $userId    = isset($user['id']) ? (int)$user['id'] : null;
     $webhookId = isset($webhookRow['id']) ? (int)$webhookRow['id'] : null;
 
     enviar_webhook_http(
@@ -345,6 +454,11 @@ $userId    = isset($user['id']) ? (int)$user['id'] : null;
  */
 function disparar_evento_webhooks(PDO $pdo, string $evento, array $user, array $extra = []): void
 {
+    $userId = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
+        return;
+    }
+
     $stmt = $pdo->query("SELECT * FROM webhooks WHERE ativo = 1");
     if (!$stmt) {
         return;

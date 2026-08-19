@@ -14,6 +14,31 @@ function fmt_retorno_dt(?string $v): string {
     if (!$v) return '-';
     try { return (new DateTime($v))->format('d/m/Y H:i'); } catch (Throwable $e) { return (string)$v; }
 }
+function retorno_table_exists(PDO $pdo, string $table): bool {
+    try {
+        $st = $pdo->prepare("SHOW TABLES LIKE :t");
+        $st->execute([':t' => $table]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+function retorno_col_exists(PDO $pdo, string $table, string $col): bool {
+    try {
+        $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
+        $st->execute([':c' => $col]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+function retorno_pct(int $parte, int $total): string {
+    if ($total <= 0) return '0,0%';
+    return number_format(($parte / $total) * 100, 1, ',', '.') . '%';
+}
+function retorno_money(float $valor): string {
+    return 'R$ ' . number_format($valor, 2, ',', '.');
+}
 
 $msg = '';
 $msgTipo = 'ok';
@@ -102,6 +127,65 @@ try {
     }
 } catch (Throwable $e) {}
 
+$kpiAlunosAgendados = 0;
+$kpiCompradoresAposDisparo = 0;
+$kpiFaturamentoAposDisparo = 0.0;
+try {
+    $kpiAlunosAgendados = (int)$pdo->query("SELECT COUNT(DISTINCT user_id) FROM retorno_agendamentos")->fetchColumn();
+} catch (Throwable $e) {}
+
+$hotmartReady = retorno_table_exists($pdo, 'hotmart_sales')
+    && retorno_col_exists($pdo, 'hotmart_sales', 'matched_user_id')
+    && retorno_col_exists($pdo, 'hotmart_sales', 'status')
+    && retorno_col_exists($pdo, 'hotmart_sales', 'transaction_date');
+$revenueCol = null;
+foreach (['gross_revenue', 'producer_net', 'net_revenue'] as $col) {
+    if (retorno_col_exists($pdo, 'hotmart_sales', $col)) {
+        $revenueCol = $col;
+        break;
+    }
+}
+if ($hotmartReady) {
+    try {
+        $st = $pdo->query("
+            SELECT COUNT(DISTINCT ra.user_id)
+            FROM retorno_agendamentos ra
+            WHERE ra.status = 'enviado'
+              AND ra.sent_at IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM hotmart_sales s
+                  WHERE s.matched_user_id = ra.user_id
+                    AND s.status IN ('Aprovado','Completo')
+                    AND s.transaction_date IS NOT NULL
+                    AND s.transaction_date >= ra.sent_at
+                  LIMIT 1
+              )
+        ");
+        $kpiCompradoresAposDisparo = (int)$st->fetchColumn();
+    } catch (Throwable $e) {}
+    if ($revenueCol !== null) {
+        try {
+            $st = $pdo->query("
+                SELECT COALESCE(SUM(s.`$revenueCol`), 0)
+                FROM hotmart_sales s
+                WHERE s.status IN ('Aprovado','Completo')
+                  AND s.transaction_date IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM retorno_agendamentos ra
+                      WHERE ra.user_id = s.matched_user_id
+                        AND ra.status = 'enviado'
+                        AND ra.sent_at IS NOT NULL
+                        AND s.transaction_date >= ra.sent_at
+                      LIMIT 1
+                  )
+            ");
+            $kpiFaturamentoAposDisparo = (float)$st->fetchColumn();
+        } catch (Throwable $e) {}
+    }
+}
+
 $st = $pdo->prepare("SELECT ra.*, u.nome, u.email, u.telefone,
     (SELECT GROUP_CONCAT(t.nome ORDER BY t.nome SEPARATOR ', ') FROM user_tags ut JOIN tags t ON t.id=ut.tag_id WHERE ut.user_id=u.id) AS tags_lista
     FROM retorno_agendamentos ra
@@ -148,6 +232,8 @@ require __DIR__ . '/_header.php';
     <div class="kpi kpi-g"><div class="kpi-label">Enviados</div><div class="kpi-value"><?= number_format($kpis['enviado']) ?></div></div>
     <div class="kpi kpi-r"><div class="kpi-label">Erro</div><div class="kpi-value"><?= number_format($kpis['erro']) ?></div></div>
     <div class="kpi"><div class="kpi-label">Cancelados</div><div class="kpi-value"><?= number_format($kpis['cancelado']) ?></div></div>
+    <div class="kpi kpi-g"><div class="kpi-label">Compraram apos disparo</div><div class="kpi-value"><?= number_format($kpiCompradoresAposDisparo, 0, ',', '.') ?></div><div class="kpi-sub"><?= h(retorno_pct($kpiCompradoresAposDisparo, $kpiAlunosAgendados)) ?> dos alunos agendados</div></div>
+    <div class="kpi kpi-b"><div class="kpi-label">Faturamento apos disparo</div><div class="kpi-value"><?= h(retorno_money($kpiFaturamentoAposDisparo)) ?></div><div class="kpi-sub">Vendas aprovadas apos envio</div></div>
 </div>
 
 <form method="get" class="filter-bar">

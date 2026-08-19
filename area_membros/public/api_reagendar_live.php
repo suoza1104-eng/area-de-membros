@@ -77,6 +77,7 @@ function rl_ensure_history(PDO $pdo): void {
         expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
+        origem VARCHAR(30) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
@@ -94,6 +95,7 @@ function rl_ensure_history(PDO $pdo): void {
         "ALTER TABLE reagendamentos_live ADD COLUMN expired_checked_at DATETIME NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN ip VARCHAR(64) NULL",
         "ALTER TABLE reagendamentos_live ADD COLUMN user_agent VARCHAR(250) NULL",
+        "ALTER TABLE reagendamentos_live ADD COLUMN origem VARCHAR(30) NULL AFTER user_agent",
         "ALTER TABLE reagendamentos_live ADD COLUMN webhook_url TEXT NULL",
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
@@ -108,15 +110,21 @@ function rl_available_slots(PDO $pdo): array {
     $days = (int)rl_get_setting_db($pdo, 'reagendar_window_days', '30');
     if ($days < 1) $days = 1;
     if ($days > 365) $days = 365;
+    $interval = (int)rl_get_setting_db($pdo, 'reagendar_availability_interval_days', '1');
+    if ($interval < 1) $interval = 1;
+    if ($interval > 365) $interval = 365;
+    $allowSameDay = (int)rl_get_setting_db($pdo, 'reagendar_allow_same_day', '0') === 1;
     $time = trim((string)rl_get_setting_db($pdo, 'reagendar_live_time', '19:30'));
     if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
     $blackouts = array_flip(array_filter(array_map('trim', explode(',', (string)rl_get_setting_db($pdo, 'reagendar_blackout_dates', '')))));
 
     $slots = [];
+    $startOffset = $allowSameDay ? 0 : 1;
     for ($i = 0; $i <= $days && count($slots) < $qty; $i++) {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
+        if ($i < $startOffset || (($i - $startOffset) % $interval) !== 0) continue;
         $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
         if ($slot <= $now) continue;
         $slots[$slot->format('Y-m-d H:i:s')] = $slot;
@@ -178,8 +186,8 @@ try {
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
     $pdo->prepare("INSERT INTO reagendamentos_live
-        (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
-        VALUES (:u, :oldc, :newc, :oldl, :newl, 'reagendado', :url, :sfat, :delay, :ip, :ua, :wh, NOW())")
+        (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
+        VALUES (:u, :oldc, :newc, :oldl, :newl, 'reagendado', :url, :sfat, :delay, :ip, :ua, 'aluno', :wh, NOW())")
         ->execute([
             ':u' => $alunoId,
             ':oldc' => $oldCodigo !== '' ? $oldCodigo : null,
@@ -194,7 +202,21 @@ try {
             ':wh' => null,
         ]);
     $histId = (int)$pdo->lastInsertId();
+    reagendamento_live_log($pdo, $histId, $alunoId, 'agendamento_criado', 'pendente', 'Reagendamento criado pela pagina publica.', [
+        'new_turma_live_at' => $slot,
+        'sf_disparo_at' => $dispatchAt,
+        'origem' => 'aluno',
+    ]);
+    $tokenId = (int)($_SESSION['reagendar_token_id'] ?? 0);
+    if ($tokenId > 0) {
+        $pdo->prepare("UPDATE live_reschedule_tokens SET used_at = COALESCE(used_at, NOW()) WHERE id = :id AND user_id = :user_id")
+            ->execute([':id' => $tokenId, ':user_id' => $alunoId]);
+        unset($_SESSION['reagendar_token_id']);
+    }
     $pdo->commit();
+    if (function_exists('definir_tag_estado_reagendamento')) {
+        definir_tag_estado_reagendamento($alunoId, 'ativo', 'reagendamento_live', $histId);
+    }
 
     $extra = [
         'reagendamento_id' => $histId,
@@ -222,7 +244,6 @@ try {
     rl_json(true, 'Reagendado com sucesso.', [
         'turma' => $oldCodigo,
         'live_nova' => $slots[$slot]->format('d/m/Y H:i'),
-        'live_url' => $liveUrl,
         'reagendamento_id' => $histId,
     ]);
 } catch (Throwable $e) {

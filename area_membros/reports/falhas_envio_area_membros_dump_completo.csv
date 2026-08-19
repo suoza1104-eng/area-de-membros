@@ -1,0 +1,192 @@
+﻿queue_id;event_id;status;tentativas;http;erro;nome;email;telefone;ja_existe_atualmente;criado_em;atualizado_em
+478;239;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Braz Gonçalves de melo;;55999378467;nao;2026-03-25 20:25:39;2026-03-26 00:00:02
+624;312;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Jonathas Oliveira;;55319835123;nao;2026-03-26 09:41:49;2026-03-26 13:20:02
+988;494;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Arlete Rodrigues;;95999052030;nao;2026-03-27 08:42:36;2026-03-27 12:40:02
+1022;511;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Paulo Cezar de Jesus;;11965678994;sim;2026-03-27 10:29:12;2026-03-27 14:20:02
+1784;892;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Eriomar pereira da Silva;;55839861948;nao;2026-03-29 08:33:39;2026-03-29 12:00:02
+1900;950;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Edimilson Moreira da Silva;;77999075215;nao;2026-03-29 11:39:41;2026-03-29 15:40:02
+2170;1085;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Geraldo jesus José da Silva;;15991661309;nao;2026-03-29 18:06:31;2026-03-29 22:00:02
+3252;1626;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Vanildo Severino Borges;;83998193215;nao;2026-03-31 20:47:37;2026-04-01 00:40:02
+3896;1948;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Caio Cesar Lopes;;31987168657;nao;2026-04-02 07:27:22;2026-04-02 11:20:03
+3982;1991;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Jorge Carvalho Silva;;21973632534;nao;2026-04-02 10:27:50;2026-04-02 14:40:02
+4098;2049;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Carlos Eduardo Pereira;;31987372437;nao;2026-04-02 14:30:28;2026-04-02 18:00:02
+4144;2072;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Francisco Rivan de Andrade;;55119820405;nao;2026-04-02 17:05:32;2026-04-02 20:40:02
+4358;2179;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";thiago lourenço;;22992698914;nao;2026-04-03 06:34:24;2026-04-03 10:20:02
+5144;2572;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Sebastião Divino Barbosa;;55629926681;nao;2026-04-04 17:27:38;2026-04-04 21:20:02
+5604;2802;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Eriomar Pereira da Silva;;55839861948;nao;2026-04-05 15:41:52;2026-04-05 20:00:02
+5642;2821;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Guimarães Abreu Pacheco;;32999854354;nao;2026-04-05 16:38:28;2026-04-05 20:20:02
+5852;2926;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Alessandro Ruiz da Silva;;17996601203;sim;2026-04-05 22:16:19;2026-04-06 01:40:02
+6180;3090;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";waldemir fogaca;;11987772190;nao;2026-04-06 13:23:18;2026-04-06 17:20:02
+6438;3219;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Cristóbal Guerrero Mojena;;61982110766;nao;2026-04-06 21:51:35;2026-04-07 01:40:02
+6828;3414;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Reyver Silva;;84988520180;nao;2026-04-07 15:39:18;2026-04-07 20:00:02
+6846;3423;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Cássio Alves Cotta;;27988302518;nao;2026-04-07 16:15:10;2026-04-07 20:20:02
+6936;3468;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Josenaldo Pedro dos Santos;;11930395017;nao;2026-04-07 19:24:09;2026-04-07 23:20:02
+6938;3469;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Josenaldo Pedro dos Santos;;11930395017;nao;2026-04-07 19:24:52;2026-04-07 23:40:01
+6940;3470;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Josenaldo Pedro dos Santos;;11930395017;nao;2026-04-07 19:30:16;2026-04-07 23:40:01
+7840;3920;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Lucio Ferreira;;21964314171;nao;2026-04-09 18:20:36;2026-04-09 22:20:02
+7968;3984;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Rodrigo silva santiago;;88997138356;nao;2026-04-09 22:21:25;2026-04-10 02:00:03
+8736;4368;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";GUSTAVO DA SILVA ARAUJO;;91982139420;nao;2026-04-11 12:50:55;2026-04-11 16:40:02
+9010;4505;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio valenca;;55997132990;nao;2026-04-11 22:10:52;2026-04-12 02:00:02
+9026;4513;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio valenca;;55997132990;nao;2026-04-11 22:36:01;2026-04-12 02:00:02
+9562;4781;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Willian de Souza;;21982584905;nao;2026-04-12 17:35:15;2026-04-12 21:20:01
+9572;4786;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José Ricardo do Nascimento;;34996982722;nao;2026-04-12 17:47:48;2026-04-12 22:00:03
+9646;4823;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";ANESIA F SILVA;;11997610063;nao;2026-04-12 20:52:08;2026-04-13 01:00:02
+9856;4928;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Gabriel  gomes;;16994340001;nao;2026-04-13 07:32:57;2026-04-13 11:40:02
+9914;4957;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Lucas Alves;;11989377660;nao;2026-04-13 08:59:19;2026-04-13 13:00:03
+10554;5277;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Anderson Calabrez;;15996782589;nao;2026-04-14 10:49:02;2026-04-14 14:40:02
+11368;5684;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";igor wesley dos santos silva;;11977915938;nao;2026-04-15 17:44:09;2026-04-15 21:20:02
+11384;5692;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Carlos Daniel Bezerra;;88499689349;nao;2026-04-15 18:07:19;2026-04-15 22:20:02
+11696;5848;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Cristiano Aurelio Pinheiro Machado;;51994010796;nao;2026-04-16 09:10:58;2026-04-16 13:20:02
+11828;5914;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Moisés s de Lima;;83998919301;sim;2026-04-16 12:38:18;2026-04-16 16:20:02
+12516;6258;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Hermano Francisco Costa;;82996239798;nao;2026-04-17 15:29:12;2026-04-17 19:00:02
+14064;7032;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Davi de Almeida;;55949918205;nao;2026-04-20 11:41:24;2026-04-20 15:40:02
+15048;7524;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Lucas Guemra;;42988337976;nao;2026-04-21 22:11:58;2026-04-22 01:40:02
+15322;7661;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Adriano Silva olivera;;93991027395;sim;2026-04-22 12:55:18;2026-04-22 16:40:02
+15718;7859;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Diolino jesus brito;;11963442701;sim;2026-04-23 06:51:59;2026-04-23 10:40:02
+15808;7904;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";JOSENIR DO DESTERRO VALE ABREU;;85989681391;sim;2026-04-23 09:16:29;2026-04-23 12:40:02
+16382;8191;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio figueiredoosaf1233@gmail.com;;75983649122;nao;2026-04-24 10:47:16;2026-04-24 14:40:01
+17868;8934;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";THIAGO JUNIOR ALVES DA SILVA;;11987448244;sim;2026-04-27 10:54:02;2026-04-27 15:00:01
+18374;9187;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";thomas patricio;;55119372077;sim;2026-04-28 05:55:08;2026-04-28 09:20:02
+18726;9363;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Sebastião santos de Souza;;33999854709;nao;2026-04-28 18:23:36;2026-04-28 22:20:02
+19050;9525;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José Viturino;;28996493608;nao;2026-04-29 09:15:15;2026-04-29 13:20:01
+19808;9904;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Samuel José dos Reis;;31985150964;sim;2026-04-30 19:41:53;2026-04-30 23:40:01
+19832;9916;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José mauri róseo da Silva;;85986406520;nao;2026-04-30 20:47:03;2026-05-01 00:40:01
+20436;10218;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Marcelo freitas;;34999541915;sim;2026-05-02 07:02:51;2026-05-02 11:00:02
+20546;10273;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Gabriel Oliveira de Almeida Bitencourt Curty;;28999481960;nao;2026-05-02 11:16:02;2026-05-02 15:00:02
+21228;10614;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Francildo ncota;;62998470858;nao;2026-05-03 16:00:59;2026-05-03 20:00:02
+21268;10634;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Ricardo Pereira Lima Rulk;;15997118538;nao;2026-05-03 17:14:55;2026-05-03 21:20:01
+21356;10678;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Valtemir Santos;;55129883306;sim;2026-05-03 19:29:59;2026-05-03 23:20:02
+21836;10918;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Carlos Antônio dos santos;;21979315822;nao;2026-05-04 16:20:06;2026-05-04 20:20:02
+23546;11773;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";WALDY SOUZA;;91981992411;nao;2026-05-07 23:07:19;2026-05-08 03:00:02
+24010;12005;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Elismar Francisco;;77999056092;nao;2026-05-09 13:49:29;2026-05-09 17:20:01
+25420;12710;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Claudir Aparecido Creto da Silva;;19983194125;nao;2026-05-12 13:50:10;2026-05-12 17:40:02
+25482;12741;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Geovane Silva;;31997151868;nao;2026-05-12 17:02:29;2026-05-12 21:20:01
+25556;12778;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Levi dos Remédios Oliveira;;98981836191;sim;2026-05-12 19:49:41;2026-05-12 23:20:01
+26070;13035;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";EVANDRO RIBEIRO GONCALVES;;54999429440;sim;2026-05-13 18:21:54;2026-05-13 22:00:02
+26790;13395;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Marco Antônio;;11965057204;sim;2026-05-15 18:31:51;2026-05-15 22:00:02
+26800;13400;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José Luiz dos Santos;;15998141471;nao;2026-05-15 18:42:13;2026-05-15 22:20:02
+27614;13807;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Marco Antonio;;11965057204;sim;2026-05-17 16:52:54;2026-05-17 20:20:01
+28054;14027;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Pedro ribeiro65483556@gmail.com;;55149915623;nao;2026-05-18 11:25:30;2026-05-18 15:40:01
+28182;14091;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio Bezerra;;55839878513;nao;2026-05-18 16:38:33;2026-05-18 20:00:01
+28760;14380;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Viana do nascimento;;21979908369;sim;2026-05-19 17:31:06;2026-05-19 21:20:01
+28768;14384;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Viana do nascimento;;21979908369;sim;2026-05-19 17:44:53;2026-05-19 21:40:02
+29456;14728;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Samuel José dos Reis;;31985150964;sim;2026-05-20 21:12:07;2026-05-21 00:40:01
+29852;14926;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Luiz Pereira Lopes;;31999083956;sim;2026-05-21 20:44:24;2026-05-22 01:00:01
+30366;15183;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Samuel José dos Reis;;31985150964;sim;2026-05-22 23:18:09;2026-05-23 03:20:01
+31732;15866;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Gilson Rodrigues Belarmino;;81991504959;sim;2026-05-26 11:43:41;2026-05-26 16:20:01
+31818;15909;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Gilson Rodrigues Belarmino;;81991504959;sim;2026-05-26 15:51:01;2026-05-26 20:00:01
+31870;15935;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Lauro costa ramos;;83999541078;nao;2026-05-26 18:12:41;2026-05-26 21:40:01
+31946;15973;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Marcelo Assunção;;55919930462;nao;2026-05-26 20:25:46;2026-05-27 00:20:01
+33670;16835;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José Ailton juvino dos Santos;;82994307601;nao;2026-05-31 10:57:05;2026-05-31 14:20:02
+34502;17251;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Octaviano Ferreira Costa Filho;;27993114554;nao;2026-06-02 07:59:17;2026-06-02 11:40:01
+35096;17548;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Geraldo Ermelindo Ferreira;;33197131098;sim;2026-06-03 19:33:51;2026-06-03 23:00:02
+35164;17582;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Marcelo Fraga13.jmf@gmail.com;;51999601518;sim;2026-06-04 00:09:58;2026-06-04 04:20:01
+36828;18414;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";FLAVIO PIZZOL;;55449974150;nao;2026-06-08 21:25:26;2026-06-09 01:00:02
+36836;18418;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio Ricardo mourao Mourao;;55159985267;nao;2026-06-08 21:44:20;2026-06-09 01:20:02
+37424;18712;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Ivo dias;;11978851576;nao;2026-06-10 09:34:41;2026-06-10 13:00:02
+37572;18786;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Alberico Dos Santos;;55719994504;nao;2026-06-10 18:25:47;2026-06-10 22:20:01
+37668;18834;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Gilmar Dias oelho;;71982667521;nao;2026-06-10 21:29:22;2026-06-11 01:00:02
+37688;18844;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Edson Eustáquio de Noronha;;55379995989;sim;2026-06-10 21:47:14;2026-06-11 01:40:01
+37694;18847;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Edinho sousa;;86981174810;nao;2026-06-10 21:50:59;2026-06-11 01:40:01
+37912;18956;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Eder soares;;48984080800;nao;2026-06-11 15:16:21;2026-06-11 19:20:01
+38186;19093;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Antônio  José  de mello;;19997757113;sim;2026-06-12 14:44:00;2026-06-12 19:00:02
+38400;19200;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Cristovo Jorge Silva;;55229979816;nao;2026-06-13 08:29:31;2026-06-13 12:20:01
+38986;19493;failed;8;422;"{""ok"":false,""error"":""missing_email_or_phone""}";Isaac Rodrigues;;55689810482;sim;2026-06-15 00:16:55;2026-06-15 04:00:02
+39128;19564;pending_retry;4;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Batista;;41999864545;nao;2026-06-15 11:38:05;2026-06-15 12:20:01
+39130;19565;pending_retry;3;422;"{""ok"":false,""error"":""missing_email_or_phone""}";João Batista;;41999864545;nao;2026-06-15 11:39:06;2026-06-15 12:20:01
+39452;19726;pending_retry;1;422;"{""ok"":false,""error"":""missing_email_or_phone""}";José Cícero;;19982497653;nao;2026-06-16 08:29:02;2026-06-16 08:29:04
+39946;19973;pending;0;;;Paulo Rodrigues da Silva;firefighterpaulo@gmail.com;11943585594;sim;2026-06-17 14:23:08;2026-06-17 14:23:08
+39948;19974;pending;0;;;Antonio Barbosa;antoniobarbosarei28@gmail.com;75998311970;nao;2026-06-17 14:28:44;2026-06-17 14:28:44
+39950;19975;pending;0;;;Robson Carlos Barreto;robsoncarlosbarreto128@gmail.com;17996338529;nao;2026-06-17 14:30:07;2026-06-17 14:30:07
+39952;19976;pending;0;;;Jorge Alves;cordeirojorge6156@gmail.com;27999250700;nao;2026-06-17 14:49:27;2026-06-17 14:49:27
+39954;19977;pending;0;;;Carlos Alberto de jesus sobrinho;carlosalberto-sobrinho@hotmail.com;11981309033;nao;2026-06-17 14:51:35;2026-06-17 14:51:35
+39956;19978;pending;0;;;Wellington Carlos;wellingtonizaque1@gmail.com;13988562160;nao;2026-06-17 14:52:16;2026-06-17 14:52:16
+39958;19979;pending;0;;;Paulo Sérgio de Oliveira;ps.mo@hotmail.com;91993553324;nao;2026-06-17 15:05:42;2026-06-17 15:05:42
+39960;19980;pending;0;;;Schaili Ravena Oliveira Abreu;abreuschaili@gmail.com;27998738507;nao;2026-06-17 15:08:14;2026-06-17 15:08:14
+39962;19981;pending;0;;;Schaili Ravena Oliveira Abreu;abreuschaili@gmail.com;27998738507;nao;2026-06-17 15:15:23;2026-06-17 15:15:23
+39964;19982;pending;0;;;Ednaldo antonio quirino;ednaldoantonioquirino@gmail.com;83991842526;nao;2026-06-17 15:23:19;2026-06-17 15:23:19
+39966;19983;pending;0;;;Douglas Dynegro;douglasdysantos90@gmail.com;61991108119;nao;2026-06-17 15:29:10;2026-06-17 15:29:10
+39968;19984;pending;0;;;Natan Cassiano de Alencar Pires;natanpires2016@gmail.com;11952288493;nao;2026-06-17 16:04:37;2026-06-17 16:04:37
+39970;19985;pending;0;;;Roque Luiz dos Santos Brito;roquebrittto86@gmail.com;75982784840;nao;2026-06-17 16:25:42;2026-06-17 16:25:42
+39972;19986;pending;0;;;Guthyerry Lira da silva;venixtsho@gmail.com;69992839130;nao;2026-06-17 16:27:10;2026-06-17 16:27:10
+39974;19987;pending;0;;;Jaildo Moreira;instalasat@yahoo.com.br;37988187493;sim;2026-06-17 16:31:39;2026-06-17 16:31:39
+39976;19988;pending;0;;;Joao Carlos;joaocarlosjpa38@gmail.com;55219907161;nao;2026-06-17 16:46:39;2026-06-17 16:46:39
+39978;19989;pending;0;;;Igor Silva Rodrigues;vocepodevp@gmail.com;31973504167;nao;2026-06-17 16:47:47;2026-06-17 16:47:47
+39980;19990;pending;0;;;Hugo dias;welley2262@gmail.com;11954800682;sim;2026-06-17 16:53:52;2026-06-17 16:53:52
+39982;19991;pending;0;;;Anderson Papini;andersonpapini12@gmail.com;55319891620;nao;2026-06-17 16:57:32;2026-06-17 16:57:32
+39984;19992;pending;0;;;Anderson Papini;andersonpapini12@gmail.com;55989162097;nao;2026-06-17 16:58:19;2026-06-17 16:58:19
+39986;19993;pending;0;;;Anderson Papini;andersonpapini12@gmail.com;31989162097;nao;2026-06-17 16:58:35;2026-06-17 16:58:35
+39988;19994;pending;0;;;Mateus Jeferson;mneletricaprojetos@gmail.com;31993475081;nao;2026-06-17 17:00:55;2026-06-17 17:00:55
+39990;19995;pending;0;;;Jose moab Alves dos Santos;josemoab1966@gmail.com;11983424626;sim;2026-06-17 17:09:15;2026-06-17 17:09:15
+39992;19996;pending;0;;;Entoni Farias;entonilazaro@gmail.com;64996159426;nao;2026-06-17 17:18:59;2026-06-17 17:18:59
+39994;19997;pending;0;;;Isaque Souza;isaque.corvete@gmail.com;51992747535;nao;2026-06-17 17:24:47;2026-06-17 17:24:47
+39996;19998;pending;0;;;João Paulo Alves da Silva;paulojoao76761@gmail.com;85994059738;nao;2026-06-17 17:30:49;2026-06-17 17:30:49
+39998;19999;pending;0;;;Alceu Ferreira;alceulico@gmail.com;55219923808;nao;2026-06-17 17:35:37;2026-06-17 17:35:37
+40000;20000;pending;0;;;Fabricio Ferreira;fabraslift@gmail.com;55119935081;nao;2026-06-17 17:37:44;2026-06-17 17:37:44
+40002;20001;pending;0;;;Fabricio Ferreira;fabraslift@gmail.com;11993508155;nao;2026-06-17 17:38:04;2026-06-17 17:38:04
+40004;20002;pending;0;;;Fleury Correia;fleury.correia@gmail.com;81996142779;sim;2026-06-17 17:40:04;2026-06-17 17:40:04
+40006;20003;pending;0;;;Verônica Giovanna Angeloti;veronicaangeloti@gmail.com;16993842428;nao;2026-06-17 18:06:02;2026-06-17 18:06:02
+40008;20004;pending;0;;;Rodrigo petraglia zanele;rodrigopetragliazanele1980@gmail.com;11942276519;nao;2026-06-17 18:08:09;2026-06-17 18:08:09
+40010;20005;pending;0;;;Francisco Leonardo Nascimento Silva;leos123490@gmail.com;88998173286;nao;2026-06-17 18:09:19;2026-06-17 18:09:19
+40012;20006;pending;0;;;Allan Clefi Barros Nina Filho;allanclefi@gmail.com;98988601008;nao;2026-06-17 18:13:57;2026-06-17 18:13:57
+40014;20007;pending;0;;;Fidelis santos;informeaqui07@gmail.com;55159914216;nao;2026-06-17 18:21:35;2026-06-17 18:21:35
+40016;20008;pending;0;;;Valdeci Neri trindade;valdecineri663@gmail.com;55759813085;nao;2026-06-17 18:22:24;2026-06-17 18:22:24
+40018;20009;pending;0;;;Juracy Viana;juracykopa01@gmail.com;71999719847;sim;2026-06-17 18:31:29;2026-06-17 18:31:29
+40020;20010;pending;0;;;Osmar Nascimento Junior;juniorosmar645@gmail.com;55289997981;nao;2026-06-17 18:38:02;2026-06-17 18:38:02
+40022;20011;pending;0;;;Gerson Corado;;55779984568;nao;2026-06-17 18:38:15;2026-06-17 18:38:15
+40024;20012;pending;0;;;Carlos Alberto da Silva Cavalcanti;tokedemestrepinturas@gmail.com;11987905166;nao;2026-06-17 18:46:50;2026-06-17 18:46:50
+40026;20013;pending;0;;;Michael Veloso Avanso De Matos;michael_avanso@hotmail.com;11997086577;nao;2026-06-17 18:47:37;2026-06-17 18:47:37
+40028;20014;pending;0;;;VICTOR BERNARDO;bernardoosilva3@gmail.com;83999166443;nao;2026-06-17 18:55:07;2026-06-17 18:55:07
+40030;20015;pending;0;;;João Leno de Sousa;sousajoaolenodesousa@gmail.com;86981415366;nao;2026-06-17 19:09:04;2026-06-17 19:09:04
+40032;20016;pending;0;;;Marcelo Vigil;bugavigil@gmail.com;51985219564;nao;2026-06-17 19:12:48;2026-06-17 19:12:48
+40034;20017;pending;0;;;Kelvin Nunes;kelvinnunes337@gmail.com;11950527562;nao;2026-06-17 19:35:54;2026-06-17 19:35:54
+40036;20018;pending;0;;;Marcelo Silva Brito;britomarcelo064@gmail.com;65998139163;nao;2026-06-17 19:37:12;2026-06-17 19:37:12
+40038;20019;pending;0;;;Jose Pedro;pepe.ubilla@hotmail.com;11971487733;nao;2026-06-17 19:53:27;2026-06-17 19:53:27
+40040;20020;pending;0;;;Damazio Da Silva;damaziodasailva@gmail.com;55629991799;nao;2026-06-17 19:56:32;2026-06-17 19:56:32
+40042;20021;pending;0;;;João Ferreira Gomes;ferreirabh60@gmail.com;31998407423;nao;2026-06-17 20:02:17;2026-06-17 20:02:17
+40044;20022;pending;0;;;EZEQUIAS FELIPE SILVA DE JESUS;ezequiasf693@gmail.com;38998304236;nao;2026-06-17 20:04:12;2026-06-17 20:04:12
+40046;20023;pending;0;;;Marildo Oliveira;marildoo73@gmail.com;91993939747;nao;2026-06-17 20:14:26;2026-06-17 20:14:26
+40048;20024;pending;0;;;Anderson Da;andersonb2k61@gmail.com;61991463835;nao;2026-06-17 20:20:40;2026-06-17 20:20:40
+40050;20025;pending;0;;;Francisco Pereira;francisco.link2022@gmail.com;15991597809;nao;2026-06-17 20:30:33;2026-06-17 20:30:33
+40052;20026;pending;0;;;Maurício hebach filho;hebach@hotmail.com;37999891454;nao;2026-06-17 20:31:27;2026-06-17 20:31:27
+40054;20027;pending;0;;;Eli Pereira da Silva;elieltricista2024@gmail.com;33499122216;nao;2026-06-17 20:34:50;2026-06-17 20:34:50
+40056;20028;pending;0;;;Eli Pereira da Silva;elieltricista2024@gmail.com;34991222160;nao;2026-06-17 20:35:42;2026-06-17 20:35:42
+40058;20029;pending;0;;;Fernandes Salvador Farias;fernandosalvadorfarias@gmail.com;11986374297;nao;2026-06-17 20:41:01;2026-06-17 20:41:01
+40060;20030;pending;0;;;José A Teixeira;teixeira0129@gmail.com;55669990011;sim;2026-06-17 20:42:58;2026-06-17 20:42:58
+40062;20031;pending;0;;;João Vitor;joaotubyas@gmail.com;21966646184;nao;2026-06-17 20:47:25;2026-06-17 20:47:25
+40064;20032;pending;0;;;Givaldo Silva;givaldobuzios9@gmail.com;22997404180;sim;2026-06-17 20:48:53;2026-06-17 20:48:53
+40066;20033;pending;0;;;Jean Carlos de Paula Pinto;jeancarlosdepaulapinto@gmail.com;96984247828;nao;2026-06-17 20:56:14;2026-06-17 20:56:14
+40068;20034;pending;0;;;Josué Soares da Silva;josuesoares0625@gmail.com;81986774642;nao;2026-06-17 21:02:29;2026-06-17 21:02:29
+40070;20035;pending;0;;;Eduardo da Silva Reis;edureis5518@gmail.com;31992696609;nao;2026-06-17 21:09:04;2026-06-17 21:09:04
+40072;20036;pending;0;;;Pedro da Silva Lacerda;pedrinhodasilvalacerda@gmail.com;83998229021;nao;2026-06-17 21:22:32;2026-06-17 21:22:32
+40074;20037;pending;0;;;Alexandre Marinho;alexandrealvesmarinho@gmail.com;32984056323;nao;2026-06-17 21:27:38;2026-06-17 21:27:38
+40076;20038;pending;0;;;Aloisio COSTA DA SILVA;aloisio2008@gmail.com;21972132943;nao;2026-06-17 21:32:10;2026-06-17 21:32:10
+40078;20039;pending;0;;;Erisvaldo de Sousa Oliveira;erisvaldo20sousa@gmail.com;98984694925;nao;2026-06-17 21:35:40;2026-06-17 21:35:40
+40080;20040;pending;0;;;Jeorge gustavo rangel de souza;jeorgerangel@yahoo.com.br;81984603155;nao;2026-06-17 21:39:39;2026-06-17 21:39:39
+40082;20041;pending;0;;;Adriano Lima da Silva;aquillisadriano@gmail.com;87981748262;nao;2026-06-17 21:39:40;2026-06-17 21:39:40
+40084;20042;pending;0;;;Daniel Lucas da costa;sguardrio@gmail.com;21970343260;nao;2026-06-17 21:45:04;2026-06-17 21:45:04
+40086;20043;pending;0;;;Caio Henrique Pereira da Silva;clc241508@gmail.com;98981772066;nao;2026-06-17 21:46:49;2026-06-17 21:46:49
+40088;20044;pending;0;;;Leonildo Gonçalves Candia;leonildocandia@hotmail.com;11965851624;nao;2026-06-17 21:59:20;2026-06-17 21:59:20
+40090;20045;pending;0;;;Diogo Carramanhos Cardoso;cardosodiogo277@gmail.com;24988420540;sim;2026-06-17 22:11:21;2026-06-17 22:11:21
+40092;20046;pending;0;;;awd awd;fekera@gmail.com;34996309444;sim;2026-06-17 22:16:17;2026-06-17 22:16:17
+40094;20047;pending;0;;;Wellington Batista Forquim;batista_well@hotmail.com;41995657179;nao;2026-06-17 22:21:07;2026-06-17 22:21:07
+40096;20048;pending;0;;;José Neves boa sorte Filho Neves;josenevesboasorte@gmail.co;55279924743;nao;2026-06-17 22:25:45;2026-06-17 22:25:45
+40098;20049;pending;0;;;Adriano Silva Santos Dri;arn872011@hotmail.com;81982211373;nao;2026-06-17 22:34:46;2026-06-17 22:34:46
+40100;20050;pending;0;;;Gilmar Sousa;gilmarrsousa84@gmail.com;55139880507;nao;2026-06-17 22:35:49;2026-06-17 22:35:49
+40102;20051;pending;0;;;Wadson da Silva Lopes;wadsonlopespm@gmail.com;73991229687;nao;2026-06-17 22:40:32;2026-06-17 22:40:32
+40104;20052;pending;0;;;Wadson da Silva Lopes;wadsonlopespm@gmail.com;73991229687;nao;2026-06-17 22:43:47;2026-06-17 22:43:47
+40106;20053;pending;0;;;Valdemir Brito de Cristo;speednet.fsa@outlook.com;75998973790;nao;2026-06-17 23:00:30;2026-06-17 23:00:30
+40108;20054;pending;0;;;denis monteiro ribeiro;denismtribeiro@gmail.com;14997228506;nao;2026-06-17 23:01:08;2026-06-17 23:01:08
+40110;20055;pending;0;;;Elielson Gomes;elielsomg029@gmail.com;75999397583;nao;2026-06-17 23:10:58;2026-06-17 23:10:58
+40112;20056;pending;0;;;Sérgio Mota;sergiomota.arq@gmail.com;21997010532;nao;2026-06-17 23:17:39;2026-06-17 23:17:39
+40114;20057;pending;0;;;Samuel Sousa;eletrica3htecnologia@outlook.com;11967978187;nao;2026-06-17 23:41:29;2026-06-17 23:41:29
+40116;20058;pending;0;;;THIAGO BELEM PEIXOTO;thiagobelempeixoto@yahoo.com.br;22997399553;nao;2026-06-17 23:54:59;2026-06-17 23:54:59
+40118;20059;pending;0;;;EROCI DE AQUINO PILAR;erocipilar19@gmail.com;66999111087;nao;2026-06-18 00:05:15;2026-06-18 00:05:15
+40120;20060;pending;0;;;Rivaldo terto;rivaldoterto69@gmail.com;84992796662;sim;2026-06-18 00:08:13;2026-06-18 00:08:13
+40122;20061;pending;0;;;Pedro Vitor Silva de Oliveira;pedrovitor4019@gmail.com;84998112143;nao;2026-06-18 00:11:06;2026-06-18 00:11:06
+40124;20062;pending;0;;;Rosinei nunessoares;neynunes844@gmail.com;69993672017;sim;2026-06-18 00:23:03;2026-06-18 00:23:03
+40126;20063;pending;0;;;Paulinho Henrique;guerreirodecristo321@gmail.com;82999367737;nao;2026-06-18 00:39:46;2026-06-18 00:39:46
+40128;20064;pending;0;;;FILIPE MOABE GOMES DA CRUZ;filipemoabe@gmail.com;31985493691;nao;2026-06-18 00:42:56;2026-06-18 00:42:56
+40130;20065;pending;0;;;Diogo Freires;diogofreires@live.com;27997527244;nao;2026-06-18 00:53:43;2026-06-18 00:53:43
+40132;20066;pending;0;;;sdfsf gg;sdfsdf@jhjfd.com;31222222222;nao;2026-06-18 00:56:36;2026-06-18 00:56:36
+40134;20067;pending;0;;;Marcos Furtuna;marcosfortuna40@gmail.com;67992765100;sim;2026-06-18 00:59:32;2026-06-18 00:59:32

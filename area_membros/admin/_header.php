@@ -17,6 +17,39 @@ $__isEquipe    = ($_SESSION['admin_tipo'] === 'equipe');
 $__equipePerms = $__isEquipe
     ? (json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [])
     : [];
+if ($__isEquipe && empty($__equipePerms['whatsapp_grupos']) && !empty($__equipePerms['whatsapp_monitor'])) {
+    $__equipePerms['whatsapp_grupos'] = $__equipePerms['whatsapp_monitor'];
+}
+if ($__isEquipe && empty($__equipePerms['whatsapp_config']) && !empty($__equipePerms['whatsapp_ai'])) {
+    $__equipePerms['whatsapp_config'] = $__equipePerms['whatsapp_ai'];
+}
+if ($__isEquipe && empty($__equipePerms['cron_monitor']) && !empty($__equipePerms['logs'])) {
+    $__equipePerms['cron_monitor'] = $__equipePerms['logs'];
+}
+if ($__isEquipe && empty($__equipePerms['integration_hub']) && !empty($__equipePerms['inbound_webhooks'])) {
+    $__equipePerms['integration_hub'] = $__equipePerms['inbound_webhooks'];
+}
+if ($__isEquipe && empty($__equipePerms['integracoes'])) {
+    foreach (['webhooks', 'integration_hub', 'superfuncionario', 'manychat'] as $__intPermKey) {
+        if (!empty($__equipePerms[$__intPermKey])) {
+            $__equipePerms['integracoes'] = $__equipePerms[$__intPermKey];
+            break;
+        }
+    }
+    unset($__intPermKey);
+}
+if ($__isEquipe && empty($__equipePerms['automacoes'])) {
+    foreach (['email_marketing', 'notificacoes', 'webhooks', 'manychat', 'superfuncionario', 'torpedo_voz', 'telegram'] as $__autoPermKey) {
+        if (!empty($__equipePerms[$__autoPermKey])) {
+            $__equipePerms['automacoes'] = $__equipePerms[$__autoPermKey];
+            break;
+        }
+    }
+    unset($__autoPermKey);
+}
+if ($__isEquipe && empty($__equipePerms['hotmart_import']) && !empty($__equipePerms['vendas_analytics'])) {
+    $__equipePerms['hotmart_import'] = $__equipePerms['vendas_analytics'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -31,20 +64,33 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'webhooks','superfuncionario','disparos','live_events','inbound_webhooks','monitor','logs','aparencia','config_app','equipe'] as $__k) {
+foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
+          'integracoes','webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
+$__sbV['integracoes'] = $__sbV['integracoes'] || $__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['superfuncionario'] || $__sbV['manychat'];
 
 // Informações do usuário logado para o sidebar
 $__sbNome    = $__isEquipe ? ($_SESSION['equipe_nome']  ?? 'Membro') : 'Administrador';
 $__sbRole    = $__isEquipe ? 'Equipe' : 'Admin logado';
 $__sbInitial = strtoupper(substr($__sbNome, 0, 1));
+$__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 // ──────────────────────────────────────────────────────────────────────────
+
+$__supportUnread = 0;
+try {
+    $pdoBadge = getPDO();
+    $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
+    if ($stBadge && $stBadge->fetchColumn()) {
+        $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
+    }
+} catch (Throwable $ignored) {}
 
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
+    'hotmart_import'   => 'Conciliar Hotmart',
+    'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
     'reagendamentos_live' => 'Reagendamentos de Live',
@@ -52,9 +98,25 @@ $titleMap = [
     'turmas'           => 'Turmas',
     'cursos'           => 'Cursos Recomendados',
     'certificado'      => 'Certificado',
+    'integracoes'      => 'Integrações',
     'webhooks'         => 'Webhooks',
+    'meta_leads'       => 'Meta Leads Qualificados',
+    'meta_form_utms'   => 'UTMs Forms Meta',
+    'integration_hub'  => 'Hub de Integrações',
+    'manychat'         => 'Manychat',
+    'torpedo_voz'      => 'Torpedo de Voz',
+    'telegram'         => 'Telegram',
     'superfuncionario' => 'SuperFuncionário',
+    'whatsapp_config'  => 'Configurações WhatsApp',
+    'whatsapp_monitor' => 'WhatsApp Monitor',
+    'whatsapp_grupos'  => 'Grupos WhatsApp',
+    'whatsapp_ai'      => 'IA WhatsApp',
+    'suporte_chat'     => 'Central de Suporte',
+    'automacoes'       => 'Automações',
+    'notificacoes'     => 'Notificações do App',
+    'email_marketing'  => 'E-mail Marketing',
     'monitor'          => 'Rastreamento',
+    'cron_monitor'     => 'Monitor de Cron',
     'logs'             => 'Logs',
     'aparencia'        => 'Aparência',
     'config_app'       => 'Configurações',
@@ -196,6 +258,12 @@ img { max-width: 100%; display: block; }
   border: 1px solid var(--border);
   margin-top: 2px; display: inline-block;
 }
+.sb-logo-version {
+  color: var(--primary);
+  border-color: rgba(250,204,21,.28);
+  background: rgba(250,204,21,.08);
+  margin-left: 4px;
+}
 
 .sb-nav {
   flex: 1;
@@ -269,7 +337,7 @@ img { max-width: 100%; display: block; }
 #main-wrapper {
   margin-left: var(--sidebar-w);
   flex: 1; display: flex; flex-direction: column; min-height: 100vh;
-  overflow-x: hidden; min-width: 0;
+  overflow-x: clip; min-width: 0;
 }
 
 /* ===== TOPBAR ===== */
@@ -488,6 +556,7 @@ button:not([class]):hover { filter: brightness(1.07); }
 .badge-warning { background: rgba(245,158,11,.1);   color: #fcd34d; }
 .badge-neutral { background: rgba(100,116,139,.1);  color: #94a3b8; }
 .badge-primary { background: var(--primary-dim);    color: var(--primary); }
+.sb-support-badge { margin-left:auto; min-width:18px; height:18px; padding:0 5px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#ef4444; color:#fff; font-size:10px; font-weight:800; }
 
 /* ===== ALERTS ===== */
 .alert {
@@ -603,11 +672,12 @@ button:not([class]):hover { filter: brightness(1.07); }
     <div class="sb-logo-info">
       <div class="sb-logo-name"><?= __esc($__courseTitle) ?></div>
       <span class="sb-logo-badge">Admin</span>
+      <span class="sb-logo-badge sb-logo-version"><?= __esc($__appVersion) ?></span>
     </div>
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -631,6 +701,29 @@ button:not([class]):hover { filter: brightness(1.07); }
         <line x1="6" y1="20" x2="6" y2="16"/>
       </svg>
       Vendas
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['hotmart_import']): ?>
+    <a href="import_vendas_hotmart.php" class="sb-item <?= $currentMenu === 'hotmart_import' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 3v12"/>
+        <path d="m7 10 5 5 5-5"/>
+        <path d="M5 21h14"/>
+      </svg>
+      Conciliar Hotmart
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['vendas_vitalicio']): ?>
+    <a href="vendas_vitalicio.php" class="sb-item <?= $currentMenu === 'vendas_vitalicio' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20 7h-9"/>
+        <path d="M14 17H5"/>
+        <circle cx="17" cy="17" r="3"/>
+        <circle cx="7" cy="7" r="3"/>
+      </svg>
+      Vendas Vitalicio
     </a>
     <?php endif; ?>
 
@@ -712,11 +805,20 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks'] || $__sbV['superfuncionario'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks']): ?>
+    <?php if ($__sbV['integracoes'] || $__sbV['meta_leads'] || $__sbV['meta_form_utms'] || $__sbV['torpedo_voz'] || $__sbV['telegram'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
-    <?php if ($__sbV['webhooks']): ?>
+    <?php if ($__sbV['integracoes']): ?>
+    <a href="integracoes.php" class="sb-item <?= in_array($currentMenu, ['integracoes','webhooks','integration_hub','superfuncionario','manychat'], true) ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
+      </svg>
+      Integrações
+    </a>
+    <?php endif; ?>
+
+    <?php if (false && $__sbV['webhooks']): ?>
     <a href="webhooks.php" class="sb-item <?= $currentMenu === 'webhooks' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -725,13 +827,111 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['superfuncionario']): ?>
+    <?php if (false && $__sbV['integration_hub']): ?>
+    <a href="integration_hub.php" class="sb-item <?= $currentMenu === 'integration_hub' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h5M14 11l3-4M14 13l3 4"/>
+      </svg>
+      Hub de Integrações
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['meta_leads']): ?>
+    <a href="meta_leads_qualificados.php" class="sb-item <?= $currentMenu === 'meta_leads' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/><path d="M17 17l3 3M20 17l-3 3"/>
+      </svg>
+      Meta Leads
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['meta_form_utms']): ?>
+    <a href="meta_form_utms.php" class="sb-item <?= $currentMenu === 'meta_form_utms' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 4h16v6H4z"/><path d="M4 14h7v6H4z"/><path d="M15 14h5v6h-5z"/><path d="M8 7h8M6 17h3M17 17h1"/>
+      </svg>
+      UTMs Forms
+    </a>
+    <?php endif; ?>
+
+    <?php if (false && $__sbV['superfuncionario']): ?>
     <a href="superfuncionario.php" class="sb-item <?= $currentMenu === 'superfuncionario' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
         <path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M2 12h2M20 12h2M12 2v2M12 20v2"/>
       </svg>
       SuperFuncionário
+    </a>
+    <?php endif; ?>
+
+    <?php if (false && $__sbV['manychat']): ?>
+    <a href="manychat.php" class="sb-item <?= $currentMenu === 'manychat' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/>
+        <path d="M8 9h8M8 13h5"/>
+      </svg>
+      Manychat
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['torpedo_voz']): ?>
+    <a href="torpedo_voz.php" class="sb-item <?= $currentMenu === 'torpedo_voz' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.8 19.8 0 012.08 4.18 2 2 0 014.06 2h3a2 2 0 012 1.72c.12.9.32 1.77.59 2.61a2 2 0 01-.45 2.11L7.91 9.73a16 16 0 006.36 6.36l1.29-1.29a2 2 0 012.11-.45c.84.27 1.71.47 2.61.59A2 2 0 0122 16.92z"/>
+      </svg>
+      Torpedo de Voz
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['telegram']): ?>
+    <a href="telegram.php" class="sb-item <?= $currentMenu === 'telegram' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 3L2 11l7 3 3 7 10-18z"/>
+        <path d="M9 14l13-11"/>
+      </svg>
+      Telegram
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_config']): ?>
+    <a href="whatsapp_config.php" class="sb-item <?= $currentMenu === 'whatsapp_config' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+      </svg>
+      Configurações WhatsApp
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_monitor']): ?>
+    <a href="whatsapp_monitor.php" class="sb-item <?= $currentMenu === 'whatsapp_monitor' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M5 4h14a2 2 0 012 2v10a2 2 0 01-2 2H8l-5 3V6a2 2 0 012-2z"/>
+        <path d="M8 9h8M8 13h5"/>
+      </svg>
+      WhatsApp Monitor
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_grupos']): ?>
+    <a href="whatsapp_grupos.php" class="sb-item <?= $currentMenu === 'whatsapp_grupos' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 5h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-5 3V7a2 2 0 012-2z"/>
+        <path d="M8 9h8M8 13h6"/>
+        <circle cx="18" cy="18" r="3"/>
+      </svg>
+      Grupos WhatsApp
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['whatsapp_ai']): ?>
+    <a href="whatsapp_ai.php" class="sb-item <?= $currentMenu === 'whatsapp_ai' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a7 7 0 017 7c0 4-3 6-7 6s-7-2-7-6a7 7 0 017-7z"/>
+        <path d="M8 21h8"/>
+        <path d="M9 15v3M15 15v3"/>
+        <path d="M9 9h.01M15 9h.01"/>
+      </svg>
+      IA WhatsApp
     </a>
     <?php endif; ?>
 
@@ -766,8 +966,47 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
+    <?php if ($__sbV['suporte_chat'] || $__sbV['automacoes'] || $__sbV['notificacoes'] || $__sbV['monitor'] || $__sbV['cron_monitor'] || $__sbV['logs'] || $__sbV['aparencia'] || $__sbV['config_app'] || $__sbV['equipe']): ?>
     <div class="sb-section">Sistema</div>
+    <?php endif; ?>
+
+    <?php if ($__sbV['suporte_chat']): ?>
+    <a href="suporte_chat.php" class="sb-item <?= $currentMenu === 'suporte_chat' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/><path d="M8 9h8M8 13h5"/>
+      </svg>
+      Central de Suporte
+      <?php if ($__supportUnread > 0): ?><span class="sb-support-badge"><?= $__supportUnread > 99 ? '99+' : (int)$__supportUnread ?></span><?php endif; ?>
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['automacoes']): ?>
+    <a href="automacoes.php" class="sb-item <?= $currentMenu === 'automacoes' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 6h5v5H4zM15 3h5v5h-5zM15 16h5v5h-5z"/>
+        <path d="M9 8h2a4 4 0 014 4v1M15 18h-2a4 4 0 01-4-4v-1"/>
+      </svg>
+      Automações
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['notificacoes']): ?>
+    <a href="notificacoes.php" class="sb-item <?= $currentMenu === 'notificacoes' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+        <path d="M10 21h4"/>
+      </svg>
+      Notificações do App
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['email_marketing']): ?>
+    <a href="email_dashboard.php" class="sb-item <?= $currentMenu === 'email_marketing' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
+      </svg>
+      E-mail Marketing
+    </a>
     <?php endif; ?>
 
     <?php if ($__sbV['monitor']): ?>
@@ -776,6 +1015,17 @@ button:not([class]):hover { filter: brightness(1.07); }
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
       Rastreamento
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['cron_monitor']): ?>
+    <a href="cron_monitor.php" class="sb-item <?= $currentMenu === 'cron_monitor' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M12 7v5l3 2"/>
+        <path d="M4 4l2 2M20 4l-2 2"/>
+      </svg>
+      Monitor de Cron
     </a>
     <?php endif; ?>
 

@@ -1,0 +1,2093 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/funcoes.php';
+require_once __DIR__ . '/course_access.php';
+
+if (!function_exists('mb_substr')) {
+    function mb_substr($string, $start, $length = null, $encoding = null) { return $length === null ? substr((string)$string, (int)$start) : substr((string)$string, (int)$start, (int)$length); }
+}
+if (!function_exists('mb_strlen')) {
+    function mb_strlen($string, $encoding = null) { return strlen((string)$string); }
+}
+if (!function_exists('mb_strtolower')) {
+    function mb_strtolower($string, $encoding = null) { return strtolower((string)$string); }
+}
+
+function support_chat_ensure_schema(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_conversations (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'open',
+        priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+        channel VARCHAR(20) NOT NULL DEFAULT 'test',
+        subject VARCHAR(180) NULL,
+        assigned_to VARCHAR(150) NULL,
+        assigned_name VARCHAR(150) NULL,
+        stage VARCHAR(40) NOT NULL DEFAULT 'novo',
+        tags_json TEXT NULL,
+        notes TEXT NULL,
+        unread_admin INT UNSIGNED NOT NULL DEFAULT 0,
+        unread_student INT UNSIGNED NOT NULL DEFAULT 0,
+        student_last_seen_at DATETIME NULL,
+        admin_last_seen_at DATETIME NULL,
+        last_message_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        closed_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_user (user_id), KEY idx_support_status (status),
+        KEY idx_support_assignee (assigned_to), KEY idx_support_last (last_message_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_messages (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        sender_type VARCHAR(20) NOT NULL,
+        sender_id VARCHAR(150) NULL,
+        sender_name VARCHAR(150) NULL,
+        message_type VARCHAR(20) NOT NULL DEFAULT 'text',
+        body TEXT NULL,
+        attachment_url VARCHAR(1000) NULL,
+        attachment_name VARCHAR(255) NULL,
+        attachment_mime VARCHAR(120) NULL,
+        attachment_size BIGINT UNSIGNED NULL,
+        metadata_json TEXT NULL,
+        reply_to_id BIGINT UNSIGNED NULL,
+        read_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_support_message_conv (conversation_id,id), KEY idx_support_message_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_typing (
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        actor_type VARCHAR(20) NOT NULL,
+        actor_name VARCHAR(150) NULL,
+        expires_at DATETIME NOT NULL,
+        PRIMARY KEY (conversation_id,actor_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_automation_flows (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(150) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft', graph_json LONGTEXT NOT NULL,
+        created_by VARCHAR(150) NULL, updated_by VARCHAR(150) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_flow_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_automation_runs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, flow_id BIGINT UNSIGNED NOT NULL,
+        conversation_id BIGINT UNSIGNED NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'running',
+        log_json LONGTEXT NULL, started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        finished_at DATETIME NULL, KEY idx_support_run_conv (conversation_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_agent_memory (
+        conversation_id BIGINT UNSIGNED PRIMARY KEY,
+        summary LONGTEXT NULL,
+        token_count INT UNSIGNED NOT NULL DEFAULT 0,
+        last_intent VARCHAR(80) NULL,
+        last_confidence DECIMAL(4,2) NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_agent_processed_messages (
+        message_id BIGINT UNSIGNED PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'processing',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_agent_processed_conv (conversation_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_events (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NULL,
+        user_id INT NULL,
+        event_type VARCHAR(60) NOT NULL,
+        actor_type VARCHAR(30) NULL,
+        actor_id VARCHAR(150) NULL,
+        actor_name VARCHAR(150) NULL,
+        action_type VARCHAR(80) NULL,
+        turma_codigo VARCHAR(120) NULL,
+        metadata_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_support_events_created (created_at),
+        KEY idx_support_events_type_created (event_type,created_at),
+        KEY idx_support_events_conv (conversation_id),
+        KEY idx_support_events_user (user_id),
+        KEY idx_support_events_turma (turma_codigo),
+        KEY idx_support_events_action (action_type,created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_feedback (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        user_id INT NOT NULL,
+        rating TINYINT UNSIGNED NOT NULL,
+        comment TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_support_feedback_created (created_at),
+        KEY idx_support_feedback_conv (conversation_id),
+        KEY idx_support_feedback_user (user_id),
+        KEY idx_support_feedback_rating (rating)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ai_evaluations (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conversation_id BIGINT UNSIGNED NOT NULL,
+        user_id INT NOT NULL,
+        overall_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        humanization_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        clarity_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        resolution_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        context_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        repetition_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        handoff_score DECIMAL(4,2) NOT NULL DEFAULT 0,
+        summary TEXT NULL,
+        bottlenecks TEXT NULL,
+        suggestions_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_support_ai_eval_conv (conversation_id),
+        KEY idx_support_ai_eval_created (created_at),
+        KEY idx_support_ai_eval_score (overall_score)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ai_learning_suggestions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        source_evaluation_id BIGINT UNSIGNED NULL,
+        suggestion_hash CHAR(40) NOT NULL,
+        type VARCHAR(30) NOT NULL DEFAULT 'prompt',
+        target_agent VARCHAR(120) NULL,
+        title VARCHAR(220) NOT NULL,
+        detail LONGTEXT NULL,
+        priority VARCHAR(30) NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        applied_by VARCHAR(150) NULL,
+        applied_at DATETIME NULL,
+        dismissed_by VARCHAR(150) NULL,
+        dismissed_at DATETIME NULL,
+        result_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_support_learning_hash (suggestion_hash),
+        KEY idx_support_learning_status (status,created_at),
+        KEY idx_support_learning_target (target_agent,status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_agent_prompt_versions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        suggestion_id BIGINT UNSIGNED NULL,
+        setting_key VARCHAR(120) NOT NULL,
+        target_agent VARCHAR(120) NULL,
+        old_value LONGTEXT NULL,
+        new_value LONGTEXT NULL,
+        changed_by VARCHAR(150) NULL,
+        change_reason VARCHAR(255) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_support_prompt_versions_setting (setting_key,created_at),
+        KEY idx_support_prompt_versions_suggestion (suggestion_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES ('support_entry_whatsapp_url','')")->execute();
+    } catch (Throwable $ignored) {}
+    foreach (['support_chat_student_enabled'=>'0','support_chat_test_mode'=>'1','support_chat_button_mode'=>'fixed','support_chat_welcome'=>'Olá! Como podemos ajudar?','support_chat_offline_message'=>'Recebemos sua mensagem e responderemos assim que possível.','support_chat_font_scale'=>'1.08','support_chat_avatar_url'=>'','support_chat_display_name'=>'Suporte FERA','support_chat_sound_enabled'=>'1'] as $key=>$value) {
+        $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
+        try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
+    }
+    foreach ([
+        'support_chat_auto_close_minutes'=>'30',
+        'support_chat_closing_message'=>'Obrigado pelo contato. Fico a disposicao sempre que precisar.',
+        'support_chat_human_idle_close_hours'=>'24',
+        'support_chat_human_idle_message'=>'Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.',
+        'support_chat_followup_variations_json'=>'["Te ajudo em algo mais, {primeiro_nome}?","Posso ajudar com mais alguma coisa, {primeiro_nome}?","Ficou alguma duvida que eu possa resolver, {primeiro_nome}?"]',
+    ] as $key=>$value) {
+        $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
+        try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
+    }
+    foreach ([
+        'support_agent_enabled'=>'0',
+        'support_agent_multi_enabled'=>'1',
+        'support_agent_basic_enabled'=>'1',
+        'support_agent_sales_enabled'=>'0',
+        'support_agent_technical_enabled'=>'1',
+        'support_agent_reschedule_enabled'=>'1',
+        'support_agent_certificate_enabled'=>'0',
+        'support_agent_group_enabled'=>'1',
+        'support_agent_max_tokens'=>'3000',
+        'support_agent_pause_seconds'=>'5',
+        'support_agent_display_name'=>'Agente de suporte',
+        'support_agent_prompt_basic'=>support_agent_default_prompt('basic'),
+        'support_agent_prompt_sales'=>support_agent_default_prompt('sales'),
+        'support_agent_prompt_technical'=>support_agent_default_prompt('technical'),
+        'support_agent_prompt_reschedule'=>support_agent_default_prompt('reschedule'),
+        'support_agent_prompt_certificate'=>support_agent_default_prompt('certificate'),
+        'support_agent_prompt_group'=>support_agent_default_prompt('group'),
+        'support_agent_group_link_template'=>'https://mais.red/wpp/MCQDC_{{codigo_turma}}',
+        'support_agent_handoff_message'=>'Vou encaminhar seu atendimento para uma pessoa da equipe analisar com seguranca.',
+        'support_agents_json'=>json_encode(support_agent_default_agents(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+        'support_agent_variable_map_json'=>json_encode(support_agent_default_variable_map(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+        'support_crm_stages_json'=>'[{"id":"agent","label":"Com agente","condition":"status=open"},{"id":"human","label":"Humano pendente","condition":"stage=human"},{"id":"done","label":"Concluido","condition":"status=closed"}]',
+    ] as $key=>$value) {
+        $st=$pdo->prepare("INSERT IGNORE INTO settings (chave,valor) VALUES (:k,:v)");
+        try {$st->execute(['k'=>$key,'v'=>$value]);} catch (Throwable $ignored) {}
+    }
+    foreach(['support_agent_prompt_basic'=>'basic','support_agent_prompt_sales'=>'sales','support_agent_prompt_technical'=>'technical'] as $key=>$type){try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave=:k AND (valor='' OR valor LIKE 'Responda duvidas basicas%' OR valor LIKE 'Quando vendas estiver ativo%' OR valor LIKE 'Ajude em problemas tecnicos comuns%')")->execute(['v'=>support_agent_default_prompt($type),'k'=>$key]);}catch(Throwable $ignored){}}
+    foreach([
+        'support_agent_prompt_basic'=>['basic','%Regras de certificado: antes de transferir para humano, avalie certificado.tem_certificado_emitido%'],
+        'support_agent_prompt_sales'=>['sales','%Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Se nao houver,%'],
+        'support_agent_prompt_technical'=>['technical','%Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para erro com arquivo, imagem ou situacao sem diagnostico%'],
+        'support_agent_prompt_reschedule'=>['reschedule','%Reagendamento de live: ofereca somente datas presentes%'],
+        'support_agent_prompt_certificate'=>['certificate','%Certificado: primeiro confira se todas as aulas obrigatorias%'],
+        'support_agent_prompt_group'=>['group','%Grupo de alunos: envie o link do grupo somente quando existir%'],
+    ] as $key=>$spec){try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave=:k AND (valor='' OR valor LIKE :legacy)")->execute(['v'=>support_agent_default_prompt($spec[0]),'k'=>$key,'legacy'=>$spec[1]]);}catch(Throwable $ignored){}}
+    try{$pdo->prepare("UPDATE settings SET valor=:v WHERE chave='support_agent_variable_map_json' AND (valor='' OR valor IS NULL)")->execute(['v'=>json_encode(support_agent_default_variable_map(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);}catch(Throwable $ignored){}
+    try{$pdo->prepare("INSERT INTO settings (chave,valor) VALUES ('support_agents_json',:v) ON DUPLICATE KEY UPDATE valor=IF(valor='' OR valor IS NULL,VALUES(valor),valor)")->execute(['v'=>json_encode(support_agent_default_agents(),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);}catch(Throwable $ignored){}
+    support_chat_ensure_user_summary_columns($pdo);
+}
+
+function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+
+function support_agent_display_name(?PDO $pdo=null): string
+{
+    $name=trim((string)get_setting('support_agent_display_name','Agente de suporte'));
+    return $name!==''?mb_substr($name,0,80):'Agente de suporte';
+}
+
+function support_chat_ensure_user_summary_columns(PDO $pdo): void
+{
+    if(!support_chat_table_exists($pdo,'users'))return;
+    foreach([
+        'support_chat_assunto'=>"ALTER TABLE users ADD COLUMN support_chat_assunto LONGTEXT NULL",
+        'support_chat_assunto_at'=>"ALTER TABLE users ADD COLUMN support_chat_assunto_at DATETIME NULL",
+        'support_chat_assunto_conversation_id'=>"ALTER TABLE users ADD COLUMN support_chat_assunto_conversation_id BIGINT UNSIGNED NULL",
+    ] as $column=>$sql){
+        if(!support_chat_column_exists($pdo,'users',$column)){
+            try{$pdo->exec($sql);}catch(Throwable $ignored){}
+        }
+    }
+}
+
+function support_chat_user_turma(PDO $pdo,int $userId): string
+{
+    if($userId<=0||!support_chat_table_exists($pdo,'users'))return '';
+    try{$st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$u=$st->fetch(PDO::FETCH_ASSOC)?:[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $c){$v=trim((string)($u[$c]??''));if($v!=='')return mb_substr($v,0,120);}}catch(Throwable $ignored){}
+    return '';
+}
+
+function support_chat_log_event(PDO $pdo,string $eventType,int $conversationId=0,int $userId=0,string $actorType='',string $actorId='',string $actorName='',string $actionType='',array $metadata=[]): void
+{
+    try{
+        if(!support_chat_table_exists($pdo,'support_events'))return;
+        if($userId<=0&&$conversationId>0){$st=$pdo->prepare("SELECT user_id FROM support_conversations WHERE id=:id LIMIT 1");$st->execute(['id'=>$conversationId]);$userId=(int)$st->fetchColumn();}
+        $turma=support_chat_user_turma($pdo,$userId);
+        $pdo->prepare("INSERT INTO support_events(conversation_id,user_id,event_type,actor_type,actor_id,actor_name,action_type,turma_codigo,metadata_json) VALUES(:c,:u,:e,:at,:ai,:an,:ac,:t,:m)")->execute([
+            'c'=>$conversationId>0?$conversationId:null,'u'=>$userId>0?$userId:null,'e'=>mb_substr($eventType,0,60),
+            'at'=>$actorType!==''?mb_substr($actorType,0,30):null,'ai'=>$actorId!==''?mb_substr($actorId,0,150):null,'an'=>$actorName!==''?mb_substr($actorName,0,150):null,
+            'ac'=>$actionType!==''?mb_substr($actionType,0,80):null,'t'=>$turma!==''?$turma:null,'m'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null
+        ]);
+    }catch(Throwable $ignored){}
+}
+
+function support_chat_period_bounds(string $from,string $to): array
+{
+    $to=preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)?$to:date('Y-m-d');
+    $from=preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)?$from:date('Y-m-d',strtotime('-29 days'));
+    if(strtotime($from)>strtotime($to))[$from,$to]=[$to,$from];
+    return [$from.' 00:00:00',$to.' 23:59:59',substr($from,0,10),substr($to,0,10)];
+}
+
+function support_chat_bucket_sql(string $bucket,string $column='created_at'): array
+{
+    if($bucket==='month')return ["DATE_FORMAT($column,'%Y-%m')","DATE_FORMAT($column,'%m/%Y')"];
+    if($bucket==='week')return ["YEARWEEK($column,3)","CONCAT('Sem ',DATE_FORMAT(DATE_SUB(DATE($column),INTERVAL WEEKDAY($column) DAY),'%d/%m'))"];
+    return ["DATE($column)","DATE_FORMAT($column,'%d/%m')"];
+}
+
+function support_chat_fetch_pairs(PDO $pdo,string $sql,array $params=[]): array
+{
+    try{$st=$pdo->prepare($sql);$st->execute($params);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $e){return [];}
+}
+
+function support_chat_analytics(PDO $pdo,string $from,string $to,string $bucket='day'): array
+{
+    [$fromDt,$toDt,$fromDate,$toDate]=support_chat_period_bounds($from,$to);if(!in_array($bucket,['day','week','month'],true))$bucket='day';[$keyExpr,$labelExpr]=support_chat_bucket_sql($bucket,'created_at');
+    $params=['from'=>$fromDt,'to'=>$toDt];
+    $clickParams=['cfrom1'=>$fromDt,'cto1'=>$toDt];$clickParts=["SELECT created_at FROM support_events WHERE event_type='support_button_click' AND created_at BETWEEN :cfrom1 AND :cto1"];
+    if(support_chat_table_exists($pdo,'webhook_logs')&&support_chat_column_exists($pdo,'webhook_logs','evento')&&support_chat_column_exists($pdo,'webhook_logs','created_at')){
+        $first=support_chat_fetch_pairs($pdo,"SELECT MIN(created_at) first_at FROM support_events WHERE event_type='support_button_click'");
+        $firstAt=(string)($first[0]['first_at']??'');$clickParams['cfrom2']=$fromDt;$clickParams['cto2']=$toDt;
+        $oldLimit=$firstAt!==''?" AND created_at<:first_click_event":'';if($firstAt!=='')$clickParams['first_click_event']=$firstAt;
+        $clickParts[]="SELECT created_at FROM webhook_logs WHERE evento='BOTAO_HELP' AND created_at BETWEEN :cfrom2 AND :cto2{$oldLimit}";
+    }
+    $clickSource='('.implode(' UNION ALL ',$clickParts).') click_src';[$clickKey,$clickLabel]=support_chat_bucket_sql($bucket,'click_src.created_at');
+    $clicks=support_chat_fetch_pairs($pdo,"SELECT {$clickKey} k,{$clickLabel} label,COUNT(*) total FROM {$clickSource} GROUP BY k,label ORDER BY k",$clickParams);
+    [$entryKey,$entryLabel]=support_chat_bucket_sql($bucket,'created_at');
+    $entry=support_chat_fetch_pairs($pdo,"SELECT {$entryKey} k,{$entryLabel} label,SUM(action_type='chat') chat,SUM(action_type='whatsapp') whatsapp,COUNT(*) total FROM support_events WHERE event_type='support_entry' AND created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    $started=support_chat_fetch_pairs($pdo,"SELECT {$keyExpr} k,{$labelExpr} label,COUNT(*) total,SUM(channel='app') app,SUM(channel='test') test FROM support_conversations WHERE created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    [$closedKey,$closedLabel]=support_chat_bucket_sql($bucket,'closed_at');
+    $closed=support_chat_fetch_pairs($pdo,"SELECT {$closedKey} k,{$closedLabel} label,COUNT(*) closed_total,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='admin')) closed_human,SUM(EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=support_conversations.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=support_conversations.id AND m2.sender_type='admin')) closed_ai FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    $status=support_chat_fetch_pairs($pdo,"SELECT status label,COUNT(*) total FROM support_conversations GROUP BY status ORDER BY total DESC");
+    [$agentKey,$agentLabel]=support_chat_bucket_sql($bucket,'a.dt');
+    $agents=support_chat_fetch_pairs($pdo,"SELECT a.agent,{$agentKey} k,{$agentLabel} label,SUM(a.started) started,SUM(a.closed_total) closed_total FROM (SELECT COALESCE(NULLIF(assigned_name,''),'Sem atendente') agent,created_at dt,1 started,0 closed_total FROM support_conversations WHERE created_at BETWEEN :afrom1 AND :ato1 UNION ALL SELECT COALESCE(NULLIF(assigned_name,''),'Sem atendente') agent,closed_at dt,0 started,1 closed_total FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :afrom2 AND :ato2) a GROUP BY a.agent,k,label ORDER BY k,a.agent",['afrom1'=>$fromDt,'ato1'=>$toDt,'afrom2'=>$fromDt,'ato2'=>$toDt]);
+    $turmas=support_chat_fetch_pairs($pdo,"SELECT COALESCE(NULLIF(COALESCE(u.codigo_turma,u.turma_codigo,u.turma,u.utm_campaign),''),'Sem turma') turma,COUNT(*) total FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.created_at BETWEEN :from AND :to GROUP BY turma ORDER BY total DESC LIMIT 12",$params);
+    $actions=support_chat_fetch_pairs($pdo,"SELECT COALESCE(NULLIF(action_type,''),'outras') label,COUNT(*) total FROM support_events WHERE event_type='ai_action' AND created_at BETWEEN :from AND :to GROUP BY label ORDER BY total DESC",$params);
+    $aiEval=[];
+    if(support_chat_table_exists($pdo,'support_ai_evaluations')){
+        [$evalKey,$evalLabel]=support_chat_bucket_sql($bucket,'created_at');
+        $aiEval=support_chat_fetch_pairs($pdo,"SELECT {$evalKey} k,{$evalLabel} label,COUNT(*) total,ROUND(AVG(overall_score),2) overall,ROUND(AVG(humanization_score),2) humanization,ROUND(AVG(resolution_score),2) resolution FROM support_ai_evaluations WHERE created_at BETWEEN :from AND :to GROUP BY k,label ORDER BY k",$params);
+    }
+    $logs=support_chat_fetch_pairs($pdo,"SELECT e.*,u.nome user_name,u.email user_email FROM support_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.created_at BETWEEN :from AND :to ORDER BY e.id DESC LIMIT 160",$params);
+    $one=static fn(string $sql,array $p=[])=> (int)((support_chat_fetch_pairs($pdo,$sql,$p)[0]['n']??0));
+    $kpis=[
+        'clicks'=>$one("SELECT COUNT(*) n FROM {$clickSource}",$clickParams),
+        'entry_chat'=>$one("SELECT COUNT(*) n FROM support_events WHERE event_type='support_entry' AND action_type='chat' AND created_at BETWEEN :from AND :to",$params),
+        'entry_whatsapp'=>$one("SELECT COUNT(*) n FROM support_events WHERE event_type='support_entry' AND action_type='whatsapp' AND created_at BETWEEN :from AND :to",$params),
+        'started'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE created_at BETWEEN :from AND :to",$params),
+        'open'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status<>'closed'"),
+        'closed'=>$one("SELECT COUNT(*) n FROM support_conversations WHERE status='closed' AND closed_at BETWEEN :from AND :to",$params),
+        'human_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='admin')",$params),
+        'ai_closed'=>$one("SELECT COUNT(*) n FROM support_conversations c WHERE c.status='closed' AND c.closed_at BETWEEN :from AND :to AND EXISTS(SELECT 1 FROM support_messages m WHERE m.conversation_id=c.id AND m.sender_type='bot') AND NOT EXISTS(SELECT 1 FROM support_messages m2 WHERE m2.conversation_id=c.id AND m2.sender_type='admin')",$params),
+    ];
+    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'kpis'=>$kpis,'clicks'=>$clicks,'entry'=>$entry,'started'=>$started,'closed'=>$closed,'status'=>$status,'agents'=>$agents,'turmas'=>$turmas,'actions'=>$actions,'ai_eval'=>$aiEval,'logs'=>$logs];
+}
+
+function support_chat_first_name(array $conv): string
+{
+    $name=trim((string)($conv['user_name']??''));
+    return $name!==''?(explode(' ',$name)[0]??''):'';
+}
+
+function support_chat_render_template(string $text,array $conv): string
+{
+    $name=trim((string)($conv['user_name']??''));
+    $first=support_chat_first_name($conv);
+    $vars=[
+        'nome'=>$name,
+        'primeiro_nome'=>$first,
+        'email'=>trim((string)($conv['user_email']??'')),
+        'telefone'=>trim((string)($conv['user_phone']??'')),
+        'id_aluno'=>(string)($conv['user_id']??''),
+        'turma'=>trim((string)($conv['user_turma']??$conv['codigo_turma']??$conv['turma']??'')),
+        'codigo_turma'=>trim((string)($conv['user_turma']??$conv['codigo_turma']??$conv['turma']??'')),
+    ];
+    $map=[];
+    foreach($vars as $key=>$value){
+        $map['{{'.$key.'}}']=$value;
+        $map['{'.$key.'}']=$value;
+    }
+    $rendered=strtr($text,$map);
+    $rendered=(string)preg_replace('/[ \t]+([,.;!?])/u','$1',$rendered);
+    $rendered=(string)preg_replace('/^\s*[,;]\s*/u','',$rendered);
+    return trim($rendered);
+}
+
+function support_chat_random_followup(PDO $pdo,array $conv): string
+{
+    $raw=(string)get_setting('support_chat_followup_variations_json','');
+    $items=json_decode($raw,true);
+    if(!is_array($items)||!$items)$items=['Te ajudo em algo mais, {primeiro_nome}?','Posso ajudar com mais alguma coisa, {primeiro_nome}?'];
+    $text=(string)$items[array_rand($items)];
+    return support_chat_render_template($text,$conv);
+}
+
+function support_agent_is_closing_message(string $body): bool
+{
+    $plain=mb_strtolower(trim(preg_replace('/\s+/u',' ',$body)));
+    if($plain===''||mb_strlen($plain)>140)return false;
+    $ascii=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$plain);
+    $plain=$ascii!==false?$ascii:$plain;
+    $plain=preg_replace('/[^a-z0-9\s]+/i',' ',$plain);
+    $plain=trim(preg_replace('/\s+/',' ',$plain));
+    if($plain==='')return false;
+    if(preg_match('/\bnao\s+(consigo|consegui|abre|abriu|funciona|recebi|entendi|sei|aparece|esta|tenho)\b/',$plain))return false;
+    $positive=['obrigado','obrigada','obg','valeu','vlw','beleza','blz','show','ok','certo','perfeito','resolvido','resolveu','deu certo','entendido'];
+    $closing=['so isso','era isso','nada','nada mais','nao precisa','nao obrigado','por enquanto nao','pode fechar','pode encerrar','sem mais duvidas','tudo certo','tudo resolvido'];
+    foreach($closing as $term)if($plain===$term||str_contains($plain,$term))return true;
+    foreach($positive as $term)if($plain===$term)return true;
+    foreach($positive as $ok)foreach($closing as $end)if(str_contains($plain,$ok)&&str_contains($plain,$end))return true;
+    if(preg_match('/\b(encerrar|fechar|finalizar)\s+(o\s+)?atendimento\b/',$plain))return true;
+    if(preg_match('/^(ok|certo|perfeito|obrigado|obrigada|obg|valeu|vlw)\s+(obrigado|obrigada|obg|valeu|vlw)$/',$plain))return true;
+
+    $b=mb_strtolower(trim(preg_replace('/\s+/u',' ',$body)));
+    if($b===''||mb_strlen($b)>90)return false;
+    if(preg_match('/\b(n[aã]o|nao)\s+(consigo|consegui|abre|abriu|funciona|recebi|entendi|sei|aparece|est[aá]|tenho)\b/u',$b))return false;
+    $patterns=[
+        '/^(obrigad[ao]|obg|valeu|vlw|beleza|blz|show|ok|certo|perfeito|resolvido|resolveu|deu certo)[.! ]*$/u',
+        '/^(n[aã]o|nao|n[aã]o obrigado|nao obrigado|n[aã]o precisa|nao precisa|nada|s[oó] isso|so isso|era isso|por enquanto n[aã]o|por enquanto nao)[.! ]*$/u',
+        '/\b(ok|certo|perfeito|obrigad[ao]|obg|valeu|vlw).{0,20}\b(s[oÃ³] isso|so isso|nada mais|n[aÃ£]o precisa|nao precisa|pode fechar)\b/u',
+        '/\b(s[oÃ³] isso mesmo|so isso mesmo|tudo certo|tudo resolvido|era isso mesmo|sem mais duvidas)\b/u',
+        '/\b(pode encerrar|pode fechar|encerrar atendimento|fechar atendimento|finalizar atendimento)\b/u',
+    ];
+    foreach($patterns as $p)if(preg_match($p,$b))return true;
+    return false;
+}
+
+function support_agent_is_resolution_update(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^a-z0-9\s]+/',' ',$b));$b=(string)preg_replace('/\s+/',' ',$b);
+    if($b===''||strlen($b)>180)return false;
+    if(str_contains($b,'conseguindo')||preg_match('/\b(nao|n)\s+(consegui|consigo|deu certo|funcionou|resolveu|resolvido)\b/',$b))return false;
+    if(preg_match('/\b(consegui|deu certo|funcionou|resolvido|resolveu|agora foi|ja consegui|ja deu certo)\b/',$b))return true;
+    return false;
+}
+
+function support_agent_is_deferred_no_help(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^a-z0-9\s]+/',' ',$b));$b=(string)preg_replace('/\s+/',' ',$b);
+    if($b===''||strlen($b)>220)return false;
+    if((str_contains($b,'estou assistindo')||str_contains($b,'vou assistir')||str_contains($b,'assistindo as aulas')||str_contains($b,'assistindo aulas'))&&(str_contains($b,'depois')||str_contains($b,'terminar')||str_contains($b,'chamo')))return true;
+    if((str_contains($b,'depois')||str_contains($b,'mais tarde')||str_contains($b,'quando terminar'))&&(str_contains($b,'eu chamo')||str_contains($b,'te chamo')||str_contains($b,'chamo voces')||str_contains($b,'chamo voce')))return true;
+    return false;
+}
+
+function support_chat_last_message(PDO $pdo,int $conversationId): ?array
+{
+    $st=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c ORDER BY id DESC LIMIT 1");
+    $st->execute(['c'=>$conversationId]);
+    $row=$st->fetch(PDO::FETCH_ASSOC);
+    return $row?:null;
+}
+
+function support_chat_message_meta(?array $message): array
+{
+    if(!$message)return [];
+    $meta=json_decode((string)($message['metadata_json']??''),true);
+    return is_array($meta)?$meta:[];
+}
+
+function support_chat_has_pending_close_prompt(PDO $pdo,int $conversationId): bool
+{
+    $last=support_chat_last_message($pdo,$conversationId);
+    $meta=support_chat_message_meta($last);
+    return !empty($meta['close_prompt'])&&($last['sender_type']??'')!=='student';
+}
+
+function support_chat_previous_close_prompt(PDO $pdo,int $conversationId,int $beforeMessageId): bool
+{
+    $st=$pdo->prepare("SELECT metadata_json FROM support_messages WHERE conversation_id=:c AND id<:id AND sender_type<>'student' ORDER BY id DESC LIMIT 1");
+    $st->execute(['c'=>$conversationId,'id'=>$beforeMessageId]);
+    $meta=json_decode((string)$st->fetchColumn(),true);
+    return is_array($meta)&&!empty($meta['close_prompt']);
+}
+
+function support_chat_send_close_prompt(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte'): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
+    if(support_chat_has_pending_close_prompt($pdo,$conversationId))return;
+    if($actorType!=='admin')$actorName=support_agent_display_name($pdo);
+    support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,support_chat_random_followup($pdo,$conv),[],['close_prompt'=>true]);
+    support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'ask_more_help');
+}
+
+function support_chat_trim_summary_text(string $text,int $limit=2400): string
+{
+    $text=trim((string)preg_replace('/\s+/u',' ',$text));
+    return mb_strlen($text)>$limit?mb_substr($text,0,$limit-3).'...':$text;
+}
+
+function support_chat_closure_reason_label(string $reason): string
+{
+    return $reason==='inactivity'?'Fechamento por inatividade':'Fechamento por conclusao do assunto';
+}
+
+function support_chat_fallback_closure_summary(PDO $pdo,int $conversationId,string $reason): array
+{
+    $messages=support_chat_messages($pdo,$conversationId,0);
+    $firstStudent='';$answers=[];
+    foreach($messages as $m){
+        $body=trim((string)($m['body']??''));if($body==='')continue;
+        if($firstStudent===''&&($m['sender_type']??'')==='student')$firstStudent=$body;
+        if(in_array((string)($m['sender_type']??''),['bot','admin'],true))$answers[]=$body;
+    }
+    $motivo=$firstStudent!==''?support_chat_trim_summary_text($firstStudent,700):'Atendimento sem mensagem inicial identificada.';
+    $respostas=$answers?support_chat_trim_summary_text(implode(' | ',array_slice($answers,-8)),1400):'Sem respostas registradas no atendimento.';
+    $fechamento=support_chat_closure_reason_label($reason);
+    return [
+        'assunto'=>"Motivo do contato: {$motivo}\nRespostas: {$respostas}\nFechamento: {$fechamento}.",
+        'motivo_contato'=>$motivo,
+        'respostas'=>$respostas,
+        'motivo_fechamento'=>$fechamento,
+        'generated_by'=>'fallback',
+    ];
+}
+
+function support_chat_generate_closure_summary(PDO $pdo,int $conversationId,string $reason): array
+{
+    $fallback=support_chat_fallback_closure_summary($pdo,$conversationId,$reason);
+    try{
+        $cfg=support_agent_config($pdo);if(trim((string)($cfg['api_key']??''))==='')return $fallback;
+        $messages=support_chat_messages($pdo,$conversationId,0);
+        $history=[];foreach(array_slice($messages,-80) as $m){$history[]=[
+            'quando'=>(string)($m['created_at']??''),'autor'=>(string)($m['sender_name']??$m['sender_type']??''),'tipo'=>(string)($m['sender_type']??''),
+            'mensagem'=>support_chat_trim_summary_text((string)($m['body']??''),1600),
+        ];}
+        $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+            'assunto'=>['type'=>'string'],
+            'motivo_contato'=>['type'=>'string'],
+            'respostas'=>['type'=>'string'],
+            'motivo_fechamento'=>['type'=>'string'],
+        ],'required'=>['assunto','motivo_contato','respostas','motivo_fechamento']];
+        $input=[
+            ['role'=>'system','content'=>'Voce resume atendimentos de suporte em portugues do Brasil. Gere um resumo fiel, objetivo e util para automacoes. Use somente a conversa enviada.'],
+            ['role'=>'user','content'=>json_encode(['motivo_fechamento'=>support_chat_closure_reason_label($reason),'mensagens'=>$history],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)],
+        ];
+        $payload=['model'=>(string)$cfg['model'],'input'=>$input,'max_output_tokens'=>900,'text'=>['format'=>['type'=>'json_schema','name'=>'support_chat_closure_summary','strict'=>true,'schema'=>$schema]]];
+        if(strpos((string)$cfg['model'],'gpt-5')!==0)$payload['temperature']=0.2;
+        $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$cfg['api_key'],'Content-Type: application/json'],CURLOPT_POSTFIELDS=>json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),CURLOPT_TIMEOUT=>35]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+        if($raw===false||$raw==='')throw new RuntimeException('Falha ao chamar OpenAI: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('OpenAI HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,800));
+        $text=(string)($decoded['output_text']??'');if($text==='')foreach($decoded['output']??[] as $out)foreach($out['content']??[] as $c)if(isset($c['text']))$text.=(string)$c['text'];
+        $result=json_decode($text,true);if(!is_array($result))throw new RuntimeException('Resumo da IA retornou formato invalido.');
+        return [
+            'assunto'=>support_chat_trim_summary_text((string)($result['assunto']??$fallback['assunto']),6000),
+            'motivo_contato'=>support_chat_trim_summary_text((string)($result['motivo_contato']??$fallback['motivo_contato']),1600),
+            'respostas'=>support_chat_trim_summary_text((string)($result['respostas']??$fallback['respostas']),2400),
+            'motivo_fechamento'=>support_chat_trim_summary_text((string)($result['motivo_fechamento']??support_chat_closure_reason_label($reason)),1200),
+            'generated_by'=>'openai',
+        ];
+    }catch(Throwable $e){
+        @error_log('support_chat_generate_closure_summary: '.$e->getMessage());
+        return $fallback;
+    }
+}
+
+function support_chat_store_and_dispatch_closure(PDO $pdo,int $conversationId,array $conv,string $reason,string $actorType,string $actorId,string $actorName,array $extra=[]): void
+{
+    $reason=$reason==='inactivity'?'inactivity':'conclusion';
+    $userId=(int)($conv['user_id']??0);if($userId<=0)return;
+    $summary=support_chat_generate_closure_summary($pdo,$conversationId,$reason);
+    try{
+        support_chat_ensure_user_summary_columns($pdo);
+        $pdo->prepare("UPDATE users SET support_chat_assunto=:assunto,support_chat_assunto_at=NOW(),support_chat_assunto_conversation_id=:conversation_id WHERE id=:user_id")
+            ->execute(['assunto'=>$summary['assunto'],'conversation_id'=>$conversationId,'user_id'=>$userId]);
+    }catch(Throwable $e){@error_log('support_chat_store_summary: '.$e->getMessage());}
+    $event=$reason==='inactivity'?'SUPORTE_CHAT_FECHADO_INATIVIDADE':'SUPORTE_CHAT_FECHADO_CONCLUSAO';
+    $payload=array_merge([
+        'event_id'=>'support_chat_'.$event.'_'.$conversationId,
+        'conversation_id'=>$conversationId,
+        'closure_reason'=>$reason,
+        'closure_label'=>support_chat_closure_reason_label($reason),
+        'closed_at'=>date('Y-m-d H:i:s'),
+        'closed_by'=>['type'=>$actorType,'id'=>$actorId,'name'=>$actorName],
+        'stage_before_close'=>(string)($conv['stage']??''),
+        'assigned_name'=>(string)($conv['assigned_name']??''),
+        'support_chat_assunto'=>$summary['assunto'],
+        'motivo_contato'=>$summary['motivo_contato'],
+        'respostas'=>$summary['respostas'],
+        'motivo_fechamento'=>$summary['motivo_fechamento'],
+        'summary_generated_by'=>$summary['generated_by'],
+    ],$extra);
+    try{disparar_webhooks($event,$userId,$payload);}catch(Throwable $e){@error_log('support_chat_dispatch_closure: '.$e->getMessage());}
+    support_chat_log_event($pdo,'automation_trigger',$conversationId,$userId,$actorType,$actorId,$actorName,$event,['summary_generated_by'=>$summary['generated_by']]);
+}
+
+function support_chat_close_with_feedback(PDO $pdo,int $conversationId,string $actorType='bot',string $actorName='Agente de suporte',bool $sendClosing=true,string $closureReason='conclusion'): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;
+    if((string)($conv['status']??'')==='closed')return;
+    if($actorType!=='admin')$actorName=support_agent_display_name($pdo);
+    if($sendClosing){
+        $message=trim((string)get_setting('support_chat_closing_message','Obrigado pelo contato. Fico a disposicao sempre que precisar.'));
+        if($message==='')$message='Obrigado pelo contato. Fico a disposicao sempre que precisar.';
+        $message=support_chat_render_template($message,$conv);
+        support_chat_send($pdo,$conversationId,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,$message,[],[
+            'feedback'=>['prompt'=>'Como foi seu atendimento?','scale'=>[0,1,2,3,4,5],'conversation_id'=>$conversationId],
+        ]);
+    }
+    $pdo->prepare("UPDATE support_conversations SET status='closed',stage='done',closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,'feedback_requested');
+    support_chat_store_and_dispatch_closure($pdo,$conversationId,$conv,$closureReason,$actorType,$actorType==='admin'?'admin':'support_agent',$actorName,['send_feedback'=>true]);
+    support_agent_evaluate_conversation($pdo,$conversationId);
+}
+
+function support_chat_submit_feedback(PDO $pdo,int $conversationId,int $userId,int $rating,string $comment): void
+{
+    if($conversationId<=0||$userId<=0)throw new RuntimeException('Atendimento invalido.');
+    $rating=max(0,min(5,$rating));$comment=mb_substr(trim($comment),0,3000);
+    $st=$pdo->prepare("SELECT id FROM support_feedback WHERE conversation_id=:c AND user_id=:u ORDER BY id DESC LIMIT 1");$st->execute(['c'=>$conversationId,'u'=>$userId]);$id=(int)$st->fetchColumn();
+    if($id>0)$pdo->prepare("UPDATE support_feedback SET rating=:r,comment=:m WHERE id=:id")->execute(['r'=>$rating,'m'=>$comment!==''?$comment:null,'id'=>$id]);
+    else $pdo->prepare("INSERT INTO support_feedback(conversation_id,user_id,rating,comment) VALUES(:c,:u,:r,:m)")->execute(['c'=>$conversationId,'u'=>$userId,'r'=>$rating,'m'=>$comment!==''?$comment:null]);
+    support_chat_log_event($pdo,'feedback_submitted',$conversationId,$userId,'student',(string)$userId,'Aluno','fps',['rating'=>$rating]);
+}
+
+function support_agent_evaluate_conversation(PDO $pdo,int $conversationId): void
+{
+    try{
+        if(!support_chat_table_exists($pdo,'support_ai_evaluations'))return;
+        $cfg=support_agent_config($pdo);if(empty($cfg['enabled'])||trim((string)($cfg['api_key']??''))==='')return;
+        $agents=support_agent_agents_by_id($cfg);$quality=$agents['quality']??null;if(!$quality||empty($quality['active']))return;
+        $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;$userId=(int)($conv['user_id']??0);
+        $messages=support_chat_messages($pdo,$conversationId,0);if(!$messages)return;
+        $safe=[];foreach($messages as $m){$body=(string)($m['body']??'');$body=preg_replace('/https?:\/\/\S+/u','[LINK]',$body);$body=preg_replace('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu','[EMAIL]',$body);$body=preg_replace('/\b\d{10,13}\b/u','[TELEFONE]',$body);$safe[]=['sender_type'=>$m['sender_type']??'','message_type'=>$m['message_type']??'text','body'=>mb_substr(trim((string)preg_replace('/\s+/u',' ',$body)),0,800),'metadata'=>$m['metadata']??[],'created_at'=>$m['created_at']??''];}
+        $events=support_chat_fetch_pairs($pdo,"SELECT event_type,actor_type,action_type,metadata_json,created_at FROM support_events WHERE conversation_id=:c ORDER BY id LIMIT 80",['c'=>$conversationId]);
+        $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+            'overall_score'=>['type'=>'number'],'humanization_score'=>['type'=>'number'],'clarity_score'=>['type'=>'number'],'resolution_score'=>['type'=>'number'],'context_score'=>['type'=>'number'],'repetition_score'=>['type'=>'number'],'handoff_score'=>['type'=>'number'],
+            'summary'=>['type'=>'string'],'bottlenecks'=>['type'=>'string'],
+            'suggestions'=>['type'=>'array','items'=>['type'=>'object','additionalProperties'=>false,'properties'=>['type'=>['type'=>'string'],'target_agent'=>['type'=>'string'],'title'=>['type'=>'string'],'detail'=>['type'=>'string'],'priority'=>['type'=>'string']],'required'=>['type','target_agent','title','detail','priority']]],
+        ],'required'=>['overall_score','humanization_score','clarity_score','resolution_score','context_score','repetition_score','handoff_score','summary','bottlenecks','suggestions']];
+        $modelCfg=$cfg;$modelCfg['model']=(string)($quality['model']??support_agent_model_for_power((string)($quality['power']??'balanced')));$modelCfg['max_tokens']=2200;
+        $system="Voce e o agente avaliador da central de suporte. Analise a conversa finalizada, de notas de 0 a 10 e gere sugestoes objetivas. Nao exponha dados pessoais. Prompt: ".(string)($quality['prompt']??'');
+        $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['conversation'=>['id'=>$conversationId,'status'=>$conv['status']??'','stage'=>$conv['stage']??''],'messages'=>$safe,'events'=>$events],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+        $res=support_agent_call_openai_schema($modelCfg,$input,$schema,'support_ai_evaluation',1800);
+        $clamp=static fn($v)=>max(0,min(10,(float)$v));
+        $pdo->prepare("INSERT INTO support_ai_evaluations(conversation_id,user_id,overall_score,humanization_score,clarity_score,resolution_score,context_score,repetition_score,handoff_score,summary,bottlenecks,suggestions_json) VALUES(:c,:u,:o,:h,:cl,:r,:ctx,:rep,:ho,:s,:b,:j) ON DUPLICATE KEY UPDATE overall_score=VALUES(overall_score),humanization_score=VALUES(humanization_score),clarity_score=VALUES(clarity_score),resolution_score=VALUES(resolution_score),context_score=VALUES(context_score),repetition_score=VALUES(repetition_score),handoff_score=VALUES(handoff_score),summary=VALUES(summary),bottlenecks=VALUES(bottlenecks),suggestions_json=VALUES(suggestions_json)")->execute([
+            'c'=>$conversationId,'u'=>$userId,'o'=>$clamp($res['overall_score']??0),'h'=>$clamp($res['humanization_score']??0),'cl'=>$clamp($res['clarity_score']??0),'r'=>$clamp($res['resolution_score']??0),'ctx'=>$clamp($res['context_score']??0),'rep'=>$clamp($res['repetition_score']??0),'ho'=>$clamp($res['handoff_score']??0),
+            's'=>mb_substr((string)($res['summary']??''),0,2000),'b'=>mb_substr((string)($res['bottlenecks']??''),0,4000),'j'=>json_encode($res['suggestions']??[],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)
+        ]);
+        support_chat_log_event($pdo,'ai_action',$conversationId,$userId,'bot','support_agent',support_agent_display_name($pdo),'quality_evaluation',['overall_score'=>$clamp($res['overall_score']??0)]);
+    }catch(Throwable $e){try{support_chat_log_event($pdo,'ai_action',$conversationId,0,'bot','support_agent','Agente de suporte','quality_evaluation_error',['error'=>$e->getMessage()]);}catch(Throwable $ignored){}}
+}
+
+function support_learning_collect_suggestions(PDO $pdo): int
+{
+    support_chat_ensure_schema($pdo);
+    $inserted=0;
+    if(!support_chat_table_exists($pdo,'support_ai_evaluations'))return 0;
+    $rows=$pdo->query("SELECT id,suggestions_json FROM support_ai_evaluations WHERE suggestions_json IS NOT NULL AND suggestions_json<>'' ORDER BY id DESC LIMIT 500")->fetchAll(PDO::FETCH_ASSOC)?:[];
+    $st=$pdo->prepare("INSERT IGNORE INTO support_ai_learning_suggestions(source_evaluation_id,suggestion_hash,type,target_agent,title,detail,priority,status) VALUES(:eid,:hash,:type,:target,:title,:detail,:priority,'pending')");
+    foreach($rows as $row){
+        $items=json_decode((string)($row['suggestions_json']??''),true);
+        if(!is_array($items))continue;
+        foreach($items as $item){
+            if(!is_array($item))continue;
+            $type=mb_substr(preg_replace('/[^a-z0-9_-]/i','',(string)($item['type']??'prompt'))?:'prompt',0,30);
+            if(!in_array($type,['prompt','agent'],true))$type='prompt';
+            $target=mb_substr(trim((string)($item['target_agent']??'')),0,120);
+            $title=mb_substr(trim((string)($item['title']??'')),0,220);
+            $detail=trim((string)($item['detail']??''));
+            $priority=mb_substr(trim((string)($item['priority']??'')),0,30);
+            if($title===''&&$detail==='')continue;
+            $hash=sha1(json_encode([$type,mb_strtolower($target),mb_strtolower($title),mb_strtolower($detail)],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+            $st->execute(['eid'=>(int)$row['id'],'hash'=>$hash,'type'=>$type,'target'=>$target?:null,'title'=>$title?:mb_substr($detail,0,160),'detail'=>$detail,'priority'=>$priority?:null]);
+            $inserted+=(int)$st->rowCount();
+        }
+    }
+    return $inserted;
+}
+
+function support_learning_dashboard(PDO $pdo): array
+{
+    support_learning_collect_suggestions($pdo);
+    $summary=['evaluations'=>0,'pending'=>0,'applied'=>0,'dismissed'=>0,'avg_overall'=>0,'avg_humanization'=>0];
+    try{$summary=array_merge($summary,$pdo->query("SELECT COUNT(*) evaluations,ROUND(AVG(overall_score),2) avg_overall,ROUND(AVG(humanization_score),2) avg_humanization FROM support_ai_evaluations")->fetch(PDO::FETCH_ASSOC)?:[]);}catch(Throwable $ignored){}
+    try{foreach($pdo->query("SELECT status,COUNT(*) total FROM support_ai_learning_suggestions GROUP BY status")->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$summary[(string)$r['status']]=(int)$r['total'];}catch(Throwable $ignored){}
+    $suggestions=[];$versions=[];
+    try{$suggestions=$pdo->query("SELECT * FROM support_ai_learning_suggestions ORDER BY FIELD(status,'pending','applied','dismissed'),FIELD(priority,'alta','high','media','medium','baixa','low'),id DESC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}
+    try{$versions=$pdo->query("SELECT * FROM support_agent_prompt_versions ORDER BY id DESC LIMIT 40")->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}
+    return ['summary'=>$summary,'suggestions'=>$suggestions,'versions'=>$versions];
+}
+
+function support_learning_match_agent_id(array $agents,string $target,string $title='',string $detail=''): string
+{
+    $needle=mb_strtolower(trim($target.' '.$title.' '.$detail));
+    foreach($agents as $agent){
+        $id=(string)($agent['id']??'');$name=mb_strtolower((string)($agent['name']??''));
+        if($id!==''&&(mb_strtolower($id)===mb_strtolower($target)||($target!==''&&str_contains($name,mb_strtolower($target)))))return $id;
+    }
+    if(str_contains($needle,'certificado')||str_contains($needle,'senha'))return 'certificate';
+    if(str_contains($needle,'pagamento')||str_contains($needle,'compra')||str_contains($needle,'pix')||str_contains($needle,'comercial')||str_contains($needle,'vitalicio'))return 'payment_vitalicio';
+    if(str_contains($needle,'acesso')||str_contains($needle,'plataforma')||str_contains($needle,'aula bloqueada'))return 'access';
+    if(str_contains($needle,'live')||str_contains($needle,'aula ao vivo')||str_contains($needle,'reagendamento'))return 'live';
+    if(str_contains($needle,'grupo')||str_contains($needle,'whatsapp'))return 'group';
+    if(str_contains($needle,'contexto')||str_contains($needle,'repeticao')||str_contains($needle,'repetição')||str_contains($needle,'fluxo'))return 'orchestrator';
+    return '';
+}
+
+function support_learning_target_setting(string $target,string $title='',string $detail=''): string
+{
+    $t=mb_strtolower(trim($target.' '.$title.' '.$detail));
+    if($t===''||$t==='bot_atendimento'||$t==='legacy'||$t==='suporte'||$t==='suporte_basico')return 'support_agent_prompt_basic';
+    if(str_contains($t,'cert'))return 'support_agent_prompt_certificate';
+    if(str_contains($t,'live')||str_contains($t,'reag'))return 'support_agent_prompt_reschedule';
+    if(str_contains($t,'grupo')||str_contains($t,'whatsapp'))return 'support_agent_prompt_group';
+    if(str_contains($t,'venda')||str_contains($t,'comercial')||str_contains($t,'pag'))return 'support_agent_prompt_sales';
+    if(str_contains($t,'acesso')||str_contains($t,'tecn'))return 'support_agent_prompt_technical';
+    return 'support_agent_prompt_basic';
+}
+
+function support_learning_apply_suggestion(PDO $pdo,int $suggestionId,string $actorName): array
+{
+    support_chat_ensure_schema($pdo);
+    $st=$pdo->prepare("SELECT * FROM support_ai_learning_suggestions WHERE id=:id LIMIT 1");$st->execute(['id'=>$suggestionId]);$s=$st->fetch(PDO::FETCH_ASSOC);
+    if(!$s)throw new RuntimeException('Sugestao nao encontrada.');
+    if((string)($s['status']??'')!=='pending')throw new RuntimeException('Esta sugestao ja foi revisada.');
+    $type=(string)($s['type']??'prompt');$target=trim((string)($s['target_agent']??''));$title=trim((string)($s['title']??''));$detail=trim((string)($s['detail']??''));
+    $reason=mb_substr($title!==''?$title:'Sugestao aplicada',0,255);
+    $note=trim("Ajuste aprovado pelo aprendizado em ".date('d/m/Y H:i').": ".$reason.($detail!==''?"\nDiretriz: ".$detail:''));
+    if($type==='agent'){
+        $old=(string)get_setting('support_agents_json','');
+        $agents=json_decode($old,true);if(!is_array($agents)||!$agents)$agents=support_agent_default_agents();
+        $base=preg_replace('/[^a-z0-9_]+/i','_',mb_strtolower($target!==''?$target:$title));$base=trim($base,'_')?:'novo_agente';
+        $id=$base;$ids=array_column($agents,'id');$n=2;while(in_array($id,$ids,true))$id=$base.'_'.$n++;
+        $agents[]=['id'=>$id,'name'=>mb_substr($title!==''?$title:'Novo agente sugerido',0,120),'active'=>false,'power'=>'balanced','handoff_threshold'=>0.60,'max_turns'=>6,'description'=>$detail,'prompt'=>$note];
+        $new=json_encode(array_values($agents),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        set_setting('support_agents_json',$new);
+        $settingKey='support_agents_json';
+        $result=['created_agent_id'=>$id,'active'=>false];
+    }else{
+        $oldAgents=(string)get_setting('support_agents_json','');
+        $agents=json_decode($oldAgents,true);if(!is_array($agents)||!$agents)$agents=support_agent_default_agents();
+        $agentId=support_learning_match_agent_id($agents,$target,$title,$detail);
+        if($agentId!==''){
+            $old=$oldAgents;
+            foreach($agents as &$agent){if((string)($agent['id']??'')===$agentId){$agent['prompt']=trim((string)($agent['prompt']??''))."\n\n".$note;break;}}unset($agent);
+            $new=json_encode(array_values($agents),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+            set_setting('support_agents_json',$new);
+            $settingKey='support_agents_json';
+            $result=['setting_key'=>$settingKey,'updated_agent_id'=>$agentId];
+        }else{
+            $settingKey=support_learning_target_setting($target,$title,$detail);
+            $old=(string)get_setting($settingKey,'');
+            $new=trim($old)."\n\n".$note;
+            set_setting($settingKey,$new);
+            $result=['setting_key'=>$settingKey];
+        }
+    }
+    $pdo->prepare("INSERT INTO support_agent_prompt_versions(suggestion_id,setting_key,target_agent,old_value,new_value,changed_by,change_reason) VALUES(:sid,:k,:target,:old,:new,:by,:reason)")->execute(['sid'=>$suggestionId,'k'=>$settingKey,'target'=>$target?:null,'old'=>$old??'','new'=>$new??'','by'=>$actorName,'reason'=>$reason]);
+    $pdo->prepare("UPDATE support_ai_learning_suggestions SET status='applied',applied_by=:by,applied_at=NOW(),result_json=:r WHERE id=:id")->execute(['by'=>$actorName,'r'=>json_encode($result,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'id'=>$suggestionId]);
+    return $result;
+}
+
+function support_learning_dismiss_suggestion(PDO $pdo,int $suggestionId,string $actorName): void
+{
+    support_chat_ensure_schema($pdo);
+    $pdo->prepare("UPDATE support_ai_learning_suggestions SET status='dismissed',dismissed_by=:by,dismissed_at=NOW() WHERE id=:id AND status='pending'")->execute(['by'=>$actorName,'id'=>$suggestionId]);
+}
+
+function support_chat_close_for_human_inactivity(PDO $pdo,int $conversationId): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['status']??'')==='closed')return;
+    $message=trim((string)get_setting('support_chat_human_idle_message','Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.'));
+    if($message==='')$message='Como nao tivemos retorno, vou encerrar este atendimento por inatividade. Se ainda precisar de ajuda, chame aqui de novo detalhando seu problema.';
+    $message=support_chat_render_template($message,$conv);
+    support_chat_send($pdo,$conversationId,'bot','support_inactivity','Central de suporte',$message,[],['closed_by_inactivity'=>true]);
+    $pdo->prepare("UPDATE support_conversations SET status='closed',stage='agent',assigned_to=NULL,assigned_name=NULL,closed_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    support_chat_log_event($pdo,'conversation_closed',$conversationId,(int)($conv['user_id']??0),'bot','support_inactivity','Central de suporte','human_inactivity',['previous_assigned_name'=>(string)($conv['assigned_name']??'')]);
+    support_chat_store_and_dispatch_closure($pdo,$conversationId,$conv,'inactivity','bot','support_inactivity','Central de suporte',['previous_assigned_name'=>(string)($conv['assigned_name']??''),'send_feedback'=>false]);
+    support_agent_evaluate_conversation($pdo,$conversationId);
+}
+
+function support_chat_auto_close_idle(PDO $pdo): int
+{
+    $minutes=max(0,min(10080,(int)get_setting('support_chat_auto_close_minutes','30')));if($minutes<=0)return 0;
+    $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='') AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$minutes} MINUTE) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')<>'student' LIMIT 30";
+    $ids=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
+    foreach($ids as $id){
+        if(support_chat_has_pending_close_prompt($pdo,$id))support_chat_close_with_feedback($pdo,$id,'bot',support_agent_display_name($pdo),true,'inactivity');
+        else support_chat_send_close_prompt($pdo,$id,'bot',support_agent_display_name($pdo));
+    }
+    $hours=max(0,min(720,(int)get_setting('support_chat_human_idle_close_hours','24')));
+    if($hours>0){
+        $sql="SELECT c.id FROM support_conversations c WHERE c.status<>'closed' AND c.assigned_name IS NOT NULL AND c.assigned_name<>'' AND c.last_message_at<=DATE_SUB(NOW(),INTERVAL {$hours} HOUR) AND COALESCE((SELECT m.sender_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1),'')='admin' LIMIT 30";
+        $humanIds=array_map('intval',$pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN)?:[]);
+        foreach($humanIds as $id)support_chat_close_for_human_inactivity($pdo,$id);
+        $ids=array_merge($ids,$humanIds);
+    }
+    return count($ids);
+}
+
+function support_chat_feedback_analytics(PDO $pdo,string $from,string $to,string $bucket='day',string $turma=''): array
+{
+    [$fromDt,$toDt,$fromDate,$toDate]=support_chat_period_bounds($from,$to);if(!in_array($bucket,['day','week','month'],true))$bucket='day';[$keyExpr,$labelExpr]=support_chat_bucket_sql($bucket,'f.created_at');
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $params=['from'=>$fromDt,'to'=>$toDt];$where="f.created_at BETWEEN :from AND :to";
+    if(trim($turma)!==''){$where.=" AND {$turmaExpr} LIKE :turma";$params['turma']='%'.trim($turma).'%';}
+    $trend=support_chat_fetch_pairs($pdo,"SELECT {$keyExpr} k,{$labelExpr} label,COUNT(*) total,ROUND(AVG(f.rating),2) avg_rating FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} GROUP BY k,label ORDER BY k",$params);
+    $dist=support_chat_fetch_pairs($pdo,"SELECT f.rating label,COUNT(*) total FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} GROUP BY f.rating ORDER BY f.rating",$params);
+    $comments=support_chat_fetch_pairs($pdo,"SELECT f.*,u.nome user_name,u.email user_email,{$turmaExpr} turma FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where} ORDER BY f.id DESC LIMIT 200",$params);
+    $summary=support_chat_fetch_pairs($pdo,"SELECT COUNT(*) responses,ROUND(AVG(f.rating),2) avg_rating FROM support_feedback f JOIN support_conversations c ON c.id=f.conversation_id JOIN users u ON u.id=f.user_id WHERE {$where}",$params)[0]??['responses'=>0,'avg_rating'=>0];
+    return ['from'=>$fromDate,'to'=>$toDate,'bucket'=>$bucket,'turma'=>$turma,'summary'=>$summary,'trend'=>$trend,'distribution'=>$dist,'comments'=>$comments];
+}
+
+function support_chat_feedback_ai_analysis(PDO $pdo,array $data): string
+{
+    $comments=array_slice(array_map(static fn($r)=>['nota'=>(int)($r['rating']??0),'aluno'=>(string)($r['user_name']??''),'turma'=>(string)($r['turma']??''),'opiniao'=>(string)($r['comment']??'')],$data['comments']??[]),0,120);
+    $responses=(int)($data['summary']['responses']??0);$avg=(string)($data['summary']['avg_rating']??'0');
+    if($responses<=0)return "Sem respostas de FPS no filtro selecionado.";
+    $cfg=support_agent_config($pdo);$apiKey=(string)($cfg['api_key']??'');
+    if($apiKey==='')return "Resumo: {$responses} resposta(s), nota media {$avg}.\n\nPontos criticos: configure a chave OpenAI para uma analise qualitativa completa dos textos.\n\nPontos positivos e melhorias devem ser avaliados a partir das opinioes da tabela.";
+    $input=[['role'=>'system','content'=>'Analise pesquisas de atendimento FPS de uma central de suporte. Entregue em portugues: resumo, pontos criticos, pontos positivos, melhorias e conclusao. Seja objetivo e use somente os dados enviados.'],['role'=>'user','content'=>json_encode(['resumo'=>$data['summary']??[],'distribuicao'=>$data['distribution']??[],'comentarios'=>$comments],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+    $payload=['model'=>$cfg['model']??'gpt-4.1-mini','input'=>$input,'max_output_tokens'=>1200];
+    if(strpos((string)($cfg['model']??''),'gpt-5')!==0)$payload['temperature']=0.2;
+    $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$apiKey,'Content-Type: application/json'],CURLOPT_POSTFIELDS=>json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),CURLOPT_TIMEOUT=>60]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+    if($raw===false||$raw==='')throw new RuntimeException('Falha ao chamar IA: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('IA HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,600));
+    $text=(string)($decoded['output_text']??'');if($text==='')foreach($decoded['output']??[] as $out)foreach($out['content']??[] as $c)if(isset($c['text']))$text.=(string)$c['text'];
+    return trim($text)!==''?trim($text):'A IA nao retornou texto para este filtro.';
+}
+
+function support_agent_default_prompt(string $type): string
+{
+    $common="Use apenas os dados do payload_aluno. A mensagem atual do aluno fica em mensagem_atual; memoria e historico_recente sao apenas contexto. Nao invente informacao. Se o pedido do aluno nao estiver coberto pelo prompt nem pelos dados do banco/payload, transfira para humano. Se faltar dado para responder com certeza, transfira para humano. Seja direto, humano e natural. Cumprimente apenas na primeira resposta do agente. Estilo de conversa: nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se precisar destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Prefira frases curtas e naturais em vez de topicos. Data e live: sempre use payload_aluno.contexto_atual.agora_iso/agora_br e payload_aluno.live.status_data_live antes de falar de aula ao vivo. Se o aluno perguntar onde assistir a live, acesso, link, senha ou segunda parte da senha, e a live estiver hoje ou futura, nao transfira para humano: informe a data e explique que a equipe comunica e envia o acesso no grupo no dia do evento. Se o aluno relatar problema para assistir/acessar a live, compare a data calendario da live com a data atual: se for hoje, transfira para humano; se nao for hoje e for futura, diga que a aula nao e hoje, informe a data e diga que o acesso sera enviado no grupo no dia da aula; se for passada, diga que ja passou e sugira reagendamento. Se status_data_live.status for passada, nunca diga que a live vai acontecer, esta marcada ou sera no futuro; explique que a data vinculada ja passou e ofereca reagendamento ou humano conforme o caso. Se a data estiver ausente, diga que nao encontrou a data da live e transfira se isso for essencial.";
+    if($type==='sales')return $common." Em vendas, responda somente se houver preco, oferta, curso ou condicao no payload/contexto. Use compras para reconhecer produtos ja comprados e evitar oferecer como se o aluno nao tivesse comprado. Se nao houver informacao comercial suficiente, colete a duvida e transfira para humano. Nao prometa bonus, desconto, prazo, garantia ou vaga que nao esteja no payload.";
+    if($type==='technical')return $common." Em suporte tecnico, ajude com login, acesso ao curso, video/audio, link de acesso, grupo, live e certificado. Para dificuldade de acessar o curso, primeiro confira payload_aluno.acesso: se permitido=true e expirado=false, oriente login/acesso usando links.acesso_direto_area_membros ou links.area_do_aluno e nao fale de acesso vitalicio como problema. Se expirado=true e vitalicio=false, explique que o periodo gratuito encerrou na data acesso.vence_em_br e use acesso.link_liberar_acesso_vitalicio para liberar o acesso vitalicio. Para aula bloqueada por sequencia, confira curso.aulas_concluidas, curso.aulas_faltantes_obrigatorias e curso.aulas; nao repita a reclamacao do aluno e nao peca mensagem de erro quando o progresso ja mostrar aula anterior pendente. Oriente que cada aula libera automaticamente ao assistir 80% do video no YouTube; se nao liberar, o aluno pode clicar no botao Concluir no fim da aula, na parte de baixo, ate aparecer status de concluido. Para erro com arquivo, imagem, pagamento, desbloqueio manual ou situacao sem diagnostico no payload, transfira para humano.";
+    if($type==='reschedule')return $common." Reagendamento de live: ofereca somente datas presentes em reagendamento.opcoes. Antes de oferecer, confira live.status_data_live: se a live atual ainda for futura, explique a data atual e pergunte se o aluno quer reagendar; se ja passou, ofereca as opcoes disponiveis como nova data. Quando o aluno escolher uma data listada, confirme o reagendamento.";
+    if($type==='certificate')return $common." Certificado: primeiro confira se todas as aulas obrigatorias foram concluidas, se houve live/aula ao vivo e se a aula 5 consta concluida. Para live, use live.status_data_live e live.eventos; nao trate data passada como live futura. Se estiver apto, peca a senha do certificado. Com senha correta, o sistema pode gerar o certificado e enviar o link. Com senha errada, informe que nao conferiu e peca para verificar.";
+    if($type==='group')return $common." Grupo de alunos: envie o link do grupo somente quando existir em payload_aluno.links.link_grupo_configurado ou em payload_aluno.links.grupos_whatsapp. Use o codigo_turma para conferir se o link corresponde a turma. Se nao existir link, transfira para humano.";
+    return $common." Regras de certificado: antes de transferir para humano, avalie certificado.tem_certificado_emitido, certificado.link_verificacao, certificado.pdf_url, certificado.link_emitir, aulas obrigatorias, aulas concluidas, aulas faltantes, percentual de avanco, aula 5, data_live, status_data_live e eventos de live. Para emitir, o aluno precisa ter concluido todas as aulas obrigatorias, assistido a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo. Se ja existe certificado emitido e houver link_verificacao/pdf_url, mande o link. Se nao existe certificado emitido e os criterios estiverem ok, mande o link_emitir e oriente a usar as duas senhas na tela de emissao. Se ainda falta algo, explique exatamente o que falta. Nao use certificado.link_emitir como certificado pronto quando o certificado ja foi emitido. Para grupo e acesso, use os links do payload quando existirem.";
+}
+
+function support_agent_power_models(): array
+{
+    return [
+        'economy'=>['label'=>'Economica','model'=>'gpt-5.4-nano','description'=>'Menor custo para classificacao, FAQ simples e respostas objetivas.'],
+        'balanced'=>['label'=>'Equilibrada','model'=>'gpt-5.4-mini','description'=>'Melhor padrao para suporte com bom custo e boa interpretacao.'],
+        'strong'=>['label'=>'Forte','model'=>'gpt-5.4','description'=>'Use em casos sensiveis, ambiguidade alta ou maior risco de erro.'],
+    ];
+}
+
+function support_agent_model_for_power(string $power,string $fallback='gpt-5.4-mini'): string
+{
+    $models=support_agent_power_models();
+    return (string)($models[$power]['model']??$fallback);
+}
+
+function support_agent_default_agents(): array
+{
+    return [
+        [
+            'id'=>'orchestrator','name'=>'Agente 1 - Orquestrador','active'=>true,'power'=>'balanced',
+            'handoff_threshold'=>0.58,'max_turns'=>8,
+            'description'=>'Entende o esqueleto do negocio, identifica a intencao, confirma ambiguidades e escolhe o especialista correto.',
+            'prompt'=>'Voce e o orquestrador da central de suporte. Nao tente resolver detalhes tecnicos quando houver especialista. Classifique a mensagem atual usando todo o contexto da conversa e o payload do aluno. Se o aluno falar de certificado sem especificar, confirme se e o certificado do curso gratuito de Iniciacao em Montagem de Quadros Eletricos ou de outro curso. Se falar de live, aula ao vivo, segunda senha ou segunda parte da senha, direcione para live ou certificado conforme o foco. Se falar de pagamento, compra, Pix, boleto, cartao, acesso vitalicio ou reembolso, direcione para pagamento_vitalicio; reembolso e cobranca divergente devem ir para humano. Se a mensagem for curta, interprete como resposta ao ultimo passo antes de trocar de assunto. Se nao houver certeza, peca uma confirmacao curta ou mande para humano.'
+        ],
+        [
+            'id'=>'live','name'=>'Especialista em Aula ao Vivo','active'=>true,'power'=>'economy',
+            'handoff_threshold'=>0.55,'max_turns'=>8,
+            'description'=>'Data da live, status passado/futuro/hoje, acesso, grupo, segunda parte da senha e reagendamento.',
+            'prompt'=>'Voce e especialista em aula ao vivo do curso de Iniciacao em Montagem de Quadros Eletricos. Use live.status_data_live, reagendamento.opcoes, links.grupos_whatsapp e links.link_grupo_configurado. Nunca trate data passada como futura. Se a live for futura ou hoje, informe a data e diga que o acesso e avisado no grupo no dia do evento. Se ja passou, ofereca reagendamento usando somente datas em reagendamento.opcoes. Explique que a segunda parte da senha e passada na aula ao vivo. Se o aluno escolher uma data listada, confirme o reagendamento. Se houver problema para acessar no dia da live, mande para humano.'
+        ],
+        [
+            'id'=>'certificate','name'=>'Especialista em Certificado','active'=>true,'power'=>'balanced',
+            'handoff_threshold'=>0.58,'max_turns'=>8,
+            'description'=>'Certificado gratuito, certificado de cursos pagos, senha da aula 5, senha da live, carga horaria e emissao.',
+            'prompt'=>'Voce e especialista em certificado. Primeiro identifique se o aluno fala do certificado do curso gratuito de Iniciacao em Montagem de Quadros Eletricos ou de outro curso. Se ambiguo, pergunte isso. Para o gratuito, use certificado, curso e live do payload. Para emitir, precisa concluir aulas obrigatorias, aula 5, live/aula ao vivo e ter as duas partes da senha. Se certificado ja existe, envie link/PDF. Se faltar algo, diga exatamente o que falta em uma resposta curta. Regra de carga horaria: curso gratuito de montagem de quadros tem certificado de 8 horas; curso completo/comunidade FERA pode ter outra carga horaria e deve ir para humano se nao estiver no payload. Respostas curtas numericas apos falar de senha devem ser tratadas como senha ou parte de senha, nunca como nova pergunta generica.'
+        ],
+        [
+            'id'=>'access','name'=>'Especialista em Acesso a Plataforma','active'=>true,'power'=>'economy',
+            'handoff_threshold'=>0.55,'max_turns'=>8,
+            'description'=>'Login, link direto, aula bloqueada, progresso sequencial, erro de acesso e materias.',
+            'prompt'=>'Voce e especialista em acesso a area de membros. Para qualquer dificuldade de acessar o curso, confira primeiro acesso.permitido, acesso.expirado, acesso.vence_em_br, acesso.vitalicio e acesso.link_liberar_acesso_vitalicio. Se o aluno ainda esta no prazo gratuito, oriente o acesso usando links.acesso_direto_area_membros ou links.area_do_aluno. Se o prazo gratuito ja encerrou e nao ha vitalicio ativo, nao trate como erro tecnico: explique que o periodo gratuito encerrou na data informada e envie o link para liberar acesso vitalicio. Para aula bloqueada por sequencia, confira curso.aulas_concluidas, curso.aulas_faltantes_obrigatorias e curso.aulas; nao repita a reclamacao do aluno e nao peca mensagem de erro quando o progresso ja mostrar aula anterior pendente. Oriente que cada aula libera automaticamente ao assistir 80% do video no YouTube; se nao liberar, o aluno pode clicar no botao Concluir no fim da aula, na parte de baixo, ate aparecer status de concluido. Ajude com login, link direto e aulas bloqueadas por sequencia. Se o aluno disser que pagou mas aulas pedem pagamento, ou que deveria ter acesso vitalicio e nao tem, direcione para pagamento_vitalicio ou humano. Nao diga que esta tudo liberado se o payload mostrar acesso limitado. Faca uma pergunta por vez.'
+        ],
+        [
+            'id'=>'payment_vitalicio','name'=>'Especialista em Pagamento e Vitalicio','active'=>true,'power'=>'strong',
+            'handoff_threshold'=>0.65,'max_turns'=>5,
+            'description'=>'Compra, pagamento, acesso vitalicio, boleto/Pix/cartao, divergencia de liberacao e reembolso.',
+            'prompt'=>'Voce e especialista em pagamento e acesso vitalicio. Use compras e acesso do payload. Acesso vitalicio e uma taxa opcional para liberar novamente o curso quando o periodo gratuito encerra. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio, se existir. Pode explicar status confirmado, pendente ou nao localizado. Se pagamento foi feito recentemente, oriente aguardar confirmacao quando o payload justificar. Se houver reembolso, chargeback, pagamento nao localizado, divergencia entre produto comprado e acesso, ou pedido de reembolso, action=handoff. Nao prometa liberar acesso, estorno, prazo bancario ou compensacao fora do payload.'
+        ],
+        [
+            'id'=>'group','name'=>'Especialista em Grupo WhatsApp','active'=>true,'power'=>'economy',
+            'handoff_threshold'=>0.55,'max_turns'=>6,
+            'description'=>'Link do grupo, avisos, turma e comunicados da live.',
+            'prompt'=>'Voce e especialista em grupos de WhatsApp. Use links.link_grupo_configurado e links.grupos_whatsapp. Envie link somente se existir no payload. Explique que avisos da live e acesso podem ser enviados pelo grupo. Se nao houver link confiavel, mande para humano.'
+        ],
+        [
+            'id'=>'paid_courses','name'=>'Especialista em Cursos Pagos','active'=>true,'power'=>'balanced',
+            'handoff_threshold'=>0.62,'max_turns'=>6,
+            'description'=>'Duvidas sobre FERA, comunidade, cursos pagos, diferenca entre gratuito e pago.',
+            'prompt'=>'Voce e especialista em cursos pagos e diferencas entre produtos. Use compras do payload para reconhecer o que o aluno comprou. Nao invente preco, oferta, garantia, bonus ou carga horaria. Se faltar informacao comercial ou houver divergencia de compra, mande para humano.'
+        ],
+        [
+            'id'=>'quality','name'=>'Agente Avaliador de Atendimento','active'=>true,'power'=>'balanced',
+            'handoff_threshold'=>0.0,'max_turns'=>0,
+            'description'=>'Avalia conversas fechadas, nota humanizacao, clareza, resolucao, repeticao e sugere melhorias.',
+            'prompt'=>'Voce avalia atendimentos finalizados. Dê notas de 0 a 10 para humanizacao, clareza, resolucao, uso de contexto, repeticao e handoff. Gere gargalos, sugestoes de prompt e possiveis novos agentes. Nao altera prompts sozinho; gera sugestoes para aprovacao humana.'
+        ],
+    ];
+}
+
+function support_agent_default_variable_map(): array
+{
+    return [
+        ['key'=>'link_certificado_emitido','label'=>'Link do certificado emitido','path'=>'certificado.link_verificacao','description'=>'Use quando o certificado ja foi emitido. Se existir PDF, use pdf_certificado_emitido como alternativa.'],
+        ['key'=>'pdf_certificado_emitido','label'=>'PDF do certificado emitido','path'=>'certificado.pdf_url','description'=>'URL direta do PDF do certificado, quando o sistema ja gerou o arquivo.'],
+        ['key'=>'link_emitir_certificado','label'=>'Link para emitir certificado','path'=>'certificado.link_emitir','description'=>'Use apenas quando nao existe certificado emitido e o aluno ja concluiu as aulas obrigatorias.'],
+        ['key'=>'link_acesso','label'=>'Link de acesso direto','path'=>'links.acesso_direto_area_membros','description'=>'Magic link de acesso temporario para o aluno entrar na area de membros.'],
+        ['key'=>'link_liberar_acesso_vitalicio','label'=>'Link para liberar acesso vitalicio','path'=>'acesso.link_liberar_acesso_vitalicio','description'=>'Checkout da taxa opcional que libera o acesso vitalicio quando o prazo gratuito encerrou.'],
+        ['key'=>'vencimento_acesso_gratuito','label'=>'Vencimento do acesso gratuito','path'=>'acesso.vence_em_br','description'=>'Data em que o periodo gratuito do aluno encerra ou encerrou.'],
+        ['key'=>'status_acesso_gratuito','label'=>'Status do acesso gratuito','path'=>'acesso.regra_para_ia','description'=>'Regra de decisao para orientar acesso gratuito ativo versus prazo encerrado.'],
+        ['key'=>'data_live','label'=>'Data da live','path'=>'aluno.data_live','description'=>'Data da aula ao vivo vinculada ao aluno.'],
+        ['key'=>'status_data_live','label'=>'Status da data da live','path'=>'live.status_data_live.status','description'=>'Indica se a live vinculada esta futura, hoje, passada, ausente ou invalida. Use antes de falar que a live vai acontecer.'],
+        ['key'=>'agora_sp','label'=>'Data atual Sao Paulo','path'=>'contexto_atual.agora_br','description'=>'Data e hora atual em Sao Paulo para comparar com aulas ao vivo e prazos.'],
+        ['key'=>'link_grupo','label'=>'Link do grupo','path'=>'links.grupos_whatsapp.0.invite_url','description'=>'Primeiro link de convite de grupo WhatsApp encontrado para a turma/campanha.'],
+    ];
+}
+
+function support_agent_payload_field_options(): array
+{
+    return [
+        ['path'=>'aluno.id','label'=>'ID do aluno','description'=>'Identificador interno do aluno.'],
+        ['path'=>'aluno.nome','label'=>'Nome do aluno','description'=>'Nome cadastrado do aluno.'],
+        ['path'=>'aluno.email','label'=>'E-mail do aluno','description'=>'E-mail cadastrado do aluno.'],
+        ['path'=>'aluno.telefone','label'=>'Telefone do aluno','description'=>'Telefone cadastrado do aluno.'],
+        ['path'=>'aluno.data_inscricao','label'=>'Data de inscricao','description'=>'Data em que o aluno entrou no sistema.'],
+        ['path'=>'aluno.codigo_turma','label'=>'Codigo da turma','description'=>'Turma/campanha vinculada ao aluno.'],
+        ['path'=>'aluno.data_live','label'=>'Data da live','description'=>'Data da aula ao vivo vinculada ao aluno.'],
+        ['path'=>'contexto_atual.agora_br','label'=>'Data atual','description'=>'Data e hora atual em Sao Paulo.'],
+        ['path'=>'live.status_data_live.status','label'=>'Status da live','description'=>'Status calculado da data da live em relacao a data atual.'],
+        ['path'=>'live.status_data_live.instrucoes','label'=>'Regra da data da live','description'=>'Instrucao calculada para nao anunciar live passada como futura.'],
+        ['path'=>'aluno.campos_personalizados','label'=>'Campos personalizados','description'=>'Campos extras do cadastro/importacao do aluno.'],
+        ['path'=>'engajamento.aulas_assistidas','label'=>'Aulas assistidas','description'=>'Lista de aulas que o aluno assistiu.'],
+        ['path'=>'engajamento.aulas_concluidas','label'=>'Total de aulas concluidas','description'=>'Quantidade de aulas obrigatorias concluidas.'],
+        ['path'=>'engajamento.aulas_obrigatorias','label'=>'Total de aulas obrigatorias','description'=>'Quantidade de aulas exigidas para concluir.'],
+        ['path'=>'engajamento.percentual_avanco','label'=>'Percentual de avanco','description'=>'Percentual de conclusao do curso.'],
+        ['path'=>'engajamento.eventos','label'=>'Eventos do aluno','description'=>'Eventos acionados pelo aluno com datas.'],
+        ['path'=>'certificado.tem_certificado_emitido','label'=>'Certificado ja emitido','description'=>'Indica se o aluno ja possui certificado emitido.'],
+        ['path'=>'certificado.link_verificacao','label'=>'Link do certificado emitido','description'=>'Link publico para verificar/abrir certificado ja emitido.'],
+        ['path'=>'certificado.pdf_url','label'=>'PDF do certificado emitido','description'=>'URL direta do PDF do certificado, quando existir.'],
+        ['path'=>'certificado.link_emitir','label'=>'Link para emitir certificado','description'=>'Link para iniciar emissao quando o aluno ainda nao tem certificado emitido.'],
+        ['path'=>'certificado.criterios_e_pendencias','label'=>'Pendencias do certificado','description'=>'O que falta para o aluno poder emitir certificado.'],
+        ['path'=>'certificado.pode_iniciar_emissao_agora','label'=>'Pode emitir agora','description'=>'Indica se o aluno ja cumpre os criterios para emitir.'],
+        ['path'=>'links.acesso_direto_area_membros','label'=>'Link de acesso direto','description'=>'Magic link temporario para o aluno acessar a area de membros.'],
+        ['path'=>'acesso.link_liberar_acesso_vitalicio','label'=>'Link liberar acesso vitalicio','description'=>'Checkout para liberar acesso vitalicio quando prazo gratuito encerrou.'],
+        ['path'=>'acesso.vence_em_br','label'=>'Vencimento acesso gratuito','description'=>'Data formatada de vencimento do periodo gratuito.'],
+        ['path'=>'acesso.dias_restantes','label'=>'Dias restantes acesso gratuito','description'=>'Dias aproximados restantes antes do bloqueio por prazo.'],
+        ['path'=>'acesso.expirado','label'=>'Acesso expirado','description'=>'Indica se o prazo gratuito ja encerrou.'],
+        ['path'=>'acesso.permitido','label'=>'Acesso permitido','description'=>'Indica se o aluno ainda pode acessar agora.'],
+        ['path'=>'links.grupos_whatsapp.0.invite_url','label'=>'Link do grupo WhatsApp','description'=>'Primeiro link de convite do grupo relacionado ao aluno.'],
+        ['path'=>'live.eventos','label'=>'Eventos da live','description'=>'Eventos do aluno na live, como acesso, permanencia e oferta.'],
+        ['path'=>'live.reagendamentos','label'=>'Reagendamentos da live','description'=>'Historico de reagendamentos de live do aluno.'],
+        ['path'=>'reagendamento.opcoes','label'=>'Opcoes para reagendar live','description'=>'Datas que o agente pode oferecer ao aluno.'],
+        ['path'=>'tags','label'=>'Tags do aluno','description'=>'Tags atuais vinculadas ao aluno.'],
+        ['path'=>'compras','label'=>'Compras do aluno','description'=>'Cursos/produtos comprados pelo aluno.'],
+    ];
+}
+
+function support_chat_admin_identity(): array
+{
+    $name=trim((string)($_SESSION['equipe_nome'] ?? $_SESSION['admin_nome'] ?? 'Administrador'));
+    $id=(string)($_SESSION['equipe_id'] ?? $_SESSION['admin_user'] ?? 'admin');
+    return ['id'=>$id,'name'=>$name !== '' ? $name : 'Administrador'];
+}
+
+function support_chat_get_or_create(PDO $pdo,int $userId,string $channel='test'): int
+{
+    if ($userId<=0) throw new InvalidArgumentException('Aluno inválido.');
+    $u=$pdo->prepare("SELECT id FROM users WHERE id=:id LIMIT 1");$u->execute(['id'=>$userId]);
+    if (!$u->fetchColumn()) throw new RuntimeException('Aluno não encontrado.');
+    $st=$pdo->prepare("SELECT id FROM support_conversations WHERE user_id=:u ORDER BY id DESC LIMIT 1");
+    $st->execute(['u'=>$userId]);$id=(int)$st->fetchColumn();if($id>0)return $id;
+    $pdo->prepare("INSERT INTO support_conversations(user_id,channel,subject) VALUES(:u,:c,'Atendimento pelo aplicativo')")->execute(['u'=>$userId,'c'=>$channel]);
+    $id=(int)$pdo->lastInsertId();support_chat_log_event($pdo,'conversation_started',$id,$userId,'student',(string)$userId,'Aluno','',['channel'=>$channel]);return $id;
+}
+
+function support_chat_conversations(PDO $pdo,string $filter='open',array $criteria=[]): array
+{
+    $where=$filter==='all'?'1=1':($filter==='human'?"c.status='pending' AND c.stage='human'":($filter==='unassigned'?"c.status<>'closed' AND c.assigned_to IS NULL":($filter==='closed'?"c.status='closed'":"c.status<>'closed'")));
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $params=[];$q=trim((string)($criteria['q']??''));if($q!==''){$where.=" AND (u.nome LIKE :q OR u.email LIKE :q OR u.telefone LIKE :q OR {$turmaExpr} LIKE :q".(ctype_digit($q)?" OR c.id=:qid OR u.id=:qid":"").")";$params['q']='%'.$q.'%';if(ctype_digit($q))$params['qid']=(int)$q;}
+    if(empty($criteria['include_empty']))$where.=" AND EXISTS(SELECT 1 FROM support_messages sm WHERE sm.conversation_id=c.id)";
+    $from=trim((string)($criteria['date_from']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$from)){$where.=" AND c.created_at>=:from";$params['from']=$from.' 00:00:00';}
+    $to=trim((string)($criteria['date_to']??''));if(preg_match('/^\d{4}-\d{2}-\d{2}$/',$to)){$where.=" AND c.created_at<=:to";$params['to']=$to.' 23:59:59';}
+    $assignee=trim((string)($criteria['assignee']??''));if($assignee==='__ia__')$where.=" AND c.status<>'closed' AND c.stage='agent' AND (c.assigned_name IS NULL OR c.assigned_name='')";elseif($assignee!==''){$where.=" AND c.assigned_name=:assignee";$params['assignee']=$assignee;}
+    $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma,
+        (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
+        (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
+        FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC,c.id DESC LIMIT 200");$st->execute($params);$rows=$st->fetchAll(PDO::FETCH_ASSOC)?:[];
+    foreach($rows as &$row)$row=array_merge($row,support_chat_presence_status($pdo,(int)($row['user_id']??0),(string)($row['student_last_seen_at']??'')));
+    unset($row);
+    return $rows;
+}
+
+function support_chat_detail(PDO $pdo,int $conversationId): ?array
+{
+    $turmaCols=[];foreach(['codigo_turma','turma_codigo','turma','utm_campaign'] as $col)if(support_chat_column_exists($pdo,'users',$col))$turmaCols[]="u.`{$col}`";$turmaExpr=$turmaCols?('COALESCE('.implode(',',$turmaCols).", '')"):"''";
+    $st=$pdo->prepare("SELECT c.*,u.nome user_name,u.email user_email,u.telefone user_phone,{$turmaExpr} user_turma FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE c.id=:id LIMIT 1");
+    $st->execute(['id'=>$conversationId]);$row=$st->fetch(PDO::FETCH_ASSOC);if(!$row)return null;return array_merge($row,support_chat_user_app_status($pdo,(int)($row['user_id']??0)));
+}
+
+function support_chat_user_app_status(PDO $pdo,int $userId): array
+{
+    $status=['app_installed'=>0,'push_enabled'=>0];
+    if($userId>0&&support_chat_table_exists($pdo,'push_devices')){
+        try{
+            $st=$pdo->prepare("SELECT MAX(installed_at IS NOT NULL AND status='active') app_installed,MAX(status='active' AND notification_permission='granted' AND token IS NOT NULL) push_enabled FROM push_devices WHERE user_id=:u");
+            $st->execute(['u'=>$userId]);$row=$st->fetch(PDO::FETCH_ASSOC)?:[];
+            $status['app_installed']=(int)($row['app_installed']??0)>0?1:0;
+            $status['push_enabled']=(int)($row['push_enabled']??0)>0?1:0;
+        }catch(Throwable $ignored){}
+    }
+    return array_merge($status,support_chat_presence_status($pdo,$userId));
+}
+
+function support_chat_touch_student_presence(PDO $pdo,int $userId): void
+{
+    if($userId<=0||!support_chat_table_exists($pdo,'support_conversations'))return;
+    try{$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE user_id=:u")->execute(['u'=>$userId]);}catch(Throwable $ignored){}
+}
+
+function support_chat_presence_status(PDO $pdo,int $userId,string $conversationSeenAt=''): array
+{
+    $last=trim($conversationSeenAt);
+    if($userId>0){
+        try{
+            $st=$pdo->prepare("SELECT MAX(student_last_seen_at) FROM support_conversations WHERE user_id=:u");
+            $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
+            if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+        }catch(Throwable $ignored){}
+        if(support_chat_table_exists($pdo,'push_devices')&&support_chat_column_exists($pdo,'push_devices','last_seen_at')){
+            try{
+                $st=$pdo->prepare("SELECT MAX(last_seen_at) FROM push_devices WHERE user_id=:u AND status='active'");
+                $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
+                if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+            }catch(Throwable $ignored){}
+        }
+    }
+    $ts=$last!==''?strtotime($last):0;
+    $seconds=$ts>0?max(0,time()-$ts):null;
+    $threshold=max(60,min(1800,(int)get_setting('support_chat_online_threshold_seconds','180')));
+    $online=$seconds!==null&&$seconds<=$threshold;
+    $label=$online?'Online':'Offline';
+    if(!$online&&$ts>0)$label.=' - visto '.date('d/m H:i',$ts);
+    return ['student_online'=>$online?1:0,'student_presence_label'=>$label,'student_last_seen_at'=>$ts>0?date('Y-m-d H:i:s',$ts):null,'student_last_seen_seconds'=>$seconds];
+}
+
+function support_chat_assign_conversation(PDO $pdo,int $conversationId,string $assignedName,string $actorId,string $actorName,string $reason='manual'): bool
+{
+    $assignedName=trim($assignedName);if($conversationId<=0||$assignedName==='')return false;
+    $st=$pdo->prepare("SELECT assigned_name,status,stage,user_id FROM support_conversations WHERE id=:id LIMIT 1");$st->execute(['id'=>$conversationId]);$conv=$st->fetch(PDO::FETCH_ASSOC);if(!$conv)return false;
+    $current=trim((string)($conv['assigned_name']??''));if(mb_strtolower($current)===mb_strtolower($assignedName)&&(string)($conv['status']??'')!=='closed'&&(string)($conv['stage']??'')==='em_atendimento')return false;
+    $pdo->prepare("UPDATE support_conversations SET assigned_to=:a,assigned_name=:n,status='open',stage='em_atendimento',closed_at=NULL WHERE id=:id")->execute(['a'=>$assignedName,'n'=>$assignedName,'id'=>$conversationId]);
+    support_chat_log_event($pdo,'assignment',$conversationId,(int)($conv['user_id']??0),'admin',$actorId,$actorName,'atribuir',['assigned_name'=>$assignedName,'previous_assigned_name'=>$current,'reason'=>$reason]);
+    return true;
+}
+
+function support_chat_assignment_history(PDO $pdo,int $conversationId): array
+{
+    if($conversationId<=0)return [];
+    return support_chat_fetch_pairs($pdo,"SELECT created_at,actor_name,actor_type,metadata_json FROM support_events WHERE conversation_id=:c AND event_type='assignment' ORDER BY id DESC LIMIT 80",['c'=>$conversationId]);
+}
+
+function support_chat_messages(PDO $pdo,int $conversationId,int $after=0): array
+{
+    $st=$pdo->prepare("SELECT * FROM support_messages WHERE conversation_id=:c AND id>:a ORDER BY id ASC LIMIT 300");
+    $st->execute(['c'=>$conversationId,'a'=>$after]);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];
+}
+
+function support_chat_recent_duplicate_id(PDO $pdo,int $conversationId,string $senderType,string $body,int $seconds=4): int
+{
+    $body=trim($body);if($conversationId<=0||$body==='')return 0;
+    $st=$pdo->prepare("SELECT id FROM support_messages WHERE conversation_id=:c AND sender_type=:s AND message_type='text' AND attachment_url IS NULL AND body=:b AND created_at>=DATE_SUB(NOW(),INTERVAL :sec SECOND) ORDER BY id DESC LIMIT 1");
+    $st->bindValue(':c',$conversationId,PDO::PARAM_INT);$st->bindValue(':s',$senderType);$st->bindValue(':b',$body);$st->bindValue(':sec',max(1,min(30,$seconds)),PDO::PARAM_INT);$st->execute();
+    return (int)$st->fetchColumn();
+}
+
+function support_chat_store_upload(array $file): array
+{
+    if (($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new RuntimeException('Não foi possível receber o arquivo.');
+    if ((int)($file['size']??0)>20*1024*1024) throw new RuntimeException('O arquivo deve ter no máximo 20 MB.');
+    $tmp=(string)$file['tmp_name'];$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp)?:'application/octet-stream';
+    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif','audio/webm'=>'webm','audio/ogg'=>'ogg','audio/mpeg'=>'mp3','audio/mp4'=>'m4a','video/webm'=>'webm','video/mp4'=>'mp4','video/quicktime'=>'mov','application/pdf'=>'pdf','text/plain'=>'txt','application/zip'=>'zip','application/vnd.openxmlformats-officedocument.wordprocessingml.document'=>'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'=>'xlsx'];
+    if(!isset($allowed[$mime]))throw new RuntimeException('Tipo de arquivo não permitido.');
+    $dir=__DIR__.'/../public/uploads/support_chat/'.date('Y/m');if(!is_dir($dir)&&!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Falha ao preparar uploads.');
+    $name=bin2hex(random_bytes(16)).'.'.$allowed[$mime];if(!move_uploaded_file($tmp,$dir.'/'.$name))throw new RuntimeException('Falha ao salvar o arquivo.');
+    $original=(string)($file['name']??'arquivo');
+    $type=str_starts_with($mime,'image/')?'image':(str_starts_with($mime,'audio/')||preg_match('/^audio-/i',$original)?'audio':(str_starts_with($mime,'video/')?'video':'file'));
+    return ['url'=>'uploads/support_chat/'.date('Y/m').'/'.$name,'name'=>mb_substr($original,0,255),'mime'=>$mime,'size'=>(int)$file['size'],'type'=>$type];
+}
+
+function support_chat_store_avatar(array $file): string
+{
+    if (($file['error']??UPLOAD_ERR_NO_FILE)===UPLOAD_ERR_NO_FILE) return '';
+    if (($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new RuntimeException('Não foi possível receber a imagem.');
+    if ((int)($file['size']??0)>3*1024*1024) throw new RuntimeException('A imagem deve ter no máximo 3 MB.');
+    $tmp=(string)$file['tmp_name'];$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp)?:'application/octet-stream';
+    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','image/gif'=>'gif'];
+    if(!isset($allowed[$mime]))throw new RuntimeException('Envie uma imagem JPG, PNG, WEBP ou GIF.');
+    $dir=__DIR__.'/../public/uploads/support_chat/avatar';if(!is_dir($dir)&&!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Falha ao preparar upload da imagem.');
+    $name='support-avatar-'.bin2hex(random_bytes(8)).'.'.$allowed[$mime];if(!move_uploaded_file($tmp,$dir.'/'.$name))throw new RuntimeException('Falha ao salvar a imagem.');
+    return 'uploads/support_chat/avatar/'.$name;
+}
+
+function support_chat_send(PDO $pdo,int $conversationId,string $senderType,string $senderId,string $senderName,string $body,array $attachment=[],array $metadata=[]): int
+{
+    $body=trim($body);if($body===''&&!$attachment)throw new InvalidArgumentException('Digite uma mensagem ou anexe um arquivo.');
+    if(mb_strlen($body)>10000)throw new InvalidArgumentException('Mensagem muito longa.');
+    if(!$attachment&&$body!==''){
+        $dupeWindow=in_array($senderType,['bot','admin'],true)?90:12;
+        $duplicateId=support_chat_recent_duplicate_id($pdo,$conversationId,$senderType,$body,$dupeWindow);
+        if($duplicateId>0)return $duplicateId;
+    }
+    $type=(string)($attachment['type']??'text');
+    $st=$pdo->prepare("INSERT INTO support_messages(conversation_id,sender_type,sender_id,sender_name,message_type,body,attachment_url,attachment_name,attachment_mime,attachment_size,metadata_json) VALUES(:c,:st,:si,:sn,:mt,:b,:url,:an,:am,:az,:meta)");
+    $st->execute(['c'=>$conversationId,'st'=>$senderType,'si'=>$senderId,'sn'=>$senderName,'mt'=>$type,'b'=>$body!==''?$body:null,'url'=>$attachment['url']??null,'an'=>$attachment['name']??null,'am'=>$attachment['mime']??null,'az'=>$attachment['size']??null,'meta'=>$metadata?json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null]);
+    $id=(int)$pdo->lastInsertId();$student=$senderType==='student';
+    support_chat_log_event($pdo,'message_sent',$conversationId,0,$senderType,$senderId,$senderName,$type,['message_id'=>$id,'has_attachment'=>!empty($attachment)]);
+    $pdo->prepare("UPDATE support_conversations SET last_message_at=NOW(),stage=IF(status='closed','agent',stage),assigned_to=IF(status='closed',NULL,assigned_to),assigned_name=IF(status='closed',NULL,assigned_name),closed_at=IF(status='closed',NULL,closed_at),status=IF(status='closed','open',status),unread_admin=unread_admin+:ua,unread_student=unread_student+:us WHERE id=:id")
+        ->execute(['ua'=>$student?1:0,'us'=>$student?0:1,'id'=>$conversationId]);
+    if($student)$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    elseif($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET admin_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    if($senderType==='admin')$pdo->prepare("UPDATE support_conversations SET status='open' WHERE id=:id AND status='pending' AND stage='human'")->execute(['id'=>$conversationId]);
+    if(!$student && get_setting('support_chat_student_enabled','0')==='1') {
+        try { support_chat_push_student($pdo,$conversationId,$id,$body!==''?$body:'Você recebeu um novo anexo.'); }
+        catch(Throwable $e) { @error_log('support_chat_push: '.$e->getMessage()); }
+    }
+    return $id;
+}
+
+function support_chat_push_student(PDO $pdo,int $conversationId,int $messageId,string $body): void
+{
+    require_once __DIR__.'/push_notifications.php';push_ensure_schema($pdo);
+    $st=$pdo->prepare("SELECT user_id,student_last_seen_at FROM support_conversations WHERE id=:id");$st->execute(['id'=>$conversationId]);$conv=$st->fetch(PDO::FETCH_ASSOC);if(!$conv)return;
+    if(!empty($conv['student_last_seen_at'])&&strtotime((string)$conv['student_last_seen_at'])>time()-30)return;
+    $devices=$pdo->prepare("SELECT * FROM push_devices WHERE user_id=:u AND status='active' AND notification_permission='granted' AND token IS NOT NULL AND token<>''");$devices->execute(['u'=>(int)$conv['user_id']]);$rows=$devices->fetchAll(PDO::FETCH_ASSOC)?:[];if(!$rows)return;
+    $title='Nova mensagem do suporte';$text=mb_substr(trim(preg_replace('/\s+/u',' ',$body)),0,180);$target='support_message:'.$messageId;
+    $pdo->prepare("INSERT INTO push_notifications(title,body,click_url,target_type,target_value,total_targets,status,created_by) VALUES(:t,:b,'trilha.php?abrir_suporte=1','support_chat',:v,:n,'processing','Central de suporte')")->execute(['t'=>$title,'b'=>$text,'v'=>$target,'n'=>count($rows)]);$notificationId=(int)$pdo->lastInsertId();$accepted=0;$failed=0;
+    foreach($rows as $device){$pdo->prepare("INSERT INTO push_delivery_logs(notification_id,device_id,user_id,status) VALUES(:n,:d,:u,'queued')")->execute(['n'=>$notificationId,'d'=>$device['id'],'u'=>$conv['user_id']]);$deliveryId=(int)$pdo->lastInsertId();$result=push_send_to_device($pdo,$device,$notificationId,$deliveryId,$title,$text,'trilha.php?abrir_suporte=1');empty($result['accepted'])?$failed++:$accepted++;}
+    $pdo->prepare("UPDATE push_notifications SET accepted_count=:a,failed_count=:f,status=:s,finished_at=NOW() WHERE id=:id")->execute(['a'=>$accepted,'f'=>$failed,'s'=>$failed?'sent_with_failures':'sent','id'=>$notificationId]);
+}
+
+function support_agent_prepare_answer(string $answer,bool $firstAgentReply): array
+{
+    if(!$firstAgentReply){$clean=preg_replace('/^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[,!.\s]*(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][^.!?\n]{0,70})?[.!?\s]*/iu','',$answer,1);if(is_string($clean)&&trim($clean)!=='')$answer=trim($clean);}
+    $buttons=[];if(preg_match('/https?:\/\/[^\s<>"\']+/iu',$answer,$m)){ $url=rtrim($m[0],".,;:)");$lowerAnswer=mb_strtolower($answer);$label=(stripos($url,'verificar_certificado')!==false||stripos($url,'uploads/certificates')!==false)?'Ver certificado':(stripos($url,'certificado.php')!==false?'Emitir certificado':(str_contains($lowerAnswer,'acesso vitalicio')||str_contains($lowerAnswer,'acesso vitalÃ­cio')?'Liberar acesso vitalicio':'Abrir link'));$answer=trim((string)preg_replace('/\s*[:;-]\s*$/u','',str_replace($m[0],'',$answer)));$buttons[]=['label'=>$label,'url'=>$url];if($answer==='')$answer='Use o botao abaixo para abrir o link.'; }
+    return ['body'=>$answer,'metadata'=>$buttons?['buttons'=>$buttons]:[]];
+}
+
+function support_agent_split_answer(string $body,int $limit=650): array
+{
+    $body=trim($body);if(strlen($body)<=$limit)return[$body];
+    $parts=[];$rest=$body;while(strlen($rest)>$limit&&count($parts)<4){$slice=substr($rest,0,$limit);$cuts=[strrpos($slice,"\n"),strrpos($slice,'. '),strrpos($slice,'! '),strrpos($slice,'? '),strrpos($slice,' ')];$cut=max(array_map(static fn($v)=>$v===false?0:(int)$v,$cuts));if($cut<120)$cut=$limit;$parts[]=trim(substr($rest,0,$cut+1));$rest=trim(substr($rest,$cut+1));}
+    if($rest!=='')$parts[]=trim($rest);return array_values(array_filter($parts));
+}
+
+function support_agent_humanize_formatting(string $answer): string
+{
+    $answer=trim($answer);
+    if($answer==='')return '';
+    $answer=preg_replace('/\*{2,3}([^*\n][^*]*?)\*{2,3}/u','*$1*',$answer)??$answer;
+    $answer=preg_replace('/^\s*[-]+[ \t]+/um','',$answer)??$answer;
+    $answer=preg_replace('/[ \t]*[—–]+[ \t]*/u',', ',$answer)??$answer;
+    $answer=preg_replace('/(?<=\S)[ \t]+-[ \t]+(?=\S)/u',', ',$answer)??$answer;
+    $answer=preg_replace('/[ \t]{2,}/u',' ',$answer)??$answer;
+    $answer=preg_replace('/ *,+ */u',', ',$answer)??$answer;
+    return trim($answer);
+}
+
+function support_agent_send_answer(PDO $pdo,int $conversationId,string $answer,bool $firstAgentReply,bool $sendFollowup=true,bool $markClosePrompt=false,string $agentId='legacy'): void
+{
+    $agentName=support_agent_display_name($pdo);
+    $answer=support_agent_humanize_formatting($answer);
+    $prepared=support_agent_prepare_answer($answer,$firstAgentReply);$parts=support_agent_split_answer((string)$prepared['body']);
+    $answerAsksClose=(bool)preg_match('/como posso ajudar|em que posso ajudar|posso ajudar.{0,50}(mais|alguma coisa)|alguma duvida|mais alguma coisa/iu',(string)$prepared['body']);
+    foreach($parts as $i=>$part){$last=$i===count($parts)-1;$metadata=$last?$prepared['metadata']:[];$metadata['agent_id']=$agentId;if($last&&($markClosePrompt||$answerAsksClose))$metadata['close_prompt']=true;support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$part,[],$metadata);if(!$last){support_chat_typing($pdo,$conversationId,'bot',$agentName);sleep(random_int(4,6));}}
+    if($markClosePrompt||$answerAsksClose){
+        $conv=support_chat_detail($pdo,$conversationId);
+        if($conv)support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent',$agentName,'ask_more_help',['source'=>'agent_answer']);
+    }
+    if($sendFollowup&&!$answerAsksClose&&!$markClosePrompt){
+        $conv=support_chat_detail($pdo,$conversationId);
+        if($conv&&($follow=support_chat_random_followup($pdo,$conv))!==''){support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$follow,[],['close_prompt'=>true,'agent_id'=>$agentId]);support_chat_log_event($pdo,'close_prompt_sent',$conversationId,(int)($conv['user_id']??0),'bot','support_agent',$agentName,'ask_more_help',['source'=>'agent_followup','agent_id'=>$agentId]);}
+    }
+}
+
+function support_agent_normalize_answer_for_payload(string $answer,array $payload): string
+{
+    $live=$payload['live']['status_data_live']??[];
+    if(is_array($live)&&($live['status']??'')==='passada'){
+        $announcesFuture=(bool)preg_match('/\b(vai acontecer|vai ser|esta marcada|esta agendada|sera|come[cç]a|acontece|marcada para)\b/iu',$answer);
+        $liveBr=trim((string)($live['data_live_br']??$payload['aluno']['data_live']??''));
+        if($announcesFuture&&$liveBr!==''&&str_contains($answer,$liveBr)){
+            $answer="A aula ao vivo vinculada ao seu cadastro era em {$liveBr}, entao essa data ja passou. Vou encaminhar seu atendimento para a equipe conferir a melhor orientacao para o seu caso.";
+        }
+    }
+    $cert=$payload['certificado']??[];if(empty($cert['tem_certificado_emitido']))return $answer;
+    $emit=(string)($cert['link_emitir']??'');$preferred=(string)($cert['pdf_url']??'');if($preferred==='')$preferred=(string)($cert['link_verificacao']??'');
+    if($emit!==''&&$preferred!==''&&str_contains($answer,$emit))$answer=str_replace($emit,$preferred,$answer);
+    return $answer;
+}
+
+function support_chat_mark_read(PDO $pdo,int $conversationId,string $viewer): void
+{
+    $sender=$viewer==='admin'?'student':'admin';$column=$viewer==='admin'?'unread_admin':'unread_student';$seen=$viewer==='admin'?'admin_last_seen_at':'student_last_seen_at';
+    $pdo->prepare("UPDATE support_messages SET read_at=COALESCE(read_at,NOW()) WHERE conversation_id=:c AND sender_type=:s")->execute(['c'=>$conversationId,'s'=>$sender]);
+    $pdo->prepare("UPDATE support_conversations SET {$column}=0,{$seen}=NOW() WHERE id=:c")->execute(['c'=>$conversationId]);
+}
+
+function support_chat_typing(PDO $pdo,int $conversationId,string $actor,string $name): void
+{
+    $pdo->prepare("INSERT INTO support_typing(conversation_id,actor_type,actor_name,expires_at) VALUES(:c,:a,:n,DATE_ADD(NOW(),INTERVAL 4 SECOND)) ON DUPLICATE KEY UPDATE actor_name=VALUES(actor_name),expires_at=VALUES(expires_at)")->execute(['c'=>$conversationId,'a'=>$actor,'n'=>$name]);
+    if($actor==='student')$pdo->prepare("UPDATE support_conversations SET student_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+    elseif($actor==='admin')$pdo->prepare("UPDATE support_conversations SET admin_last_seen_at=NOW() WHERE id=:id")->execute(['id'=>$conversationId]);
+}
+
+function support_chat_typing_state(PDO $pdo,int $conversationId,string $exclude): array
+{
+    $st=$pdo->prepare("SELECT actor_type,actor_name FROM support_typing WHERE conversation_id=:c AND actor_type<>:e AND expires_at>NOW()");$st->execute(['c'=>$conversationId,'e'=>$exclude]);return $st->fetchAll(PDO::FETCH_ASSOC)?:[];
+}
+
+function support_agent_config(PDO $pdo): array
+{
+    $agents=json_decode((string)get_setting('support_agents_json',''),true);
+    if(!is_array($agents)||!$agents)$agents=support_agent_default_agents();
+    return [
+        'enabled'=>get_setting('support_agent_enabled','0')==='1',
+        'multi'=>get_setting('support_agent_multi_enabled','1')==='1',
+        'basic'=>get_setting('support_agent_basic_enabled','1')==='1',
+        'sales'=>get_setting('support_agent_sales_enabled','0')==='1',
+        'technical'=>get_setting('support_agent_technical_enabled','1')==='1',
+        'reschedule'=>get_setting('support_agent_reschedule_enabled','1')==='1',
+        'certificate'=>get_setting('support_agent_certificate_enabled','0')==='1',
+        'group'=>get_setting('support_agent_group_enabled','1')==='1',
+        'max_tokens'=>max(500,min(12000,(int)get_setting('support_agent_max_tokens','3000'))),
+        'pause_seconds'=>max(0,min(30,(int)get_setting('support_agent_pause_seconds','5'))),
+        'display_name'=>support_agent_display_name($pdo),
+        'model'=>trim((string)get_setting('whatsapp_ai_model','gpt-4.1-mini'))?:'gpt-4.1-mini',
+        'api_key'=>trim((string)get_setting('whatsapp_ai_openai_api_key','')),
+        'temperature'=>max(0,min(1,(float)get_setting('whatsapp_ai_temperature','0.2'))),
+        'prompt_basic'=>trim((string)get_setting('support_agent_prompt_basic',''))?:support_agent_default_prompt('basic'),
+        'prompt_sales'=>trim((string)get_setting('support_agent_prompt_sales',''))?:support_agent_default_prompt('sales'),
+        'prompt_technical'=>trim((string)get_setting('support_agent_prompt_technical',''))?:support_agent_default_prompt('technical'),
+        'prompt_reschedule'=>trim((string)get_setting('support_agent_prompt_reschedule',''))?:support_agent_default_prompt('reschedule'),
+        'prompt_certificate'=>trim((string)get_setting('support_agent_prompt_certificate',''))?:support_agent_default_prompt('certificate'),
+        'prompt_group'=>trim((string)get_setting('support_agent_prompt_group',''))?:support_agent_default_prompt('group'),
+        'group_link_template'=>trim((string)get_setting('support_agent_group_link_template','https://mais.red/wpp/MCQDC_{{codigo_turma}}')),
+        'handoff_message'=>(string)get_setting('support_agent_handoff_message','Vou encaminhar seu atendimento para uma pessoa da equipe analisar com seguranca.'),
+        'transcription_model'=>trim((string)get_setting('whatsapp_ai_transcription_model','gpt-4o-mini-transcribe'))?:'gpt-4o-mini-transcribe',
+        'agents'=>$agents,
+    ];
+}
+
+function support_agent_user_field_description(string $field): string
+{
+    $map=[
+        'id'=>'ID interno do aluno.','nome'=>'Nome do aluno.','email'=>'E-mail cadastrado.','telefone'=>'Telefone/WhatsApp cadastrado.','created_at'=>'Data de inscricao/cadastro.','criado_em'=>'Data de inscricao/cadastro.',
+        'codigo_turma'=>'Codigo da turma/campanha do aluno.','turma_codigo'=>'Codigo da turma/campanha do aluno.','turma'=>'Turma do aluno.','data_live'=>'Data da aula ao vivo gravada no aluno.','turma_live_at'=>'Data da aula ao vivo gravada no aluno.',
+        'acesso_vitalicio'=>'Indica se o aluno comprou ou recebeu acesso vitalicio.','utm_source'=>'Origem UTM da inscricao.','utm_medium'=>'Midia UTM da inscricao.','utm_campaign'=>'Campanha UTM da inscricao.','utm_content'=>'Conteudo UTM.','utm_term'=>'Termo UTM.',
+    ];return $map[$field]??('Campo personalizado do usuario: '.$field.'.');
+}
+
+function support_agent_user_public_fields(PDO $pdo,array $user): array
+{
+    $blocked=['senha','password','remember_token','token','reset_token','magic_token','api_key','secret','hash'];$out=[];
+    foreach($user as $k=>$v){$lk=strtolower((string)$k);$deny=false;foreach($blocked as $b)if(str_contains($lk,$b)){$deny=true;break;}if($deny)continue;$out[$k]=['valor'=>$v,'descricao'=>support_agent_user_field_description((string)$k)];}
+    return $out;
+}
+
+function support_agent_variable_map(PDO $pdo): array
+{
+    $map=json_decode((string)get_setting('support_agent_variable_map_json',''),true);if(!is_array($map)||!$map)$map=support_agent_default_variable_map();
+    return array_values(array_filter($map,static fn($r)=>is_array($r)&&trim((string)($r['key']??''))!==''&&trim((string)($r['path']??''))!==''));
+}
+
+function support_agent_path_value(array $payload,string $path)
+{
+    $value=$payload;foreach(explode('.',$path) as $part){if($part==='')continue;if(is_array($value)&&array_key_exists($part,$value))$value=$value[$part];else return null;}return $value;
+}
+
+function support_agent_configured_variables(PDO $pdo,array $payload): array
+{
+    $out=[];foreach(support_agent_variable_map($pdo) as $row){$key=preg_replace('/[^a-z0-9_-]/i','',(string)$row['key']);if($key==='')continue;$out[$key]=['label'=>(string)($row['label']??$key),'path'=>(string)$row['path'],'description'=>(string)($row['description']??''),'value'=>support_agent_path_value($payload,(string)$row['path'])];}return $out;
+}
+
+function support_agent_format_datetime_br($value): string
+{
+    $value=trim((string)$value);if($value==='')return '';
+    try{return (new DateTimeImmutable($value,new DateTimeZone('America/Sao_Paulo')))->format('d/m/Y H:i');}catch(Throwable $e){return $value;}
+}
+
+function support_agent_access_days_remaining($seconds): ?int
+{
+    if($seconds===null||$seconds==='')return null;
+    $seconds=max(0,(int)$seconds);
+    return (int)ceil($seconds/86400);
+}
+
+function support_agent_live_status(string $liveAt,DateTimeImmutable $now): array
+{
+    $liveAt=trim($liveAt);
+    if($liveAt==='')return ['status'=>'ausente','data_live_iso'=>'','data_live_br'=>'','agora_iso'=>$now->format('Y-m-d H:i:s'),'agora_br'=>$now->format('d/m/Y H:i'),'dias_diferenca'=>null,'instrucoes'=>'Nao ha data de aula ao vivo no cadastro. Nao invente data; transfira para humano se a data for essencial.'];
+    try{$live=new DateTimeImmutable($liveAt,new DateTimeZone('America/Sao_Paulo'));}catch(Throwable $e){return ['status'=>'invalida','data_live_iso'=>$liveAt,'data_live_br'=>$liveAt,'agora_iso'=>$now->format('Y-m-d H:i:s'),'agora_br'=>$now->format('d/m/Y H:i'),'dias_diferenca'=>null,'instrucoes'=>'A data da aula ao vivo nao esta em formato confiavel. Nao anuncie como futura; transfira para humano se precisar responder sobre horario.'];}
+    $diffDays=(int)$now->setTime(0,0)->diff($live->setTime(0,0))->format('%r%a');
+    if($live<$now)$status='passada';
+    elseif($live->format('Y-m-d')===$now->format('Y-m-d'))$status='hoje';
+    else $status='futura';
+    $instruction=$status==='passada'
+        ? 'A aula ao vivo vinculada ao aluno ja passou. Nunca diga que vai acontecer nessa data; se o aluno perguntar por live, explique que a data cadastrada ja passou e ofereca reagendamento/opcoes ou humano.'
+        : ($status==='hoje'
+            ? 'A aula ao vivo e hoje. Informe no presente/futuro apenas se o horario ainda nao passou; se houver duvida, seja cuidadoso e compare horario.'
+            : 'A aula ao vivo ainda esta futura. Voce pode informar a data e horario quando o aluno perguntar.');
+    return ['status'=>$status,'data_live_iso'=>$live->format('Y-m-d H:i:s'),'data_live_br'=>$live->format('d/m/Y H:i'),'agora_iso'=>$now->format('Y-m-d H:i:s'),'agora_br'=>$now->format('d/m/Y H:i'),'dias_diferenca'=>$diffDays,'instrucoes'=>$instruction];
+}
+
+function support_agent_purchase_context(PDO $pdo,array $user): array
+{
+    $out=[];$uid=(int)($user['id']??0);$email=trim((string)($user['email']??''));$phone=preg_replace('/\D+/','',(string)($user['telefone']??''));
+    $add=function(array $rows,string $source)use(&$out){foreach($rows as $r){$out[]=[
+        'origem'=>$source,'transacao'=>(string)($r['transaction_code']??$r['external_transaction_id']??''),
+        'status'=>(string)($r['status']??$r['normalized_status']??$r['provider_status']??''),
+        'produto'=>(string)($r['product_name']??''),'oferta'=>(string)($r['price_name']??$r['offer_code']??''),
+        'data'=>(string)($r['transaction_date']??$r['payment_confirmed_at']??$r['created_at']??$r['granted_at']??''),
+    ];}};
+    foreach(['hotmart_sales_live','hotmart_sales'] as $table){
+        if(!support_chat_table_exists($pdo,$table))continue;
+        try{
+            $where=[];$params=[];
+            if($uid>0&&support_chat_column_exists($pdo,$table,'matched_user_id')){$where[]='matched_user_id=:uid';$params['uid']=$uid;}
+            if($email!==''&&support_chat_column_exists($pdo,$table,'buyer_email')){$where[]='buyer_email=:email';$params['email']=$email;}
+            if($phone!==''&&support_chat_column_exists($pdo,$table,'buyer_phone_norm')){$where[]='buyer_phone_norm=:phone';$params['phone']=$phone;}
+            if(!$where)continue;
+            $dateCol=support_chat_column_exists($pdo,$table,'payment_confirmed_at')?'COALESCE(payment_confirmed_at,transaction_date)':'transaction_date';
+            $q=$pdo->prepare("SELECT transaction_code,status,transaction_date,".(support_chat_column_exists($pdo,$table,'payment_confirmed_at')?'payment_confirmed_at':"NULL AS payment_confirmed_at").",product_name,price_name FROM {$table} WHERE ".implode(' OR ',$where)." ORDER BY {$dateCol} DESC LIMIT 8");
+            $q->execute($params);$add($q->fetchAll(PDO::FETCH_ASSOC)?:[],$table);
+        }catch(Throwable $ignored){}
+    }
+    if(support_chat_table_exists($pdo,'course_lifetime_access')){
+        try{$q=$pdo->prepare("SELECT transaction_code,offer_code,source AS status,grant_type AS price_name,granted_at AS transaction_date FROM course_lifetime_access WHERE user_id=:u ORDER BY granted_at DESC LIMIT 5");$q->execute(['u'=>$uid]);$add($q->fetchAll(PDO::FETCH_ASSOC)?:[],'course_lifetime_access');}catch(Throwable $ignored){}
+    }
+    return array_slice($out,0,12);
+}
+
+function support_agent_user_payload(PDO $pdo,int $userId): array
+{
+    $st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$user=$st->fetch(PDO::FETCH_ASSOC)?:[];
+    if(!$user)throw new RuntimeException('Aluno nao encontrado para o agente.');
+    $tags=[];if(support_chat_table_exists($pdo,'user_tags')&&support_chat_table_exists($pdo,'tags')){try{$tagDesc=support_chat_column_exists($pdo,'tags','descricao')?'t.descricao':"'' AS descricao";$q=$pdo->prepare("SELECT t.nome,{$tagDesc},ut.created_at FROM user_tags ut JOIN tags t ON t.id=ut.tag_id WHERE ut.user_id=:u ORDER BY ut.created_at DESC");$q->execute(['u'=>$userId]);$tags=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $lessons=[];$required=0;$done=0;$missing=[];if(support_chat_table_exists($pdo,'lessons')){try{if(support_chat_table_exists($pdo,'lesson_progress')){$progressAt=support_chat_column_exists($pdo,'lesson_progress','updated_at')?'lp.updated_at':(support_chat_column_exists($pdo,'lesson_progress','completed_at')?'COALESCE(lp.completed_at,lp.created_at)':'lp.created_at');$q=$pdo->prepare("SELECT l.id,l.titulo,l.ordem,l.conta_para_conclusao,COALESCE(lp.status,'not_started') status,{$progressAt} updated_at FROM lessons l LEFT JOIN lesson_progress lp ON lp.lesson_id=l.id AND lp.user_id=:u WHERE l.ativo=1 ORDER BY l.ordem,l.id");$q->execute(['u'=>$userId]);$lessons=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}else{$lessons=$pdo->query("SELECT id,titulo,ordem,conta_para_conclusao,'not_started' status,NULL updated_at FROM lessons WHERE ativo=1 ORDER BY ordem,id")->fetchAll(PDO::FETCH_ASSOC)?:[];}$required=count(array_filter($lessons,static fn($r)=>(int)($r['conta_para_conclusao']??0)===1));if($required<=0)$required=count($lessons);foreach($lessons as $ls){$counts=(int)($ls['conta_para_conclusao']??0)===1||$required===count($lessons);if(!$counts)continue;if(($ls['status']??'')==='completed')$done++;else $missing[]=['id'=>(int)$ls['id'],'titulo'=>(string)($ls['titulo']??('Aula '.$ls['id'])),'ordem'=>$ls['ordem']??null,'status'=>(string)($ls['status']??'not_started')];}}catch(Throwable $ignored){}}
+    if($lessons&&support_chat_table_exists($pdo,'lesson_progress')&&support_chat_column_exists($pdo,'lesson_progress','watched_seconds')){try{$q=$pdo->prepare("SELECT lesson_id,watched_seconds FROM lesson_progress WHERE user_id=:u");$q->execute(['u'=>$userId]);$watched=[];foreach($q->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$watched[(int)$r['lesson_id']]=(int)($r['watched_seconds']??0);foreach($lessons as &$ls){$lid=(int)($ls['id']??0);$ls['watched_seconds']=$watched[$lid]??0;}unset($ls);}catch(Throwable $ignored){}}
+    $views=[];if(support_chat_table_exists($pdo,'lesson_view_events')){try{$q=$pdo->prepare("SELECT l.titulo,l.ordem,MIN(v.viewed_at) first_viewed_at,MAX(v.viewed_at) last_viewed_at,COUNT(*) views FROM lesson_view_events v LEFT JOIN lessons l ON l.id=v.lesson_id WHERE v.user_id=:u GROUP BY v.lesson_id,l.titulo,l.ordem ORDER BY l.ordem,l.titulo LIMIT 80");$q->execute(['u'=>$userId]);$views=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $certificates=[];if(support_chat_table_exists($pdo,'certificates')){try{$q=$pdo->prepare("SELECT * FROM certificates WHERE user_id=:u ORDER BY id DESC LIMIT 10");$q->execute(['u'=>$userId]);$certificates=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $live=[];if(support_chat_table_exists($pdo,'live_event_recebimentos')&&support_chat_table_exists($pdo,'live_events')){try{$q=$pdo->prepare("SELECT le.tipo,MIN(ler.created_at) first_at,MAX(ler.created_at) last_at,COUNT(*) total FROM live_event_recebimentos ler JOIN live_events le ON le.id=ler.event_id WHERE ler.user_id=:u AND ler.status='processado' GROUP BY le.tipo ORDER BY last_at DESC");$q->execute(['u'=>$userId]);$live=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $reschedules=[];if(support_chat_table_exists($pdo,'reagendamentos_live')){try{$q=$pdo->prepare("SELECT status,old_turma_live_at,new_turma_live_at,created_at FROM reagendamentos_live WHERE user_id=:u ORDER BY id DESC LIMIT 10");$q->execute(['u'=>$userId]);$reschedules=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $groupLinks=[];$turmaCodigo=(string)($user['codigo_turma']??$user['turma_codigo']??'');if($turmaCodigo!==''&&support_chat_table_exists($pdo,'whatsapp_group_campaigns')&&support_chat_table_exists($pdo,'whatsapp_group_campaign_groups')){try{$q=$pdo->prepare("SELECT c.name campanha,c.public_url,g.group_name,g.invite_url,g.current_members,g.max_members FROM whatsapp_group_campaigns c LEFT JOIN whatsapp_group_campaign_groups g ON g.campaign_id=c.id AND g.is_active=1 WHERE c.status='active' AND (c.slug=:t OR c.name=:t OR g.group_name=:t) ORDER BY g.is_current DESC,g.updated_at DESC LIMIT 5");$q->execute(['t'=>$turmaCodigo]);$groupLinks=$q->fetchAll(PDO::FETCH_ASSOC)?:[];}catch(Throwable $ignored){}}
+    $groupTemplate=trim((string)get_setting('support_agent_group_link_template','https://mais.red/wpp/MCQDC_{{codigo_turma}}'));
+    $configuredGroupLink='';
+    if($groupTemplate!==''&&$turmaCodigo!=='')$configuredGroupLink=str_replace(['{{codigo_turma}}','{{codigo da turma}}','{{turma}}'],rawurlencode($turmaCodigo),$groupTemplate);
+    $coursePct=$required>0?(int)floor(($done/max(1,$required))*100):0;$issuedCert=null;foreach($certificates as $cert)if(($cert['status']??'')==='emitido'){$issuedCert=$cert;break;}
+    $certVerify=$issuedCert&&!empty($issuedCert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$issuedCert['codigo_uid']):'';
+    $magicLink=function_exists('gerar_magic_link')?gerar_magic_link($userId,30,false):'';
+    $access=course_access_status($pdo,$userId);
+    $accessExpiresBr=support_agent_format_datetime_br($access['expires_at']??'');
+    $accessStartBr=support_agent_format_datetime_br($access['start_at']??'');
+    $accessDaysRemaining=support_agent_access_days_remaining($access['remaining_seconds']??null);
+    $now=new DateTimeImmutable('now',new DateTimeZone('America/Sao_Paulo'));
+    $liveRaw=(string)($user['turma_live_at']??$user['data_live']??'');
+    $liveStatus=support_agent_live_status($liveRaw,$now);
+    $payload=[
+        'contexto_atual'=>[
+            'timezone'=>'America/Sao_Paulo',
+            'agora_iso'=>$now->format('Y-m-d H:i:s'),
+            'agora_br'=>$now->format('d/m/Y H:i'),
+            'regra_datas'=>'Sempre compare datas do payload com agora_iso/agora_br antes de responder. Nunca trate data passada como evento futuro.',
+        ],
+        'aluno'=>[
+            'id'=>(int)$user['id'],'nome'=>(string)($user['nome']??''),'email'=>(string)($user['email']??''),'telefone'=>(string)($user['telefone']??''),
+            'data_inscricao'=>(string)($user['created_at']??$user['criado_em']??''),'codigo_turma'=>$turmaCodigo,
+            'data_live'=>$liveStatus['data_live_br']!==''?$liveStatus['data_live_br']:$liveRaw,
+            'data_live_iso'=>$liveStatus['data_live_iso']??$liveRaw,
+            'status_data_live'=>$liveStatus['status']??'ausente',
+            'acesso_vitalicio'=>!empty($access['lifetime']),
+        ],
+        'campos_personalizados_usuario'=>support_agent_user_public_fields($pdo,$user),
+        'links'=>[
+            'acesso_direto_area_membros'=>$magicLink,
+            'area_do_aluno'=>rtrim((string)BASE_URL,'/').'/trilha.php',
+            'emitir_certificado'=>rtrim((string)BASE_URL,'/').'/certificado.php',
+            'verificar_certificado_emitido'=>$certVerify,
+            'pdf_certificado_emitido'=>(string)($issuedCert['pdf_url']??''),
+            'link_grupo_configurado'=>$configuredGroupLink,
+            'template_grupo_whatsapp'=>$groupTemplate,
+            'grupos_whatsapp'=>$groupLinks,
+            'liberar_acesso_vitalicio'=>$access['checkout_url']??'',
+        ],
+        'tags'=>$tags,
+        'acesso'=>[
+            'vitalicio'=>!empty($access['lifetime']),
+            'pago'=>!empty($access['is_paid']),
+            'tipo'=>$access['grant_type']??null,
+            'origem'=>$access['grant_source']??null,
+            'liberado_em'=>$access['lifetime_granted_at']??null,
+            'transacao'=>$access['lifetime_transaction_code']??null,
+            'expirado'=>!empty($access['expired']),
+            'permitido'=>!empty($access['allowed']),
+            'controle_prazo_ativo'=>!empty($access['enabled']),
+            'inicio_contagem'=>$access['start_at']??null,
+            'inicio_contagem_br'=>$accessStartBr,
+            'vence_em'=>$access['expires_at']??null,
+            'vence_em_iso'=>$access['expires_at_iso']??null,
+            'vence_em_br'=>$accessExpiresBr,
+            'segundos_restantes'=>$access['remaining_seconds']??null,
+            'dias_restantes'=>$accessDaysRemaining,
+            'dias_gratuitos'=>$access['access_days']??null,
+            'mensagem_bloqueio'=>$access['message']??'',
+            'checkout_url'=>$access['checkout_url']??'',
+            'link_liberar_acesso_vitalicio'=>$access['checkout_url']??'',
+            'regra_para_ia'=>'Se permitido=true e expirado=false, o aluno ainda esta no periodo gratuito: oriente login/acesso e nao venda vitalicio. Se expirado=true e vitalicio=false, explique que o periodo gratuito encerrou em vence_em_br e envie link_liberar_acesso_vitalicio.',
+        ],
+        'curso'=>['aulas_obrigatorias'=>$required,'aulas_concluidas'=>$done,'percentual_avanco'=>$coursePct,'aulas_faltantes_obrigatorias'=>$missing,'aulas'=>$lessons,'visualizacoes'=>$views],
+        'certificado'=>[
+            'tem_certificado_emitido'=>$issuedCert!==null,
+            'pode_iniciar_emissao_agora'=>$required>0&&$done>=$required,
+            'regra_emissao'=>'Para emitir o certificado, o aluno precisa concluir todas as aulas obrigatorias, assistir a live/aula ao vivo, ter a senha da aula 5 e a senha da aula ao vivo; depois confirma a senha do certificado e o nome na tela de emissao.',
+            'criterios_e_pendencias'=>[
+                'aulas_obrigatorias_total'=>$required,'aulas_obrigatorias_concluidas'=>$done,'percentual_obrigatorio'=>$coursePct,
+                'aulas_faltantes'=>$missing,
+                'senhas_necessarias'=>['senha_da_aula_5','senha_da_aula_ao_vivo'],
+                'senha_certificado'=>'Necessaria na tela de emissao; nao informe senha se ela nao estiver no payload/contexto.',
+            ],
+            'link_emitir'=>rtrim((string)BASE_URL,'/').'/certificado.php','link_verificacao'=>$certVerify,'pdf_url'=>(string)($issuedCert['pdf_url']??''),'registros'=>$certificates
+        ],
+        'live'=>['status_data_live'=>$liveStatus,'eventos'=>$live,'reagendamentos'=>$reschedules],
+        'reagendamento'=>['opcoes'=>support_agent_available_reschedule_slots($pdo,2)],
+        'compras'=>support_agent_purchase_context($pdo,$user),
+    ];
+    $payload['variaveis_configuradas']=support_agent_configured_variables($pdo,$payload);
+    return $payload;
+}
+
+function support_agent_compact_payload_for_ai(array $payload): array
+{
+    $course=$payload['curso']??[];$cert=$payload['certificado']??[];$live=$payload['live']??[];
+    $lesson5=null;foreach(($course['aulas']??[]) as $lesson){if((int)($lesson['ordem']??0)===5){$lesson5=['id'=>$lesson['id']??null,'titulo'=>$lesson['titulo']??'','ordem'=>$lesson['ordem']??null,'status'=>$lesson['status']??''];break;}}
+    $compact=$payload;
+    $compact['curso']=[
+        'aulas_obrigatorias'=>$course['aulas_obrigatorias']??0,
+        'aulas_concluidas'=>$course['aulas_concluidas']??0,
+        'percentual_avanco'=>$course['percentual_avanco']??0,
+        'aula_5'=>$lesson5,
+        'aulas_faltantes_obrigatorias'=>array_slice(is_array($course['aulas_faltantes_obrigatorias']??null)?$course['aulas_faltantes_obrigatorias']:[],0,12),
+        'visualizacoes_resumo'=>array_slice(is_array($course['visualizacoes']??null)?$course['visualizacoes']:[],0,12),
+    ];
+    $criteria=is_array($cert['criterios_e_pendencias']??null)?$cert['criterios_e_pendencias']:[];
+    if(isset($criteria['aulas_faltantes'])&&is_array($criteria['aulas_faltantes']))$criteria['aulas_faltantes']=array_slice($criteria['aulas_faltantes'],0,12);
+    $compact['certificado']=[
+        'tem_certificado_emitido'=>$cert['tem_certificado_emitido']??false,
+        'pode_iniciar_emissao_agora'=>$cert['pode_iniciar_emissao_agora']??false,
+        'regra_emissao'=>$cert['regra_emissao']??'',
+        'criterios_e_pendencias'=>$criteria,
+        'link_emitir'=>$cert['link_emitir']??'',
+        'link_verificacao'=>$cert['link_verificacao']??'',
+        'pdf_url'=>$cert['pdf_url']??'',
+        'registros'=>array_slice(is_array($cert['registros']??null)?$cert['registros']:[],0,2),
+    ];
+    $compact['live']=[
+        'status_data_live'=>$live['status_data_live']??[],
+        'eventos'=>array_slice(is_array($live['eventos']??null)?$live['eventos']:[],0,8),
+        'reagendamentos'=>array_slice(is_array($live['reagendamentos']??null)?$live['reagendamentos']:[],0,5),
+    ];
+    $compact['tags']=array_slice(is_array($payload['tags']??null)?$payload['tags']:[],0,12);
+    $compact['compras']=array_slice(is_array($payload['compras']??null)?$payload['compras']:[],0,8);
+    $compact['payload_compactado']=true;
+    return $compact;
+}
+
+function support_agent_estimate_context_tokens(array $payload,string $memory,string $body,array $recent=[]): int
+{
+    return (int)((strlen(json_encode($payload,JSON_UNESCAPED_UNICODE))+strlen($memory)+strlen($body)+strlen(json_encode($recent,JSON_UNESCAPED_UNICODE)))/4);
+}
+
+function support_agent_available_reschedule_slots(PDO $pdo,int $qty=2): array
+{
+    $time=trim((string)get_setting('reagendar_live_time','19:00'));if(!preg_match('/^\d{2}:\d{2}$/',$time))$time='19:00';
+    $days=max(1,min(60,(int)get_setting('reagendar_live_days_ahead','14')));$interval=max(1,min(14,(int)get_setting('reagendar_live_interval_days','1')));
+    $now=new DateTimeImmutable('now',new DateTimeZone('America/Sao_Paulo'));$out=[];
+    for($i=1;$i<=$days&&count($out)<$qty;$i++){if((($i-1)%$interval)!==0)continue;$slot=$now->modify("+{$i} days")->format('Y-m-d').' '.$time.':00';$dt=new DateTimeImmutable($slot,new DateTimeZone('America/Sao_Paulo'));if($dt>$now)$out[]=['iso'=>$dt->format('Y-m-d H:i:s'),'label'=>$dt->format('d/m/Y H:i')];}
+    return $out;
+}
+
+function support_agent_reschedule_live(PDO $pdo,int $userId,string $slot): bool
+{
+    $slots=support_agent_available_reschedule_slots($pdo,8);$allowed=array_column($slots,'iso');if(!in_array($slot,$allowed,true))return false;
+    $st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$user=$st->fetch(PDO::FETCH_ASSOC);if(!$user)return false;
+    $sets=[];$params=['id'=>$userId,'slot'=>$slot];if(support_chat_column_exists($pdo,'users','turma_live_at'))$sets[]='turma_live_at=:slot';if(support_chat_column_exists($pdo,'users','data_live'))$sets[]='data_live=:slot';if(!$sets)return false;
+    $old=(string)($user['turma_live_at']??$user['data_live']??'');$turma=(string)($user['codigo_turma']??$user['turma_codigo']??'');
+    $liveUrl=trim((string)get_setting('reagendar_live_url',''));$offsetMin=(int)get_setting('reagendar_dispatch_offset_min','0');$delayMs=max(0,min(30000,(int)get_setting('reagendar_dispatch_delay_ms','500')));$dt=new DateTimeImmutable($slot,new DateTimeZone('America/Sao_Paulo'));$dispatchAt=$dt->modify(($offsetMin>=0?'+':'').$offsetMin.' minutes')->format('Y-m-d H:i:s');$histId=0;
+    $pdo->beginTransaction();
+    $pdo->prepare('UPDATE users SET '.implode(',',$sets).' WHERE id=:id LIMIT 1')->execute($params);
+    if(support_chat_table_exists($pdo,'reagendamentos_live')){
+        $cols=['user_id','old_codigo_turma','new_codigo_turma','old_turma_live_at','new_turma_live_at','status','origem','created_at'];$vals=[':u',':oc',':nc',':ol',':nl',"'reagendado'",':origem','NOW()'];$p=['u'=>$userId,'oc'=>$turma?:null,'nc'=>$turma?:null,'ol'=>$old?:null,'nl'=>$slot,'origem'=>'agente_suporte'];
+        if(support_chat_column_exists($pdo,'reagendamentos_live','live_url')){$cols[]='live_url';$vals[]=':url';$p['url']=$liveUrl?:null;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','sf_disparo_at')){$cols[]='sf_disparo_at';$vals[]=':sf';$p['sf']=$dispatchAt;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','sf_delay_ms')){$cols[]='sf_delay_ms';$vals[]=':delay';$p['delay']=$delayMs;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','ip')){$cols[]='ip';$vals[]=':ip';$p['ip']=$_SERVER['REMOTE_ADDR']??null;}
+        if(support_chat_column_exists($pdo,'reagendamentos_live','user_agent')){$cols[]='user_agent';$vals[]=':ua';$p['ua']='support_chat';}
+        $pdo->prepare('INSERT INTO reagendamentos_live('.implode(',',$cols).') VALUES('.implode(',',$vals).')')->execute($p);$histId=(int)$pdo->lastInsertId();
+        try{reagendamento_live_log($pdo,$histId,$userId,'agendamento_criado','pendente','Reagendamento criado pela central de suporte.',['new_turma_live_at'=>$slot,'sf_disparo_at'=>$dispatchAt,'origem'=>'support_chat']);}catch(Throwable $ignored){}
+    }
+    $pdo->commit();
+    try{definir_tag_estado_reagendamento($userId,'ativo','support_chat',$histId?:null);}catch(Throwable $ignored){}
+    support_chat_dispatch_live_rescheduled($pdo,$userId,$histId,$turma,$old,$slot,$liveUrl,'support_chat');
+    support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','reagendamento_live',['reagendamento_id'=>$histId,'new_turma_live_at'=>$slot,'old_turma_live_at'=>$old]);return true;
+}
+
+function support_chat_dispatch_live_rescheduled(PDO $pdo,int $userId,int $histId,string $codigoTurma,string $oldLive,string $newLive,string $liveUrl,string $origem): void
+{
+    try{
+        $dt=new DateTimeImmutable($newLive,new DateTimeZone('America/Sao_Paulo'));
+        disparar_webhooks('LIVE_REAGENDADA',$userId,[
+            'reagendamento_id'=>$histId?:null,
+            'codigo_turma'=>$codigoTurma,
+            'data_live'=>$dt->format('d/m/Y H:i'),
+            'data_live_iso'=>$dt->format('Y-m-d H:i:s'),
+            'live_url'=>$liveUrl,
+            'origem'=>$origem,
+            'reagendamento'=>[
+                'id'=>$histId?:null,
+                'turma_original'=>$codigoTurma,
+                'live_antiga'=>$oldLive,
+                'live_nova'=>$dt->format('d/m/Y H:i'),
+                'live_nova_iso'=>$dt->format('Y-m-d H:i:s'),
+                'live_url'=>$liveUrl,
+                'status'=>'reagendado',
+            ],
+        ]);
+    }catch(Throwable $ignored){}
+}
+
+function support_chat_dispatch_certificate_event(PDO $pdo,int $userId,array $cert,string $origem): void
+{
+    try{adicionar_tag($userId,'CERT_EMITIDO',$origem);}catch(Throwable $ignored){}
+    try{disparar_webhooks('CERT_EMITIDO',$userId,[
+        'codigo_certificado'=>$cert['codigo_uid']??'',
+        'curso'=>$cert['course']??'',
+        'emitido_em'=>$cert['emitido_em']??'',
+        'pdf_url'=>$cert['pdf_url']??'',
+        'certificado_id'=>$cert['id']??null,
+        'origem'=>$origem,
+    ]);}catch(Throwable $ignored){}
+}
+
+function support_agent_certificate_expected_password(PDO $pdo,int $userId): string
+{
+    $cfg=[];try{$st=$pdo->query("SELECT * FROM certificate_config WHERE id=1 LIMIT 1");$cfg=$st?($st->fetch(PDO::FETCH_ASSOC)?:[]):[];}catch(Throwable $ignored){}
+    $type=(string)($cfg['senha_tipo']??'unica');$mode=(string)($cfg['senha_mode']??'fixa');$fixed=trim((string)($cfg['senha_fixa']??''));$parts=json_decode((string)($cfg['senha_partes_fixas']??'[]'),true);if(!is_array($parts))$parts=[];
+    $variable='';
+    if($mode==='variavel'){
+        try{$st=$pdo->prepare("SELECT turma_id FROM inscricoes WHERE user_id=:u ORDER BY id DESC LIMIT 1");$st->execute(['u'=>$userId]);$turmaId=(int)$st->fetchColumn();if($turmaId>0){$st=$pdo->prepare("SELECT senha_certificado FROM turmas WHERE id=:id LIMIT 1");$st->execute(['id'=>$turmaId]);$variable=trim((string)$st->fetchColumn());}}catch(Throwable $ignored){}
+    }
+    if($type==='modular'){if($mode==='variavel')$parts[]=$variable;return implode('',array_map('trim',$parts));}
+    if($mode==='variavel')return $variable;
+    return $fixed!==''?$fixed:(defined('SENHA_CERTIFICADO')?(string)SENHA_CERTIFICADO:'');
+}
+
+function support_agent_certificate_input_password(string $body): string
+{
+    $candidate=trim($body);$candidate=(string)preg_replace('/^\s*(minha\s+)?senha\s*(do\s+certificado)?\s*(e|é|eh|:|-)?\s*/iu','',$candidate);
+    $candidate=trim($candidate," \t\n\r\0\x0B\"'`.,;:!?");
+    return mb_strlen($candidate)<=120?$candidate:'';
+}
+
+function support_agent_recent_certificate_context(PDO $pdo,int $conversationId,int $messageId): bool
+{
+    $st=$pdo->prepare("SELECT body FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id ORDER BY id DESC LIMIT 3");$st->execute(['c'=>$conversationId,'id'=>$messageId]);
+    foreach($st->fetchAll(PDO::FETCH_COLUMN)?:[] as $body){$b=mb_strtolower((string)$body);if(str_contains($b,'certificado')&&str_contains($b,'senha'))return true;}
+    return false;
+}
+
+function support_agent_generate_certificate(PDO $pdo,int $userId): array
+{
+    require_once __DIR__.'/certificado_pdf.php';
+    $st=$pdo->prepare("SELECT * FROM users WHERE id=:id LIMIT 1");$st->execute(['id'=>$userId]);$user=$st->fetch(PDO::FETCH_ASSOC);if(!$user)throw new RuntimeException('Aluno nao encontrado.');
+    $app=[];$cfg=[];try{$q=$pdo->query("SELECT * FROM app_config WHERE id=1 LIMIT 1");$app=$q?($q->fetch(PDO::FETCH_ASSOC)?:[]):[];}catch(Throwable $ignored){}try{$q=$pdo->query("SELECT * FROM certificate_config WHERE id=1 LIMIT 1");$cfg=$q?($q->fetch(PDO::FETCH_ASSOC)?:[]):[];}catch(Throwable $ignored){}
+    $course=trim((string)($app['course_title']??'Trilha de Aulas'))?:'Trilha de Aulas';
+    $pdo->beginTransaction();
+    try{
+        $st=$pdo->prepare("SELECT * FROM certificates WHERE user_id=:u AND course=:c ORDER BY id DESC LIMIT 1");$st->execute(['u'=>$userId,'c'=>$course]);$cert=$st->fetch(PDO::FETCH_ASSOC)?:null;
+        if(!$cert||($cert['status']??'')!=='emitido'){$code='';$chars='abcdefghijklmnopqrstuvwxyz0123456789';for($i=0;$i<36;$i++)$code.=($i>0&&$i%9===0)?'-':$chars[random_int(0,strlen($chars)-1)];$now=date('Y-m-d H:i:s');$pdo->prepare("INSERT INTO certificates(user_id,course,codigo_uid,emitido_em,status) VALUES(:u,:c,:code,:dt,'emitido')")->execute(['u'=>$userId,'c'=>$course,'code'=>$code,'dt'=>$now]);$cert=['id'=>(int)$pdo->lastInsertId(),'user_id'=>$userId,'course'=>$course,'codigo_uid'=>$code,'emitido_em'=>$now,'status'=>'emitido','pdf_url'=>null];}
+        $pdf=trim((string)($cert['pdf_url']??''));if($pdf===''){$pdf=gerar_pdf_certificado($user,$cert,$cfg);$pdo->prepare("UPDATE certificates SET pdf_url=:p WHERE id=:id")->execute(['p'=>$pdf,'id'=>(int)$cert['id']]);$cert['pdf_url']=$pdf;}
+        $pdo->commit();
+    }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+    support_chat_log_event($pdo,'ai_action',0,$userId,'bot','support_agent','Agente de suporte','geracao_certificado',['certificate_id'=>(int)($cert['id']??0),'pdf_url'=>(string)($cert['pdf_url']??'')]);
+    $cert['course']=$cert['course']??$course;support_chat_dispatch_certificate_event($pdo,$userId,$cert,'agente_suporte');
+    $cert['link_verificacao']=!empty($cert['codigo_uid'])?rtrim((string)BASE_URL,'/').'/verificar_certificado.php?c='.rawurlencode((string)$cert['codigo_uid']):'';
+    return $cert;
+}
+
+function support_agent_call_openai(array $cfg,array $input): array
+{
+    $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+        'action'=>['type'=>'string','enum'=>['answer','handoff','reschedule_options','confirm_reschedule']],
+        'confidence'=>['type'=>'number'],'intent'=>['type'=>'string'],'answer'=>['type'=>'string'],'reason'=>['type'=>'string'],
+        'selected_reschedule_iso'=>['type'=>['string','null']],'memory_summary'=>['type'=>'string'],'tokens_estimate'=>['type'=>'integer'],
+    ],'required'=>['action','confidence','intent','answer','reason','selected_reschedule_iso','memory_summary','tokens_estimate']];
+    return support_agent_call_openai_schema($cfg,$input,$schema,'support_agent_response',min(2000,(int)$cfg['max_tokens']));
+}
+
+function support_agent_call_openai_schema(array $cfg,array $input,array $schema,string $schemaName='support_agent_response',int $maxOutput=2000): array
+{
+    if($cfg['api_key']==='')throw new RuntimeException('Chave OpenAI nao configurada.');
+    $payload=['model'=>$cfg['model'],'input'=>$input,'max_output_tokens'=>min(2000,(int)$cfg['max_tokens']),'text'=>['format'=>['type'=>'json_schema','name'=>'support_agent_response','strict'=>true,'schema'=>$schema]]];
+    $payload['max_output_tokens']=max(300,min(4000,$maxOutput));
+    $payload['text']['format']['name']=$schemaName;
+    if(strpos((string)$cfg['model'],'gpt-5')!==0)$payload['temperature']=(float)$cfg['temperature'];
+    $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$cfg['api_key'],'Content-Type: application/json'],CURLOPT_POSTFIELDS=>json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),CURLOPT_TIMEOUT=>60]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+    if($raw===false||$raw==='')throw new RuntimeException('Falha ao chamar OpenAI: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('OpenAI HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,800));
+    $text=(string)($decoded['output_text']??'');if($text==='')foreach($decoded['output']??[] as $out)foreach($out['content']??[] as $c)if(isset($c['text']))$text.=(string)$c['text'];
+    $result=json_decode($text,true);if(!is_array($result))throw new RuntimeException('A IA retornou formato invalido.');return $result;
+}
+
+function support_agent_agents_by_id(array $cfg): array
+{
+    $out=[];foreach(($cfg['agents']??[]) as $agent){if(!is_array($agent))continue;$id=preg_replace('/[^a-z0-9_-]/i','',(string)($agent['id']??''));if($id==='')continue;$agent['id']=$id;$agent['active']=array_key_exists('active',$agent)?(bool)$agent['active']:true;$agent['power']=(string)($agent['power']??'balanced');$agent['model']=support_agent_model_for_power($agent['power'],(string)($cfg['model']??'gpt-5.4-mini'));$agent['handoff_threshold']=max(0,min(1,(float)($agent['handoff_threshold']??0.58)));$agent['max_turns']=max(0,min(30,(int)($agent['max_turns']??8)));$out[$id]=$agent;}return $out;
+}
+
+function support_agent_recent_turn_count(PDO $pdo,int $conversationId,string $agentId=''): int
+{
+    $st=$pdo->prepare("SELECT metadata_json FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' ORDER BY id DESC LIMIT 40");$st->execute(['c'=>$conversationId]);$count=0;
+    foreach($st->fetchAll(PDO::FETCH_COLUMN)?:[] as $meta){$j=json_decode((string)$meta,true);if(!is_array($j))$j=[];if($agentId===''||($j['agent_id']??'')===$agentId)$count++;}
+    return $count;
+}
+
+function support_agent_multi_route(PDO $pdo,array $cfg,array $payload,array $recent,string $memory,string $body,bool $firstAgentReply): array
+{
+    $agents=support_agent_agents_by_id($cfg);$router=$agents['orchestrator']??null;
+    if(!$router||empty($router['active']))return ['target_agent'=>'legacy','action'=>'legacy','confidence'=>1,'reason'=>'multi disabled'];
+    $available=[];foreach($agents as $id=>$agent){if($id==='quality'||empty($agent['active']))continue;$available[]=['id'=>$id,'name'=>(string)($agent['name']??$id),'description'=>(string)($agent['description']??''),'handoff_threshold'=>(float)($agent['handoff_threshold']??0.58)];}
+    $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+        'action'=>['type'=>'string','enum'=>['route','clarify','handoff']],
+        'target_agent'=>['type'=>'string'],
+        'confidence'=>['type'=>'number'],
+        'reason'=>['type'=>'string'],
+        'clarification_question'=>['type'=>'string'],
+        'memory_summary'=>['type'=>'string'],
+    ],'required'=>['action','target_agent','confidence','reason','clarification_question','memory_summary']];
+    $modelCfg=$cfg;$modelCfg['model']=(string)$router['model'];$modelCfg['max_tokens']=min((int)$cfg['max_tokens'],1800);
+    $system="Voce e o orquestrador multiagente da central. Sua funcao e escolher um especialista, pedir uma confirmacao curta ou transferir para humano. Use somente mensagem_atual, historico_recente, memoria e payload_aluno. Nao responda o problema final, apenas roteie. Prompt do orquestrador: ".(string)($router['prompt']??'');
+    $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memory,'payload_aluno'=>$payload,'historico_recente'=>$recent,'agentes_disponiveis'=>$available],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+    $res=support_agent_call_openai_schema($modelCfg,$input,$schema,'support_agent_router',900);
+    $target=preg_replace('/[^a-z0-9_-]/i','',(string)($res['target_agent']??''));
+    if($target===''||!isset($agents[$target])||empty($agents[$target]['active']))$res['action']='handoff';
+    return $res;
+}
+
+function support_agent_multi_flow(PDO $pdo,int $conversationId,int $messageId,array $conv,array $cfg,array $payload,string $body,bool $firstAgentReply,array $recent,string $memorySummary,int $estimated): bool
+{
+    if(empty($cfg['multi']))return false;
+    $agents=support_agent_agents_by_id($cfg);if(!$agents)return false;
+    $route=support_agent_multi_route($pdo,$cfg,$payload,$recent,$memorySummary,$body,$firstAgentReply);
+    $routeAction=(string)($route['action']??'handoff');$confidence=(float)($route['confidence']??0);$target=preg_replace('/[^a-z0-9_-]/i','',(string)($route['target_agent']??''));
+    support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent',support_agent_display_name($pdo),'router_'.$target,['action'=>$routeAction,'confidence'=>$confidence,'reason'=>(string)($route['reason']??'')]);
+    if($routeAction==='clarify'){
+        $q=trim((string)($route['clarification_question']??''));if($q==='')$q='So para eu te orientar certo: sua duvida e sobre certificado, aula ao vivo, acesso as aulas ou pagamento?';
+        support_agent_send_answer($pdo,$conversationId,$q,$firstAgentReply,false,false,'orchestrator');
+        return true;
+    }
+    if($routeAction==='handoff'||$confidence<0.50||$target===''||!isset($agents[$target])){support_agent_handoff($pdo,$conversationId,(string)($route['reason']??'Roteador sem confianca.'),$cfg);return true;}
+    $agent=$agents[$target];$maxTurns=(int)($agent['max_turns']??8);if($maxTurns>0&&support_agent_recent_turn_count($pdo,$conversationId,$target)>=$maxTurns){support_agent_handoff($pdo,$conversationId,'Limite de turnos do agente '.$target.' atingido.',$cfg);return true;}
+    $schema=['type'=>'object','additionalProperties'=>false,'properties'=>[
+        'action'=>['type'=>'string','enum'=>['answer','handoff','confirm_reschedule']],
+        'confidence'=>['type'=>'number'],'intent'=>['type'=>'string'],'answer'=>['type'=>'string'],'reason'=>['type'=>'string'],
+        'selected_reschedule_iso'=>['type'=>['string','null']],'memory_summary'=>['type'=>'string'],'tokens_estimate'=>['type'=>'integer'],
+        'resolved'=>['type'=>'boolean'],
+    ],'required'=>['action','confidence','intent','answer','reason','selected_reschedule_iso','memory_summary','tokens_estimate','resolved']];
+    $modelCfg=$cfg;$modelCfg['model']=(string)$agent['model'];$modelCfg['max_tokens']=min((int)$cfg['max_tokens'],2600);
+    $system="Voce e um especialista da equipe multiagente da area de membros. Especialista ativo: ".($agent['name']??$target).". Use somente o payload do aluno e o historico da conversa atual. Nao invente. Seja humano, curto e natural. Reconheca a ultima mensagem antes de orientar, mas nao repita a reclamacao do aluno. Faca uma pergunta por vez. Nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Regra critica de acesso ao curso: antes de falar de acesso vitalicio, confira payload_aluno.acesso. Se acesso.permitido=true e acesso.expirado=false, o aluno ainda esta no periodo gratuito; oriente acesso/login com links.acesso_direto_area_membros ou links.area_do_aluno. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio. Regra critica de aulas bloqueadas: se o aluno disser que uma aula nao liberou, confira curso.aulas_concluidas, curso.aulas_faltantes_obrigatorias e curso.aulas; quando houver aula anterior pendente, nao peca mensagem de erro, apenas oriente assistir pelo menos 80% do video no YouTube; se nao liberar automaticamente, clicar no botao Concluir no fim da aula, na parte de baixo, ate aparecer status de concluido. Se o aluno mudar claramente de assunto, action=handoff com reason='voltar_orquestrador'. Se faltar dado ou houver risco, action=handoff. Nao pergunte 'posso ajudar em algo mais' se ainda houver proxima acao. Prompt do especialista: ".(string)($agent['prompt']??'');
+    $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'memoria'=>$memorySummary,'payload_aluno'=>$payload,'historico_recente'=>$recent,'agente'=>$agent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+    $res=support_agent_call_openai_schema($modelCfg,$input,$schema,'support_agent_specialist',1400);
+    $action=(string)($res['action']??'handoff');$agentConfidence=(float)($res['confidence']??0);$threshold=(float)($agent['handoff_threshold']??0.58);
+    if($action==='confirm_reschedule'&&$target==='live'){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
+    support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent',support_agent_display_name($pdo),'specialist_'.$target,['action'=>$action,'confidence'=>$agentConfidence,'threshold'=>$threshold,'intent'=>(string)($res['intent']??'')]);
+    if($action==='handoff'||$agentConfidence<$threshold){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Especialista sem confianca.'),$cfg);return true;}
+    $answer=support_agent_normalize_answer_for_payload(trim((string)$res['answer']),$payload);if($answer==='')$answer='Consegui analisar seu caso, mas preciso de mais um detalhe para continuar.';
+    $sendFollowup=!empty($res['resolved']);support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply,$sendFollowup,false,$target);
+    $pdo->prepare("INSERT INTO support_agent_memory(conversation_id,summary,token_count,last_intent,last_confidence) VALUES(:c,:s,:t,:i,:cf) ON DUPLICATE KEY UPDATE summary=VALUES(summary),token_count=VALUES(token_count),last_intent=VALUES(last_intent),last_confidence=VALUES(last_confidence)")->execute(['c'=>$conversationId,'s'=>substr((string)($res['memory_summary']??($route['memory_summary']??'')),0,12000),'t'=>min(999999,(int)($res['tokens_estimate']??$estimated)),'i'=>substr($target.':'.(string)($res['intent']??''),0,80),'cf'=>$agentConfidence]);
+    return true;
+}
+
+function support_agent_transcribe_audio(PDO $pdo,array $cfg,array $message): string
+{
+    $url=(string)($message['attachment_url']??'');$path=realpath(__DIR__.'/../public/'.$url);if(!$path||!is_file($path))throw new RuntimeException('Audio nao encontrado para transcricao.');
+    $ch=curl_init('https://api.openai.com/v1/audio/transcriptions');$file=new CURLFile($path,(string)($message['attachment_mime']??'audio/webm'),basename($path));
+    curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$cfg['api_key']],CURLOPT_POSTFIELDS=>['model'=>$cfg['transcription_model'],'file'=>$file],CURLOPT_TIMEOUT=>60]);$raw=curl_exec($ch);$err=curl_error($ch);$code=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);
+    if($raw===false||$raw==='')throw new RuntimeException('Falha na transcricao: '.$err);$decoded=json_decode($raw,true);if($code<200||$code>=300)throw new RuntimeException('Transcricao HTTP '.$code.': '.mb_substr((string)($decoded['error']['message']??$raw),0,800));
+    return trim((string)($decoded['text']??''));
+}
+
+function support_agent_handoff(PDO $pdo,int $conversationId,string $reason,array $cfg): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if($conv&&($conv['stage']??'')==='human')return;
+    $agentName=support_agent_display_name($pdo);
+    support_chat_log_event($pdo,'human_handoff',$conversationId,0,'bot','support_agent',$agentName,'handoff',['reason'=>$reason]);
+    $pdo->prepare("UPDATE support_conversations SET status='pending',stage='human',priority=IF(priority='normal','high',priority),notes=CONCAT(COALESCE(notes,''),IF(COALESCE(notes,'')='','',\"\n\"),:n) WHERE id=:id")->execute(['n'=>'Agente transferiu para humano: '.$reason,'id'=>$conversationId]);
+    $msg=trim((string)$cfg['handoff_message']);if($msg!=='')support_chat_send($pdo,$conversationId,'bot','support_agent',$agentName,$msg);
+}
+
+function support_agent_is_human_request(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);return str_contains($b,'atendimento humano')||str_contains($b,'falar com humano')||str_contains($b,'pessoa da equipe')||str_contains($b,'atendente humano')||str_contains($b,'quero atendente')||str_contains($b,'chamar atendente');
+}
+
+function support_agent_is_certificate_request(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    return str_contains($b,'certificado')||str_contains($b,'certificacao')||str_contains($b,'diploma')||str_contains($b,'certidao');
+}
+
+function support_agent_is_group_request(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    return str_contains($b,'grupo')||str_contains($b,'whatsapp')||str_contains($b,'wpp');
+}
+
+function support_agent_is_live_access_question(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $hasLive=str_contains($b,'aula ao vivo')||str_contains($b,'live');
+    if(!$hasLive)return false;
+    return str_contains($b,'onde')||str_contains($b,'quando')||str_contains($b,'que dia')||str_contains($b,'qual dia')||str_contains($b,'data')||str_contains($b,'horario')||str_contains($b,'hora')||str_contains($b,'assistir')||str_contains($b,'acesso')||str_contains($b,'link')||str_contains($b,'senha')||str_contains($b,'segunda parte')||str_contains($b,'2a parte')||str_contains($b,'2 parte')||str_contains($b,'cadê')||str_contains($b,'cade');
+}
+
+function support_agent_is_live_problem(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $hasLive=str_contains($b,'aula ao vivo')||str_contains($b,'live');
+    if(!$hasLive)return false;
+    return (bool)preg_match('/\b(nao consigo|nao estou conseguindo|nao consegui|nao abre|nao abriu|nao aparece|nao funciona|erro|problema|travando|bloqueado|sem acesso|link nao|link quebrado|link errado)\b/u',$b);
+}
+
+function support_agent_is_course_access_problem(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    if(str_contains($b,'live')||str_contains($b,'aula ao vivo'))return false;
+    $problem=(bool)preg_match('/\b(nao consigo|n consigo|nao estou conseguindo|n estou conseguindo|nao consegui|n consegui|nao entra|n entra|nao abre|n abre|nao aparece|n aparece|nao funciona|n funciona|erro|problema|bloqueado|sem acesso|acesso bloqueado|link nao|login|senha)\b/u',$b);
+    $course=str_contains($b,'curso')||str_contains($b,'aula')||str_contains($b,'aulas')||str_contains($b,'area de membros')||str_contains($b,'plataforma')||str_contains($b,'conteudo')||str_contains($b,'trilha')||str_contains($b,'assistir');
+    return $problem&&$course;
+}
+
+function support_agent_is_lesson_sequence_problem(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    if(str_contains($b,'live')||str_contains($b,'aula ao vivo'))return false;
+    $hasLesson=str_contains($b,'aula')||str_contains($b,'aulas')||preg_match('/\b(primeira|segunda|terceira|quarta|quinta|sexta|setima|oitava|nona|decima|[1-9][0-9]?)\b/u',$b);
+    if(!$hasLesson)return false;
+    return (bool)preg_match('/\b(nao liber|n liber|bloquead|travou|travada|travado|nao aparece|n aparece|nao abriu|n abriu|nao abre|n abre|proxima|seguinte|quinta|quarta|sexta)\b/u',$b);
+}
+
+function support_agent_lesson_sequence_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$course=$payload['curso']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $required=(int)($course['aulas_obrigatorias']??0);$done=(int)($course['aulas_concluidas']??0);
+    $missing=is_array($course['aulas_faltantes_obrigatorias']??null)?$course['aulas_faltantes_obrigatorias']:[];
+    $next=$missing[0]??null;$nextLabel='a proxima aula';$previousLabel='aula anterior';
+    if(is_array($next)){
+        $order=(int)($next['ordem']??0);$title=trim((string)($next['titulo']??''));
+        if($order>0)$nextLabel='a aula '.$order;
+        elseif($title!=='')$nextLabel=$title;
+        if($order>1)$previousLabel='aula '.($order-1);
+    }elseif($required>0&&$done<$required){
+        $nextLabel='a aula '.($done+1);
+        if($done>0)$previousLabel='aula '.$done;
+    }
+    $msg=$prefix.'as aulas sao liberadas em sequencia. Para liberar '.$nextLabel.', assista pelo menos 80% da '.$previousLabel.' pelo video do YouTube. Se nao liberar automaticamente, clique no botao Concluir no fim da aula, na parte de baixo, ate aparecer o status de concluido.';
+    if($required>0)$msg.=' Pelo sistema, constam '.$done.' de '.$required.' aulas obrigatorias concluidas.';
+    return $msg;
+}
+
+function support_agent_course_access_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$access=$payload['acesso']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $direct=trim((string)($links['acesso_direto_area_membros']??''));$trail=trim((string)($links['area_do_aluno']??''));
+    $checkout=trim((string)($access['link_liberar_acesso_vitalicio']??$access['checkout_url']??$links['liberar_acesso_vitalicio']??''));
+    $expires=trim((string)($access['vence_em_br']??''));$days=$access['dias_restantes']??null;
+    if(!empty($access['expirado'])&&empty($access['vitalicio'])){
+        $msg=$prefix.'o acesso gratuito do seu cadastro ja encerrou'.($expires!==''?' em '.$expires:'').'. O acesso vitalicio e uma liberacao opcional para continuar acessando o curso depois do periodo gratuito.';
+        if($checkout!=='')$msg.="\n\nPara liberar o acesso vitalicio, use o link abaixo:\n".$checkout;
+        else $msg.="\n\nNao encontrei o link de liberacao salvo para sua turma, entao vou encaminhar para a equipe conferir.";
+        return $msg;
+    }
+    if(!empty($access['permitido'])||!empty($access['vitalicio'])){
+        $extra='';
+        if(empty($access['vitalicio'])&&$expires!==''){
+            $extra=' Seu acesso gratuito esta ativo ate '.$expires.'.';
+            if($days!==null)$extra.=' Faltam cerca de '.(int)$days.' dia(s).';
+        }
+        if(!empty($access['vitalicio']))$extra=' Seu acesso vitalicio esta ativo.';
+        $url=$direct!==''?$direct:$trail;
+        $msg=$prefix.'seu acesso ao curso consta liberado no sistema.'.$extra;
+        if($url!=='')$msg.="\n\nTente entrar por este link direto:\n".$url;
+        $msg.="\n\nSe mesmo assim nao abrir, me envie a mensagem exata que aparece na tela.";
+        return $msg;
+    }
+    if($direct!==''||$trail!=='')return $prefix."vou te passar o link de acesso e, se continuar travando, me envie a mensagem exata que aparece.\n".($direct!==''?$direct:$trail);
+    return $prefix.'nao encontrei um link confiavel de acesso no seu cadastro. Vou encaminhar para a equipe conferir.';
+}
+
+function support_agent_live_is_calendar_today(array $payload): bool
+{
+    $live=$payload['live']['status_data_live']??[];$liveIso=(string)($live['data_live_iso']??$payload['aluno']['data_live_iso']??'');$nowIso=(string)($live['agora_iso']??$payload['contexto_atual']['agora_iso']??'');
+    if($liveIso===''||$nowIso==='')return false;
+    try{$liveDt=new DateTimeImmutable($liveIso,new DateTimeZone('America/Sao_Paulo'));$nowDt=new DateTimeImmutable($nowIso,new DateTimeZone('America/Sao_Paulo'));return $liveDt->format('Y-m-d')===$nowDt->format('Y-m-d');}catch(Throwable $e){return false;}
+}
+
+function support_agent_live_problem_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$live=$payload['live']['status_data_live']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $status=(string)($live['status']??($student['status_data_live']??'ausente'));$liveBr=trim((string)($live['data_live_br']??$student['data_live']??''));
+    $group=trim((string)($links['link_grupo_configurado']??''));if($group===''){$groups=$links['grupos_whatsapp']??[];if(is_array($groups)&&isset($groups[0]['invite_url']))$group=trim((string)$groups[0]['invite_url']);}
+    $groupText=$group!==''?" O acesso sera enviado no grupo da sua turma no dia da aula:\n".$group:' O acesso sera enviado no grupo de alunos da sua turma no dia da aula ao vivo.';
+    if($status==='futura'){
+        $date=$liveBr!==''?" A data cadastrada para voce e {$liveBr}.":' A aula ao vivo cadastrada para voce ainda esta futura.';
+        return $prefix."a sua aula ao vivo nao e hoje.{$date}{$groupText}";
+    }
+    if($status==='passada'){
+        $date=$liveBr!==''?"A data cadastrada era {$liveBr}.":'A data cadastrada da sua aula ao vivo ja passou.';
+        return $prefix.$date." Essa aula ao vivo ja passou, entao o ideal e fazer um reagendamento para uma nova data.";
+    }
+    return $prefix."nao encontrei uma data confiavel da sua aula ao vivo no cadastro. Vou encaminhar para a equipe conferir a data e o acesso correto.";
+}
+
+function support_agent_live_access_answer(array $payload): string
+{
+    $student=$payload['aluno']??[];$live=$payload['live']['status_data_live']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';$prefix=$first!==''?$first.', ':'';
+    $status=(string)($live['status']??($student['status_data_live']??'ausente'));
+    $liveBr=trim((string)($live['data_live_br']??$student['data_live']??''));
+    $group=trim((string)($links['link_grupo_configurado']??''));if($group===''){$groups=$links['grupos_whatsapp']??[];if(is_array($groups)&&isset($groups[0]['invite_url']))$group=trim((string)$groups[0]['invite_url']);}
+    $groupText=$group!==''?" Acompanhe o grupo da turma, porque e por la que a equipe envia os avisos e o acesso:\n".$group:' A equipe vai comunicar no grupo da turma e enviar o acesso por la no dia do evento.';
+    if($status==='futura'){
+        $date=$liveBr!==''?" esta marcada para {$liveBr}":' ainda esta futura';
+        return $prefix."sua aula ao vivo{$date}.{$groupText}\n\nA segunda parte da senha e passada na aula ao vivo. Depois da live, use essa parte junto com a senha da aula 5 para emitir o certificado.";
+    }
+    if($status==='hoje'){
+        $date=$liveBr!==''?" e hoje, {$liveBr}":' e hoje';
+        return $prefix."sua aula ao vivo{$date}.{$groupText}\n\nA segunda parte da senha e passada na aula ao vivo. Fique de olho no grupo para receber o acesso no horario do evento.";
+    }
+    if($status==='passada'){
+        $date=$liveBr!==''?" ({$liveBr})":'';
+        return $prefix."a data da aula ao vivo vinculada ao seu cadastro ja passou{$date}. Nao vou te passar essa data como se ainda fosse acontecer. Vou deixar a equipe conferir se houve nova orientacao ou reagendamento e te avisar por aqui ou pelo grupo.";
+    }
+    return $prefix."nao encontrei uma data confiavel da aula ao vivo no seu cadastro. Vou deixar a equipe conferir e te avisar por aqui ou pelo grupo com a data e o acesso corretos.";
+}
+
+function support_agent_is_greeting_only(string $body): bool
+{
+    $plain=@iconv('UTF-8','ASCII//TRANSLIT//IGNORE',$body);$b=strtolower($plain!==false?$plain:$body);
+    $b=trim((string)preg_replace('/[^\p{L}\p{N}\s]+/u',' ',$b));$b=(string)preg_replace('/\s+/u',' ',$b);
+    return (bool)preg_match('/^(oi|ola|olá|bom dia|boa tarde|boa noite|e ai|e ai tudo bem|tudo bem|opa)$/iu',$b);
+}
+
+function support_agent_claim_message(PDO $pdo,int $conversationId,int $messageId): bool
+{
+    try{
+        $st=$pdo->prepare("INSERT IGNORE INTO support_agent_processed_messages(message_id,conversation_id,status) VALUES(:m,:c,'processing')");
+        $st->execute(['m'=>$messageId,'c'=>$conversationId]);
+        return $st->rowCount()>0;
+    }catch(Throwable $e){return true;}
+}
+
+function support_agent_finish_message(PDO $pdo,int $messageId,string $status='done'): void
+{
+    try{$pdo->prepare("UPDATE support_agent_processed_messages SET status=:s WHERE message_id=:m")->execute(['s'=>$status,'m'=>$messageId]);}catch(Throwable $ignored){}
+}
+
+function support_agent_has_live_completion(array $payload): bool
+{
+    $events=$payload['live']['eventos']??[];if(!is_array($events)||!$events)return false;
+    foreach($events as $event){$type=strtolower((string)($event['tipo']??''));if($type!==''&&(str_contains($type,'oferta')||str_contains($type,'ficou')||str_contains($type,'assistiu')||str_contains($type,'acessou')||str_contains($type,'live')))return true;}
+    return false;
+}
+
+function support_agent_lesson_completed_by_order(array $payload,int $order): bool
+{
+    $lessons=$payload['curso']['aulas']??[];if(!is_array($lessons))return false;
+    foreach($lessons as $lesson){
+        $title=strtolower((string)($lesson['titulo']??''));
+        $matchesOrder=(int)($lesson['ordem']??0)===$order;
+        $matchesTitle=(bool)preg_match('/\baula\s*0?'.preg_quote((string)$order,'/').'\b/',$title);
+        if(($matchesOrder||$matchesTitle)&&($lesson['status']??'')==='completed')return true;
+    }
+    return false;
+}
+
+function support_agent_join_pt(array $items): string
+{
+    $items=array_values(array_filter(array_map('trim',$items),static fn($v)=>$v!==''));
+    $count=count($items);if($count===0)return '';if($count===1)return $items[0];if($count===2)return $items[0].' e '.$items[1];
+    return implode(', ',array_slice($items,0,-1)).' e '.$items[$count-1];
+}
+
+function support_agent_missing_lesson_labels(array $missing): array
+{
+    $labels=[];
+    foreach($missing as $m){
+        if(!is_array($m))continue;
+        $order=(int)($m['ordem']??0);$title=trim((string)($m['titulo']??''));
+        if($order>0)$labels[]='aula '.$order;
+        elseif($title!=='')$labels[]=$title;
+    }
+    return array_values(array_unique($labels));
+}
+
+function support_agent_certificate_answer(array $payload): string
+{
+    $cert=$payload['certificado']??[];$course=$payload['curso']??[];$student=$payload['aluno']??[];$links=$payload['links']??[];
+    $name=trim((string)($student['nome']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+    $prefix=$first!==''?$first.', ':'';
+    if(!empty($cert['tem_certificado_emitido'])){
+        $url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));
+        if($url!=='')return $prefix."seu certificado ja foi emitido. Vou deixar o acesso direto abaixo:\n".$url;
+        $emit=trim((string)($cert['link_emitir']??''));return $prefix."nao encontrei um PDF ou link pronto do seu certificado salvo no sistema. Isso normalmente significa que voce ainda precisa emitir pela tela de certificado. Acesse abaixo e confirme seus dados usando a senha da aula 5 e a senha da aula ao vivo quando forem solicitadas.\n".$emit;
+    }
+    $required=(int)($course['aulas_obrigatorias']??0);$done=(int)($course['aulas_concluidas']??0);$missing=$course['aulas_faltantes_obrigatorias']??($cert['criterios_e_pendencias']['aulas_faltantes']??[]);
+    $lessonsOk=$required>0&&$done>=$required;$liveOk=support_agent_has_live_completion($payload);$lesson5Ok=support_agent_lesson_completed_by_order($payload,5);
+    if($lessonsOk&&$liveOk&&$lesson5Ok){
+        $url=trim((string)($cert['link_emitir']??''));if($url!=='')return $prefix."analisei seu progresso: as aulas obrigatorias estao concluidas, a aula 5 consta como concluida e encontrei registro de live/aula ao vivo. Agora voce precisa emitir o certificado pela tela abaixo, usando a senha da aula 5 e a senha da aula ao vivo quando forem solicitadas.\n".$url;
+    }
+    $pending=[];$missingLabels=is_array($missing)?support_agent_missing_lesson_labels($missing):[];
+    if($required<=0)$pending[]='confirmar a lista de aulas obrigatorias no seu cadastro';
+    elseif(!$lessonsOk)$pending[]=$missingLabels?('concluir '.support_agent_join_pt($missingLabels)):("concluir as aulas obrigatorias que faltam ({$done}/{$required})");
+    if(!$liveOk)$pending[]='assistir a aula ao vivo';
+    if(!$lesson5Ok&&!in_array('aula 5',$missingLabels,true))$pending[]='concluir a aula 5, onde fica uma parte da senha';
+    $trail=trim((string)($links['area_do_aluno']??''));if($trail==='')$trail=trim((string)($links['acesso_direto_area_membros']??''));
+    $msg=$prefix."seu certificado ainda nao aparece como emitido. Para liberar a emissao, falta ".support_agent_join_pt($pending?:['concluir os requisitos do certificado']).". Depois disso, use a senha completa: a parte da aula 5 junto com a parte da aula ao vivo.";
+    if($trail!=='')$msg.="\n\nPara finalizar as aulas, acesse por aqui:\n".$trail;
+    return $msg;
+}
+
+function support_agent_certificate_flow(PDO $pdo,int $conversationId,int $messageId,array $conv,array $payload,string $body,bool $firstAgentReply): bool
+{
+    $cert=$payload['certificado']??[];$already=!empty($cert['tem_certificado_emitido']);
+    if($already){$url=trim((string)($cert['pdf_url']??''));if($url==='')$url=trim((string)($cert['link_verificacao']??''));if($url!==''){$issued=[];foreach(($cert['registros']??[]) as $r){if(($r['status']??'')==='emitido'){$issued=$r;break;}}support_chat_dispatch_certificate_event($pdo,(int)$conv['user_id'],['codigo_uid'=>$issued['codigo_uid']??'','course'=>$issued['course']??'','emitido_em'=>$issued['emitido_em']??'','pdf_url'=>$url,'id'=>$issued['id']??null],'agente_suporte_envio');}support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);support_agent_send_answer($pdo,$conversationId,$url!==''?"Seu certificado ja esta emitido. Vou deixar o link abaixo:\n".$url:'Seu certificado ja consta como emitido, mas nao encontrei o link salvo. Vou encaminhar para a equipe conferir.',$firstAgentReply);return true;}
+    $missing=support_agent_certificate_answer($payload);
+    $eligible=(int)($payload['curso']['aulas_obrigatorias']??0)>0&&(int)($payload['curso']['aulas_concluidas']??0)>=(int)($payload['curso']['aulas_obrigatorias']??0)&&support_agent_has_live_completion($payload)&&support_agent_lesson_completed_by_order($payload,5);
+    if(!$eligible){support_agent_send_answer($pdo,$conversationId,$missing,$firstAgentReply);return true;}
+    $password=support_agent_certificate_input_password($body);$expected=support_agent_certificate_expected_password($pdo,(int)$conv['user_id']);
+    if($expected===''||$password===''||support_agent_is_certificate_request($password)){support_agent_send_answer($pdo,$conversationId,'Voce ja cumpre os criterios para emitir o certificado. Me envie a senha do certificado para eu validar e gerar o link.',$firstAgentReply);return true;}
+    if(!hash_equals($expected,$password)){try{disparar_webhooks('CERT_SENHA_ERRADA',(int)$conv['user_id'],['motivo'=>'senha_incorreta','origem'=>'agente_suporte']);}catch(Throwable $ignored){}support_agent_send_answer($pdo,$conversationId,'Essa senha nao conferiu. Verifique a senha da aula 5 e da aula ao vivo e me envie novamente.',$firstAgentReply);return true;}
+    $issued=support_agent_generate_certificate($pdo,(int)$conv['user_id']);$url=trim((string)($issued['pdf_url']??''));if($url==='')$url=trim((string)($issued['link_verificacao']??''));
+    support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_certificado',['url_found'=>$url!=='' ? 1 : 0]);
+    support_agent_send_answer($pdo,$conversationId,"Pronto, gerei seu certificado e disparei o gatilho de certificado emitido. Vou deixar o link abaixo:\n".$url,$firstAgentReply);return true;
+}
+
+function support_agent_group_answer(array $payload): string
+{
+    $link=trim((string)($payload['links']['link_grupo_configurado']??''));if($link===''){$groups=$payload['links']['grupos_whatsapp']??[];if(is_array($groups)&&isset($groups[0]['invite_url']))$link=trim((string)$groups[0]['invite_url']);}
+    if($link==='')return 'Nao encontrei um link de grupo configurado para a sua turma. Vou encaminhar para a equipe conferir.';
+    return "Aqui esta o link do grupo da sua turma:\n".$link;
+}
+
+function support_agent_handle_student_message(PDO $pdo,int $conversationId,int $messageId): void
+{
+    $cfg=support_agent_config($pdo);if(!$cfg['enabled'])return;
+    if(!support_agent_claim_message($pdo,$conversationId,$messageId))return;
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv||($conv['stage']??'')==='human'||($conv['status']??'')==='closed'||trim((string)($conv['assigned_name']??''))!==''){support_agent_finish_message($pdo,$messageId,'skipped');return;}
+    $st=$pdo->prepare("SELECT * FROM support_messages WHERE id=:id AND conversation_id=:c LIMIT 1");$st->execute(['id'=>$messageId,'c'=>$conversationId]);$msg=$st->fetch(PDO::FETCH_ASSOC);if(!$msg||($msg['sender_type']??'')!=='student'){support_agent_finish_message($pdo,$messageId,'skipped');return;}
+    try{
+        $pause=(int)($cfg['pause_seconds']??0);if($pause>0){sleep($pause);$newer=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='student' AND id>:id");$newer->execute(['c'=>$conversationId,'id'=>$messageId]);if((int)$newer->fetchColumn()>0){support_agent_finish_message($pdo,$messageId,'skipped');return;}}
+        $body=trim((string)($msg['body']??''));$type=(string)($msg['message_type']??'text');
+        if(support_agent_is_human_request($body)){support_agent_handoff($pdo,$conversationId,'Aluno pediu atendimento humano.',$cfg);support_agent_finish_message($pdo,$messageId);return;}
+        if(in_array($type,['image','video','file'],true)){support_agent_handoff($pdo,$conversationId,'Aluno enviou imagem/video/arquivo.', $cfg);support_agent_finish_message($pdo,$messageId);return;}
+        if($type==='audio'){$body=support_agent_transcribe_audio($pdo,$cfg,$msg);if($body===''){support_agent_handoff($pdo,$conversationId,'Audio sem transcricao confiavel.',$cfg);support_agent_finish_message($pdo,$messageId);return;}$pdo->prepare("UPDATE support_messages SET body=:b,metadata_json=:m WHERE id=:id")->execute(['b'=>'Transcricao do audio: '.$body,'m'=>json_encode(['transcription'=>$body],JSON_UNESCAPED_UNICODE),'id'=>$messageId]);}
+        if($type==='text'&&support_agent_is_live_problem($body)){
+            $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
+            $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);
+            if(support_agent_live_is_calendar_today($payload)){
+                support_agent_handoff($pdo,$conversationId,'Aluno relatou problema para assistir a aula ao vivo no dia da live.',$cfg);
+                support_agent_finish_message($pdo,$messageId);return;
+            }
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','problema_aula_ao_vivo',['status_data_live'=>(string)($payload['live']['status_data_live']['status']??'')]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_live_problem_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        $hadClosePrompt=support_chat_previous_close_prompt($pdo,$conversationId,$messageId);
+        if(support_agent_is_closing_message($body)&&$hadClosePrompt){
+            support_chat_close_with_feedback($pdo,$conversationId,'bot','Agente de suporte',true);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(support_agent_is_deferred_no_help($body)){
+            $name=trim((string)($conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?'Combinado, '.$first.'. ':'Combinado. ').'Fique a vontade para assistir as aulas no seu ritmo. Quando precisar, e so me chamar por aqui.',false,false,true);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(support_agent_is_closing_message($body)||support_agent_is_resolution_update($body)){
+            $name=trim((string)($conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?'Que otimo, '.$first.'. ':'Que otimo. ').'Posso ajudar com mais alguma coisa?',false,false);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        $agentCount=$pdo->prepare("SELECT COUNT(*) FROM support_messages WHERE conversation_id=:c AND sender_type='bot' AND sender_id='support_agent' AND id<:id");$agentCount->execute(['c'=>$conversationId,'id'=>$messageId]);$firstAgentReply=((int)$agentCount->fetchColumn())===0;
+        $memSt=$pdo->prepare("SELECT * FROM support_agent_memory WHERE conversation_id=:c");$memSt->execute(['c'=>$conversationId]);$memory=$memSt->fetch(PDO::FETCH_ASSOC)?:['summary'=>'','token_count'=>0];
+        $payload=support_agent_user_payload($pdo,(int)$conv['user_id']);
+        if($type==='text'&&support_agent_is_greeting_only($body)){
+            $name=trim((string)($payload['aluno']['nome']??$conv['user_name']??''));$first=$name!==''?explode(' ',$name)[0]:'';
+            support_agent_send_answer($pdo,$conversationId,($first!==''?$first.', ':'').'oi. Como posso ajudar?',$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if($type==='text'&&support_agent_is_lesson_sequence_problem($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_sequencia_aulas',['aulas_concluidas'=>(int)($payload['curso']['aulas_concluidas']??0),'aulas_obrigatorias'=>(int)($payload['curso']['aulas_obrigatorias']??0)]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_lesson_sequence_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if($type==='text'&&support_agent_is_course_access_problem($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_acesso_curso',['expirado'=>!empty($payload['acesso']['expirado']),'permitido'=>!empty($payload['acesso']['permitido']),'vitalicio'=>!empty($payload['acesso']['vitalicio'])]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_course_access_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(empty($cfg['multi'])&&$type==='text'&&support_agent_is_live_access_question($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','orientacao_aula_ao_vivo',['status_data_live'=>(string)($payload['live']['status_data_live']['status']??'')]);
+            support_agent_send_answer($pdo,$conversationId,support_agent_live_access_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        $certificateContext=support_agent_is_certificate_request($body)||support_agent_recent_certificate_context($pdo,$conversationId,$messageId);
+        if(empty($cfg['multi'])&&$cfg['certificate']&&$certificateContext){
+            support_agent_certificate_flow($pdo,$conversationId,$messageId,$conv,$payload,$body,$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(empty($cfg['multi'])&&!$cfg['certificate']&&support_agent_is_certificate_request($body)){
+            $answer=support_agent_certificate_answer($payload);
+            support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(empty($cfg['multi'])&&$cfg['group']&&support_agent_is_group_request($body)){
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','envio_link_grupo');
+            support_agent_send_answer($pdo,$conversationId,support_agent_group_answer($payload),$firstAgentReply);
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);support_agent_finish_message($pdo,$messageId);return;
+        }
+        $recent=array_values(array_filter(support_chat_messages($pdo,$conversationId,max(0,$messageId-25)),static fn($m)=>(int)($m['id']??0)<$messageId));$memorySummary=(string)($memory['summary']??'');$aiPayload=$payload;$estimated=support_agent_estimate_context_tokens($aiPayload,$memorySummary,$body,$recent);
+        if($estimated>$cfg['max_tokens']){
+            $aiPayload=support_agent_compact_payload_for_ai($payload);
+            $recent=array_slice($recent,-8);
+            $memorySummary=mb_substr($memorySummary,-3000);
+            $estimated=support_agent_estimate_context_tokens($aiPayload,$memorySummary,$body,$recent);
+            support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte','contexto_compactado',['estimated_tokens'=>$estimated,'limit'=>(int)$cfg['max_tokens']]);
+        }
+        if($estimated>$cfg['max_tokens']){
+            support_agent_handoff($pdo,$conversationId,'Contexto acima do limite de tokens mesmo apos compactacao.',$cfg);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        if(!empty($cfg['multi'])&&support_agent_multi_flow($pdo,$conversationId,$messageId,$conv,$cfg,$aiPayload,$body,$firstAgentReply,$recent,$memorySummary,$estimated)){
+            $pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);
+            support_agent_finish_message($pdo,$messageId);return;
+        }
+        $system="Voce e um agente de atendimento, vendas e suporte tecnico da area de membros. Use estritamente o payload do aluno atual. Nunca revele dados de outro aluno. A mensagem do aluno que voce deve responder agora esta em mensagem_atual; historico_recente e memoria servem apenas como contexto, nao repita nem trate como nova pergunta. Se mensagem_atual for apenas saudacao curta, responda somente a saudacao e pergunte como pode ajudar; nao use intencoes antigas do historico. Cumprimente somente se primeira_resposta_do_agente=true; se for false, responda direto sem 'ola', 'oi', 'bom dia', 'boa tarde' ou 'boa noite'. Responda apenas o que tiver certeza pelo contexto. Se o pedido nao estiver nos prompts nem no payload/banco, action=handoff. Estilo de conversa: nao use Markdown, listas com hifen, tracos longos ou negrito com dois asteriscos. Se destacar uma palavra, use no maximo um asterisco antes e um depois, como *assim*. Regra critica de acesso ao curso: antes de falar de acesso vitalicio, confira payload_aluno.acesso. Se acesso.permitido=true e acesso.expirado=false, o aluno ainda esta no periodo gratuito; oriente acesso/login com links.acesso_direto_area_membros ou links.area_do_aluno. Se acesso.expirado=true e acesso.vitalicio=false, explique que o periodo gratuito encerrou em acesso.vence_em_br e envie acesso.link_liberar_acesso_vitalicio. Regra critica de aulas bloqueadas: se o aluno disser que uma aula nao liberou, confira curso.aulas_concluidas, curso.aulas_faltantes_obrigatorias e curso.aulas; quando houver aula anterior pendente, nao peca mensagem de erro, apenas oriente assistir pelo menos 80% do video no YouTube; se nao liberar automaticamente, clicar no botao Concluir no fim da aula, na parte de baixo, ate aparecer status de concluido. Regra critica de datas: payload_aluno.contexto_atual.agora_iso/agora_br contem a data atual em Sao Paulo. Antes de falar de live/aula ao vivo, compare com payload_aluno.live.status_data_live. Se o aluno perguntar onde assistir a live, acesso, link, senha da live ou segunda parte da senha, e status_data_live.status for hoje ou futura, responda com a data e diga que a equipe comunica e envia o acesso no grupo no dia do evento; nao use handoff para esse caso. Se o aluno relatar problema para assistir/acessar a aula ao vivo, compare data_live_iso com agora_iso pelo dia calendario: se for hoje, action=handoff para suporte humano; se nao for hoje e for futura, diga que a aula nao e hoje, informe a data e diga que o acesso sera enviado no grupo no dia da aula; se for passada, diga que ja passou e sugira reagendamento. Se status_data_live.status=passada, e proibido dizer que a live vai acontecer, esta marcada, sera ou comeca nessa data; diga que a data cadastrada ja passou e, se apropriado, ofereca reagendamento.opcoes ou action=handoff. Se status=ausente/invalida, nao invente data. Certificado: se a pergunta for sobre certificado, respeite a funcao certificado ativa; quando desativada, apenas oriente pelo link de emissao. Para live, use status_data_live, data_live_iso, data_live_br e eventos de live do payload. Para grupos e acesso, use payload_aluno.links, link_grupo_configurado e payload_aluno.variaveis_configuradas. Use payload_aluno.compras para reconhecer compras/produtos do aluno e evitar respostas comerciais erradas. Se a resposta ficar grande, escreva naturalmente em blocos curtos; o sistema pode dividir em mensagens com pausa. Para reagendamento, so confirme datas listadas em reagendamento.opcoes. Funcoes ativas: suporte_basico=".($cfg['basic']?'sim':'nao').", vendas=".($cfg['sales']?'sim':'nao').", suporte_tecnico=".($cfg['technical']?'sim':'nao').", reagendamento=".($cfg['reschedule']?'sim':'nao').", certificado=".($cfg['certificate']?'sim':'nao').", grupo=".($cfg['group']?'sim':'nao').". Prompts: suporte={$cfg['prompt_basic']} vendas={$cfg['prompt_sales']} tecnico={$cfg['prompt_technical']} reagendamento={$cfg['prompt_reschedule']} certificado={$cfg['prompt_certificate']} grupo={$cfg['prompt_group']}";
+        $input=[['role'=>'system','content'=>$system],['role'=>'user','content'=>json_encode(['mensagem_atual'=>$body,'primeira_resposta_do_agente'=>$firstAgentReply,'memoria'=>$memorySummary,'payload_aluno'=>$aiPayload,'historico_recente'=>$recent],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]];
+        $res=support_agent_call_openai($cfg,$input);$action=(string)($res['action']??'handoff');$confidence=(float)($res['confidence']??0);
+        if($action==='confirm_reschedule'&&$cfg['reschedule']){$slot=(string)($res['selected_reschedule_iso']??'');if($slot!==''&&support_agent_reschedule_live($pdo,(int)$conv['user_id'],$slot))$res['answer']=trim((string)$res['answer'])?:'Pronto, sua aula ao vivo foi reagendada.';else $action='handoff';}
+        support_chat_log_event($pdo,'ai_action',$conversationId,(int)$conv['user_id'],'bot','support_agent','Agente de suporte',(string)($res['intent']??$action),['action'=>$action,'confidence'=>$confidence]);
+        if($action==='handoff'||$confidence<0.55){support_agent_handoff($pdo,$conversationId,(string)($res['reason']??'Baixa confianca.'),$cfg);support_agent_finish_message($pdo,$messageId);}
+        else{$answer=support_agent_normalize_answer_for_payload(trim((string)$res['answer'])?:'Consegui analisar seu caso, mas vou precisar de mais detalhes.',$payload);support_agent_send_answer($pdo,$conversationId,$answer,$firstAgentReply);$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}
+        $pdo->prepare("INSERT INTO support_agent_memory(conversation_id,summary,token_count,last_intent,last_confidence) VALUES(:c,:s,:t,:i,:cf) ON DUPLICATE KEY UPDATE summary=VALUES(summary),token_count=VALUES(token_count),last_intent=VALUES(last_intent),last_confidence=VALUES(last_confidence)")->execute(['c'=>$conversationId,'s'=>mb_substr((string)($res['memory_summary']??''),0,12000),'t'=>min(999999,(int)($res['tokens_estimate']??$estimated)),'i'=>mb_substr((string)($res['intent']??''),0,80),'cf'=>$confidence]);
+        support_agent_finish_message($pdo,$messageId);
+    }catch(Throwable $e){support_agent_finish_message($pdo,$messageId,'error');support_agent_handoff($pdo,$conversationId,'Erro do agente: '.$e->getMessage(),$cfg);}
+}
+
+function support_chat_blank_graph(): array
+{
+    return ['schemaVersion'=>1,'nodes'=>[
+        ['id'=>'trigger_start','type'=>'trigger','x'=>80,'y'=>150,'config'=>['label'=>'Aluno chamou no suporte']],
+        ['id'=>'typing_start','type'=>'typing','x'=>350,'y'=>150,'config'=>['label'=>'Digitando','seconds'=>2]],
+        ['id'=>'message_start','type'=>'message','x'=>620,'y'=>150,'config'=>['label'=>'Boas-vindas','text'=>'Olá {primeiro_nome}! Já recebemos sua mensagem. Como podemos ajudar?','buttons'=>[]]],
+    ],'edges'=>[['id'=>'e1','source'=>'trigger_start','target'=>'typing_start','sourceHandle'=>'default'],['id'=>'e2','source'=>'typing_start','target'=>'message_start','sourceHandle'=>'default']],'viewport'=>['x'=>50,'y'=>40,'zoom'=>1]];
+}
+
+function support_chat_run_automation(PDO $pdo,int $conversationId): void
+{
+    $conv=support_chat_detail($pdo,$conversationId);if(!$conv)return;
+    $flows=$pdo->query("SELECT * FROM support_automation_flows WHERE status='active' ORDER BY id LIMIT 10")->fetchAll(PDO::FETCH_ASSOC)?:[];
+    foreach($flows as $flow){
+        $graph=json_decode((string)$flow['graph_json'],true);if(!is_array($graph))continue;$nodes=[];foreach($graph['nodes']??[] as $n)$nodes[$n['id']]=$n;
+        $next=[];foreach($graph['edges']??[] as $e)$next[$e['source']][$e['sourceHandle']??'default']=$e['target'];
+        $current=null;foreach($nodes as $n)if(($n['type']??'')==='trigger'){$current=$n['id'];break;}if(!$current)continue;
+        $log=[];$steps=0;$pdo->prepare("INSERT INTO support_automation_runs(flow_id,conversation_id) VALUES(:f,:c)")->execute(['f'=>$flow['id'],'c'=>$conversationId]);$runId=(int)$pdo->lastInsertId();
+        while($current&&isset($nodes[$current])&&$steps++<30){$n=$nodes[$current];$cfg=$n['config']??[];$handle='default';$log[]=['node'=>$current,'type'=>$n['type'],'at'=>date('c')];
+            if($n['type']==='typing'){support_chat_typing($pdo,$conversationId,'admin','Assistente virtual');$seconds=max(0,min(5,(int)($cfg['seconds']??1)));if($seconds)usleep($seconds*1000000);}
+            elseif($n['type']==='message'||$n['type']==='ai'){$text=(string)($cfg['text']??($n['type']==='ai'?'Olá! Sou o assistente virtual. Conte em poucas palavras como podemos ajudar.':''));$text=str_replace('{primeiro_nome}',explode(' ',trim((string)$conv['user_name']))[0]??'',$text);support_chat_send($pdo,$conversationId,'bot','automation','Assistente virtual',$text);}
+            elseif($n['type']==='support_chat'){$text=trim((string)($cfg['text']??''));if($text==='')$text='Recebemos sua mensagem. Em instantes vamos continuar seu atendimento por aqui.';$text=str_replace('{primeiro_nome}',explode(' ',trim((string)$conv['user_name']))[0]??'',$text);$messageId=support_chat_send($pdo,$conversationId,'bot','automation','Central de suporte',$text);try{support_chat_push_student($pdo,$conversationId,$messageId,$text);}catch(Throwable $ignored){}if(($cfg['handoff']??'ia')==='human'){$pdo->prepare("UPDATE support_conversations SET status='pending',stage='human',priority=IF(priority='normal','high',priority),notes=CONCAT(COALESCE(notes,''),IF(COALESCE(notes,'')='','',\"\n\"),:n) WHERE id=:id")->execute(['n'=>'Automacao transferiu para humano pelo bloco Chat central.','id'=>$conversationId]);support_chat_log_event($pdo,'human_handoff',$conversationId,0,'automation','support_flow','Automacao','handoff',['source'=>'support_chat_block']);}else{$pdo->prepare("UPDATE support_conversations SET stage='agent' WHERE id=:id AND stage<>'human'")->execute(['id'=>$conversationId]);}}
+            elseif($n['type']==='condition'){$field=(string)($cfg['field']??'stage');$expected=mb_strtolower(trim((string)($cfg['value']??'')));$actual=mb_strtolower((string)($conv[$field]??''));$handle=str_contains($actual,$expected)?'yes':'no';}
+            $current=$next[$current][$handle]??null;
+        }
+        $pdo->prepare("UPDATE support_automation_runs SET status='completed',log_json=:l,finished_at=NOW() WHERE id=:id")->execute(['l'=>json_encode($log,JSON_UNESCAPED_UNICODE),'id'=>$runId]);
+    }
+}

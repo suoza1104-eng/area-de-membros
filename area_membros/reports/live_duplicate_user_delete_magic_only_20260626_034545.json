@@ -1,0 +1,138 @@
+{
+    "generated_at": "2026-06-26 03:45:42",
+    "deleted_magic_link_only": [
+        {
+            "user": {
+                "id": 43213,
+                "nome": "Lucival Carmo",
+                "email": "lucivalcarmo2@gmail.com",
+                "telefone": "5591985411434"
+            },
+            "magic_links_deleted": 2,
+            "live_receipts_marked_error": 2,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 43207,
+                "nome": "Danielly Gomes de Lima",
+                "email": "danielly29lima@gmail.com",
+                "telefone": "5563993289733"
+            },
+            "magic_links_deleted": 2,
+            "live_receipts_marked_error": 2,
+            "tags_deleted": 2,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 43176,
+                "nome": "Andrezza Guanabara",
+                "email": "andrezzagdasilva@gmail.com.nb",
+                "telefone": "5511993773793"
+            },
+            "magic_links_deleted": 3,
+            "live_receipts_marked_error": 3,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 42683,
+                "nome": "Gutemberg Barbosa Miranda da Silva",
+                "email": "hugoboy714@gmail.com",
+                "telefone": "5581991748311"
+            },
+            "magic_links_deleted": 1,
+            "live_receipts_marked_error": 1,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 42117,
+                "nome": "dfdf",
+                "email": "dfd@ghgf.com",
+                "telefone": "5522222222222"
+            },
+            "magic_links_deleted": 1,
+            "live_receipts_marked_error": 1,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 41996,
+                "nome": "kath teste",
+                "email": "kkkk@gmail.com",
+                "telefone": "5566666666666"
+            },
+            "magic_links_deleted": 2,
+            "live_receipts_marked_error": 2,
+            "tags_deleted": 2,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 41992,
+                "nome": "Jose Dantas",
+                "email": "jdantasneto1965@gmail.com",
+                "telefone": "5582982272525"
+            },
+            "magic_links_deleted": 2,
+            "live_receipts_marked_error": 2,
+            "tags_deleted": 2,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 41463,
+                "nome": "Osmane",
+                "email": "sgtoscabral@hotmail.com",
+                "telefone": "5521979041633"
+            },
+            "magic_links_deleted": 1,
+            "live_receipts_marked_error": 1,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 41185,
+                "nome": "Emerson",
+                "email": "Kskdkd@jeid.com",
+                "telefone": "5531984884848"
+            },
+            "magic_links_deleted": 1,
+            "live_receipts_marked_error": 1,
+            "tags_deleted": 1,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 41070,
+                "nome": "Emerson Leite",
+                "email": "souza1104@dfdfd.com",
+                "telefone": "5533333333333"
+            },
+            "magic_links_deleted": 3,
+            "live_receipts_marked_error": 3,
+            "tags_deleted": 2,
+            "deleted": 1
+        },
+        {
+            "user": {
+                "id": 40872,
+                "nome": "Edmilson Pinheiro",
+                "email": "edmilson.psilva.ep@gmail.com",
+                "telefone": "5513997392651"
+            },
+            "magic_links_deleted": 4,
+            "live_receipts_marked_error": 4,
+            "tags_deleted": 2,
+            "deleted": 1
+        }
+    ],
+    "skipped": []
+}

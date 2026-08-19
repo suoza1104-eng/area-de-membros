@@ -118,8 +118,9 @@ function ae_gerar_ou_atualizar_certificado(PDO $pdo, array $aluno): array {
         $upd->execute([':pdf_url' => $pdfUrl, ':id' => (int)$cert['id']]);
         $cert['pdf_url'] = $pdfUrl;
 
-        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin'); } catch (Throwable $e) {}
         $pdo->commit();
+
+        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin'); } catch (Throwable $e) {}
         return $cert;
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

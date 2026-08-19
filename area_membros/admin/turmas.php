@@ -4,81 +4,16 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 proteger_admin();
 $pdo = getPDO();
+course_access_ensure_schema($pdo);
 
-/** Verifica se uma coluna existe em uma tabela. */
+function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
 function col_exists(PDO $pdo, string $table, string $col): bool {
     try {
         $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");
         $st->execute([':c' => $col]);
         return (bool)$st->fetch();
-    } catch (Throwable $e) {
-        return false;
-    }
-}
-/**
- * Parseia o campo de filtro de tags da turma.
- * - Compatível com legado CSV (inclui_any)
- * - Novo formato: JSON (include_any, exclude_any, exclude_cert, exclude_zero)
- */
-function parse_live_filter_cfg(?string $raw): array {
-    $raw = trim((string)$raw);
-    $cfg = [
-        'include_any'  => [],
-        'exclude_any'  => [],
-        'exclude_cert' => 0,
-        'exclude_zero' => 0,
-    ];
-    if ($raw === '') return $cfg;
-
-    // JSON?
-    if ($raw[0] === '{' || $raw[0] === '[') {
-        $j = json_decode($raw, true);
-        if (is_array($j)) {
-            if (isset($j['include_any']) && is_array($j['include_any'])) {
-                $cfg['include_any'] = array_values(array_filter(array_map('intval', $j['include_any']), fn($v)=>$v>0));
-            }
-            if (isset($j['exclude_any']) && is_array($j['exclude_any'])) {
-                $cfg['exclude_any'] = array_values(array_filter(array_map('intval', $j['exclude_any']), fn($v)=>$v>0));
-            }
-            if (isset($j['exclude_cert'])) $cfg['exclude_cert'] = (int)(!!$j['exclude_cert']);
-            if (isset($j['exclude_zero'])) $cfg['exclude_zero'] = (int)(!!$j['exclude_zero']);
-            return $cfg;
-        }
-    }
-
-    // Legado CSV = include_any
-    $ids = [];
-    foreach (explode(',', $raw) as $p) {
-        $v = (int)trim($p);
-        if ($v > 0) $ids[] = $v;
-    }
-    $cfg['include_any'] = array_values(array_unique($ids));
-    return $cfg;
-}
-
-function encode_live_filter_cfg(array $cfg): ?string {
-    $out = [
-        'include_any'  => array_values(array_filter(array_map('intval', $cfg['include_any'] ?? []), fn($v)=>$v>0)),
-        'exclude_any'  => array_values(array_filter(array_map('intval', $cfg['exclude_any'] ?? []), fn($v)=>$v>0)),
-        'exclude_cert' => (int)(!!($cfg['exclude_cert'] ?? 0)),
-        'exclude_zero' => (int)(!!($cfg['exclude_zero'] ?? 0)),
-    ];
-    // Se tudo vazio/zero, mantém NULL pra não poluir
-    if (!$out['include_any'] && !$out['exclude_any'] && $out['exclude_cert']===0 && $out['exclude_zero']===0) {
-        return null;
-    }
-    return json_encode($out, JSON_UNESCAPED_UNICODE);
-}
-
-/** Verifica se uma tabela existe. */
-function table_exists(PDO $pdo, string $table): bool {
-    try {
-        $st = $pdo->prepare("SHOW TABLES LIKE :t");
-        $st->execute([':t' => $table]);
-        return (bool)$st->fetchColumn();
-    } catch (Throwable $e) {
-        return false;
-    }
+    } catch (Throwable $e) { return false; }
 }
 
 function dt_local_value(?string $dbValue): string {
@@ -88,436 +23,771 @@ function dt_local_value(?string $dbValue): string {
     return date('Y-m-d\TH:i', $ts);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id     = (int)($_POST['id'] ?? 0);
-    $codigo = trim((string)($_POST['codigo'] ?? ''));
-    $ji     = (string)($_POST['janela_inicio'] ?? '');
-    $jf     = (string)($_POST['janela_fim'] ?? '');
-    $dl     = (string)($_POST['data_live'] ?? '');
-    $url    = trim((string)($_POST['webhook_live_url'] ?? ''));
-    $delay  = (int)($_POST['delay_ms'] ?? 500);
-    $codigoLive = trim((string)($_POST['codigo_live'] ?? ''));
-    $codigoLive = ($codigoLive === '') ? null : $codigoLive;
+function dt_br_short(?string $dbValue): string {
+    if (!$dbValue) return '—';
+    $ts = strtotime($dbValue);
+    return $ts ? date('d/m/Y H:i', $ts) : '—';
+}
 
-    $liveEnabled = isset($_POST['live_webhook_enabled']) ? 1 : 0;
-    $disparo     = (string)($_POST['live_disparo_data'] ?? '');
-    $includeSel = $_POST['live_include_tag_ids'] ?? ($_POST['live_filter_tag_ids'] ?? []);
-    $excludeSel = $_POST['live_exclude_tag_ids'] ?? [];
-    $excludeCert = isset($_POST['live_exclude_cert']) ? 1 : 0;
-    $excludeZero = isset($_POST['live_exclude_zero']) ? 1 : 0;
+function sort_ts(?string $dbValue): int {
+    if (!$dbValue) return 0;
+    $ts = strtotime($dbValue);
+    return $ts ? (int)$ts : 0;
+}
 
-    $jiDb   = $ji ? date('Y-m-d H:i:s', strtotime($ji)) : null;
-    $jfDb   = $jf ? date('Y-m-d H:i:s', strtotime($jf)) : null;
-    $dlDb   = $dl ? date('Y-m-d H:i:s', strtotime($dl)) : null;
-    $dispDb = $disparo ? date('Y-m-d H:i:s', strtotime($disparo)) : null;
+function carregar_status_disparos_live(PDO $pdo): array {
+    $status = [];
+    try {
+        $st = $pdo->query("
+            SELECT l.id AS dispatch_id,
+                   l.turma_id,
+                   l.status,
+                   l.started_at,
+                   l.finished_at,
+                   COALESCE(SUM(r.status IN ('pending','processing','sent','failed')), 0) AS elegiveis,
+                   COALESCE(SUM(r.status = 'sent'), 0) AS enviados,
+                   COALESCE(SUM(r.status IN ('pending','processing') OR (r.status = 'failed' AND r.attempts < 3)), 0) AS faltam,
+                   COALESCE(SUM(r.status = 'failed' AND r.attempts >= 3), 0) AS erros
+              FROM live_turma_dispatch_logs l
+              JOIN (
+                    SELECT turma_id, MAX(id) AS dispatch_id
+                      FROM live_turma_dispatch_logs
+                     WHERE turma_id IS NOT NULL
+                  GROUP BY turma_id
+              ) ultimo ON ultimo.dispatch_id = l.id
+         LEFT JOIN live_turma_dispatch_recipients r ON r.dispatch_id = l.id
+          GROUP BY l.id, l.turma_id, l.status, l.started_at, l.finished_at
+        ");
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $turmaId = (int)($row['turma_id'] ?? 0);
+            if ($turmaId <= 0) continue;
+            $status[$turmaId] = [
+                'dispatch_id' => (int)($row['dispatch_id'] ?? 0),
+                'status' => (string)($row['status'] ?? ''),
+                'started_at' => (string)($row['started_at'] ?? ''),
+                'finished_at' => (string)($row['finished_at'] ?? ''),
+                'elegiveis' => (int)($row['elegiveis'] ?? 0),
+                'enviados' => (int)($row['enviados'] ?? 0),
+                'faltam' => (int)($row['faltam'] ?? 0),
+                'erros' => (int)($row['erros'] ?? 0),
+            ];
+        }
+    } catch (Throwable $e) {}
+    return $status;
+}
 
-    // tags CSV
-    $tagsCsv = null;
-    // monta config avançada (JSON) e mantém compatível com legado
-    $cfg = [
-        'include_any'  => is_array($includeSel) ? array_values(array_filter(array_map('intval', $includeSel), fn($v)=>$v>0)) : [],
-        'exclude_any'  => is_array($excludeSel) ? array_values(array_filter(array_map('intval', $excludeSel), fn($v)=>$v>0)) : [],
-        'exclude_cert' => $excludeCert,
-        'exclude_zero' => $excludeZero,
-    ];
-    $tagsCsv = encode_live_filter_cfg($cfg);
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string)($_GET['acao'] ?? '') === 'status_disparos_live') {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    echo json_encode(['ok' => true, 'status' => carregar_status_disparos_live($pdo)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
 
-
-    if ($codigo === '' || !$jiDb || !$jfDb) {
-        // validação mínima (mantém simples)
-        header('Location: turmas.php');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'disparar_live_turma_manual') {
+    $turmaId = (int)($_POST['turma_id'] ?? 0);
+    $confirmarRedisparo = (string)($_POST['confirmar_redisparo'] ?? '') === '1';
+    if ($turmaId <= 0) {
+        header('Location: turmas.php?err=' . urlencode('Turma invalida para disparo manual.'));
         exit;
     }
 
-    // Detecta colunas opcionais da tabela turmas (blinda contra banco divergente)
-    $hasLiveEnabled = col_exists($pdo, 'turmas', 'live_webhook_enabled');
-    $hasDispDate    = col_exists($pdo, 'turmas', 'live_disparo_data');
-    $hasTagIds      = col_exists($pdo, 'turmas', 'live_filter_tag_ids');
-    $hasCreatedAt   = col_exists($pdo, 'turmas', 'created_at');
-    $hasLiveDisp    = col_exists($pdo, 'turmas', 'live_disparada');
-    $hasCodigoLive  = col_exists($pdo, 'turmas', 'codigo_live');
+    try {
+        $stTurmaDisparo = $pdo->prepare("SELECT codigo, data_live, live_disparada FROM turmas WHERE id = :id LIMIT 1");
+        $stTurmaDisparo->execute([':id' => $turmaId]);
+        $turmaDisparo = $stTurmaDisparo->fetch(PDO::FETCH_ASSOC);
+        if (!$turmaDisparo) {
+            header('Location: turmas.php?err=' . urlencode('Turma nao encontrada para disparo manual.'));
+            exit;
+        }
+
+        $liveTsDisparo = sort_ts($turmaDisparo['data_live'] ?? null);
+        if ($liveTsDisparo <= time()) {
+            header('Location: turmas.php?err=' . urlencode('A data da live ja encerrou ou nao foi definida.'));
+            exit;
+        }
+
+        $jaDisparada = (int)($turmaDisparo['live_disparada'] ?? 0) === 1;
+        if ($jaDisparada && !$confirmarRedisparo) {
+            header('Location: turmas.php?err=' . urlencode('Este aviso ja foi disparado. Confirme explicitamente para enviar novamente.'));
+            exit;
+        }
+
+        try {
+            $stFilaAtiva = $pdo->prepare("
+                SELECT 1
+                  FROM live_turma_dispatch_logs
+                 WHERE turma_id = :id
+                   AND status IN ('queued', 'iniciado', 'processando')
+                 LIMIT 1
+            ");
+            $stFilaAtiva->execute([':id' => $turmaId]);
+            if ($stFilaAtiva->fetchColumn()) {
+                header('Location: turmas.php?err=' . urlencode('Ja existe um disparo desta turma em andamento. Aguarde a conclusao antes de tentar novamente.'));
+                exit;
+            }
+        } catch (Throwable $e) {}
+
+        $GLOBALS['manual_live_turma_id'] = $turmaId;
+        ob_start();
+        require __DIR__ . '/../cron/processar_lives.php';
+        ob_end_clean();
+        $resultado = $GLOBALS['manual_live_turma_result'] ?? null;
+        if (!is_array($resultado) || empty($resultado['ok'])) {
+            $motivo = is_array($resultado) ? (string)($resultado['message'] ?? '') : '';
+            if ($motivo === '') $motivo = 'O disparo manual nao foi confirmado.';
+            header('Location: turmas.php?err=' . urlencode($motivo));
+            exit;
+        }
+
+        $stats = is_array($resultado['stats'] ?? null) ? $resultado['stats'] : [];
+        $pendentes = (int)($stats['pending'] ?? 0) + (int)($stats['processing'] ?? 0) + (int)($stats['retryable_failed'] ?? 0);
+        $resumo = sprintf(
+            '%s Elegiveis: %d; enviados: %d; pendentes: %d; falhas finais: %d.',
+            (string)($resultado['message'] ?? 'Disparo manual enfileirado.'),
+            (int)($stats['elegiveis'] ?? 0),
+            (int)($stats['sent'] ?? 0),
+            $pendentes,
+            (int)($stats['failed'] ?? 0)
+        );
+        header('Location: turmas.php?ok=' . urlencode($resumo));
+        exit;
+    } catch (Throwable $e) {
+        if (ob_get_level() > 0) ob_end_clean();
+        header('Location: turmas.php?err=' . urlencode('Erro no disparo manual: ' . $e->getMessage()));
+        exit;
+    }
+}
+
+// ===================== CLONE (pré-preenche formulário) =====================
+$cloneFill = null;
+if (isset($_GET['clone_fill'])) {
+    $srcId = (int)$_GET['clone_fill'];
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $srcId]);
+    $src = $st->fetch(PDO::FETCH_ASSOC);
+    if ($src) {
+        $baseCodigo = preg_replace('/_COPIA(_\d+)?$/', '', (string)$src['codigo']);
+        $newCodigo  = $baseCodigo . '_COPIA';
+        $suffix = 1;
+        while (true) {
+            $chk = $pdo->prepare("SELECT id FROM turmas WHERE codigo = :c LIMIT 1");
+            $chk->execute([':c' => $newCodigo]);
+            if (!$chk->fetchColumn()) break;
+            $newCodigo = $baseCodigo . '_COPIA_' . (++$suffix);
+        }
+        $cloneFill = $src;
+        $cloneFill['codigo'] = $newCodigo;
+        $cloneFill['id']     = 0; // força criação nova
+    }
+}
+
+// ===================== SAVE =====================
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $id          = (int)($_POST['id'] ?? 0);
+    $codigo      = trim((string)($_POST['codigo'] ?? ''));
+    $codigoLive  = trim((string)($_POST['codigo_live'] ?? ''));
+    $codigoLive  = ($codigoLive === '') ? null : $codigoLive;
+    $ji          = (string)($_POST['janela_inicio'] ?? '');
+    $jf          = (string)($_POST['janela_fim'] ?? '');
+    $dl          = (string)($_POST['data_live'] ?? '');
+    $senhaCert   = trim((string)($_POST['senha_certificado'] ?? ''));
+    $accessDeadlineEnabled = isset($_POST['access_deadline_enabled']) ? 1 : 0;
+    $accessDeadlineDays = max(1, min(3650, (int)($_POST['access_deadline_days'] ?? 30)));
+    $accessDeadlineStart = (string)($_POST['access_deadline_start'] ?? 'cadastro');
+    if (!in_array($accessDeadlineStart, ['cadastro', 'live'], true)) $accessDeadlineStart = 'cadastro';
+    $accessCountdownEnabled = isset($_POST['access_countdown_enabled']) ? 1 : 0;
+    $lifetimeCheckoutUrl = trim((string)($_POST['lifetime_checkout_url'] ?? ''));
+    $lifetimeOfferCodes = implode(',', course_access_offer_codes((string)($_POST['lifetime_offer_codes'] ?? '')));
+    $accessExpiredMessage = trim((string)($_POST['access_expired_message'] ?? ''));
+
+    $jiDb = $ji ? date('Y-m-d H:i:s', strtotime($ji)) : null;
+    $jfDb = $jf ? date('Y-m-d H:i:s', strtotime($jf)) : null;
+    $dlDb = $dl ? date('Y-m-d H:i:s', strtotime($dl)) : null;
+
+    if ($codigo === '' || !$jiDb || !$jfDb) {
+        header('Location: turmas.php'); exit;
+    }
+
+    $hasCodigoLive   = col_exists($pdo, 'turmas', 'codigo_live');
+    $hasCreatedAt    = col_exists($pdo, 'turmas', 'created_at');
+    $hasLiveDisp     = col_exists($pdo, 'turmas', 'live_disparada');
+    $hasSenhaCert    = col_exists($pdo, 'turmas', 'senha_certificado');
+
+    // Migration: cria coluna senha_certificado se não existir
+    if (!$hasSenhaCert) {
+        try { $pdo->exec("ALTER TABLE turmas ADD COLUMN senha_certificado VARCHAR(255) NOT NULL DEFAULT ''"); $hasSenhaCert = true; } catch (Throwable $e) {}
+    }
 
     if ($id > 0) {
-        // lê antigo para decidir se precisa resetar live_disparada
-        $old = null;
-        if ($hasLiveDisp) {
-            try {
-                $stOld = $pdo->prepare("SELECT data_live, webhook_live_url, live_webhook_enabled, live_disparo_data, live_disparada FROM turmas WHERE id = :id");
-                $stOld->execute([':id' => $id]);
-                $old = $stOld->fetch(PDO::FETCH_ASSOC) ?: null;
-            } catch (Throwable $e) { $old = null; }
-        }
-
-        $set = [];
-        $params = [':id' => $id];
-
-        // colunas base (existem no seu schema)
-        $set[] = "codigo = :c";        $params[':c']  = $codigo;
-        $set[] = "janela_inicio = :ji";$params[':ji'] = $jiDb;
-        $set[] = "janela_fim = :jf";   $params[':jf'] = $jfDb;
-        $set[] = "data_live = :dl";    $params[':dl'] = $dlDb;
-        $set[] = "webhook_live_url = :u"; $params[':u'] = ($url !== '' ? $url : null);
-        $set[] = "delay_ms = :d";      $params[':d']  = $delay;
-
+        $set = []; $params = [':id' => $id];
+        $set[] = "codigo = :c";         $params[':c']  = $codigo;
+        $set[] = "janela_inicio = :ji"; $params[':ji'] = $jiDb;
+        $set[] = "janela_fim = :jf";    $params[':jf'] = $jfDb;
+        $set[] = "data_live = :dl";     $params[':dl'] = $dlDb;
         if ($hasCodigoLive) { $set[] = "codigo_live = :cl"; $params[':cl'] = $codigoLive; }
+        if ($hasSenhaCert)  { $set[] = "senha_certificado = :sc"; $params[':sc'] = $senhaCert; }
+        $set[] = "access_deadline_enabled = :ade"; $params[':ade'] = $accessDeadlineEnabled;
+        $set[] = "access_deadline_days = :add"; $params[':add'] = $accessDeadlineDays;
+        $set[] = "access_deadline_start = :ads"; $params[':ads'] = $accessDeadlineStart;
+        $set[] = "access_countdown_enabled = :ace"; $params[':ace'] = $accessCountdownEnabled;
+        $set[] = "lifetime_checkout_url = :lcu"; $params[':lcu'] = $lifetimeCheckoutUrl ?: null;
+        $set[] = "lifetime_offer_codes = :loc"; $params[':loc'] = $lifetimeOfferCodes ?: null;
+        $set[] = "access_expired_message = :aem"; $params[':aem'] = $accessExpiredMessage ?: null;
 
-        if ($hasLiveEnabled) { $set[] = "live_webhook_enabled = :en"; $params[':en'] = $liveEnabled; }
-        if ($hasDispDate)    { $set[] = "live_disparo_data = :disp";  $params[':disp'] = $dispDb; }
-        if ($hasTagIds)      { $set[] = "live_filter_tag_ids = :tags";$params[':tags'] = $tagsCsv; }
-
-        // reset live_disparada se mudou algo relevante
-        if ($hasLiveDisp) {
-            $ld = 0;
-            if ($old) {
-                $changed = false;
-                if (($old['data_live'] ?? null) !== ($dlDb ?? null)) $changed = true;
-                if (($old['webhook_live_url'] ?? null) !== ($url !== '' ? $url : null)) $changed = true;
-                if ($hasLiveEnabled && (int)($old['live_webhook_enabled'] ?? 0) !== (int)$liveEnabled) $changed = true;
-                if ($hasDispDate && (($old['live_disparo_data'] ?? null) !== ($dispDb ?? null))) $changed = true;
-
-                $ld = $changed ? 0 : (int)($old['live_disparada'] ?? 0);
-            }
-            $set[] = "live_disparada = :ld";
-            $params[':ld'] = $ld;
-        }
-
-        $sql = "UPDATE turmas SET " . implode(",\n    ", $set) . " WHERE id = :id";
         try {
-            $pdo->prepare($sql)->execute($params);
+            $pdo->prepare("UPDATE turmas SET " . implode(", ", $set) . " WHERE id = :id")->execute($params);
         } catch (Throwable $e) {
-            $msg = 'Erro ao salvar turma.';
-            if (strpos((string)$e->getMessage(), '1062') !== false) {
-                $msg = 'Código da live já existe em outra turma.';
-            }
-            header('Location: turmas.php?err=' . urlencode($msg));
-            exit;
+            $msg = strpos((string)$e->getMessage(), '1062') !== false ? 'Código já existe em outra turma.' : 'Erro ao salvar turma.';
+            header('Location: turmas.php?err=' . urlencode($msg)); exit;
         }
     } else {
-        $cols = ["codigo","janela_inicio","janela_fim","data_live","webhook_live_url","delay_ms"];
-        $vals = [":c",":ji",":jf",":dl",":u",":d"];
-        $params = [
-            ':c'  => $codigo,
-            ':ji' => $jiDb,
-            ':jf' => $jfDb,
-            ':dl' => $dlDb,
-            ':u'  => ($url !== '' ? $url : null),
-            ':d'  => $delay,
-        ];
-
+        $cols = ["codigo", "janela_inicio", "janela_fim", "data_live"];
+        $vals = [":c", ":ji", ":jf", ":dl"];
+        $params = [':c'=>$codigo, ':ji'=>$jiDb, ':jf'=>$jfDb, ':dl'=>$dlDb];
         if ($hasCodigoLive) { $cols[] = "codigo_live"; $vals[] = ":cl"; $params[':cl'] = $codigoLive; }
-        if ($hasLiveEnabled) { $cols[] = "live_webhook_enabled"; $vals[] = ":en"; $params[':en'] = $liveEnabled; }
-        if ($hasDispDate)    { $cols[] = "live_disparo_data";    $vals[] = ":disp"; $params[':disp'] = $dispDb; }
-        if ($hasTagIds)      { $cols[] = "live_filter_tag_ids";  $vals[] = ":tags"; $params[':tags'] = $tagsCsv; }
-        if ($hasCreatedAt)   { $cols[] = "created_at";           $vals[] = "NOW()"; }
-        if ($hasLiveDisp)    { $cols[] = "live_disparada";        $vals[] = "0"; }
+        if ($hasSenhaCert)  { $cols[] = "senha_certificado"; $vals[] = ":sc"; $params[':sc'] = $senhaCert; }
+        $cols[] = "access_deadline_enabled"; $vals[] = ":ade"; $params[':ade'] = $accessDeadlineEnabled;
+        $cols[] = "access_deadline_days"; $vals[] = ":add"; $params[':add'] = $accessDeadlineDays;
+        $cols[] = "access_deadline_start"; $vals[] = ":ads"; $params[':ads'] = $accessDeadlineStart;
+        $cols[] = "access_countdown_enabled"; $vals[] = ":ace"; $params[':ace'] = $accessCountdownEnabled;
+        $cols[] = "lifetime_checkout_url"; $vals[] = ":lcu"; $params[':lcu'] = $lifetimeCheckoutUrl ?: null;
+        $cols[] = "lifetime_offer_codes"; $vals[] = ":loc"; $params[':loc'] = $lifetimeOfferCodes ?: null;
+        $cols[] = "access_expired_message"; $vals[] = ":aem"; $params[':aem'] = $accessExpiredMessage ?: null;
+        if ($hasCreatedAt)  { $cols[] = "created_at"; $vals[] = "NOW()"; }
+        if ($hasLiveDisp)   { $cols[] = "live_disparada"; $vals[] = "0"; }
 
-        $sql = "INSERT INTO turmas (" . implode(",", $cols) . ") VALUES (" . implode(",", $vals) . ")";
         try {
-            $pdo->prepare($sql)->execute($params);
+            $pdo->prepare("INSERT INTO turmas (" . implode(",", $cols) . ") VALUES (" . implode(",", $vals) . ")")->execute($params);
         } catch (Throwable $e) {
-            $msg = 'Erro ao salvar turma.';
-            if (strpos((string)$e->getMessage(), '1062') !== false) {
-                $msg = 'Código da live já existe em outra turma.';
-            }
-            header('Location: turmas.php?err=' . urlencode($msg));
-            exit;
+            $msg = strpos((string)$e->getMessage(), '1062') !== false ? 'Código já existe em outra turma.' : 'Erro ao salvar turma.';
+            header('Location: turmas.php?err=' . urlencode($msg)); exit;
         }
     }
 
-    // Atualiza também os alunos já inscritos nesta turma, para o contador (turma_live_at) ficar consistente
+    // Propaga data_live para alunos da turma
     if ($codigo !== '') {
         try {
-            if (col_exists($pdo, 'users', 'data_live')) {
-                $pdo->prepare("UPDATE users SET data_live = :dl WHERE codigo_turma = :c")->execute([':dl' => $dlDb, ':c' => $codigo]);
-            }
-            if (col_exists($pdo, 'users', 'turma_live_at')) {
-                $pdo->prepare("UPDATE users SET turma_live_at = :dl WHERE codigo_turma = :c")->execute([':dl' => $dlDb, ':c' => $codigo]);
-            }
+            if (col_exists($pdo, 'users', 'data_live'))     $pdo->prepare("UPDATE users SET data_live = :dl WHERE codigo_turma = :c")->execute([':dl'=>$dlDb,':c'=>$codigo]);
+            if (col_exists($pdo, 'users', 'turma_live_at')) $pdo->prepare("UPDATE users SET turma_live_at = :dl WHERE codigo_turma = :c")->execute([':dl'=>$dlDb,':c'=>$codigo]);
         } catch (Throwable $e) {}
     }
 
-    header('Location: turmas.php');
-    exit;
+    header('Location: turmas.php'); exit;
 }
 
 if (isset($_GET['del'])) {
-    $id = (int)$_GET['del'];
-    $pdo->prepare("DELETE FROM turmas WHERE id = :id")->execute([':id' => $id]);
-    header('Location: turmas.php');
-    exit;
+    $pdo->prepare("DELETE FROM turmas WHERE id = :id")->execute([':id' => (int)$_GET['del']]);
+    header('Location: turmas.php'); exit;
 }
 
-// atualizar data da live (turma + alunos)
-if (isset($_GET['update_live_date']) && isset($_GET['codigo']) && isset($_GET['nova_data'])) {
-    $codigo = (string)$_GET['codigo'];
-    $nova   = (string)$_GET['nova_data'];
-    $dlDb   = date('Y-m-d H:i:s', strtotime($nova));
-
-    $pdo->prepare("UPDATE turmas SET data_live = :dl WHERE codigo = :c")->execute([':dl' => $dlDb, ':c' => $codigo]);
-    $pdo->prepare("UPDATE users SET data_live = :dl WHERE codigo_turma = :c")->execute([':dl' => $dlDb, ':c' => $codigo]);
-    if (col_exists($pdo, 'users', 'turma_live_at')) {
-        $pdo->prepare("UPDATE users SET turma_live_at = :dl WHERE codigo_turma = :c")->execute([':dl' => $dlDb, ':c' => $codigo]);
-    }
-    header('Location: turmas.php');
-    exit;
+if (isset($_GET['reset_disparo'])) {
+    $id = (int)$_GET['reset_disparo'];
+    try { $pdo->prepare("UPDATE turmas SET live_disparada = 0 WHERE id = :id")->execute([':id' => $id]); } catch (Throwable $e) {}
+    header('Location: turmas.php'); exit;
 }
 
+// ===================== LOAD =====================
 $edit = null;
 if (isset($_GET['edit'])) {
-    $id = (int)$_GET['edit'];
-    $stmt = $pdo->prepare("SELECT * FROM turmas WHERE id = :id");
-    $stmt->execute([':id' => $id]);
-    $edit = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id");
+    $st->execute([':id' => (int)$_GET['edit']]);
+    $edit = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
+// Clone pré-preenche como nova turma
+if ($cloneFill) $edit = $cloneFill;
 
-// carrega tags para filtro (se existir)
-$allTags = [];
-if (table_exists($pdo, 'tags') && col_exists($pdo, 'tags', 'ativo')) {
-    $allTagsStmt = $pdo->query("SELECT id, nome FROM tags WHERE ativo = 1 ORDER BY nome ASC");
-    $allTags = $allTagsStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-}
+$turmas = $pdo->query("SELECT t.*,(SELECT COUNT(*) FROM users u WHERE u.codigo_turma=t.codigo) AS total_alunos FROM turmas t ORDER BY t.janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$ultimosDisparosLive = [];
+try {
+    $stUltimosDisparos = $pdo->query("
+        SELECT turma_id,
+               MAX(CASE
+                   WHEN status NOT IN ('queued', 'iniciado', 'processando')
+                   THEN COALESCE(finished_at, started_at)
+                   ELSE NULL
+               END) AS disparado_em
+          FROM live_turma_dispatch_logs
+         GROUP BY turma_id
+    ");
+    foreach ($stUltimosDisparos->fetchAll(PDO::FETCH_ASSOC) ?: [] as $disparo) {
+        $turmaDisparoId = (int)$disparo['turma_id'];
+        $ultimosDisparosLive[$turmaDisparoId] = (string)($disparo['disparado_em'] ?? '');
+    }
+} catch (Throwable $e) {}
+$statusDisparosLive = carregar_status_disparos_live($pdo);
 
-$turmas = $pdo->query("SELECT * FROM turmas ORDER BY janela_inicio DESC")->fetchAll(PDO::FETCH_ASSOC);
-
-// menu ativo
 $menu = 'turmas';
-
 include __DIR__ . '/_header.php';
 ?>
+<style>
+.page-turmas { width: 100%; max-width: 1600px; min-width: 0; margin: 0 auto; }
+.page-turmas .card { min-width: 0; }
+.section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.grid2t { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid3t { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+@media (max-width: 780px) { .grid2t, .grid3t { grid-template-columns: 1fr; } }
+.field-lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+.btn-sm { min-height: 26px; font-size: 11px; line-height: 1.2; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+.btn-sm:hover { background: rgba(255,255,255,.08); }
+.btn-danger-sm { border-color: rgba(239,68,68,.3); color: #ef4444; }
+.btn-danger-sm:hover { background: rgba(239,68,68,.12); }
+.badge-ok   { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.25); }
+.badge-off  { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(255,255,255,.06); color:var(--muted); border:1px solid var(--border); }
+.badge-warn { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.25); }
+.badge-error { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.25); }
+.live-dispatch-summary { min-width:180px; }
+.live-dispatch-counts { display:flex; flex-wrap:wrap; gap:2px 10px; margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; }
+.live-dispatch-counts strong { color:var(--text); font-weight:700; }
+.turmas-table-wrap { width: 100%; max-width:100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.table-turmas td, .table-turmas th { font-size: 12px; }
+.table-turmas td { vertical-align: middle; }
+.table-turmas th { user-select:none; }
+.table-turmas .actions-head { width: 360px; }
+.table-turmas .actions-cell { min-width: 330px; white-space: normal; }
+.turma-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 360px; }
+.turma-actions form { display: inline-flex; }
+.sort-head { appearance:none; border:0; background:transparent; color:inherit; font:inherit; font-weight:700; text-transform:inherit; letter-spacing:inherit; padding:0; cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
+.sort-head::after { content:"↕"; font-size:10px; color:var(--muted); opacity:.7; }
+.sort-head.asc::after { content:"↑"; color:#facc15; opacity:1; }
+.sort-head.desc::after { content:"↓"; color:#facc15; opacity:1; }
+@media (max-width: 1750px) {
+    .page-turmas { max-width: none; }
+    .page-turmas .card { padding: 14px; }
+    .turmas-table-wrap { overflow: visible; }
+    .table-turmas,
+    .table-turmas thead,
+    .table-turmas tbody,
+    .table-turmas th,
+    .table-turmas td,
+    .table-turmas tr { width: 100%; min-width: 0 !important; }
+    .table-turmas,
+    .table-turmas tbody { display: block; }
+    .table-turmas thead { display: none; }
+    .table-turmas tr {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+        background: rgba(255,255,255,.02);
+    }
+    .table-turmas td {
+        display: block;
+        padding: 8px 0;
+        border: 0;
+        white-space: normal !important;
+        overflow-wrap: anywhere;
+    }
+    .table-turmas td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: 9.5px;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+    }
+    .table-turmas .actions-cell {
+        grid-column: 1 / -1;
+        display: block;
+        min-width: 0;
+        margin-top: 4px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+    }
+    .table-turmas .actions-cell::before {
+        display: block;
+        margin-bottom: 8px;
+    }
+    .live-dispatch-summary { min-width: 0; }
+    .turma-actions { max-width: none; align-items:stretch; }
+    .turma-actions .btn-sm,
+    .turma-actions form { flex: 1 1 120px; min-width:0; }
+    .turma-actions form .btn-sm { width: 100%; }
+}
+@media (max-width: 800px) {
+    .table-turmas tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .table-turmas .live-dispatch-summary { grid-column: 1 / -1; }
+    .turma-actions .btn-sm,
+    .turma-actions form { flex-basis: calc(50% - 6px); }
+}
+@media (max-width: 420px) {
+    .page-turmas .card { padding: 12px; }
+    .table-turmas tr { grid-template-columns: minmax(0, 1fr); padding: 9px 12px; }
+    .table-turmas .live-dispatch-summary { grid-column: auto; }
+    .turma-actions .btn-sm,
+    .turma-actions form { flex-basis: 100%; }
+}
+</style>
+
+<div class="page-turmas">
+
 <?php if (isset($_GET['err']) && $_GET['err'] !== ''): ?>
-    <div style="margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(255,0,0,.12);border:1px solid rgba(255,0,0,.25);color:#ffd7d7;">
-        <?= htmlspecialchars((string)$_GET['err']) ?>
+    <div style="margin-bottom:12px;padding:10px 14px;border-radius:10px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);color:#fca5a5;font-size:13px;">
+        <?= h((string)$_GET['err']) ?>
+    </div>
+<?php endif; ?>
+<?php if (isset($_GET['ok']) && $_GET['ok'] !== ''): ?>
+    <div style="margin-bottom:12px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#86efac;font-size:13px;">
+        <?= h((string)$_GET['ok']) ?>
     </div>
 <?php endif; ?>
 
+<!-- ===== FORM ===== -->
 <div class="card">
-    <h3>Turmas (janelas de inscrição)</h3>
-    <form method="post">
-        <input type="hidden" name="id" value="<?= (int)($edit['id'] ?? 0) ?>">
+    <?php
+    $isEdit  = $edit && (int)($edit['id'] ?? 0) > 0;
+    $isClone = $cloneFill !== null;
+    ?>
+    <h4 style="margin:0 0 4px 0;">
+        <?= $isClone ? 'Clonar turma — revise e salve' : ($isEdit ? 'Editar turma' : 'Nova turma') ?>
+    </h4>
+    <p style="margin:0 0 16px 0;font-size:12px;color:var(--muted);">
+        <?= $isClone ? 'Dados pré-preenchidos da turma original. Ajuste o código e as datas antes de criar.' : 'Campos básicos da turma. Webhook e SF configuram-se nas páginas dedicadas.' ?>
+    </p>
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">
-            <div>
-                <label>Código da turma<br>
-                    <input type="text" name="codigo" required value="<?= htmlspecialchars($edit['codigo'] ?? '') ?>">
-                </label>
-            </div>
+    <form method="post" id="form-turma">
+        <input type="hidden" name="id" value="<?= $isEdit ? (int)$edit['id'] : 0 ?>">
 
+        <!-- Identificação -->
+        <p class="section-label">Identificação</p>
+        <div class="grid2t">
+            <label>
+                <span class="field-lbl">Código da turma <span style="color:#ef4444">*</span></span>
+                <input type="text" name="codigo" required value="<?= h($edit['codigo'] ?? '') ?>" placeholder="ex: TURMA_ABRIL_2025">
+            </label>
+            <label>
+                <span class="field-lbl">Código da live <span style="color:var(--muted);font-weight:400">(slug opcional)</span></span>
+                <input type="text" name="codigo_live" value="<?= h($edit['codigo_live'] ?? '') ?>" placeholder="ex: live-perfil-led-18dez">
+            </label>
+        </div>
 
-            <div>
-                <label>Código da live<br>
-                    <input type="text" name="codigo_live" value="<?= htmlspecialchars($edit['codigo_live'] ?? '') ?>" placeholder="ex: live-perfil-led-18dez">
-                </label>
-                <div style="font-size:11px;opacity:.75;margin-top:4px;">
-                    Slug do link da live (opcional).
-                </div>
-            </div>
-
-            <div>
-                <label>Janela início<br>
-                    <input type="datetime-local" name="janela_inicio" required value="<?= htmlspecialchars(dt_local_value($edit['janela_inicio'] ?? null)) ?>">
-                </label>
-            </div>
-
-            <div>
-                <label>Janela fim<br>
-                    <input type="datetime-local" name="janela_fim" required value="<?= htmlspecialchars(dt_local_value($edit['janela_fim'] ?? null)) ?>">
-                </label>
-            </div>
-
-            <div>
-                <label>Data/hora da live<br>
-                    <input type="datetime-local" name="data_live" value="<?= htmlspecialchars(dt_local_value($edit['data_live'] ?? null)) ?>">
-                </label>
+        <!-- Certificado -->
+        <p class="section-label">Certificado</p>
+        <div style="max-width:480px;">
+            <label>
+                <span class="field-lbl">Senha do certificado desta turma</span>
+                <input type="text" name="senha_certificado"
+                    value="<?= h((string)($edit['senha_certificado'] ?? '')) ?>"
+                    placeholder="Ex.: TURMA_ABRIL" autocomplete="off">
+            </label>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.6;">
+                Usada quando o modo de senha está configurado como <strong>Variável</strong> em
+                <a href="certificado_config.php" style="color:#facc15;">Configuração de Certificado</a>.
             </div>
         </div>
 
-        <div style="margin-top:10px;">
-            <label>Webhook da live (URL que receberá a fila de alunos)</label><br>
-            <input type="text" name="webhook_live_url" style="width:100%;" value="<?= htmlspecialchars($edit['webhook_live_url'] ?? '') ?>">
+        <!-- Janelas e data -->
+        <p class="section-label">Janela de Inscrição &amp; Data da Live</p>
+        <div class="grid3t">
+            <label>
+                <span class="field-lbl">Janela início <span style="color:#ef4444">*</span></span>
+                <input type="datetime-local" name="janela_inicio" required value="<?= h(dt_local_value($edit['janela_inicio'] ?? null)) ?>">
+            </label>
+            <label>
+                <span class="field-lbl">Janela fim <span style="color:#ef4444">*</span></span>
+                <input type="datetime-local" name="janela_fim" required value="<?= h(dt_local_value($edit['janela_fim'] ?? null)) ?>">
+            </label>
+            <label>
+                <span class="field-lbl">Data/hora da live</span>
+                <input type="datetime-local" name="data_live" value="<?= h(dt_local_value($edit['data_live'] ?? null)) ?>">
+            </label>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:8px;">
+        <!-- Ações -->
+        <p class="section-label">Prazo de acesso &amp; oferta vitalícia</p>
+        <div class="grid2t">
             <div>
-                <label>Delay entre envios (ms)<br>
-                    <input type="number" name="delay_ms" value="<?= htmlspecialchars((string)($edit['delay_ms'] ?? '500')) ?>">
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <input type="checkbox" name="access_deadline_enabled" value="1" <?= !empty($edit['access_deadline_enabled']) ? 'checked' : '' ?>>
+                    <span class="field-lbl" style="margin:0;">Ativar prazo máximo de acesso nesta turma</span>
+                </label>
+                <div class="grid2t">
+                    <label>
+                        <span class="field-lbl">Prazo em dias</span>
+                        <input type="number" name="access_deadline_days" min="1" max="3650" value="<?= (int)($edit['access_deadline_days'] ?? 30) ?>">
+                    </label>
+                    <label>
+                        <span class="field-lbl">Iniciar contagem em</span>
+                        <select name="access_deadline_start">
+                            <option value="cadastro" <?= (($edit['access_deadline_start'] ?? 'cadastro') === 'cadastro') ? 'selected' : '' ?>>Inscrição na turma</option>
+                            <option value="live" <?= (($edit['access_deadline_start'] ?? '') === 'live') ? 'selected' : '' ?>>Data da live</option>
+                        </select>
+                    </label>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+                    <input type="checkbox" name="access_countdown_enabled" value="1" <?= !isset($edit['access_countdown_enabled']) || !empty($edit['access_countdown_enabled']) ? 'checked' : '' ?>>
+                    <span class="field-lbl" style="margin:0;">Mostrar relógio regressivo para o aluno</span>
                 </label>
             </div>
-
-            <div style="padding-top:18px;">
-                <label style="font-size:12px;">
-                    <input type="checkbox" name="live_webhook_enabled" <?= (!isset($edit['live_webhook_enabled']) || (int)($edit['live_webhook_enabled'] ?? 1) === 1) ? 'checked' : '' ?>>
-                    Habilitar disparo do webhook da live
-                </label>
-            </div>
-
             <div>
-                <label>Data/hora para disparar webhook<br>
-                    <input type="datetime-local" name="live_disparo_data" value="<?= htmlspecialchars(dt_local_value($edit['live_disparo_data'] ?? null)) ?>">
+                <label>
+                    <span class="field-lbl">URL do checkout vitalício</span>
+                    <input type="url" name="lifetime_checkout_url" value="<?= h((string)($edit['lifetime_checkout_url'] ?? '')) ?>" placeholder="https://pay.hotmart.com/...">
                 </label>
-                <div style="font-size:12px;opacity:.75;margin-top:4px">
-                    Se vazio, o disparo fica desativado (não envia automaticamente).
-                </div>
+                <label style="display:block;margin-top:12px;">
+                    <span class="field-lbl">Código(s) da oferta vitalícia</span>
+                    <input type="text" name="lifetime_offer_codes" value="<?= h((string)($edit['lifetime_offer_codes'] ?? '')) ?>" placeholder="ABC123, DEF456">
+                </label>
             </div>
         </div>
-
-                <div style="margin-top:10px;">
-            <label>Regras de envio por tags e progresso (opcional)</label>
-            <div style="font-size:12px;opacity:.78;margin-top:4px;line-height:1.3">
-                Você pode criar condições para enviar apenas para alguns alunos. Se nada for marcado, serão enviados todos os alunos da turma.
-            </div>
-
-            <?php
-            $filterCfg = parse_live_filter_cfg($edit['live_filter_tag_ids'] ?? null);
-            $selInc = [];
-            foreach (($filterCfg['include_any'] ?? []) as $tid) { $selInc[(int)$tid] = true; }
-            $selExc = [];
-            foreach (($filterCfg['exclude_any'] ?? []) as $tid) { $selExc[(int)$tid] = true; }
-            $excCert = (int)($filterCfg['exclude_cert'] ?? 0) === 1;
-            $excZero = (int)($filterCfg['exclude_zero'] ?? 0) === 1;
-            ?>
-
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
-                <div>
-                    <div style="font-size:12px;margin-bottom:6px;">
-                        <strong>ENVIAR se tiver pelo menos 1 dessas tags (OU)</strong>
-                    </div>
-                    <input type="text" class="tag-search" data-target="live_include_tag_ids" placeholder="Buscar tags..." style="width:100%;padding:8px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#0b1220;color:#fff;margin-bottom:6px;">
-                    <select name="live_include_tag_ids[]" id="live_include_tag_ids" multiple size="10" style="width:100%;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:#0b1220;color:#fff;">
-                        <?php foreach ($allTags as $tg): $tid=(int)$tg['id']; ?>
-                            <option value="<?= $tid ?>" <?= isset($selInc[$tid]) ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($tg['nome']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div style="font-size:11px;opacity:.7;margin-top:4px;">
-                        Se deixar vazio, não exige tag (não filtra por inclusão).
-                    </div>
-                </div>
-
-                <div>
-                    <div style="font-size:12px;margin-bottom:6px;">
-                        <strong>NÃO ENVIAR se tiver qualquer 1 dessas tags</strong>
-                    </div>
-                    <input type="text" class="tag-search" data-target="live_exclude_tag_ids" placeholder="Buscar tags..." style="width:100%;padding:8px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#0b1220;color:#fff;margin-bottom:6px;">
-                    <select name="live_exclude_tag_ids[]" id="live_exclude_tag_ids" multiple size="10" style="width:100%;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:#0b1220;color:#fff;">
-                        <?php foreach ($allTags as $tg): $tid=(int)$tg['id']; ?>
-                            <option value="<?= $tid ?>" <?= isset($selExc[$tid]) ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($tg['nome']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div style="font-size:11px;opacity:.7;margin-top:4px;">
-                        Ex.: selecione <code>CERT_EMITIDO</code> para não enviar para quem já gerou certificado.
-                    </div>
-                </div>
-            </div>
-
-            <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;align-items:center;">
-                <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
-                    <input type="checkbox" name="live_exclude_cert" value="1" <?= $excCert ? 'checked' : '' ?>>
-                    <span>Não enviar para quem já emitiu certificado (tag <code>CERT_EMITIDO</code>)</span>
-                </label>
-
-                <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
-                    <input type="checkbox" name="live_exclude_zero" value="1" <?= $excZero ? 'checked' : '' ?>>
-                    <span>Não enviar para quem está com <strong>0%</strong> de progresso (nenhuma aula obrigatória concluída)</span>
-                </label>
-            </div>
-
-            <div style="font-size:11px;opacity:.75;margin-top:6px;line-height:1.35">
-                Dica: você pode combinar as regras. Ex.: ENVIAR se tiver (INSCRITO OU VIU_AULA_1), e NÃO ENVIAR se tiver CERT_EMITIDO.
-            </div>
+        <label style="display:block;margin-top:12px;">
+            <span class="field-lbl">Mensagem exibida após o prazo</span>
+            <textarea name="access_expired_message" rows="3" placeholder="Seu prazo máximo de acesso terminou. Libere o acesso vitalício para continuar."><?= h((string)($edit['access_expired_message'] ?? '')) ?></textarea>
+        </label>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5;">
+            A liberação vitalícia ocorre somente após webhook de pagamento aprovado com um dos códigos de oferta configurados.
         </div>
 
-        <script>
-        // Filtro de busca nas selects de tags (não altera estética geral)
-        document.addEventListener('DOMContentLoaded', function(){
-            document.querySelectorAll('.tag-search').forEach(function(inp){
-                inp.addEventListener('input', function(){
-                    var q = (inp.value || '').toLowerCase();
-                    var targetId = inp.getAttribute('data-target');
-                    var sel = document.getElementById(targetId);
-                    if(!sel) return;
-                    Array.from(sel.options).forEach(function(opt){
-                        var txt = (opt.textContent || '').toLowerCase();
-                        opt.style.display = txt.indexOf(q) !== -1 ? '' : 'none';
-                    });
-                });
-            });
-        });
-        </script>
-
-<div style="margin-top:10px;">
-            <button type="submit" class="btn"><?= $edit ? 'Salvar turma' : 'Criar turma' ?></button>
+        <div style="margin-top:18px;display:flex;gap:10px;align-items:center;">
+            <button class="btn" type="submit">
+                <?= $isClone ? 'Criar turma clonada' : ($isEdit ? 'Salvar alterações' : 'Criar turma') ?>
+            </button>
+            <?php if ($isEdit || $isClone): ?>
+                <a class="btn-secondary" href="turmas.php">Cancelar</a>
+            <?php endif; ?>
+            <?php if ($isEdit): ?>
+                <a class="btn-secondary" href="webhooks.php?live_edit=<?= (int)$edit['id'] ?>" style="margin-left:4px;">⚙️ Webhook</a>
+                <a class="btn-secondary" href="superfuncionario.php?sf_edit=<?= (int)$edit['id'] ?>" style="margin-left:4px;">⚙️ SF</a>
+            <?php endif; ?>
         </div>
     </form>
 </div>
 
+<!-- ===== TABELA ===== -->
 <div class="card">
-    <h3>Lista de turmas</h3>
-    <table class="table" style="width:100%;">
+    <h4 style="margin:0 0 12px 0;">Turmas cadastradas</h4>
+    <?php if (!$turmas): ?>
+        <p style="color:var(--muted);font-size:13px;">Nenhuma turma cadastrada ainda.</p>
+    <?php else: ?>
+    <div class="turmas-table-wrap">
+    <table class="table table-turmas" id="turmas-sort-table" style="width:100%;">
         <thead>
         <tr>
-            <th>ID</th>
-            <th>Código</th>
-            <th>Janela início</th>
-            <th>Janela fim</th>
-            <th>Data Live</th>
-            <th>Webhook</th>
-            <th>Delay</th>
-            <th>Habilitado</th>
-            <th>Disparo em</th>
-            <th>Tags</th>
-            <th>Live disparada</th>
-            <th>Ações</th>
+            <th><button type="button" class="sort-head" data-sort="codigo">Código</button></th>
+            <th><button type="button" class="sort-head" data-sort="alunos">Alunos</button></th>
+            <th><button type="button" class="sort-head" data-sort="janela">Janela</button></th>
+            <th><button type="button" class="sort-head" data-sort="live">Live</button></th>
+            <th><button type="button" class="sort-head" data-sort="senha">Senha</button></th>
+            <th><button type="button" class="sort-head" data-sort="webhook">Webhook</button></th>
+            <th><button type="button" class="sort-head" data-sort="sf">SF</button></th>
+            <th><button type="button" class="sort-head" data-sort="disparado">Disparado</button></th>
+            <th>Envio da live</th>
+            <th class="actions-head">Ações</th>
         </tr>
         </thead>
         <tbody>
         <?php foreach ($turmas as $t): ?>
+            <?php
+            $whEnabled = (int)($t['live_webhook_enabled'] ?? 0) === 1 && !empty($t['webhook_live_url']);
+            $sfEnabled2 = (int)($t['sf_enabled'] ?? 0) === 1;
+            $disparada = (int)($t['live_disparada'] ?? 0) === 1;
+            $ultimoDisparo = $ultimosDisparosLive[(int)$t['id']] ?? '';
+            $ultimoDisparoLabel = $ultimoDisparo !== '' ? dt_br_short($ultimoDisparo) : '';
+            $statusDisparo = $statusDisparosLive[(int)$t['id']] ?? null;
+            $statusDisparoCodigo = (string)($statusDisparo['status'] ?? '');
+            $disparoEmAndamento = in_array($statusDisparoCodigo, ['queued', 'iniciado', 'processando'], true);
+            $statusDisparoLabel = $disparoEmAndamento
+                ? 'Disparando'
+                : ($statusDisparoCodigo === 'concluido_com_falhas' ? 'Concluído com erros' : ($statusDisparoCodigo === 'concluido' ? 'Concluído' : 'Sem disparo'));
+            $statusDisparoClasse = $disparoEmAndamento
+                ? 'badge-warn'
+                : ($statusDisparoCodigo === 'concluido_com_falhas' ? 'badge-error' : ($statusDisparoCodigo === 'concluido' ? 'badge-ok' : 'badge-off'));
+            ?>
             <tr>
-                <td><?= (int)$t['id'] ?></td>
-                <td><?= htmlspecialchars((string)($t['codigo'] ?? '')) ?></td>
-                <td><?= htmlspecialchars((string)($t['janela_inicio'] ?? '')) ?></td>
-                <td><?= htmlspecialchars((string)($t['janela_fim'] ?? '')) ?></td>
-                <td><?= htmlspecialchars((string)($t['data_live'] ?? '')) ?></td>
-                <td><?= htmlspecialchars((string)($t['webhook_live_url'] ?? '')) ?></td>
-                <td><?= htmlspecialchars((string)($t['delay_ms'] ?? '')) ?></td>
-                <td><?= ((int)($t['live_webhook_enabled'] ?? 1) === 1) ? 'Sim' : 'Não' ?></td>
-                <td><?= htmlspecialchars((string)($t['live_disparo_data'] ?? '')) ?></td>
-                <td>
-                    <?php
-                    $cfg = parse_live_filter_cfg($t['live_filter_tag_ids'] ?? null);
-                    $tagName = function(int $id) use ($allTags) {
-                        static $map = null;
-                        if ($map === null) {
-                            $map = [];
-                            foreach ($allTags as $tg) $map[(int)$tg['id']] = (string)$tg['nome'];
-                        }
-                        return $map[$id] ?? ('#' . $id);
-                    };
-                    $parts = [];
-                    if (!empty($cfg['include_any'])) {
-                        $names = array_map(fn($id)=>$tagName((int)$id), $cfg['include_any']);
-                        $parts[] = 'Inclui: ' . implode(', ', $names);
-                    }
-                    if (!empty($cfg['exclude_any'])) {
-                        $names = array_map(fn($id)=>$tagName((int)$id), $cfg['exclude_any']);
-                        $parts[] = 'Exclui: ' . implode(', ', $names);
-                    }
-                    if (!empty($cfg['exclude_cert'])) $parts[] = '− CERT_EMITIDO';
-                    if (!empty($cfg['exclude_zero'])) $parts[] = '− 0%';
-                    echo $parts ? htmlspecialchars(implode(' | ', $parts)) : '—';
-                    ?>
+                <td data-label="Código" data-sort-codigo="<?= h(strtolower((string)$t['codigo'])) ?>">
+                    <strong><?= h((string)$t['codigo']) ?></strong>
+                    <?php if (!empty($t['codigo_live'])): ?>
+                        <br><span style="font-size:10.5px;color:var(--muted);"><?= h((string)$t['codigo_live']) ?></span>
+                    <?php endif; ?>
                 </td>
-                <td><?= !empty($t['live_disparada']) ? 'Sim' : 'Não' ?></td>
-                <td>
-                    <a href="?edit=<?= (int)$t['id'] ?>" class="btn-sm">editar</a>
-                    <a href="?del=<?= (int)$t['id'] ?>" onclick="return confirm('Remover turma?')" class="btn-sm">remover</a>
+                <td data-label="Alunos" data-sort-alunos="<?= (int)($t['total_alunos'] ?? 0) ?>">
+                    <strong style="font-size:15px;"><?= number_format((int)($t['total_alunos'] ?? 0), 0, ',', '.') ?></strong>
+                </td>
+                <td data-label="Janela" data-sort-janela="<?= sort_ts($t['janela_inicio'] ?? null) ?>" style="white-space:nowrap;font-size:11px;">
+                    <?= h(dt_br_short($t['janela_inicio'] ?? null)) ?><br>
+                    <span style="color:var(--muted)">→ <?= h(dt_br_short($t['janela_fim'] ?? null)) ?></span>
+                </td>
+                <td data-label="Live" data-sort-live="<?= sort_ts($t['data_live'] ?? null) ?>" style="white-space:nowrap;font-size:11px;"><?= h(dt_br_short($t['data_live'] ?? null)) ?></td>
+                <td data-label="Senha" data-sort-senha="<?= h(strtolower((string)($t['senha_certificado'] ?? ''))) ?>" style="font-size:11px;color:var(--muted);"><?= h((string)($t['senha_certificado']??'—')) ?></td>
+                <td data-label="Webhook" data-sort-webhook="<?= $whEnabled ? 2 : (!empty($t['webhook_live_url']) ? 1 : 0) ?>">
+                    <?php if ($whEnabled): ?>
+                        <span class="badge-ok">ON</span>
+                    <?php elseif (!empty($t['webhook_live_url'])): ?>
+                        <span class="badge-warn">OFF</span>
+                    <?php else: ?>
+                        <span class="badge-off">—</span>
+                    <?php endif; ?>
+                </td>
+                <td data-label="SF" data-sort-sf="<?= $sfEnabled2 ? 1 : 0 ?>">
+                    <?php if ($sfEnabled2): ?>
+                        <span class="badge-ok">ON</span>
+                    <?php else: ?>
+                        <span class="badge-off">OFF</span>
+                    <?php endif; ?>
+                </td>
+                <td data-label="Disparado" data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
+                    <?php if ($disparada): ?>
+                        <span class="badge-ok">Sim</span>
+                        <?php if ($ultimoDisparoLabel !== ''): ?>
+                            <br><span style="font-size:10px;color:var(--muted);white-space:nowrap;"><?= h($ultimoDisparoLabel) ?></span>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <span class="badge-off">Não</span>
+                    <?php endif; ?>
+                </td>
+                <td class="live-dispatch-summary" data-label="Envio da live" data-live-dispatch-turma="<?= (int)$t['id'] ?>">
+                    <span class="<?= h($statusDisparoClasse) ?>" data-live-status><?= h($statusDisparoLabel) ?></span>
+                    <div class="live-dispatch-counts" <?= $statusDisparo ? '' : 'hidden' ?>>
+                        <span>Enviados: <strong data-live-enviados><?= (int)($statusDisparo['enviados'] ?? 0) ?></strong></span>
+                        <span>Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong></span>
+                        <span>Erros: <strong data-live-erros><?= (int)($statusDisparo['erros'] ?? 0) ?></strong></span>
+                    </div>
+                </td>
+                <td class="actions-cell" data-label="Ações">
+                    <?php
+                        $liveTs = sort_ts($t['data_live'] ?? null);
+                        $manualLivePermitido = $liveTs > time();
+                        $confirmacaoDisparo = $disparada
+                            ? 'Esta live ja foi disparada' . ($ultimoDisparoLabel !== '' ? ' em ' . $ultimoDisparoLabel : '') . '. Tem certeza de que deseja disparar novamente? Os alunos elegiveis poderao receber o aviso outra vez.'
+                            : 'Disparar agora os avisos de live desta turma? O cron nao enviara novamente.';
+                    ?>
+                    <div class="turma-actions">
+                    <?php if ($disparoEmAndamento): ?>
+                        <button type="button" class="btn-sm" data-live-progress-button disabled title="A fila desta turma ainda esta sendo processada">Disparo em andamento</button>
+                    <?php elseif ($manualLivePermitido): ?>
+                        <form method="post" onsubmit="return confirm(<?= h(json_encode($confirmacaoDisparo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>)">
+                            <input type="hidden" name="acao" value="disparar_live_turma_manual">
+                            <input type="hidden" name="turma_id" value="<?= (int)$t['id'] ?>">
+                            <?php if ($disparada): ?>
+                                <input type="hidden" name="confirmar_redisparo" value="1">
+                            <?php endif; ?>
+                            <button type="submit" class="btn-sm"><?= $disparada ? 'Disparar novamente' : 'Disparar live' ?></button>
+                        </form>
+                    <?php else: ?>
+                        <button type="button" class="btn-sm" disabled title="<?= $disparada ? 'Avisos ja disparados' : 'Data da live encerrada ou nao definida' ?>">Live indisponivel</button>
+                    <?php endif; ?>
+                    <a href="?edit=<?= (int)$t['id'] ?>" class="btn-sm">Editar</a>
+                    <a href="?clone_fill=<?= (int)$t['id'] ?>" class="btn-sm">Clonar</a>
+                    <a href="webhooks.php?live_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ Webhook</a>
+                    <a href="superfuncionario.php?sf_edit=<?= (int)$t['id'] ?>" class="btn-sm">⚙️ SF</a>
+                    <a href="?del=<?= (int)$t['id'] ?>" class="btn-sm btn-danger-sm" onclick="return confirm('Remover turma?')">Remover</a>
+                    </div>
                 </td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
+    <?php endif; ?>
 </div>
+
+</div><!-- /.page-turmas -->
+
+<?php if ($cloneFill): ?>
+<script>document.getElementById('form-turma').scrollIntoView({behavior:'smooth',block:'start'});</script>
+<?php endif; ?>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var table = document.getElementById('turmas-sort-table');
+    if (!table || !table.tBodies.length) return;
+
+    var currentKey = '';
+    var currentDir = 'asc';
+
+    function atualizarIndicadorDisparo(cell, info) {
+        var codigo = String(info.status || '');
+        var ativo = ['queued', 'iniciado', 'processando'].indexOf(codigo) !== -1;
+        var comErros = codigo === 'concluido_com_falhas';
+        var concluido = codigo === 'concluido';
+        var label = ativo ? 'Disparando' : (comErros ? 'Concluído com erros' : (concluido ? 'Concluído' : 'Sem disparo'));
+        var classe = ativo ? 'badge-warn' : (comErros ? 'badge-error' : (concluido ? 'badge-ok' : 'badge-off'));
+        var badge = cell.querySelector('[data-live-status]');
+        var counts = cell.querySelector('.live-dispatch-counts');
+
+        badge.className = classe;
+        badge.textContent = label;
+        counts.hidden = false;
+        cell.querySelector('[data-live-enviados]').textContent = String(Number(info.enviados || 0));
+        cell.querySelector('[data-live-faltam]').textContent = String(Number(info.faltam || 0));
+        cell.querySelector('[data-live-erros]').textContent = String(Number(info.erros || 0));
+
+        var progressButton = cell.closest('tr').querySelector('[data-live-progress-button]');
+        if (progressButton && !ativo) {
+            progressButton.textContent = label;
+            progressButton.title = 'O disparo terminou. Atualize a pagina para liberar as acoes novamente.';
+        }
+        return ativo;
+    }
+
+    async function consultarAndamentoDisparos() {
+        var haviaDisparoAtivo = !!table.querySelector('[data-live-dispatch-turma] [data-live-status].badge-warn');
+        if (!haviaDisparoAtivo) return;
+
+        var continuarConsultando = false;
+        try {
+            var url = new URL(window.location.href);
+            url.search = '';
+            url.searchParams.set('acao', 'status_disparos_live');
+            var response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}, cache: 'no-store'});
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var payload = await response.json();
+            var status = payload && payload.status ? payload.status : {};
+
+            table.querySelectorAll('[data-live-dispatch-turma]').forEach(function (cell) {
+                var turmaId = cell.getAttribute('data-live-dispatch-turma');
+                if (status[turmaId]) {
+                    continuarConsultando = atualizarIndicadorDisparo(cell, status[turmaId]) || continuarConsultando;
+                }
+            });
+        } catch (e) {
+            continuarConsultando = true;
+            console.error('Falha ao atualizar o andamento do disparo:', e);
+        }
+
+        if (continuarConsultando) window.setTimeout(consultarAndamentoDisparos, 5000);
+    }
+
+    if (table.querySelector('[data-live-dispatch-turma] [data-live-status].badge-warn')) {
+        window.setTimeout(consultarAndamentoDisparos, 2000);
+    }
+
+    function readValue(row, key) {
+        var cell = row.querySelector('[data-sort-' + key + ']');
+        if (!cell) return '';
+        var raw = cell.getAttribute('data-sort-' + key) || '';
+        if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+        return raw.toLowerCase();
+    }
+
+    table.querySelectorAll('.sort-head').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var key = btn.getAttribute('data-sort');
+            var dir = currentKey === key && currentDir === 'asc' ? 'desc' : 'asc';
+            currentKey = key;
+            currentDir = dir;
+
+            table.querySelectorAll('.sort-head').forEach(function (b) {
+                b.classList.remove('asc', 'desc');
+            });
+            btn.classList.add(dir);
+
+            var rows = Array.from(table.tBodies[0].rows);
+            rows.sort(function (a, b) {
+                var av = readValue(a, key);
+                var bv = readValue(b, key);
+                if (av < bv) return dir === 'asc' ? -1 : 1;
+                if (av > bv) return dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+            rows.forEach(function (row) { table.tBodies[0].appendChild(row); });
+        });
+    });
+});
+</script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

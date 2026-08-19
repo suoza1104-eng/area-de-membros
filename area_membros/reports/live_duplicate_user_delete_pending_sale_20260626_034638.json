@@ -1,0 +1,22 @@
+{
+    "generated_at": "2026-06-26 03:46:38",
+    "user_id": 39702,
+    "user": {
+        "id": 39702,
+        "nome": "Jefferson Batista Lucas",
+        "email": "jb.lucas.batista@hotmail.com",
+        "telefone": "5511980223489"
+    },
+    "sales_before": [
+        {
+            "id": 5291,
+            "transaction_code": "HP0261658104",
+            "status": "Pendente"
+        }
+    ],
+    "result": "deleted_pending_sale_unmatched",
+    "hotmart_unmatched": 1,
+    "live_receipts_marked_error": 3,
+    "tags_deleted": 2,
+    "deleted": 1
+}

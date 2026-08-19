@@ -1,0 +1,11 @@
+[Unit]
+Description=Area de Membros cron task %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/area-membros-cron-agent.conf
+ExecStart=/usr/bin/curl --silent --show-error --fail --connect-timeout 10 --max-time 1900 -H "X-Cron-Token: ${CRON_TOKEN}" --data "source=${CRON_SOURCE}" --data "task=%i" "${CRON_ENDPOINT}"
+User=root
+Group=root

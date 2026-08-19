@@ -6,6 +6,8 @@ require_once __DIR__ . '/../app/retorno_agendamentos.php';
 proteger_admin();
 $pdo = getPDO();
 retorno_ensure_tables($pdo);
+course_access_ensure_schema($pdo);
+enrollment_ensure_schema($pdo);
 $menu       = 'alunos';
 $page_title = 'Alunos';
 
@@ -93,8 +95,9 @@ function al_gerar_certificado_manual(PDO $pdo, int $userId): array {
         $upd->execute([':pdf_url' => $pdfUrl, ':id' => (int)$cert['id']]);
         $cert['pdf_url'] = $pdfUrl;
 
-        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin_manual'); } catch (Throwable $e) {}
         $pdo->commit();
+
+        try { adicionar_tag($userId, 'CERT_EMITIDO', 'admin_manual'); } catch (Throwable $e) {}
         return $cert;
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -139,15 +142,22 @@ function al_available_reagendar_slots(PDO $pdo): array {
     if ($days < 1) $days = 1;
     if ($days > 365) $days = 365;
 
+    $interval = (int)al_get_setting('reagendar_availability_interval_days', '1');
+    if ($interval < 1) $interval = 1;
+    if ($interval > 365) $interval = 365;
+    $allowSameDay = (int)al_get_setting('reagendar_allow_same_day', '0') === 1;
+
     $time = trim(al_get_setting('reagendar_live_time', '19:30'));
     if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '19:30';
 
     $blackouts = array_flip(array_filter(array_map('trim', explode(',', al_get_setting('reagendar_blackout_dates', '')))));
     $slots = [];
+    $startOffset = $allowSameDay ? 0 : 1;
     for ($i = 0; $i <= $days && count($slots) < $qty; $i++) {
         $day = $now->modify('+' . $i . ' days');
         $key = $day->format('Y-m-d');
         if (isset($blackouts[$key])) continue;
+        if ($i < $startOffset || (($i - $startOffset) % $interval) !== 0) continue;
 
         $slot = new DateTimeImmutable($key . ' ' . $time . ':00');
         if ($slot <= $now) continue;
@@ -176,6 +186,7 @@ function al_ensure_reagendamentos_live(PDO $pdo): void {
         expired_checked_at DATETIME NULL,
         ip VARCHAR(64) NULL,
         user_agent VARCHAR(250) NULL,
+        origem VARCHAR(30) NULL,
         webhook_url TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_reag_live_user (user_id),
@@ -184,6 +195,7 @@ function al_ensure_reagendamentos_live(PDO $pdo): void {
         KEY idx_reag_live_disparo (sf_disparo_at),
         KEY idx_reag_live_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    try { $pdo->exec("ALTER TABLE reagendamentos_live ADD COLUMN origem VARCHAR(30) NULL AFTER user_agent"); } catch (Throwable $e) {}
 }
 function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): int {
     if ($userId <= 0) throw new RuntimeException('Aluno invalido.');
@@ -193,8 +205,6 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     $dLive = new DateTimeImmutable(str_replace('T', ' ', $dataLiveRaw));
     if ($dLive <= new DateTimeImmutable('now')) throw new RuntimeException('A nova data da live deve ser futura.');
     $newLive = $dLive->format('Y-m-d H:i:s');
-    $slots = al_available_reagendar_slots($pdo);
-    if (empty($slots[$newLive])) throw new RuntimeException('Esta data nao esta disponivel para reagendamento.');
 
     $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
     $st->execute([':id' => $userId]);
@@ -221,8 +231,8 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     try {
         $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
         $pdo->prepare("INSERT INTO reagendamentos_live
-            (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, webhook_url, created_at)
-            VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, NULL, NOW())")
+            (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
+            VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, 'suporte', NULL, NOW())")
             ->execute([
                 ':u' => $userId,
                 ':oc' => $oldCodigo ?: null,
@@ -236,6 +246,11 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
                 ':ua' => 'admin_alunos',
             ]);
         $histId = (int)$pdo->lastInsertId();
+        reagendamento_live_log($pdo, $histId, $userId, 'agendamento_criado', 'pendente', 'Reagendamento criado pelo admin de alunos.', [
+            'new_turma_live_at' => $newLive,
+            'sf_disparo_at' => $dispatchAt,
+            'origem' => 'admin_alunos',
+        ]);
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -275,8 +290,15 @@ $hasUtm     = col_ok($pdo,'users','utm_source');
 
 // ── Detecta turmas disponíveis ────────────────────────────────────────────
 $turmas = [];
+$turmaDetails = [];
 if (table_ok($pdo,'turmas') && $colTurma !== '') {
-    $turmas = $pdo->query("SELECT codigo FROM turmas ORDER BY codigo ASC")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $turmaRows = $pdo->query("SELECT codigo, data_live, codigo_live FROM turmas ORDER BY codigo ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($turmaRows as $turmaRow) {
+        $turmaCode = trim((string)($turmaRow['codigo'] ?? ''));
+        if ($turmaCode === '') continue;
+        $turmas[] = $turmaCode;
+        $turmaDetails[$turmaCode] = $turmaRow;
+    }
 }
 
 // ── POST: ações inline ────────────────────────────────────────────────────
@@ -306,7 +328,54 @@ $msgPost = ''; $msgPostTipo = 'ok';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
 
-    if ($acao === 'gerar_cert_manual') {
+    if ($acao === 'liberar_vitalicio_manual') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            if ($uid <= 0) throw new RuntimeException('Aluno invalido.');
+            $currentAccess = course_access_status($pdo, $uid);
+            if (!empty($currentAccess['lifetime'])) {
+                throw new RuntimeException(!empty($currentAccess['is_paid'])
+                    ? 'Este aluno ja possui acesso vitalicio pago.'
+                    : 'Este aluno ja possui acesso vitalicio concedido.');
+            }
+            $transactionCode = 'manual_admin_' . $uid . '_' . bin2hex(random_bytes(8));
+            course_access_grant_lifetime($pdo, $uid, $transactionCode, '', '', [
+                'admin_id'=>$_SESSION['admin_id'] ?? null,
+                'motivo'=>trim((string)($_POST['motivo'] ?? 'Liberacao manual pela equipe')),
+            ], 'admin_alunos', 'manual', false);
+            if (function_exists('adicionar_tag')) {
+                adicionar_tag($uid, 'ACESSO_VITALICIO', 'admin_alunos', null);
+                adicionar_tag($uid, 'INSCRICAO_VITALICIA', 'admin_alunos', null);
+            }
+            disparar_webhooks('INSCRICAO_VITALICIA', $uid, [
+                'origem'=>'admin_alunos', 'tipo_inscricao'=>'vitalicia',
+                'acesso_vitalicio'=>true, 'acesso_pago'=>false, 'concessao'=>'manual',
+            ]);
+            disparar_webhooks('ACESSO_VITALICIO_LIBERADO', $uid, [
+                'origem'=>'admin_alunos', 'acesso_pago'=>false, 'concessao'=>'manual',
+            ]);
+            $msgPost = 'Acesso vitalicio liberado manualmente. Esta concessao nao conta como venda.';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
+    } elseif ($acao === 'remover_vitalicio') {
+        $uid = (int)($_POST['uid'] ?? 0);
+        try {
+            if ($uid <= 0) throw new RuntimeException('Aluno invalido.');
+            $stUser = $pdo->prepare("SELECT id FROM users WHERE id = :id LIMIT 1");
+            $stUser->execute([':id' => $uid]);
+            if (!$stUser->fetchColumn()) throw new RuntimeException('Aluno nao encontrado.');
+            $del = $pdo->prepare("DELETE FROM course_lifetime_access WHERE user_id = :uid");
+            $del->execute([':uid' => $uid]);
+            if (function_exists('remover_tag_usuario')) {
+                remover_tag_usuario($uid, 'ACESSO_VITALICIO');
+                remover_tag_usuario($uid, 'INSCRICAO_VITALICIA');
+            }
+            $msgPost = 'Acesso vitalicio removido. Registros apagados: ' . (int)$del->rowCount() . '.';
+        } catch (Throwable $e) {
+            $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';
+        }
+    } elseif ($acao === 'gerar_cert_manual') {
         $uid = (int)($_POST['uid'] ?? 0);
         if ($uid <= 0) {
             $msgPost = 'Aluno inválido.'; $msgPostTipo = 'erro';
@@ -468,17 +537,59 @@ if ($fDateTo !== '' && $colCreated !== '') {
     $where[]          = "u.`$colCreated` <= :dto";
     $params[':dto']   = $fDateTo . ' 23:59:59';
 }
+
+$utmOptions = [
+    'utm_source' => [],
+    'utm_medium' => [],
+    'utm_campaign' => [],
+];
+if ($hasUtm) {
+    $utmSelected = [
+        'utm_source' => $fUtmSrc,
+        'utm_medium' => $fUtmMed,
+        'utm_campaign' => $fUtmCamp,
+    ];
+    foreach (array_keys($utmOptions) as $utmColumn) {
+        $optionWhere = $where;
+        $optionParams = $params;
+        foreach ($utmSelected as $filterColumn => $filterValue) {
+            if ($filterColumn === $utmColumn || $filterValue === '') continue;
+            $key = ':opt_' . $filterColumn;
+            $optionWhere[] = "u.`$filterColumn` = $key";
+            $optionParams[$key] = $filterValue;
+        }
+        $optionWhere[] = "TRIM(COALESCE(u.`$utmColumn`, '')) <> ''";
+        $optionWhereSql = 'WHERE ' . implode(' AND ', $optionWhere);
+        try {
+            $stOptions = $pdo->prepare("
+                SELECT DISTINCT TRIM(u.`$utmColumn`) AS valor
+                FROM users u
+                $optionWhereSql
+                ORDER BY valor ASC
+                LIMIT 1000
+            ");
+            $stOptions->execute($optionParams);
+            $utmOptions[$utmColumn] = $stOptions->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        } catch (Throwable $e) {}
+
+        $selectedValue = $utmSelected[$utmColumn];
+        if ($selectedValue !== '' && !in_array($selectedValue, $utmOptions[$utmColumn], true)) {
+            array_unshift($utmOptions[$utmColumn], $selectedValue);
+        }
+    }
+}
+
 if ($fUtmSrc !== '' && $hasUtm) {
-    $where[]       = "u.utm_source LIKE :us";
-    $params[':us'] = '%' . $fUtmSrc . '%';
+    $where[]       = "u.utm_source = :us";
+    $params[':us'] = $fUtmSrc;
 }
 if ($fUtmMed !== '' && $hasUtm) {
-    $where[]       = "u.utm_medium LIKE :um";
-    $params[':um'] = '%' . $fUtmMed . '%';
+    $where[]       = "u.utm_medium = :um";
+    $params[':um'] = $fUtmMed;
 }
 if ($fUtmCamp !== '' && $hasUtm) {
-    $where[]        = "u.utm_campaign LIKE :uc";
-    $params[':uc']  = '%' . $fUtmCamp . '%';
+    $where[]        = "u.utm_campaign = :uc";
+    $params[':uc']  = $fUtmCamp;
 }
 
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
@@ -488,6 +599,25 @@ $selCreated = $colCreated !== '' ? "u.`$colCreated` AS primeiro_cadastro," : "NU
 $selUtm     = $hasUtm
     ? "u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content,"
     : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
+
+$userVarColumns = [
+    'data_live' => 'data_live',
+    'turma_live_at' => 'turma_live_at',
+    'turma_codigo' => 'user_turma_codigo_raw',
+    'codigo_live' => 'codigo_live',
+    'created_at' => 'created_at',
+    'criado_em' => 'criado_em',
+    'updated_at' => 'updated_at',
+    'utm_term' => 'utm_term',
+];
+$selUserVars = '';
+foreach ($userVarColumns as $uvCol => $uvAlias) {
+    if (col_ok($pdo, 'users', $uvCol)) {
+        $selUserVars .= "u.`$uvCol` AS `$uvAlias`,";
+    } else {
+        $selUserVars .= "NULL AS `$uvAlias`,";
+    }
+}
 
 if ($hasIL) {
     $selWhl = "(SELECT COUNT(*) FROM inscricao_logs il WHERE il.user_id = u.id) AS qtd_cadastros,
@@ -515,7 +645,7 @@ $totalGeral = (int)$stCount->fetchColumn();
 $sql = "
 SELECT
   u.id, u.nome, u.email, u.telefone,
-  $selTurma $selCreated $selUtm $selWhl $selCert
+  $selTurma $selCreated $selUtm $selUserVars $selWhl $selCert
   (SELECT GROUP_CONCAT(t.nome ORDER BY t.nome SEPARATOR '|')
    FROM user_tags ut JOIN tags t ON t.id = ut.tag_id
    WHERE ut.user_id = u.id) AS tags_lista
@@ -672,6 +802,17 @@ require __DIR__ . '/_header.php';
 .retorno-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; color:var(--muted); margin-bottom:5px; }
 .retorno-msg { font-size:12px; color:var(--text); white-space:pre-wrap; max-height:48px; overflow:hidden; }
 .retorno-empty { font-size:12px; color:var(--dim); }
+.vars-block { grid-column:1/-1; border-top:1px solid var(--border); padding-top:14px; }
+.vars-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:6px 10px; }
+.var-row {
+    display:grid; grid-template-columns:minmax(170px,.9fr) minmax(0,1.1fr); gap:10px;
+    align-items:start; border:1px solid var(--border); border-radius:var(--r);
+    padding:7px 9px; background:rgba(2,6,23,.28); min-width:0;
+}
+.var-meta { min-width:0; }
+.var-meta code { display:block; color:#bfdbfe; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.var-desc { margin-top:2px; color:var(--muted); font-size:10px; line-height:1.35; }
+.var-row > span { color:var(--text); font-size:11px; text-align:right; word-break:break-word; min-width:0; }
 .modal-box.modal-wide { max-width:620px; }
 
 /* ── KPI bar ──────────────────────────────────────────────── */
@@ -776,15 +917,30 @@ require __DIR__ . '/_header.php';
         <div class="adv-panel <?= $temFiltroUtm?'open':'' ?>" id="panel-utm">
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Source</label>
-                <input type="text" name="utm_source" value="<?= h($fUtmSrc) ?>" placeholder="google, facebook…">
+                <select name="utm_source">
+                    <option value="">Todas</option>
+                    <?php foreach ($utmOptions['utm_source'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmSrc === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Medium</label>
-                <input type="text" name="utm_medium" value="<?= h($fUtmMed) ?>" placeholder="cpc, email…">
+                <select name="utm_medium">
+                    <option value="">Todos</option>
+                    <?php foreach ($utmOptions['utm_medium'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmMed === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="filter-group" style="min-width:140px">
                 <label>UTM Campaign</label>
-                <input type="text" name="utm_campaign" value="<?= h($fUtmCamp) ?>" placeholder="nome_campanha">
+                <select name="utm_campaign">
+                    <option value="">Todas</option>
+                    <?php foreach ($utmOptions['utm_campaign'] as $utmValue): ?>
+                    <option value="<?= h((string)$utmValue) ?>" <?= $fUtmCamp === (string)$utmValue ? 'selected' : '' ?>><?= h((string)$utmValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
         <?php endif; ?>
@@ -828,6 +984,7 @@ require __DIR__ . '/_header.php';
                     <th>Nome / E-mail</th>
                     <th>Telefone</th>
                     <th>Turma</th>
+                    <th>Acesso</th>
                     <th>Tags</th>
                     <th style="text-align:center">Cadastros</th>
                     <th>1° Cadastro</th>
@@ -837,7 +994,7 @@ require __DIR__ . '/_header.php';
             </thead>
             <tbody>
             <?php if (!$alunos): ?>
-                <tr><td colspan="9" style="padding:28px;text-align:center;color:var(--muted)">Nenhum aluno encontrado para os filtros aplicados.</td></tr>
+                <tr><td colspan="10" style="padding:28px;text-align:center;color:var(--muted)">Nenhum aluno encontrado para os filtros aplicados.</td></tr>
             <?php else: ?>
             <?php foreach ($alunos as $i => $a):
                 $tags    = array_filter(array_map('trim', explode('|', (string)($a['tags_lista']??''))));
@@ -852,6 +1009,54 @@ require __DIR__ . '/_header.php';
                 $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
                 $retornosAluno = $retornosPorUser[(int)$a['id']] ?? [];
+                $accessStatus = course_access_status($pdo, (int)$a['id']);
+                $accessRemainingDays = isset($accessStatus['remaining_seconds']) && $accessStatus['remaining_seconds'] !== null
+                    ? (int)ceil((int)$accessStatus['remaining_seconds'] / 86400)
+                    : null;
+                $liveAtual = trim((string)($a['turma_live_at'] ?? ''));
+                if ($liveAtual === '') $liveAtual = trim((string)($a['data_live'] ?? ''));
+                if ($liveAtual === '') $liveAtual = trim((string)($turmaDetails[$turma]['data_live'] ?? ''));
+                $liveAtualBr = fmtDtHora($liveAtual);
+                $codigoLiveAtual = trim((string)($a['codigo_live'] ?? ''));
+                if ($codigoLiveAtual === '') $codigoLiveAtual = trim((string)($turmaDetails[$turma]['codigo_live'] ?? ''));
+                if ($codigoLiveAtual === '') $codigoLiveAtual = $turma;
+                $systemVars = [
+                    'user.id' => ['value' => (string)($a['id'] ?? ''), 'desc' => 'ID interno do aluno. Formato: numero.'],
+                    'user.nome' => ['value' => (string)($a['nome'] ?? ''), 'desc' => 'Nome cadastrado do aluno. Formato: texto.'],
+                    'user.email' => ['value' => (string)($a['email'] ?? ''), 'desc' => 'Email/login atual. Formato: email.'],
+                    'user.telefone' => ['value' => (string)($a['telefone'] ?? ''), 'desc' => 'Telefone atual do cadastro. Formato: texto.'],
+                    'user.codigo_turma' => ['value' => $turma, 'desc' => 'Codigo da turma atual. Formato: texto/numero.'],
+                    'user.turma_codigo' => ['value' => (string)($a['user_turma_codigo_raw'] ?? ''), 'desc' => 'Codigo alternativo da turma, se existir. Formato: texto/numero.'],
+                    'user.data_live' => ['value' => (string)($a['data_live'] ?? ''), 'desc' => 'Live atual gravada no aluno. Formato banco: Y-m-d H:i:s.'],
+                    'user.turma_live_at' => ['value' => (string)($a['turma_live_at'] ?? ''), 'desc' => 'Live atual gravada no aluno. Formato banco: Y-m-d H:i:s.'],
+                    'user.codigo_live' => ['value' => (string)($a['codigo_live'] ?? ''), 'desc' => 'Codigo/slug da live, se salvo no aluno. Formato: texto.'],
+                    'user.created_at' => ['value' => (string)($a['created_at'] ?? ($a['primeiro_cadastro'] ?? '')), 'desc' => 'Data de cadastro. Formato banco: Y-m-d H:i:s.'],
+                    'user.criado_em' => ['value' => (string)($a['criado_em'] ?? ''), 'desc' => 'Data de cadastro alternativa. Formato banco.'],
+                    'user.updated_at' => ['value' => (string)($a['updated_at'] ?? ''), 'desc' => 'Ultima atualizacao do cadastro. Formato banco.'],
+                    'user.utm_source' => ['value' => (string)($a['utm_source'] ?? ''), 'desc' => 'Origem UTM. Formato: texto.'],
+                    'user.utm_medium' => ['value' => (string)($a['utm_medium'] ?? ''), 'desc' => 'Midia UTM. Formato: texto.'],
+                    'user.utm_campaign' => ['value' => (string)($a['utm_campaign'] ?? ''), 'desc' => 'Campanha UTM. Formato: texto.'],
+                    'user.utm_content' => ['value' => (string)($a['utm_content'] ?? ''), 'desc' => 'Conteudo UTM. Formato: texto.'],
+                    'user.utm_term' => ['value' => (string)($a['utm_term'] ?? ''), 'desc' => 'Termo UTM. Formato: texto.'],
+                    'extra.codigo_turma' => ['value' => $turma, 'desc' => 'Codigo da turma enviado no evento. Formato: texto/numero.'],
+                    'extra.codigo_live' => ['value' => $codigoLiveAtual, 'desc' => 'Codigo/slug da live enviado no evento. Formato: texto.'],
+                    'extra.data_live' => ['value' => $liveAtualBr, 'desc' => 'Data atual da live enviada em eventos. Formato BR: dd/mm/aaaa hh:mm.'],
+                    'extra.data.live' => ['value' => $liveAtualBr, 'desc' => 'Alias de extra.data_live. Formato BR: dd/mm/aaaa hh:mm.'],
+                    'extra.data_live_iso' => ['value' => $liveAtual, 'desc' => 'Data atual da live enviada em eventos. Formato banco: Y-m-d H:i:s.'],
+                    'extra.data.live_iso' => ['value' => $liveAtual, 'desc' => 'Alias de extra.data_live_iso. Formato banco: Y-m-d H:i:s.'],
+                    'extra.reagendamento.data_live' => ['value' => $liveAtualBr, 'desc' => 'Live nova dentro do bloco de reagendamento. Formato BR.'],
+                    'extra.tags' => ['value' => implode(', ', $tags), 'desc' => 'Tags atuais do aluno. Formato: lista separada por virgula.'],
+                    'extra.qtd_inscricoes' => ['value' => (string)$qtd, 'desc' => 'Quantidade de inscricoes detectadas. Formato: numero.'],
+                    'extra.primeira_inscricao' => ['value' => $primCad, 'desc' => 'Primeira inscricao. Formato banco/data.'],
+                    'extra.ultima_inscricao' => ['value' => $ultCad, 'desc' => 'Ultima inscricao. Formato banco/data.'],
+                    'extra.acesso.vitalicio' => ['value' => !empty($accessStatus['lifetime']) ? '1' : '0', 'desc' => 'Indica se o aluno possui acesso vitalicio.'],
+                    'extra.acesso.pago' => ['value' => !empty($accessStatus['is_paid']) ? '1' : '0', 'desc' => 'Indica se o vitalicio veio de pagamento real.'],
+                    'extra.tipo_inscricao' => ['value' => !empty($accessStatus['lifetime']) ? 'vitalicia' : 'gratuita', 'desc' => 'Tipo efetivo do acesso atual do aluno.'],
+                    'extra.acesso.dias_restantes' => ['value' => $accessRemainingDays !== null ? (string)$accessRemainingDays : '', 'desc' => 'Dias restantes do acesso temporario.'],
+                    'extra.certificado.codigo' => ['value' => $certCod, 'desc' => 'Codigo publico do certificado. Formato: texto.'],
+                    'extra.certificado.pdf_url' => ['value' => $certPdf, 'desc' => 'URL do PDF do certificado. Formato: URL.'],
+                    'extra.certificado.emitido_em' => ['value' => $certEmitido, 'desc' => 'Data de emissao do certificado. Formato banco.'],
+                ];
             ?>
             <tr class="main-row" id="row-<?= $i ?>" onclick="toggleExpand(<?= $i ?>)">
                 <td><span class="expand-icon">▶</span></td>
@@ -864,6 +1069,13 @@ require __DIR__ . '/_header.php';
                     <?php if ($turma !== ''): ?>
                     <span class="badge badge-info" style="font-size:11px"><?= h($turma) ?></span>
                     <?php else: ?><span style="color:var(--dim);font-size:12px">—</span><?php endif; ?>
+                </td>
+                <td style="font-size:11px;white-space:nowrap">
+                    <?php if (!empty($accessStatus['lifetime'])): ?>
+                        <span class="badge" style="color:var(--success);border-color:var(--success)">Vitalicio<?= !empty($accessStatus['is_paid']) ? ' pago' : '' ?></span>
+                    <?php elseif (!empty($accessStatus['enabled'])): ?>
+                        <span style="color:<?= !empty($accessStatus['expired']) ? 'var(--danger)' : 'var(--muted)' ?>"><?= $accessRemainingDays !== null ? $accessRemainingDays . ' dia(s)' : '-' ?></span>
+                    <?php else: ?><span style="color:var(--dim)">Sem prazo</span><?php endif; ?>
                 </td>
                 <td style="max-width:180px">
                     <?php $shown=0; foreach ($tags as $tag):
@@ -887,7 +1099,7 @@ require __DIR__ . '/_header.php';
                 </td>
             </tr>
             <tr id="exp-<?= $i ?>">
-                <td colspan="9" style="padding:0;border-bottom:none">
+                <td colspan="10" style="padding:0;border-bottom:none">
                     <div class="expand-detail" id="det-<?= $i ?>">
                         <!-- UTMs + cadastros -->
                         <div>
@@ -919,6 +1131,26 @@ require __DIR__ . '/_header.php';
                         </div>
                         <!-- Certificado + ações -->
                         <div>
+                            <div class="det-title">Acesso ao curso</div>
+                            <?php if (!empty($accessStatus['lifetime'])): ?>
+                                <div class="det-row"><span class="det-key">Modalidade</span><span class="det-val" style="color:var(--success)">Vitalicio</span></div>
+                                <div class="det-row"><span class="det-key">Origem</span><span class="det-val"><?= !empty($accessStatus['is_paid']) ? 'Pagamento confirmado' : h((string)($accessStatus['grant_type'] ?? 'concessao')) ?></span></div>
+                                <div class="det-row"><span class="det-key">Liberado em</span><span class="det-val"><?= h(fmtDtHora((string)($accessStatus['lifetime_granted_at'] ?? ''))) ?></span></div>
+                            <?php elseif (!empty($accessStatus['enabled'])): ?>
+                                <div class="det-row"><span class="det-key">Plano</span><span class="det-val">Gratuito por <?= (int)($accessStatus['access_days'] ?? 0) ?> dias</span></div>
+                                <div class="det-row"><span class="det-key">Restante</span><span class="det-val"><?= $accessRemainingDays !== null ? $accessRemainingDays . ' dia(s)' : '-' ?></span></div>
+                                <div class="det-row"><span class="det-key">Expira em</span><span class="det-val"><?= h(fmtDtHora((string)($accessStatus['expires_at'] ?? ''))) ?></span></div>
+                            <?php else: ?>
+                                <div style="font-size:12px;color:var(--dim)">Prazo de acesso nao configurado para a turma.</div>
+                            <?php endif; ?>
+                            <?php if (empty($accessStatus['lifetime'])): ?>
+                            <form method="post" style="margin:10px 0 16px" onsubmit="return confirm('Liberar acesso vitalicio manualmente? Esta acao nao sera contabilizada como venda.')">
+                                <input type="hidden" name="acao" value="liberar_vitalicio_manual">
+                                <input type="hidden" name="uid" value="<?=(int)$a['id']?>">
+                                <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--success)">Liberar vitalicio manualmente</button>
+                            </form>
+                            <?php endif; ?>
+
                             <div class="det-title">Certificado</div>
                             <?php if($certUrl): ?>
                             <div class="det-row"><span class="det-key">Emitido em</span><span class="det-val"><?=h(fmtDtHora($certEmitido))?></span></div>
@@ -988,6 +1220,24 @@ require __DIR__ . '/_header.php';
                             <?php else: ?>
                             <div class="retorno-empty">Nenhum retorno agendado para este aluno.</div>
                             <?php endif; ?>
+                        </div>
+                        <div class="vars-block">
+                            <div class="det-title">Variaveis do sistema</div>
+                            <div class="text-xs text-muted" style="margin-bottom:8px">Valores atuais disponiveis para consulta. A live atual do aluno fica em <code>user.turma_live_at</code> e <code>user.data_live</code>; em eventos, tambem aparece como <code>extra.data_live</code>.</div>
+                            <div class="vars-grid">
+                                <?php foreach ($systemVars as $varKey => $varInfo):
+                                    $varVal = (string)($varInfo['value'] ?? '');
+                                    $varDesc = (string)($varInfo['desc'] ?? '');
+                                ?>
+                                <div class="var-row">
+                                    <div class="var-meta">
+                                        <code><?= h($varKey) ?></code>
+                                        <div class="var-desc"><?= h($varDesc) ?></div>
+                                    </div>
+                                    <span><?= h(trim((string)$varVal) !== '' ? (string)$varVal : '-') ?></span>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
                         </div>
                     </div>
                 </td>
@@ -1115,20 +1365,15 @@ require __DIR__ . '/_header.php';
             <input type="hidden" name="acao" value="reagendar_live_manual">
             <input type="hidden" name="uid" id="m-reagendar-live-uid">
             <div class="form-group">
-                <label class="form-label">Escolha a live de repescagem</label>
-                <select name="nova_data_live" id="m-reagendar-live-data" required>
-                    <option value="">Selecione uma data disponivel...</option>
-                    <?php foreach ($reagendarLiveSlots as $slot): ?>
-                    <option value="<?= h((string)$slot['value']) ?>"><?= h((string)$slot['label']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label class="form-label">Nova data/hora da live</label>
+                <input type="datetime-local" name="nova_data_live" id="m-reagendar-live-data" required>
                 <div style="font-size:11px;color:var(--muted);margin-top:6px">
-                    As opcoes seguem a configuracao da tela Reagendamento Live: quantidade de lives, horario diario e dias indisponiveis.
+                    O suporte pode informar qualquer data futura, mesmo fora da disponibilidade configurada para o aluno.
                     O aluno permanece na turma atual e o sistema dispara o gatilho LIVE_REAGENDADA.
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="submit" class="btn btn-primary btn-sm" <?= empty($reagendarLiveSlots) ? 'disabled' : '' ?>>Confirmar reagendamento</button>
+                <button type="submit" class="btn btn-primary btn-sm">Confirmar reagendamento</button>
                 <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModal('modal-reagendar-live')">Cancelar</button>
             </div>
         </form>

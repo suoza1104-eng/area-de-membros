@@ -26,11 +26,12 @@ try {
             $alunoNome = (string)$rowUser['nome'];
             $_SESSION['aluno_nome'] = $alunoNome;
         }
-        if (!empty($rowUser['turma_codigo']) && $turmaCodigo === '') {
+        if (!empty($rowUser['turma_codigo'])) {
             $turmaCodigo = (string)$rowUser['turma_codigo'];
-        } elseif (!empty($rowUser['codigo_turma']) && $turmaCodigo === '') {
+        } elseif (!empty($rowUser['codigo_turma'])) {
             $turmaCodigo = (string)$rowUser['codigo_turma'];
         }
+        $_SESSION['turma_codigo'] = $turmaCodigo;
         if (!empty($rowUser['turma_live_at'])) {
             $turmaLiveAt = (string)$rowUser['turma_live_at'];
         } elseif (!empty($rowUser['data_live'])) {
@@ -44,6 +45,7 @@ $primeiroNome = trim((string)preg_split('/\s+/', trim($alunoNome))[0] ?? '');
 if ($primeiroNome === '') $primeiroNome = 'Aluno';
 
 $aluno = ['id' => $alunoId, 'nome' => $alunoNome, 'turma_codigo' => $turmaCodigo];
+$courseAccess = course_access_status($pdo, $alunoId);
 
 try {
     $cfgStmt = $pdo->query("SELECT * FROM app_config LIMIT 1");
@@ -55,6 +57,8 @@ try {
 $courseTitle     = $appCfg['course_title'] ?? 'Nome do Curso Exemplo';
 $logoUrl         = $appCfg['logo_url']     ?? '';
 $whatsappHelpUrl = get_setting('whatsapp_help_url', '');
+$supportButtonMode = get_setting('support_chat_button_mode', 'fixed') === 'agent' ? 'agent' : 'fixed';
+$supportFabUrl = $supportButtonMode === 'fixed' ? $whatsappHelpUrl : 'trilha.php?abrir_suporte=1';
 
 try {
     $stLessons = $pdo->query("SELECT * FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
@@ -782,6 +786,7 @@ width: 100%;
             }
         }
     </style>
+<?php include __DIR__ . '/_pwa_head.php'; ?>
 </head>
 <body>
 <div class="page">
@@ -807,6 +812,8 @@ width: 100%;
     </header>
 
     <main class="content">
+        <?php include __DIR__ . '/_course_access_widget.php'; ?>
+        <?php include __DIR__ . '/_pwa_install_banner.php'; ?>
         <?php if ($liveDataIso && $liveDataBr && !$liveIsPast): ?>
             <div class="live-banner" id="live-banner">
                 <div class="live-dot"></div>
@@ -880,7 +887,7 @@ width: 100%;
             // - Proximas so liberam se TODAS as anteriores estiverem concluidas
             // - Aulas ja concluidas continuam acessiveis
             $isUnlocked = ($idx === 0) || $allPrevCompleted || $completed;
-            $locked = !$isUnlocked;
+            $locked = !empty($courseAccess['expired']) || !$isUnlocked;
 
             $thumb = $ls['thumb_url'] ?? '';
             $aulaNumero = $idx + 1;
@@ -898,7 +905,7 @@ width: 100%;
                     <?php if ($locked): ?>
                         <div class="lesson-locked-overlay" aria-hidden="true">
                             <div class="lesson-locked-overlay-icon">&#128274;</div>
-                            <div class="lesson-locked-overlay-text">Conclua a aula anterior para liberar</div>
+                            <div class="lesson-locked-overlay-text"><?= !empty($courseAccess['expired']) ? 'Prazo máximo de acesso encerrado' : 'Conclua a aula anterior para liberar' ?></div>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -986,9 +993,9 @@ width: 100%;
     </footer>
 </div>
 
-<?php if ($whatsappHelpUrl): ?>
-<a href="<?= h($whatsappHelpUrl) ?>" class="whatsapp-fab"
-   target="_blank" rel="noopener noreferrer"
+<?php if ($supportFabUrl): ?>
+<a href="<?= h($supportFabUrl) ?>" class="whatsapp-fab"
+   <?= $supportButtonMode === 'fixed' ? 'target="_blank" rel="noopener noreferrer"' : 'data-support-agent="1"' ?>
    aria-label="Falar com suporte no WhatsApp">
     <span class="whatsapp-fab-icon" aria-hidden="true">
         <!-- Ãcone estilo WhatsApp (bolha verde com telefone branco) -->
@@ -999,6 +1006,9 @@ width: 100%;
         </svg>
     </span>
 </a>
+<?php endif; ?>
+<?php if ($supportButtonMode === 'agent'): ?>
+<?php include __DIR__ . '/_support_chat_widget.php'; ?>
 <?php endif; ?>
 
 <script>
@@ -1112,5 +1122,6 @@ document.addEventListener('DOMContentLoaded', function () {
     setInterval(update, 1000);
 })();</script>
 <?php endif; ?>
+<?php include __DIR__ . '/_pwa_runtime.php'; ?>
 </body>
 </html>

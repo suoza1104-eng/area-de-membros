@@ -117,6 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             set_setting('theme_secondary', $secondary_post !== '' ? $secondary_post : '#38bdf8');
             set_setting('theme_text', $text_post !== '' ? $text_post : '#f9fafb');
             set_setting('whatsapp_help_url', $whatsHelpPost);
+            set_setting('login_help_url', $whatsHelpPost);
 
             // Reagendamento de live (calendário)
             $reagCountPost = (int)($_POST['reagendar_next_lives_count'] ?? $reagendar_next_lives_count);
@@ -218,7 +219,7 @@ include __DIR__ . '/_header.php';
         padding:9px 10px;
         border-radius:10px;
         border:1px solid var(--border-light);
-        background:#f8fafc;
+        background:var(--bg);
         color:var(--text);
         font-size:13px;
         outline:none;

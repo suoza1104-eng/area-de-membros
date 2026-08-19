@@ -1,0 +1,23 @@
+{
+    "rows": 37,
+    "unique": 36,
+    "duplicates": {
+        "158": 2
+    },
+    "payment_sales": 36,
+    "hotmart_sales_live": 36,
+    "hotmart_sales": 36,
+    "matched_users": 35,
+    "unmatched": [
+        {
+            "tx": "firepay:393",
+            "nome": "Luis Willian aires belfort",
+            "email": "willianmix33@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        }
+    ],
+    "vitalicio": 29,
+    "vitalicio_granted": 29,
+    "vitalicio_missing": [],
+    "missing_sales": []
+}

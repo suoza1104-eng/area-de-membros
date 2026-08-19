@@ -217,7 +217,7 @@ include __DIR__ . '/_header.php';
         padding:7px 9px;
         border-radius:10px;
         border:1px solid var(--border-light);
-        background:#f8fafc;
+        background:var(--bg);
         color:var(--text);
         font-size:13px;
     }

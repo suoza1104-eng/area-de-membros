@@ -19,6 +19,11 @@ $stUser = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
 $stUser->execute(['id' => $userId]);
 $user = $stUser->fetch();
 if (!$user) { header('Location: login.php'); exit; }
+$courseAccess = course_access_status($pdo, $userId);
+if (!empty($courseAccess['expired'])) {
+    header('Location: trilha.php?access_expired=1');
+    exit;
+}
 
 $stCfgApp = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
 $appCfg   = $stCfgApp->fetch() ?: [];
@@ -39,6 +44,22 @@ $certCfg   = $stCfgCert->fetch() ?: [
     'certificado_button_label' => 'Quero receber meu certificado',
     'certificado_button_link'  => '#',
 ];
+
+$errorHtml = trim((string)($certCfg['error_html'] ?? ''));
+if ($errorHtml === '') {
+    $errorHtml = trim((string)($certCfg['error_message_html'] ?? ''));
+}
+if ($errorHtml === '') {
+    $errorHtml = '<strong>Senha inválida.</strong><br>Verifique o código informado e tente novamente.';
+}
+
+$successHtml = trim((string)($certCfg['success_html'] ?? ''));
+if ($successHtml === '') {
+    $successHtml = trim((string)($certCfg['success_message_html'] ?? ''));
+}
+if ($successHtml === '') {
+    $successHtml = '<strong>Parabéns!</strong><br>Seus dados estão corretos e sua senha foi validada.';
+}
 
 $stLessons = $pdo->query("SELECT id, conta_para_conclusao, ativo FROM lessons WHERE ativo = 1 ORDER BY ordem ASC, id ASC");
 $lessons   = $stLessons->fetchAll();
@@ -68,20 +89,87 @@ foreach ($lessons as $ls) {
 $percent          = $totalObrigatorias > 0 ? (int)round(100 * $totalConcluidas / $totalObrigatorias) : 0;
 $temTudoConcluido = ($totalObrigatorias > 0 && $totalConcluidas >= $totalObrigatorias);
 
+$viuAula05 = false;
+$temTagOfertaMcqdc = false;
+try {
+    $stAula05 = $pdo->prepare("
+        SELECT 1
+          FROM lessons l
+          LEFT JOIN lesson_progress lp
+            ON lp.lesson_id = l.id
+           AND lp.user_id = :uid_lp
+          LEFT JOIN lesson_view_events lve
+            ON lve.lesson_id = l.id
+           AND lve.user_id = :uid_lve
+         WHERE l.ativo = 1
+           AND (l.ordem = 5 OR l.id = 5)
+           AND (lp.id IS NOT NULL OR lve.id IS NOT NULL)
+         LIMIT 1
+    ");
+    $stAula05->execute(['uid_lp' => $userId, 'uid_lve' => $userId]);
+    $viuAula05 = (bool)$stAula05->fetchColumn();
+} catch (Throwable $e) {}
+
+try {
+    $stTagOferta = $pdo->prepare("
+        SELECT 1
+          FROM user_tags ut
+          JOIN tags t ON t.id = ut.tag_id
+         WHERE ut.user_id = :uid
+           AND t.nome = 'ESTAVA_OFERTA_MCQDC'
+         LIMIT 1
+    ");
+    $stTagOferta->execute(['uid' => $userId]);
+    $temTagOfertaMcqdc = (bool)$stTagOferta->fetchColumn();
+} catch (Throwable $e) {}
+
+$certificadoSemSenha = ($percent >= 80 && $viuAula05 && $temTagOfertaMcqdc);
+
 function send_cert_webhook(PDO $pdo, ?string $url, string $evento, array $user, array $extra = []): void {
     if (!$url) return;
     $payload     = ['evento' => $evento, 'user' => ['id' => $user['id'] ?? null, 'nome' => $user['nome'] ?? null, 'email' => $user['email'] ?? null, 'telefone' => $user['telefone'] ?? null], 'extra' => $extra, 'timestamp' => date('c')];
     $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_POSTFIELDS => $payloadJson, CURLOPT_TIMEOUT => 10]);
-    $responseBody = curl_exec($ch);
-    $httpCode     = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError    = curl_error($ch);
-    curl_close($ch);
+    $responseBody = '';
+    $httpCode     = 0;
+    $curlError    = '';
+    if (!function_exists('curl_init')) {
+        $curlError = 'curl indisponivel';
+    } else {
+        try {
+            $ch = curl_init($url);
+            if ($ch === false) {
+                $curlError = 'curl_init falhou';
+            } else {
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST => true,
+                    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                    CURLOPT_POSTFIELDS => $payloadJson,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                    CURLOPT_TIMEOUT => 10,
+                    CURLOPT_NOSIGNAL => 1,
+                ]);
+                $responseBody = (string)curl_exec($ch);
+                $httpCode     = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError    = (string)curl_error($ch);
+                curl_close($ch);
+            }
+        } catch (Throwable $e) {
+            $curlError = $e->getMessage();
+        }
+    }
     try {
         $st = $pdo->prepare("INSERT INTO webhook_logs (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at) VALUES (NULL, :uid, :evento, :payload, :status, :body, :err, NOW())");
         $st->execute(['uid' => $user['id'] ?? null, 'evento' => $evento, 'payload' => $payloadJson, 'status' => $httpCode, 'body' => (string)$responseBody, 'err' => $curlError]);
     } catch (Throwable $e) {}
+}
+
+function cert_log_erro(PDO $pdo, string $mensagem, array $contexto = []): void {
+    try {
+        log_sistema('error', 'certificado', $mensagem, $contexto);
+    } catch (Throwable $e) {
+        @error_log('certificado: ' . $mensagem . ' | ' . $e->getMessage());
+    }
 }
 
 function gerar_codigo_certificado(): string {
@@ -101,23 +189,82 @@ $mensagemErro  = '';
 $codigoCert    = null;
 $pdfUrl        = null;
 $emitidoEm     = null;
+$senhaConfirmada = '';
+$nomeConfirmacao = trim((string)($user['nome'] ?? ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!$temTudoConcluido) {
-        $erroConclusao = true;
-        $etapa         = 'erro';
-        $mensagemErro  = 'Você ainda não concluiu todas as aulas obrigatórias. Finalize a trilha antes de emitir o certificado.';
-    } else {
         $senhaInformada = trim((string)($_POST['senha_certificado'] ?? ''));
-        if ($senhaInformada === '' || $senhaInformada !== SENHA_CERTIFICADO) {
+        $senhaConfirmada = $senhaInformada;
+        $acao = (string)($_POST['acao'] ?? '');
+        $senhaOkNaSessao = $acao === 'confirmar_nome'
+            && (int)($_SESSION['cert_senha_ok_user_id'] ?? 0) === $userId
+            && (int)($_SESSION['cert_senha_ok_until'] ?? 0) >= time();
+
+        // === Determina a senha esperada a partir da configuração do DB ===
+        $senhaTipo   = $certCfg['senha_tipo']          ?? 'unica';
+        $senhaMode   = $certCfg['senha_mode']          ?? 'fixa';
+        $senhaFixa   = trim((string)($certCfg['senha_fixa'] ?? ''));
+        $partesFixas = json_decode((string)($certCfg['senha_partes_fixas'] ?? '[]'), true) ?: [];
+
+        // Busca senha variável da turma do aluno (se modo variável)
+        $senhaVariavel = '';
+        if ($senhaMode === 'variavel') {
+            try {
+                $stInsc = $pdo->prepare("SELECT turma_id FROM inscricoes WHERE user_id = :uid ORDER BY id DESC LIMIT 1");
+                $stInsc->execute(['uid' => $userId]);
+                $insc = $stInsc->fetch();
+                if ($insc && (int)$insc['turma_id'] > 0) {
+                    $stTurma = $pdo->prepare("SELECT senha_certificado FROM turmas WHERE id = :id LIMIT 1");
+                    $stTurma->execute(['id' => (int)$insc['turma_id']]);
+                    $turma = $stTurma->fetch();
+                    $senhaVariavel = trim((string)($turma['senha_certificado'] ?? ''));
+                }
+            } catch (Throwable $e) {}
+        }
+
+        // Monta a senha esperada
+        if ($senhaTipo === 'modular') {
+            $partes = $partesFixas;
+            if ($senhaMode === 'variavel') $partes[] = $senhaVariavel;
+            $senhaEsperada = implode('', array_map('trim', $partes));
+        } elseif ($senhaMode === 'variavel') {
+            $senhaEsperada = $senhaVariavel;
+        } else {
+            // unica + fixa: prioriza DB; fallback para constante
+            $senhaEsperada = $senhaFixa !== '' ? $senhaFixa : (defined('SENHA_CERTIFICADO') ? SENHA_CERTIFICADO : '');
+        }
+
+        if (!$certificadoSemSenha && !$senhaOkNaSessao && ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '')) {
             $erroSenha    = true;
             $etapa        = 'erro';
-            $mensagemErro = $certCfg['error_message_html'] ?? 'Senha inválida.';
+            $mensagemErro = $errorHtml;
             if (!empty($certCfg['webhook_error_url'])) {
-                send_cert_webhook($pdo, $certCfg['webhook_error_url'], 'CERT_SENHA_ERRADA', $user, ['motivo' => 'senha_incorreta']);
+                try {
+                    send_cert_webhook($pdo, $certCfg['webhook_error_url'], 'CERT_SENHA_ERRADA', $user, ['motivo' => 'senha_incorreta']);
+                } catch (Throwable $e) {
+                    cert_log_erro($pdo, 'Falha no webhook de senha incorreta', ['exception' => $e->getMessage(), 'user_id' => $userId]);
+                }
             }
             try { disparar_webhooks('CERT_SENHA_ERRADA', (int)($user['id'] ?? 0), ['motivo' => 'senha_incorreta']); } catch (Throwable $e) {}
         } else {
+            if ($acao !== 'confirmar_nome') {
+                $_SESSION['cert_senha_ok_user_id'] = $userId;
+                $_SESSION['cert_senha_ok_until'] = time() + 600;
+                $etapa = 'confirmar_nome';
+                $nomeConfirmacao = trim((string)($user['nome'] ?? ''));
+            } else {
+                $nomeCorrigido = trim(preg_replace('/\s+/', ' ', (string)($_POST['nome_certificado'] ?? '')) ?? '');
+                if ($nomeCorrigido === '' || strlen($nomeCorrigido) < 3) {
+                    $erroSenha = true;
+                    $etapa = 'confirmar_nome';
+                    $nomeConfirmacao = $nomeCorrigido !== '' ? $nomeCorrigido : trim((string)($user['nome'] ?? ''));
+                    $mensagemErro = 'Informe o nome completo para emitir o certificado.';
+                } else {
+                    if ($nomeCorrigido !== trim((string)($user['nome'] ?? ''))) {
+                        $stNome = $pdo->prepare("UPDATE users SET nome = :nome WHERE id = :id LIMIT 1");
+                        $stNome->execute(['nome' => $nomeCorrigido, 'id' => $userId]);
+                        $user['nome'] = $nomeCorrigido;
+                    }
             $pdo->beginTransaction();
             try {
                 $stCert = $pdo->prepare("SELECT * FROM certificates WHERE user_id = :uid AND course = :course ORDER BY id DESC LIMIT 1");
@@ -129,6 +276,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cert       = $certExist;
                     $codigoCert = $certExist['codigo_uid'];
                     $emitidoEm  = $certExist['emitido_em'];
+                    $pdfUrl     = trim((string)($certExist['pdf_url'] ?? '')) ?: null;
                 } else {
                     $codigoCert = gerar_codigo_certificado();
                     $emitidoEm  = date('Y-m-d H:i:s');
@@ -143,33 +291,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cert = $stCert2->fetch() ?: null;
                 }
 
-                if ($cert) {
+                if ($cert && !$pdfUrl) {
                     $pdfUrl = gerar_pdf_certificado($user, $cert, $certCfg);
                     $stUpd  = $pdo->prepare("UPDATE certificates SET pdf_url = :pdf_url WHERE id = :id");
                     $stUpd->execute(['pdf_url' => $pdfUrl, 'id' => $cert['id']]);
                     $cert['pdf_url'] = $pdfUrl;
-                } else {
+                } elseif (!$cert) {
                     $pdfUrl = null;
                 }
 
-                try { adicionar_tag($userId, 'CERT_EMITIDO', 'certificado'); } catch (Throwable $e) {}
                 $pdo->commit();
 
+                try { adicionar_tag($userId, 'CERT_EMITIDO', 'certificado'); } catch (Throwable $e) {}
+
                 if (!empty($certCfg['webhook_emitido_url'])) {
-                    send_cert_webhook($pdo, $certCfg['webhook_emitido_url'], 'CERT_EMITIDO', $user, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                    try {
+                        send_cert_webhook($pdo, $certCfg['webhook_emitido_url'], 'CERT_EMITIDO', $user, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                    } catch (Throwable $e) {
+                        cert_log_erro($pdo, 'Falha no webhook direto de certificado emitido', ['exception' => $e->getMessage(), 'user_id' => $userId, 'codigo_certificado' => $codigoCert]);
+                    }
                 }
-                try { disparar_webhooks('CERT_EMITIDO', (int)$userId, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]); } catch (Throwable $e) {}
+                try {
+                    disparar_webhooks('CERT_EMITIDO', (int)$userId, ['codigo_certificado' => $codigoCert, 'curso' => $courseTitle, 'emitido_em' => $emitidoEm, 'pdf_url' => $pdfUrl]);
+                } catch (Throwable $e) {
+                    cert_log_erro($pdo, 'Falha ao capturar evento de certificado emitido', ['exception' => $e->getMessage(), 'user_id' => $userId, 'codigo_certificado' => $codigoCert]);
+                }
 
                 $etapa = 'sucesso';
+                unset($_SESSION['cert_senha_ok_user_id'], $_SESSION['cert_senha_ok_until']);
             } catch (Throwable $e) {
-                $pdo->rollBack();
+                if ($pdo->inTransaction()) $pdo->rollBack();
                 $erroSenha    = true;
                 $etapa        = 'erro';
                 $mensagemErro = 'Ocorreu um erro ao emitir seu certificado. Tente novamente mais tarde.';
-                log_sistema('error', 'certificado', 'Erro ao emitir certificado', ['exception' => $e->getMessage()]);
+                cert_log_erro($pdo, 'Erro ao emitir certificado', ['exception' => $e->getMessage(), 'user_id' => $userId]);
+            }
+                }
             }
         }
-    }
 }
 
 $btnLabel = $certCfg['certificado_button_label'] ?? 'Quero receber meu certificado';
@@ -181,6 +340,8 @@ $senhaVideoUrl     = trim((string)($certCfg['senha_video_url']          ?? ''));
 $senhaVideoEnabled = !empty($certCfg['senha_video_enabled']  ?? 0) || $senhaVideoUrl !== '';
 $erroVideoUrl      = trim((string)($certCfg['senha_error_video_url']    ?? ''));
 $erroVideoEnabled  = !empty($certCfg['senha_error_video_enabled'] ?? 0) || $erroVideoUrl !== '';
+$incompletoVideoUrl     = trim((string)($certCfg['incompleto_video_url']     ?? ''));
+$incompletoVideoEnabled = !empty($certCfg['incompleto_video_enabled'] ?? 0) || $incompletoVideoUrl !== '';
 
 function normalizar_video_url(string $url): string {
     $url = trim($url);
@@ -261,12 +422,12 @@ function normalizar_video_url(string $url): string {
         .course-sub  { font-size: 11px; color: var(--muted); }
         .btn-back {
             display: inline-flex; align-items: center; gap: 6px;
-            padding: 7px 14px; border-radius: var(--r-full);
-            border: 1px solid var(--border); background: transparent;
-            color: var(--muted); font-size: 12px; font-weight: 500; font-family: var(--font);
-            cursor: pointer; transition: background .15s, color .15s;
+            padding: 8px 16px; border-radius: var(--r-full);
+            border: 1px solid var(--primary); background: var(--primary);
+            color: #07101f; font-size: 12px; font-weight: 700; font-family: var(--font);
+            cursor: pointer; transition: filter .15s, transform .15s;
         }
-        .btn-back:hover { background: rgba(255,255,255,.06); color: var(--text); }
+        .btn-back:hover { filter: brightness(1.08); transform: translateY(-1px); }
         .btn-back svg { width: 13px; height: 13px; }
 
         /* PAGE */
@@ -351,20 +512,30 @@ function normalizar_video_url(string $url): string {
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* SUCCESS CTA */
-        .pulsing-cta { margin-top: 16px; display: flex; justify-content: center; }
+        .pulsing-cta { margin-top: 18px; display: flex; justify-content: center; }
         .pulsing-cta a {
             display: inline-flex; align-items: center; gap: 8px;
-            padding: 12px 22px; border-radius: var(--r-full);
-            background: var(--success); color: #ecfdf5;
-            font-size: 14px; font-weight: 700;
-            animation: pulseCert 1.8s infinite;
+            min-width: min(100%, 360px);
+            justify-content: center;
+            padding: 16px 28px; border-radius: var(--r-full);
+            background: #facc15; color: #111827;
+            border: 1px solid rgba(255,255,255,.45);
+            font-size: 16px; font-weight: 800;
+            box-shadow: 0 0 0 0 rgba(250,204,21,.55), 0 12px 30px rgba(250,204,21,.24);
+            animation: pulseCert 1.05s ease-in-out infinite;
             text-decoration: none;
         }
-        .pulsing-cta a svg { width: 18px; height: 18px; }
+        .pulsing-cta a:hover { filter: brightness(1.08); transform: translateY(-1px); }
+        .pulsing-cta a svg { width: 20px; height: 20px; flex-shrink: 0; }
         @keyframes pulseCert {
-            0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.45); }
-            70%  { box-shadow: 0 0 0 14px rgba(34,197,94,0); }
-            100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+            0%, 100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(250,204,21,.58), 0 12px 30px rgba(250,204,21,.24);
+            }
+            50% {
+                transform: scale(1.055);
+                box-shadow: 0 0 0 14px rgba(250,204,21,0), 0 16px 38px rgba(250,204,21,.36);
+            }
         }
 
         .cert-code {
@@ -384,6 +555,60 @@ function normalizar_video_url(string $url): string {
         .video-box { margin-top: 16px; border-radius: var(--r); overflow: hidden; background: #000; }
         .video-inner { position: relative; padding-top: 56.25%; }
         .video-inner iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+        .name-modal-backdrop {
+            position: fixed; inset: 0; z-index: 200;
+            background: rgba(2, 6, 23, .72);
+            display: flex; align-items: center; justify-content: center;
+            padding: 18px;
+        }
+        .name-modal {
+            width: min(520px, 100%);
+            background: #0d1b33;
+            border: 1px solid var(--border);
+            border-radius: var(--r-xl);
+            box-shadow: 0 24px 70px rgba(0,0,0,.38);
+            padding: 22px;
+        }
+        .name-modal h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+        .name-modal p {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.45;
+            margin-bottom: 16px;
+        }
+        .name-modal input {
+            width: 100%;
+            height: 48px;
+            border-radius: var(--r);
+            border: 1px solid var(--border);
+            background: #07101f;
+            color: var(--text);
+            padding: 0 14px;
+            font-size: 16px;
+            font-weight: 700;
+            outline: none;
+        }
+        .name-modal input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(250,204,21,.12);
+        }
+        .name-modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .name-modal-actions .btn-submit {
+            margin-top: 0;
+        }
+        .name-modal-note {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -425,18 +650,12 @@ function normalizar_video_url(string $url): string {
         <div class="progress-bar-outer"><div class="progress-bar-inner"></div></div>
         <div class="progress-text"><?= $totalConcluidas ?> de <?= $totalObrigatorias ?> aulas concluídas (<?= $percent ?>%)</div>
 
-        <?php if (!$temTudoConcluido && $etapa === 'form'): ?>
-            <div class="alert alert-warn">
-                Você ainda não concluiu todas as aulas obrigatórias. Conclua a trilha para emitir o certificado.
-            </div>
-        <?php endif; ?>
-
         <?php if ($etapa === 'erro' && $mensagemErro): ?>
             <div class="alert alert-error"><?= $mensagemErro ?></div>
         <?php endif; ?>
 
         <?php if ($etapa === 'sucesso'): ?>
-            <div class="alert alert-ok"><?= $certCfg['success_message_html'] ?? 'Certificado liberado com sucesso.' ?></div>
+            <div class="alert alert-ok"><?= $successHtml ?></div>
 
             <?php if ($codigoCert): ?>
                 <div class="cert-code">
@@ -452,20 +671,34 @@ function normalizar_video_url(string $url): string {
                     <?= h($btnLabel) ?>
                 </a>
             </div>
-        <?php else: ?>
+        <?php elseif ($etapa === 'form'): ?>
             <form method="post" action="" id="certForm">
+                <?php if ($certificadoSemSenha): ?>
+                    <input type="hidden" name="senha_certificado" value="">
+                <?php else: ?>
                 <div class="form-group">
                     <label class="form-label" for="senha_certificado">Senha do certificado</label>
                     <input type="password" id="senha_certificado" name="senha_certificado" autocomplete="off" placeholder="Digite a senha recebida">
                 </div>
+                <?php endif; ?>
                 <button type="submit" class="btn-submit" id="btnEmitir">
                     <span class="spinner" aria-hidden="true"></span>
-                    <span class="btn-text">Validar e emitir certificado</span>
+                    <span class="btn-text"><?= $certificadoSemSenha ? 'Gerar certificado' : 'Validar e emitir certificado' ?></span>
                 </button>
             </form>
         <?php endif; ?>
 
-        <?php if ($etapa === 'form' && $introVideoEnabled && $introVideoUrl !== ''): ?>
+        <?php if ($etapa === 'form' && !$certificadoSemSenha && !$temTudoConcluido && $incompletoVideoEnabled && $incompletoVideoUrl !== ''): ?>
+            <div class="video-box">
+                <div class="video-inner">
+                    <?php if (stripos($incompletoVideoUrl, '<iframe') !== false): ?>
+                        <?= $incompletoVideoUrl ?>
+                    <?php else: ?>
+                        <iframe src="<?= h(normalizar_video_url($incompletoVideoUrl)) ?>" title="Vídeo trilha incompleta" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php elseif ($etapa === 'form' && ($temTudoConcluido || $certificadoSemSenha) && $introVideoEnabled && $introVideoUrl !== ''): ?>
             <div class="video-box">
                 <div class="video-inner">
                     <?php if (stripos($introVideoUrl, '<iframe') !== false): ?>
@@ -499,26 +732,64 @@ function normalizar_video_url(string $url): string {
     </div>
 </div>
 
+<?php if ($etapa === 'confirmar_nome'): ?>
+<div class="name-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="nameModalTitle">
+    <form method="post" action="" class="name-modal" id="nameConfirmForm">
+        <input type="hidden" name="acao" value="confirmar_nome">
+        <input type="hidden" name="senha_certificado" value="<?= h($senhaConfirmada) ?>">
+        <h2 id="nameModalTitle">Confira seu nome</h2>
+        <p>Este será o nome impresso no certificado. Corrija se necessário antes de confirmar.</p>
+        <?php if ($mensagemErro): ?>
+            <div class="alert alert-error" style="margin-bottom:12px"><?= $mensagemErro ?></div>
+        <?php endif; ?>
+        <label class="form-label" for="nome_certificado">Nome no certificado</label>
+        <input type="text" id="nome_certificado" name="nome_certificado" value="<?= h($nomeConfirmacao) ?>" autocomplete="name" required minlength="3">
+        <div class="name-modal-note">Ao confirmar, o nome será atualizado no sistema e o certificado será gerado.</div>
+        <div class="name-modal-actions">
+            <button type="submit" class="btn-submit" id="btnConfirmarNome">
+                <span class="spinner" aria-hidden="true"></span>
+                <span class="btn-text">Confirmar e gerar certificado</span>
+            </button>
+        </div>
+    </form>
+</div>
+<?php endif; ?>
+
 <script>
 (function () {
     var form  = document.getElementById('certForm');
-    if (!form) return;
-    var btn   = document.getElementById('btnEmitir');
-    var input = document.getElementById('senha_certificado');
-    var locked = false;
+    var confirmForm = document.getElementById('nameConfirmForm');
+    var nameInput = document.getElementById('nome_certificado');
 
-    form.addEventListener('submit', function (e) {
-        if (locked) { e.preventDefault(); return; }
-        locked = true;
-        if (btn) {
-            btn.disabled = true;
-            btn.classList.add('is-loading');
-            btn.setAttribute('aria-busy', 'true');
-            var txt = btn.querySelector('.btn-text');
-            if (txt) txt.textContent = 'Gerando certificado...';
-        }
-        if (input) input.setAttribute('readonly', 'readonly');
-    });
+    function lockForm(targetForm, buttonId, loadingText) {
+        if (!targetForm) return;
+        var locked = false;
+        targetForm.addEventListener('submit', function (e) {
+            if (locked) { e.preventDefault(); return; }
+            locked = true;
+            var btn = document.getElementById(buttonId);
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('is-loading');
+                btn.setAttribute('aria-busy', 'true');
+                var txt = btn.querySelector('.btn-text');
+                if (txt) txt.textContent = loadingText;
+            }
+            targetForm.querySelectorAll('input').forEach(function (input) {
+                input.setAttribute('readonly', 'readonly');
+            });
+        });
+    }
+
+    lockForm(form, 'btnEmitir', <?= json_encode($certificadoSemSenha ? 'Gerando certificado...' : 'Validando senha...', JSON_UNESCAPED_UNICODE) ?>);
+    lockForm(confirmForm, 'btnConfirmarNome', 'Gerando certificado...');
+
+    if (nameInput) {
+        setTimeout(function () {
+            nameInput.focus();
+            nameInput.select();
+        }, 50);
+    }
 })();
 </script>
 

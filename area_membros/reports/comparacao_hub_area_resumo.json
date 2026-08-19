@@ -1,0 +1,9 @@
+{
+  "hub_leads_total": 17005,
+  "area_membros_users_total": 42220,
+  "hub_presentes_area_membros": 16869,
+  "hub_ausentes_area_membros": 136,
+  "conflitos_email_telefone": 4,
+  "criterio": "presente quando email normalizado OU telefone normalizado corresponde a users",
+  "arquivo_ausentes": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\leads_ausentes_area_membros.csv"
+}

@@ -7,6 +7,7 @@ proteger_admin();
 $pdo = getPDO();
 
 $menu = 'webhooks';
+$view=(string)($_GET['view']??(isset($_GET['edit'])?'hooks':(isset($_GET['live_edit'])?'live':'overview')));if(!in_array($view,['overview','hooks','reference','live'],true))$view='overview';
 
 function h(?string $v): string {
     return htmlspecialchars($v ?? '', ENT_QUOTES, 'UTF-8');
@@ -113,11 +114,38 @@ $hooks = $pdo->query("SELECT * FROM webhooks ORDER BY id DESC")->fetchAll(PDO::F
 $eventGroups = [
     'Aluno' => [
         'INSCRITO'             => ['label' => 'Aluno inscrito (novo)',         'desc' => 'Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.', 'extra' => 'user.magic_link (auto-login), extra.codigo_turma, extra.data_live, extra.qtd_inscricoes (=1), extra.primeira_inscricao, extra.eh_reinscrito (=0)'],
-        'REINSCRITO'           => ['label' => 'Aluno re-inscreveu',            'desc' => 'Disparado quando um aluno já existente se inscreve novamente. Útil para tratar pessoas que já passaram pelo funil.', 'extra' => 'user.magic_link (auto-login), extra.codigo_turma, extra.qtd_inscricoes, extra.primeira_inscricao, extra.data_inscricao_anterior, extra.turma_anterior, extra.eh_reinscrito (=1)'],
+        'INSCRICAO_GRATUITA'   => ['label' => 'Inscricao gratuita',            'desc' => 'Aluno recebeu acesso temporario conforme o prazo configurado na turma.', 'extra' => 'extra.tipo_inscricao, extra.codigo_turma, extra.data_live, extra.acesso_vitalicio (=0), extra.acesso_pago (=0)'],
+        'INSCRICAO_VITALICIA'  => ['label' => 'Inscricao vitalicia',           'desc' => 'Aluno recebeu acesso vitalicio, por pagamento ou concessao administrativa.', 'extra' => 'extra.tipo_inscricao, extra.codigo_turma, extra.acesso_vitalicio (=1), extra.acesso_pago'],
+        'REINSCRITO'           => ['label' => 'Aluno re-inscreveu',            'desc' => 'Disparado quando um aluno já existente se inscreve novamente. Preserva acesso vitalício e não renova prazo ao repetir a mesma turma.', 'extra' => 'user.magic_link, extra.codigo_turma, extra.qtd_inscricoes, extra.tipo_inscricao (acesso efetivo), extra.tipo_inscricao_solicitada, extra.acesso_vitalicio, extra.acesso_pago, extra.reinscricao_renovou_prazo'],
         'PRIMEIRO_LOGIN'       => ['label' => 'Primeiro login na plataforma',  'desc' => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a área de membros (qualquer método: senha, magic link ou cookie). Aplica também a tag PRIMEIRO_LOGIN.', 'extra' => 'user.id, user.nome, user.email, user.magic_link'],
         'ASSISTIU_ALGUMA_AULA' => ['label' => 'Assistiu alguma aula',          'desc' => 'Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.', 'extra' => 'user.id, user.nome, extra.lesson_id'],
         'CONCLUIU_TRILHA'      => ['label' => 'Concluiu a trilha',             'desc' => 'Disparado quando o aluno finaliza todas as aulas obrigatórias.', 'extra' => 'user.id, user.nome'],
         'RETORNO_AGENDADO'     => ['label' => 'Retorno agendado chegou',       'desc' => 'Disparado pelo cron quando um retorno de contato chega na data e hora marcada.', 'extra' => 'extra.agendamento_id, extra.tipo, extra.scheduled_at, extra.assunto, extra.mensagem, extra.mensagem_renderizada, extra.origem'],
+        'APP_INSTALADO' => ['label' => 'Aplicativo instalado', 'desc' => 'Disparado uma vez quando a instalação da PWA é confirmada no dispositivo.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.installed_at'],
+        'APP_NOTIFICACOES_AUTORIZADAS' => ['label' => 'Notificações do aplicativo autorizadas', 'desc' => 'Disparado uma vez quando o aluno autoriza notificações e o token é registrado.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.notification_permission'],
+        'APP_DESINSTALADO_DETECTADO' => ['label' => 'Aplicativo desinstalado/inativo detectado', 'desc' => 'Disparado quando o Firebase rejeita o token como não registrado. A detecção não é imediata.', 'extra' => 'extra.device_id, extra.client_id, extra.platform, extra.browser, extra.uninstalled_at, extra.detection'],
+    ],
+    'WhatsApp Grupos' => [
+        'WHATSAPP_GRUPO_ENTROU' => [
+            'label' => 'WhatsApp - entrou no grupo',
+            'desc' => 'Disparado quando a Evolution API informa entrada de participante e o telefone cruza com um aluno cadastrado. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+        'WHATSAPP_GRUPO_SAIU' => [
+            'label' => 'WhatsApp - saiu por conta propria',
+            'desc' => 'Disparado quando action=remove e o author e o proprio participante. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+        'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => [
+            'label' => 'WhatsApp - removido por admin',
+            'desc' => 'Disparado quando action=remove e o author e diferente do participante. Aplica a tag de mesmo nome.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id',
+        ],
+        'WHATSAPP_BLACKLIST_DETECTADO' => [
+            'label' => 'WhatsApp - blacklist detectada',
+            'desc' => 'Disparado quando um numero ativo na blacklist entra em grupo monitorado e cruza com um aluno cadastrado. A remocao e as notificacoes seguem a configuracao da tela IA WhatsApp.',
+            'extra' => 'extra.telefone, extra.group_id, extra.participant_id, extra.author_id, extra.action_original, extra.tipo_interpretado, extra.payload_log_id, extra.blacklist',
+        ],
     ],
     'Certificado' => [
         'CERT_EMITIDO'         => ['label' => 'Certificado emitido',           'desc' => 'Disparado quando o aluno acerta a senha e o certificado é gerado.', 'extra' => 'extra.codigo_certificado, extra.curso, extra.emitido_em, extra.pdf_url'],
@@ -181,6 +209,8 @@ try {
 include __DIR__ . '/_header.php';
 ?>
 <style>
+.int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
+    .int-nav{position:sticky;top:60px;z-index:30;background:var(--bg);padding-top:8px}
     :root {
         --bg:      #020617;
         --bg-card: #0b1120;
@@ -387,6 +417,8 @@ include __DIR__ . '/_header.php';
         <h1>Webhooks</h1>
         <p>Configure URLs que serão chamadas automaticamente quando eventos ocorrerem na plataforma.</p>
     </div>
+    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','hooks'=>'Webhooks','reference'=>'Payload e eventos','live'=>'Live por turma'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="webhooks.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
+    <?php if($view==='overview'):?><?php $activeHooks=count(array_filter($hooks,fn($h)=>(int)$h['ativo']===1));$liveEnabled=count(array_filter($turmasList,fn($t)=>(int)($t['live_webhook_enabled']??0)===1));?><div class="int-overview"><div class="int-kpi"><small>Webhooks cadastrados</small><strong><?=count($hooks)?></strong></div><div class="int-kpi"><small>Webhooks ativos</small><strong><?=$activeHooks?></strong></div><div class="int-kpi"><small>Turmas com live ativa</small><strong><?=$liveEnabled?></strong></div><div class="int-kpi"><small>Eventos disponíveis</small><strong><?=array_sum(array_map('count',$eventGroups))?></strong></div></div><?php endif;?>
 
     <div class="grid-2">
 
@@ -803,4 +835,5 @@ document.addEventListener('DOMContentLoaded', function () {
     </div>
 </div>
 
+<script>const whView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=whView==='overview'?false:(whView==='hooks'?(t==='Novo webhook'||t==='Editar webhook'||t==='Webhooks cadastrados'):whView==='reference'?t==='Payload enviado':whView==='live'?t==='Disparo de Live por Turma':true);if(!show)card.style.display='none';});document.querySelectorAll('.grid-2').forEach(g=>{g.style.gridTemplateColumns='minmax(0,1fr)';Array.from(g.children).forEach(col=>{const cards=Array.from(col.querySelectorAll(':scope > .card'));if(cards.length&&!cards.some(c=>c.style.display!=='none'))col.style.display='none';});});</script>
 <?php include __DIR__ . '/_footer.php'; ?>

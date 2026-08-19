@@ -1,0 +1,4542 @@
+{
+    "generated_at": "2026-06-26 03:44:14",
+    "live_tags": [
+        "ACESSOU_LIVE",
+        "CLICOU_OFERTA_LIVE",
+        "ESTAVA_OFERTA_MCQDC",
+        "CLICOU_COMPRAR_LIVE"
+    ],
+    "candidates": 160,
+    "merged": [
+        {
+            "duplicate": {
+                "id": 43234,
+                "nome": "FLABSON LOPES SOUZA",
+                "email": "flansonlopessouza11@gmail.com",
+                "telefone": "5562982905947",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 22:04:29",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41699,
+                "nome": "FLABSON LOPES SOUZA",
+                "email": "flabsonlopessouza11@gmail.com",
+                "telefone": "62982905947",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43221,
+                "nome": "JOSE CARLOS PINTO",
+                "email": "jcpinto869@gmail.com",
+                "telefone": "5548991777195",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 20:21:36",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41689,
+                "nome": "José Carlos Pinto",
+                "email": "j8177632@gmail.com",
+                "telefone": "48991777195",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43217,
+                "nome": "Paulo Gomess",
+                "email": "paulodonisetiii@gmail.com",
+                "telefone": "5535984229080",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:34:58",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41862,
+                "nome": "Paulo doniseti Gomes de paula",
+                "email": "paulotricordiano2@hotmail.com",
+                "telefone": "35984229080",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43216,
+                "nome": "Kauan Santana",
+                "email": "ks5885038@gmail.com",
+                "telefone": "5521990047513",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:33:43",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41566,
+                "nome": "Kauan Santana da costa",
+                "email": "kauanwalter15@gmail.com",
+                "telefone": "21990047513",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43215,
+                "nome": "Luiz Henrique da Silva Oliveira",
+                "email": "luizhenrique4905@hotmail.com",
+                "telefone": "5514981772518",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:33:00",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 5
+            },
+            "original": {
+                "id": 41892,
+                "nome": "Luiz Henrique da Silva Oliveira",
+                "email": "luizhenriqueoliveira07@outlook.com",
+                "telefone": "14981772518",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 5,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43212,
+                "nome": "Antonio Jose de Mello",
+                "email": "mello562@gmail.com",
+                "telefone": "(19) 99775-7113",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:18:42",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41592,
+                "nome": "antonio jose de mello",
+                "email": "mello5621@gmail.com",
+                "telefone": "19997757113",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43211,
+                "nome": "Roberto Domingos Pereira",
+                "email": "domingospereiraroberto767@gmail.com",
+                "telefone": "5521881295826",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:10:07",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41981,
+                "nome": "Roberto Domingos Pereira",
+                "email": "roberto.domingos2013@hotmail.com",
+                "telefone": "21981295826",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43210,
+                "nome": "WENDERLAN SOARES PASCOAL",
+                "email": "derlan064@gmail.com",
+                "telefone": "5531995283664",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:09:07",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 5
+            },
+            "original": {
+                "id": 41721,
+                "nome": "WENDERLAN SOARES PASCOAL",
+                "email": "wenderlam@yahoo.com.br",
+                "telefone": "31995283664",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 5,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43209,
+                "nome": "Edson Santos",
+                "email": "vsantosedson@yahoo.com.br",
+                "telefone": "5531997919302",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:05:19",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41685,
+                "nome": "Edson Vicente dos Santos",
+                "email": "evs@saliba.eng.br",
+                "telefone": "31997919302",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43208,
+                "nome": "Fabio Henrique",
+                "email": "fabinhojp27@gmail.com",
+                "telefone": "5561992179340",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:03:25",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41697,
+                "nome": "Fábio Henrique Pereira de Araújo",
+                "email": "fabinhojkfp@gmail.com",
+                "telefone": "61992179340",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43206,
+                "nome": "Adriano Carneiro Carvalho",
+                "email": "carneiro.jornalismo@gmial.com",
+                "telefone": "5566999511004",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:00:29",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41986,
+                "nome": "Adriano Carneiro Carvalho",
+                "email": "carneiro.jornalismo@gmail.com",
+                "telefone": "66999541004",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 280,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43205,
+                "nome": "Fabio Manoel da cruz",
+                "email": "FABIOMAONELDACRUZ@gmail.com",
+                "telefone": "5511988254755",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:55:42",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41869,
+                "nome": "Fabio Manoel da Cruz",
+                "email": "fabiomanoeldacruz@gmail.com",
+                "telefone": "55119882547",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "email_fuzzy",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43204,
+                "nome": "Fernando José Ribeiro",
+                "email": "fernandojoseribeiro78@gmail.com.br",
+                "telefone": "5531994676149",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:53:41",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41557,
+                "nome": "Fernando Ribeiro",
+                "email": "fernandojoseribeiro78@gmail.com",
+                "telefone": "(31) 99467-6149",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 340,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43203,
+                "nome": "Cleber",
+                "email": "Clebersilvamarcal2134@gamil.com",
+                "telefone": "5564993149911",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:48:45",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 41932,
+                "nome": "Cleber Silva Marçal",
+                "email": "clebersilvamarcal2134@gmail.com",
+                "telefone": "64993149911",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 350,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43199,
+                "nome": "Fabio Ramos dos Santos",
+                "email": "fabio_905@hotmaip.com",
+                "telefone": "5511971142093",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:32:45",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41925,
+                "nome": "Fabio Ramos dos Santos",
+                "email": "fabio_905@hotmail.com",
+                "telefone": "11971142093",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 350,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43197,
+                "nome": "Alex Mendes",
+                "email": "alex2812hms@gmail.com",
+                "telefone": "5547996396547",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:31:43",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 41491,
+                "nome": "Alex Mendes",
+                "email": "amsrepar@gmail.com",
+                "telefone": "47996396547",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 43195,
+                "nome": "Ulises aldeia",
+                "email": "Ulises_aldeiag@hotmail.com",
+                "telefone": "5595991155220",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 18:13:36",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 41507,
+                "nome": "Ulises aldeia",
+                "email": "ulisealdeia@yahoo.com",
+                "telefone": "95991155220",
+                "turma": "110626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42854,
+                "nome": "José Galdino da Silva",
+                "email": "josegaldino19750@gmail.com",
+                "telefone": "5581981960046",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-21 18:51:56",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41221,
+                "nome": "José Galdino da Silva Galdino",
+                "email": "galdino_2014@outlook.com",
+                "telefone": "81981960046",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42681,
+                "nome": "Stenio",
+                "email": "Steniotecnico2@gmail.com",
+                "telefone": "5511976612474",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:46:49",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41169,
+                "nome": "Stenio Ferreira dos Santos",
+                "email": "steniotaxista@gmail.com",
+                "telefone": "11976612474",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42680,
+                "nome": "Djair Guilherme cantelli",
+                "email": "djaircantellii@gmail.com",
+                "telefone": "5519994164367",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:39:50",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41427,
+                "nome": "Djair Guilherme Cantelli",
+                "email": "djaircantellii@gmail.com.",
+                "telefone": "19994164367",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42678,
+                "nome": "Fernando Tenorio",
+                "email": "fernandotenorio767@gmail.com",
+                "telefone": "5511959663014",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:37:31",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41277,
+                "nome": "Fernando Tenorio cavalcanti",
+                "email": "fernandotenoriocavalcanti182@gmail.com",
+                "telefone": "11959663014",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42677,
+                "nome": "Adriano da veiga Dino",
+                "email": "veigaadriano094@gmail.com",
+                "telefone": "5541995823088",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:35:47",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41314,
+                "nome": "Adriano Veiga",
+                "email": "41998813084",
+                "telefone": "41995823088",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42672,
+                "nome": "BRUNO RUFINO SANTOS DE SOUZA",
+                "email": "rufinophb2@gmail.com",
+                "telefone": "5586994451862",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:07:47",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 41424,
+                "nome": "Bruno Rufino",
+                "email": "brunissouza@hotmail.com",
+                "telefone": "86994451862",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42671,
+                "nome": "Carlos André Souza Lins",
+                "email": "carlosandre6234@gmail.com",
+                "telefone": "5581986375648",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:07:43",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 6
+            },
+            "original": {
+                "id": 41450,
+                "nome": "Carlos André Souza lins",
+                "email": "empresacasoliyky@gmail.com",
+                "telefone": "81986375648",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 6,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42669,
+                "nome": "Nestor Fajardo de Lima",
+                "email": "nestorfajardodelima@gmail.com",
+                "telefone": "5551999646161",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:07:11",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 41161,
+                "nome": "Nestor Fajardo de Lima",
+                "email": "nfajardodelima@gmail.com",
+                "telefone": "51999646161",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42668,
+                "nome": "Uellington Santos do Nascimento",
+                "email": "wsantosdonascimento@gmail.com",
+                "telefone": "5573988839112",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:05:38",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 41048,
+                "nome": "Weliton Santos do nascimento",
+                "email": "wsantosdonascimento1@gmail.com",
+                "telefone": "73988062455",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 190,
+                "why": [
+                    "email_fuzzy"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42666,
+                "nome": "Carlos",
+                "email": "apoiovix@gmail.com",
+                "telefone": "5527988931055",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:00:45",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 41400,
+                "nome": "Carlos Henrique Leiroz Ramos",
+                "email": "maisvozleiroz@gmail.com",
+                "telefone": "27988931055",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 42664,
+                "nome": "Francisco",
+                "email": "eridilsonfariasfrancisco@gmail.com",
+                "telefone": "5511979543023",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 18:47:19",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 41011,
+                "nome": "Francisco eridilson Farias",
+                "email": "eridilsonfariasfra@yahoo.com",
+                "telefone": "11979543023",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41995,
+                "nome": "kathlen teste",
+                "email": "teste@teste.com",
+                "telefone": "5521982455936",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 20:45:34",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 11802,
+                "nome": "Teste teste teste",
+                "email": "teste@teste.com.br",
+                "telefone": "31999119509",
+                "turma": "180126"
+            },
+            "match": {
+                "score": 190,
+                "why": [
+                    "email_fuzzy"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41985,
+                "nome": "Luciano Viana",
+                "email": "luciannosalvatore2016@gmail.com",
+                "telefone": "558596829769",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 19:57:59",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 40545,
+                "nome": "Luciano viana da Silva",
+                "email": "lucianoviana@gmail.com",
+                "telefone": "85996829769",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41983,
+                "nome": "Manoel Peixoto",
+                "email": "manoelmedeirospeixoto@gmail.com",
+                "telefone": "5511945525033",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 19:52:40",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 40570,
+                "nome": "Manoel Peixoto",
+                "email": "xotoetoninha@hotmail.com",
+                "telefone": "11945525033",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41982,
+                "nome": "ANTONIO LOPES NETO",
+                "email": "tonynetolopes@gmail.com",
+                "telefone": "5511980340171",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 19:34:04",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 40646,
+                "nome": "Antonio Lopes",
+                "email": "tonynetolopes@hotmail.com",
+                "telefone": "11980340171",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41974,
+                "nome": "DANIEL SANTOS DO ROSARIO",
+                "email": "dsrdanieldsr07@gmail.com",
+                "telefone": "5521965325794",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 19:02:03",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 7
+            },
+            "original": {
+                "id": 40717,
+                "nome": "Daniel santos do Rosário",
+                "email": "dsrdanieldsr@yahool.com.br",
+                "telefone": "21965325794",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 7,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41973,
+                "nome": "Amarildo Ribeiro",
+                "email": "amarildo.terracota@gmail.com",
+                "telefone": "5541999058125",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 18:55:21",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 40553,
+                "nome": "Amarildo Ribeiro",
+                "email": "41999058125",
+                "telefone": "41999058125",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41972,
+                "nome": "Aula ao vivo",
+                "email": "gsouza8083@gmail.com.br",
+                "telefone": "5562981372875",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 18:54:08",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 40622,
+                "nome": "Gabriel Santos Souza",
+                "email": "gsouza8083@gmail.com",
+                "telefone": "62981372875",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 325,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41970,
+                "nome": "Cícero Jose dos Santos",
+                "email": "Cicerodenise225@gmail.comq",
+                "telefone": "5513988231950",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 18:47:43",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 40839,
+                "nome": "Cícero Jose dos Santos",
+                "email": "cicerodenise225@gmail.com",
+                "telefone": "13988231950",
+                "turma": "070626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41966,
+                "nome": "THIAGO FACUNDO DA SILVA",
+                "email": "thiagofacund@gmail.com",
+                "telefone": "5521986364049",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 18:33:05",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 10
+            },
+            "original": {
+                "id": 40800,
+                "nome": "THIAGO FACUNDO DA SILVA",
+                "email": "thiagosilva0720@gmail.com",
+                "telefone": "21986364049",
+                "turma": "030626"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 10,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41493,
+                "nome": "Maike",
+                "email": "maikel.love.louzada@gmail.com",
+                "telefone": "5511954943260",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-11 21:44:09",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 39939,
+                "nome": "Maike da Silva Louzada",
+                "email": "maike.love.louzada@gmail.com",
+                "telefone": "11954943260",
+                "turma": "300526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41483,
+                "nome": "José Jackson",
+                "email": "jj0040535@gmail.com",
+                "telefone": "5571985089972",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-11 20:17:41",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 40016,
+                "nome": "José Jackson Araújo Santos",
+                "email": "jj0040535@gmail, com",
+                "telefone": "71985089972",
+                "turma": "300526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41467,
+                "nome": "Geneci Ferreira de Araújo",
+                "email": "fgeneci230@gmail.com",
+                "telefone": "5581993626212",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-11 19:06:35",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 39881,
+                "nome": "Geneci Ferreira de Araújo",
+                "email": "g.t.m9243zxv0095@gmail.com",
+                "telefone": "81993626212",
+                "turma": "300526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 41465,
+                "nome": "Fábio Rodrigo dias",
+                "email": "fabio@amscgestaocondominial.com.br",
+                "telefone": "5511963460480",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-11 19:02:20",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39995,
+                "nome": "Fábio Rodrigo Dias",
+                "email": "fabio.frd@hotmail.com",
+                "telefone": "11963460480",
+                "turma": "300526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40885,
+                "nome": "RICARDO DA SILVA BARRETO",
+                "email": "Ricarreto@gmail.com",
+                "telefone": "5521993662420",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 20:12:34",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39510,
+                "nome": "Ricardo Barreto",
+                "email": "ricarreto1@gmail.com",
+                "telefone": "21993662420",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 260,
+                "why": [
+                    "email_fuzzy",
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40883,
+                "nome": "PEDRO ALEIXO MANTOVANI",
+                "email": "pedro_mantovani02@hotmail.com",
+                "telefone": "5511999319198",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 19:59:47",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39210,
+                "nome": "Pedro Mantovani",
+                "email": "mantovanipedro55@gmail.com",
+                "telefone": "11999319198",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40879,
+                "nome": "Sidney Ferreira",
+                "email": "sf4553156@gmail.com",
+                "telefone": "5521987549080",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 19:42:19",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39173,
+                "nome": "Sidney ferreira da Silva",
+                "email": "sidneyfrreira797@gmail.com",
+                "telefone": "21987549080",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40878,
+                "nome": "JOSE ROBINSON DA COSTA SANTANA",
+                "email": "rbs1009santana@gmail.com",
+                "telefone": "5585985838144",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 19:36:22",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39461,
+                "nome": "JOSE ROBINSON DA COSTA SANTANA",
+                "email": "rbs10091009@gmail.com",
+                "telefone": "85985838144",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40876,
+                "nome": "Douglas Coelho",
+                "email": "dougcj1@gmail.com",
+                "telefone": "5519983449656",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 19:30:51",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39674,
+                "nome": "Douglas José",
+                "email": "dougcj1@hotmail.com",
+                "telefone": "19983449656",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40406,
+                "nome": "A",
+                "email": "mil.houses1975@gmail.com",
+                "telefone": "5511965680504",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 21:42:24",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38492,
+                "nome": "Sérgio Alves",
+                "email": "sergio.alves75@gmail.com",
+                "telefone": "11965680504",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40404,
+                "nome": "Robson",
+                "email": "Nosbormattos@hotmail.com",
+                "telefone": "5521999550366",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 21:37:50",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38554,
+                "nome": "Robson de Mattos",
+                "email": "robsondemattosmartins@gmail.com",
+                "telefone": "21999550366",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40403,
+                "nome": "EXODO PESSOA DA SILVA",
+                "email": "exodopessoadasilva@gmail.com",
+                "telefone": "5565992561981",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 21:34:32",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38894,
+                "nome": "Êxodo Pessoa da Silva",
+                "email": "instalacaomanutencaoeletricaep@gmail",
+                "telefone": "65992561981",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40399,
+                "nome": "Davi Silva",
+                "email": "davi.hughesnetsnt2@gmail.com",
+                "telefone": "5575991122804",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 21:15:25",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38939,
+                "nome": "Davi silva santana",
+                "email": "davi.hughesnetsnt@gmail.com",
+                "telefone": "75991122804",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40395,
+                "nome": "Roberto",
+                "email": "Robertossntos93966@gmail.com",
+                "telefone": "5561995697294",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 20:36:03",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37698,
+                "nome": "José Roberto dos Santos Pereira de Almeida",
+                "email": "robertosantos63966@gmail.com",
+                "telefone": "61995697294",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40394,
+                "nome": "Angelo minguci Minguci",
+                "email": "anglo.gminguci@gmail.com",
+                "telefone": "5511957840654",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 20:23:05",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 30162,
+                "nome": "Angelo paulo ALMMEIDA Gonçalves",
+                "email": "amglo.gminhuci @gmail.com",
+                "telefone": "11957840554",
+                "turma": null
+            },
+            "match": {
+                "score": 150,
+                "why": [
+                    "email_fuzzy"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40389,
+                "nome": "José Borges De Sousa",
+                "email": "joseborgeslavras1994@gmail.com",
+                "telefone": "5588992785392",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:43:57",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 39084,
+                "nome": "José Borges de Sousa",
+                "email": "joseborgeslavras@outlook.com",
+                "telefone": "88992785392",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40388,
+                "nome": "Ricardo de Souza Vieira",
+                "email": "rickalldeia123@gmail.com",
+                "telefone": "5528999734178",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:39:36",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38808,
+                "nome": "Ricardo de Souza Vieira",
+                "email": "ricardoalldeia123@gmail.com",
+                "telefone": "28999734178",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40386,
+                "nome": "Leandro Amorim Viersberg",
+                "email": "leandroviersberg@gmail.com",
+                "telefone": "5511981455379",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:37:24",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 39049,
+                "nome": "Leandro Amorim Viersberg",
+                "email": "leandroamorimviersberg@gmail.com",
+                "telefone": "11981455379",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40385,
+                "nome": "Antonio Carvalho",
+                "email": "carvalhopainting@gmail.com",
+                "telefone": "5527998850740",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:33:54",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 22483,
+                "nome": "Antônio Augusto de Carvalho Filho",
+                "email": "apaint58@yahoo.com",
+                "telefone": "(27) 99885-0740",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40384,
+                "nome": "EDERSON VIANA DE LIMA",
+                "email": "edersonviana2010@hotmail.com",
+                "telefone": "5545999410020",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:33:52",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38840,
+                "nome": "Ederson Viana de Lima",
+                "email": "edersonviana1980@gmail.com",
+                "telefone": "45999410020",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40383,
+                "nome": "Credilson",
+                "email": "credilsonjosedelima@gmail.com",
+                "telefone": "5517997682553",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:33:33",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38850,
+                "nome": "Credilson José de lima",
+                "email": "josedelimacredilson@gmail.com",
+                "telefone": "17997682553",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40382,
+                "nome": "FRANCIELTHON ÂNGELO DE CARVALHO",
+                "email": "ANGELOFRANCIELTHON8@GMAIL.COM",
+                "telefone": "5586989026119",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:32:55",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 31642,
+                "nome": "Francielthon Angelo de Carvalho",
+                "email": "francielthon4651@gmail.com",
+                "telefone": "86989026119",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40381,
+                "nome": "Edgar W R M Meruvia",
+                "email": "w_meruvia@gmail.com",
+                "telefone": "5511981220332",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:32:44",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 39036,
+                "nome": "Edgar W R M Meruvia",
+                "email": "w_meruvia@hotmail.com",
+                "telefone": "11981220332",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40380,
+                "nome": "Claudio Timotio Da Silva",
+                "email": "Prclaudiotimotio@gmail.com",
+                "telefone": "5581987578229",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:32:37",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 26218,
+                "nome": "Claudio Timotio Da Silva",
+                "email": "prclaudiotimoteo@gmail.com",
+                "telefone": "81987578229",
+                "turma": null
+            },
+            "match": {
+                "score": 245,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40379,
+                "nome": "sergio duarte",
+                "email": "sd8348925@gmail.com",
+                "telefone": "5511959058281",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:31:24",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 39074,
+                "nome": "sergio duarte",
+                "email": "duartezene@hotmail.com",
+                "telefone": "11959058281",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40377,
+                "nome": "Guilherme Santos Batista silva",
+                "email": "guyteka866@gmail.com",
+                "telefone": "5571984029987",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:28:50",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 34160,
+                "nome": "Guilherme Santos Batista Silva",
+                "email": "guilhermesantos011008@gmail.com",
+                "telefone": "71984029987",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40375,
+                "nome": "Viny Batista",
+                "email": "vinybatista397@gmail.com",
+                "telefone": "5592999017779",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:24:42",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38003,
+                "nome": "Lucenildo cruz da Silva",
+                "email": "vinybatista397@email.com",
+                "telefone": "92999017779",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40374,
+                "nome": "Valdomiro Chaves de Barros",
+                "email": "miro-val@hotmail.com",
+                "telefone": "5521999867840",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:24:25",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 5
+            },
+            "original": {
+                "id": 38955,
+                "nome": "Valdomiro Chaves de Barros",
+                "email": "miro-val@hotmaio.com",
+                "telefone": "21999867840",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 5,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40373,
+                "nome": "Sandro Diniz",
+                "email": "sandro24demaio@gmail.com",
+                "telefone": "5511953361050",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:23:28",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 39059,
+                "nome": "Sandro Diniz",
+                "email": "diniz_s@hotmail.com",
+                "telefone": "11953361050",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40372,
+                "nome": "Gerson",
+                "email": "gersonclementino67@gmail.com",
+                "telefone": "5583999827179",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:23:05",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37955,
+                "nome": "Gerson dos santos clementino",
+                "email": "clementinogerson@gmail.com",
+                "telefone": "83999827179",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40371,
+                "nome": "Alex Silva",
+                "email": "alex.prosolucoes@gmail.com",
+                "telefone": "5549988103504",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:22:52",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38516,
+                "nome": "Alex Silva",
+                "email": "alexdasilv@hotmail.com",
+                "telefone": "49988103504",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40370,
+                "nome": "Larissa Andrade",
+                "email": "elloairis2017@gmail.com",
+                "telefone": "5569992997864",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:22:27",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 39003,
+                "nome": "Erik Alves Lins",
+                "email": "erikalveslins6@gmail.com",
+                "telefone": "69992997864",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40368,
+                "nome": "ALEX SANDRO FERREIRA",
+                "email": "asandroferreira442@gmail.com",
+                "telefone": "5543996384453",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:16:09",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 38584,
+                "nome": "Alex Sandro Ferreira",
+                "email": "asndroferreira442@gmail.com",
+                "telefone": "43996384453",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40367,
+                "nome": "claudio souza",
+                "email": "seukilho@gmail.com",
+                "telefone": "5511972935430",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:15:03",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38623,
+                "nome": "claudio souza",
+                "email": "seukilho@hotmail.com",
+                "telefone": "11972935430",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40366,
+                "nome": "José Edson Nogueira",
+                "email": "edson.conservadora@gmail.com",
+                "telefone": "5511947978709",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:14:52",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 38531,
+                "nome": "José Edson Nogueira",
+                "email": "edson.conservadora@outlook.com",
+                "telefone": "11947978709",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40364,
+                "nome": "transmissao webnar-mcqdc",
+                "email": "julio_peixoto_@hotmail.com",
+                "telefone": "5544999885649",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:10:35",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38713,
+                "nome": "Julio Peixoto De Jesus",
+                "email": "juliopeixotodejesus3@gmail.com",
+                "telefone": "44999885649",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40363,
+                "nome": "Agnaldo Ismael",
+                "email": "agnaldoismaek@gmail.com",
+                "telefone": "5531993647510",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:10:07",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 39115,
+                "nome": "Agnaldo Nunes b Ismael",
+                "email": "agnaldosmaek@gmail.com",
+                "telefone": "31993647510",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 260,
+                "why": [
+                    "email_fuzzy",
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40362,
+                "nome": "Evaldo max duarte teles Teles",
+                "email": "evaldomdt.com.bt@gmail.com",
+                "telefone": "5591986125230",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:06:38",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38699,
+                "nome": "Evaldo max duarte teles Teles",
+                "email": "evaldomaxd@gmail.com",
+                "telefone": "91986125230",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40361,
+                "nome": "Vagner Rios",
+                "email": "vagner_rios1@hotmail.com",
+                "telefone": "5522998220969",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:04:52",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 38868,
+                "nome": "Vagner rios",
+                "email": "vagner_rios1@hitmail.com",
+                "telefone": "22998220969",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40360,
+                "nome": "José Cristiano dos Prazeres",
+                "email": "cristianojprazeresjprazes@outlook.com",
+                "telefone": "5581988966772",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:03:21",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 4
+            },
+            "original": {
+                "id": 37928,
+                "nome": "José Cristiano",
+                "email": "cristianojp@outlook.com",
+                "telefone": "81988966772",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 4,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40359,
+                "nome": "Alex Tenório Freire",
+                "email": "Alextfreire@hotmail.com",
+                "telefone": "5582998005670",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:02:48",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38810,
+                "nome": "Alex Freire",
+                "email": "alextenoriofreire@gmail.com",
+                "telefone": "82998005670",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40358,
+                "nome": "Carlos Alberto Silva",
+                "email": "nossos2023@gmail.com",
+                "telefone": "5511996542161",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:02:41",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38859,
+                "nome": "Carlos Alberto Moreno da Silva",
+                "email": "tekylamoreno@gmail.com",
+                "telefone": "11996542161",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 40357,
+                "nome": "marilia borges dos Santos",
+                "email": "mariliaborgessantos123@gmail.com",
+                "telefone": "5571991423579",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:02:34",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38972,
+                "nome": "Marília Borges dos Santos",
+                "email": "mariliaborgessantos26@gmail.com",
+                "telefone": "71991423579",
+                "turma": "220526"
+            },
+            "match": {
+                "score": 275,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39741,
+                "nome": "Sebastião Pereira Barbosa",
+                "email": "sebasttaobarbosa@gimei.com",
+                "telefone": "5511941770205",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 22:13:03",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37155,
+                "nome": "Sebastião Pereira Barbosa",
+                "email": "sebasttiaobarbosa@gmail.com",
+                "telefone": "11941770205",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39738,
+                "nome": "Maikon Mariano",
+                "email": "marianomaikon23@gmail.com",
+                "telefone": "5511977888589",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 22:04:05",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37728,
+                "nome": "Maikon Mariano Inácio Francisco",
+                "email": "marianomaikon23@gmil.com",
+                "telefone": "11977888589",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39727,
+                "nome": "NAZARENO MESSIAS GOLANDIM",
+                "email": "nazarenomecias@gmail.com",
+                "telefone": "5584994013681",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 21:02:19",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37957,
+                "nome": "Nazareno Messias Golandim",
+                "email": "nazarenomecias@gmail.com.br",
+                "telefone": "84994013681",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39726,
+                "nome": "Luiz Antônio Ribeiro",
+                "email": "riber.luizantonio@hotmail.com",
+                "telefone": "5519998555281",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 20:44:25",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 38118,
+                "nome": "Luiz antonio ribeiro",
+                "email": "ribeiroluizantonio488@gmail.com",
+                "telefone": "19998555281",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39725,
+                "nome": "Rodrigo Schiavini Digão",
+                "email": "dschiavini90@gmail.com",
+                "telefone": "5553999297070",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 20:42:45",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37162,
+                "nome": "Rodrigo Schiavini",
+                "email": "rodrigoschiavini@hotmail.com",
+                "telefone": "53999297070",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39721,
+                "nome": "Jameson Correia",
+                "email": "handman.installation@gmail.com",
+                "telefone": "5511914956075",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 20:30:07",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 38293,
+                "nome": "Jameson Roberto Correia da Silva",
+                "email": "ap.jamesoncorreia@gmail.com",
+                "telefone": "11914956075",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39712,
+                "nome": "Ricardo Da Silva Santos",
+                "email": "rdasilvasantos363@gmail.com",
+                "telefone": "5575981527047",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:49:19",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37985,
+                "nome": "Ricardo Da Silva Santos",
+                "email": "ricardo-silva272010@hotmail.com",
+                "telefone": "75981527047",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39708,
+                "nome": "MAILSON DOS SANTOS ALVES",
+                "email": "santosalves6617@gmail.com",
+                "telefone": "5584999215032",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:43:38",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37800,
+                "nome": "Mailson Alves",
+                "email": "mailsonalves2501@gmail.com",
+                "telefone": "84999215032",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39707,
+                "nome": "dimensionamento elétrico",
+                "email": "sro.ibt.95@gmail.com",
+                "telefone": "5598988503641",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:36:40",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37650,
+                "nome": "Sandro da Rocha Oliveira",
+                "email": "sro.ibt.95@hotmail.com",
+                "telefone": "98988503641",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39705,
+                "nome": "Marcio Minich",
+                "email": "marciominich@gmail.com",
+                "telefone": "5548984432782",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:33:32",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37971,
+                "nome": "Marcio Minich",
+                "email": "marciominich@hotmail.com",
+                "telefone": "48984432782",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39704,
+                "nome": "Pedro Feitosa De Moraes",
+                "email": "pf08051@gamil.com",
+                "telefone": "5581992774246",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:32:23",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38223,
+                "nome": "Pedro Feitosa De Moraes",
+                "email": "pf08051@gmail.com",
+                "telefone": "81992774246",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 350,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39700,
+                "nome": "Mario Oliveira Silva",
+                "email": "mariooliveirasilva41@gmail.com",
+                "telefone": "5511959446200",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:27:28",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38418,
+                "nome": "Mario de Oliveira Silva",
+                "email": "mario.silva2000@hotmail.com",
+                "telefone": "11959446200",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39699,
+                "nome": "Alessandro Antônio Rodrigues Marinho",
+                "email": "sandroodin42@gmail.com",
+                "telefone": "5591993606635",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:27:09",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38317,
+                "nome": "Alessandro Marinho",
+                "email": "marinhoa172@gmail.com",
+                "telefone": "91993606635",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39696,
+                "nome": "Juliano Junior Garcia",
+                "email": "cbpmgarcia123@gmail.com",
+                "telefone": "5566996059511",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:24:45",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 38351,
+                "nome": "Juliano Junior Garcia",
+                "email": "lhcgarcia@hotmail.com",
+                "telefone": "66996059511",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39695,
+                "nome": "Nei",
+                "email": "nei15@icloud.com",
+                "telefone": "5551991542291",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:24:39",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37841,
+                "nome": "Nei Rocha de Oliveira",
+                "email": "neirochadeoliveira@hotmail.com",
+                "telefone": "(51) 99154-2291",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39692,
+                "nome": "Alexsandro de Santana Monteiro",
+                "email": "Santanamonteiroalexsandro@g.mail.com",
+                "telefone": "5579999510779",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:19:00",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37846,
+                "nome": "Alexsandro de Santana monteiro",
+                "email": "santanamonteiroalexsandro@gmail.com",
+                "telefone": "79999510779",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39690,
+                "nome": "Roberto Fajardo Quintana",
+                "email": "robertofajardoquintana65@gmail.com",
+                "telefone": "5588994904579",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:14:05",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 12
+            },
+            "original": {
+                "id": 37749,
+                "nome": "Roberto Fajardo Quintana",
+                "email": "rfajardoquintana@gmail.com",
+                "telefone": "88994904579",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 12,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39689,
+                "nome": "Felipe Rodrigues",
+                "email": "fr7092355@gmail.com",
+                "telefone": "5584994085163",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:02:39",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37782,
+                "nome": "Francisco Felipe da Silva Rodrigues",
+                "email": "sr7092355@gmail.com",
+                "telefone": "84994085163",
+                "turma": "180526"
+            },
+            "match": {
+                "score": 260,
+                "why": [
+                    "email_fuzzy",
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39174,
+                "nome": "MAIANA DA SILVA SOUZA",
+                "email": "mayss_17@hotmail.com",
+                "telefone": "5571999352988",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 23:01:03",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36635,
+                "nome": "Maiana Souza",
+                "email": "mayss_17@hotmail.cpm",
+                "telefone": "71999352988",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39157,
+                "nome": "João Nery Rodrigues",
+                "email": "jneryrodrigues@gmail.comq",
+                "telefone": "5548991550480",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 21:05:05",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37301,
+                "nome": "João Nery Rodrigues",
+                "email": "jneryrodrigues@gmail.com",
+                "telefone": "48991550480",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39151,
+                "nome": "Jonas Rocha",
+                "email": "jhonashaker23@gmail.com",
+                "telefone": "5585992995451",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 20:31:08",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 5
+            },
+            "original": {
+                "id": 37530,
+                "nome": "Jonas Rocha da Silva",
+                "email": "jonasrocha8011@yahoo.com",
+                "telefone": "85992995451",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 5,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39142,
+                "nome": "Igor",
+                "email": "Higorsilva181922@gmail.com",
+                "telefone": "5581973329568",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 20:00:09",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37573,
+                "nome": "Igor Edvaldo do Carmo da silva",
+                "email": "higorsilva181922@gamil.com",
+                "telefone": "81973329568",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39139,
+                "nome": "Paulo César  Pereira Leite",
+                "email": "paulo.leitura@gmail.com",
+                "telefone": "5531989790181",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:51:36",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 34861,
+                "nome": "Paulo César Pereira Leite",
+                "email": "paulo.leitura@yahoo.com.br",
+                "telefone": "31989790181",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39137,
+                "nome": "Washington",
+                "email": "Washingtongvms@gmail.con",
+                "telefone": "5571997001505",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:47:02",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37253,
+                "nome": "Washington iva Costa silva",
+                "email": "washingtongvms@gmail.com",
+                "telefone": "71997001505",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39136,
+                "nome": "Carlos Alberto Pereira Silva",
+                "email": "contato@cdisolutions.com.br",
+                "telefone": "5521980877550",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:47:02",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 36304,
+                "nome": "Carlos Alberto Pereira Silva",
+                "email": "contato@newcapss.com.br",
+                "telefone": "21980877550",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39134,
+                "nome": "Valdemir  Alves  Gondin",
+                "email": "Valdemiralvesgondin@gmail.com",
+                "telefone": "5567981559912",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:43:43",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37478,
+                "nome": "Valdemiralves gondim gondim",
+                "email": "valdemiralvesgondim@gmail.com",
+                "telefone": "67981559912",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 260,
+                "why": [
+                    "email_fuzzy",
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39133,
+                "nome": "Mario Cezar da Silva Menezes",
+                "email": "mariomenezesegundo@gmsil.com",
+                "telefone": "5591980111181",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:42:43",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37213,
+                "nome": "Mario Cezar da Silva Menezes",
+                "email": "mariomenezesegundo@gmail.com",
+                "telefone": "91980111181",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39132,
+                "nome": "Marcelo Teixeira Lemos",
+                "email": "marceloteixeiralemos7@gmail.com",
+                "telefone": "5541998437769",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:42:03",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37069,
+                "nome": "Marcelo Teixeira lemos",
+                "email": "lemoseouropreto@gmail.com",
+                "telefone": "41998437769",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39129,
+                "nome": "Marcio Gonsalves",
+                "email": "mgonsalvess@gmail.com",
+                "telefone": "5511996673223",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:35:48",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37164,
+                "nome": "Marcio Gonsalves",
+                "email": "marcio@tvcultura.com.br",
+                "telefone": "11996673223",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39128,
+                "nome": "Leony luiz",
+                "email": "empregovagas523@gmail.com",
+                "telefone": "5575982804930",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:32:15",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37562,
+                "nome": "Leony Luiz Santana Da Silva",
+                "email": "edsonialopes30@icloud.com",
+                "telefone": "75982804930",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39127,
+                "nome": "Eric Florest",
+                "email": "eric.s.84.f@gmail.com",
+                "telefone": "5571996508875",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:31:12",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 5
+            },
+            "original": {
+                "id": 37646,
+                "nome": "Eric Santos Floresta",
+                "email": "eric.s.84.f@gmail.co.",
+                "telefone": "71996508875",
+                "turma": null
+            },
+            "match": {
+                "score": 160,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 5,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39125,
+                "nome": "Tiago Emanuel",
+                "email": "tiago.emp11@gmail.com",
+                "telefone": "5527988180364",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:30:18",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 36936,
+                "nome": "Tiago Emanuel Perin Medeiros",
+                "email": "mremanuel2602@gmail.com",
+                "telefone": "27988180364",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39124,
+                "nome": "Jose Rosnei De  Lima",
+                "email": "maestrozelima@hotmail.com",
+                "telefone": "5542984441895",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:26:45",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37193,
+                "nome": "José Rosnei de Lima",
+                "email": "maestrozelima@bol.com.br",
+                "telefone": "42984441895",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39122,
+                "nome": "Edmar Marega",
+                "email": "edmar.marega@gmail.com",
+                "telefone": "5511960800400",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:25:01",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37418,
+                "nome": "Edmar Marega",
+                "email": "edmar.marega@hotmail.com",
+                "telefone": "11960800400",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39120,
+                "nome": "Maycon Muller",
+                "email": "mullerclimatizacao72@gmail.com",
+                "telefone": "5543996208416",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:23:05",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37625,
+                "nome": "Maycon Müller",
+                "email": "mullerpinturas72@gmail .com",
+                "telefone": "43996208416",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39118,
+                "nome": "Jhonny Construção inteligente em icf",
+                "email": "esiony20102010@gmail.com",
+                "telefone": "5537988117371",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:22:39",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 37084,
+                "nome": "Ediony Silva",
+                "email": "ediony20102010@hotmail.com",
+                "telefone": "37988117371",
+                "turma": "260526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39117,
+                "nome": "Reinaldo araujo dos Santos",
+                "email": "reiaraujo1966@gmail.com",
+                "telefone": "5531984968346",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:21:51",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 17896,
+                "nome": "Reinaldo araujo dos Santos",
+                "email": "reiaraujosantos.1966@gmail.com",
+                "telefone": "31984968346",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39114,
+                "nome": "Aula ao vivo MC_QDC",
+                "email": "flavioperez905@gmail.com",
+                "telefone": "5519989800543",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:16:56",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37298,
+                "nome": "Flávio Perez",
+                "email": "flavioperez3648@gmail.com",
+                "telefone": "19989800543",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39112,
+                "nome": "Nelson Lopes da costa",
+                "email": "nelsonlopescosta.2025@gmail.com",
+                "telefone": "5538999815597",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:15:22",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 6
+            },
+            "original": {
+                "id": 37218,
+                "nome": "Nelson Lopes de costa",
+                "email": "nelsonlopescosta2025@gmail.com",
+                "telefone": "38999815597",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 275,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 6,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39109,
+                "nome": "José Africano",
+                "email": "africanojf22@gmail.com",
+                "telefone": "5541988349179",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:07:34",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37456,
+                "nome": "José  Africano",
+                "email": "africanojfelectrico@gmail.com",
+                "telefone": "41988349179",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 0,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39106,
+                "nome": "PATRIC R ALVES",
+                "email": "patricralves@gmail.com",
+                "telefone": "5544991355022",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:03:31",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 37032,
+                "nome": "Patric Rodrigues",
+                "email": "tricalves@gmail.com",
+                "telefone": "44991355022",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 39105,
+                "nome": "Henrique Lopes",
+                "email": "henriquelopes700@gmail.com",
+                "telefone": "5585985715435",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:01:30",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 37112,
+                "nome": "Henrique Lopes",
+                "email": "henriquetuning-@hotmail.com",
+                "telefone": "85985715435",
+                "turma": "140526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38471,
+                "nome": "Antonio Santos",
+                "email": "tonhofsantos23@gmail.com",
+                "telefone": "5571988972245",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 20:53:27",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 24550,
+                "nome": "Antônio Fernandes dos",
+                "email": "tonhofmds@gmail.com",
+                "telefone": "71988972245",
+                "turma": "060526"
+            },
+            "match": {
+                "score": 200,
+                "why": [
+                    "telefone"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38463,
+                "nome": "Emerson Amadel Leal Ribeiro",
+                "email": "emeson2015taylor@gmail.com",
+                "telefone": "5541999172725",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 20:04:59",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 36647,
+                "nome": "Emerson Amadeu Leal Ribeiro",
+                "email": "emeson2015taylor.com br",
+                "telefone": "41999172725",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38462,
+                "nome": "Samuel Fernandes Lopes",
+                "email": "samuelfernandeslopes44@gmail.com.br",
+                "telefone": "5563992221642",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 20:04:23",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36543,
+                "nome": "Samuel Fernandes lopes",
+                "email": "samuelfernandeslopes44@gmail.com",
+                "telefone": "63992221642",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 350,
+                "why": [
+                    "email_corrigido",
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38456,
+                "nome": "Paulo Sergio Lisboa",
+                "email": "lisboap362@gmail.com",
+                "telefone": "5518981270579",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:54:56",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 36839,
+                "nome": "Paulo Sergio Lisboa",
+                "email": "paulolisboa391@gmail.com",
+                "telefone": "18981270579",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38451,
+                "nome": "WEMERSON DOUGLAS OLIVEIRA PINO",
+                "email": "wemersonpino@hotmail.com",
+                "telefone": "5582993910559",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:43:30",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36743,
+                "nome": "Wemerson douglas oliveira pino",
+                "email": "07196306490",
+                "telefone": "82993910559",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38450,
+                "nome": "Denilson Oliveira de Jesus",
+                "email": "Denilson.Oli54@gmail.com",
+                "telefone": "5524998544551",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:41:35",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 36884,
+                "nome": "Denilson Oliveira de Jesus",
+                "email": "denilson.oli54@hotmail.com.br",
+                "telefone": "24998544551",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 2,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38449,
+                "nome": "Daniel Vieira",
+                "email": "pastordanielvieira@hotmail.com",
+                "telefone": "5562993330185",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:40:52",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36118,
+                "nome": "Daniel Vieira",
+                "email": "pastordanielvieira1964@gmail.com",
+                "telefone": "62993330185",
+                "turma": "060526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38447,
+                "nome": "Ricardo Sofia",
+                "email": "ricardosofia75@gmail.com",
+                "telefone": "5511981508349",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:33:52",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36578,
+                "nome": "Ricardo Sofia",
+                "email": "ricardoss75@hotmail.com",
+                "telefone": "11981508349",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38444,
+                "nome": "Roberto",
+                "email": "djrobertoms1178@gmail.com",
+                "telefone": "5567996500841",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:32:02",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36358,
+                "nome": "Roberto Da Silva Santos",
+                "email": "financeiro.parceiros@hotmail.com",
+                "telefone": "67996500841",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38443,
+                "nome": "Mizael Aleixo",
+                "email": "mizaelaleixo48@gmail.com",
+                "telefone": "5591981254153",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:57",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36241,
+                "nome": "Mizael aleixo dos santos",
+                "email": "mizaelaleixo48@gmai.com",
+                "telefone": "91981254153",
+                "turma": "060526"
+            },
+            "match": {
+                "score": 285,
+                "why": [
+                    "email_fuzzy",
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38442,
+                "nome": "MARCELO FRANCA MONZON",
+                "email": "marcelomonzon777@gmail.com",
+                "telefone": "5513997745702",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:43",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 34017,
+                "nome": "Marcelo França Monzon",
+                "email": "personal_m2002@yahoo.com.br",
+                "telefone": "13997745702",
+                "turma": null
+            },
+            "match": {
+                "score": 175,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38441,
+                "nome": "Cristian Geandro dos Santos",
+                "email": "crisgeandroo@yahoo.com.br",
+                "telefone": "5518991529261",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:42",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36422,
+                "nome": "cristian geandro santos",
+                "email": "crisgeandroo@yaho.com.br",
+                "telefone": "18991529261",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 215,
+                "why": [
+                    "telefone",
+                    "nome_fuzzy"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38439,
+                "nome": "Vinnicius",
+                "email": "vinnicius_menezes@hotmail.com",
+                "telefone": "5511963077983",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:16",
+                "tags": "ACESSOU_LIVE,CLICOU_OFERTA_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "original": {
+                "id": 36787,
+                "nome": "Vinnicius Menezes Cupertino Gomes",
+                "email": "design.vm@outlook.com",
+                "telefone": "11963077983",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 3,
+            "live_receipts_moved": 3,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 38438,
+                "nome": "hercules luna",
+                "email": "hercules.luna@hotmail.com",
+                "telefone": "5588999314680",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:00",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "original": {
+                "id": 36741,
+                "nome": "Hercules Luna",
+                "email": "herculestotti@hotmail.com",
+                "telefone": "88999314680",
+                "turma": "100526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 2,
+            "duplicate_deleted": 1
+        },
+        {
+            "duplicate": {
+                "id": 37679,
+                "nome": "Yuricke Santos de Sousa",
+                "email": "yurickesousa@acad.ifma.edu.br",
+                "telefone": "5599985141599",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-18 22:31:45",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "original": {
+                "id": 36085,
+                "nome": "Yuricke Santos De Sousa",
+                "email": "yurickesousa@gmail.com",
+                "telefone": "99985141599",
+                "turma": "060526"
+            },
+            "match": {
+                "score": 225,
+                "why": [
+                    "telefone",
+                    "nome"
+                ]
+            },
+            "tags_inserted": 1,
+            "live_receipts_moved": 1,
+            "duplicate_deleted": 1
+        }
+    ],
+    "deleted_unmatched": [
+        {
+            "candidate": {
+                "id": 40378,
+                "nome": "Gilson",
+                "email": "g73263855@gmail.com",
+                "telefone": "5581991504959",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-03 19:30:16",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "live_receipts_marked_error": 1,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39709,
+                "nome": "Sérgio Antônio de Souza",
+                "email": "sergionasbe@hotmail.com",
+                "telefone": "5511930577137",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:46:40",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "live_receipts_marked_error": 3,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39706,
+                "nome": "Alex Tenorio",
+                "email": "alextenorio26031992@gmail.com",
+                "telefone": "5587998108013",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:34:41",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "live_receipts_marked_error": 1,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39145,
+                "nome": "Cicero Roberto da Silva",
+                "email": "Cicerorobertosilva59@gmail.com",
+                "telefone": "5598889823389",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 20:12:52",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "live_receipts_marked_error": 3,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39131,
+                "nome": "Waldemilson Oliveira de Souza",
+                "email": "waldemilsonoliveiradesouza@gmail.com",
+                "telefone": "5547991433780",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:41:34",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "live_receipts_marked_error": 1,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39123,
+                "nome": "Marco Antônio",
+                "email": "msousasoares100@gmail.com",
+                "telefone": "5511965057204",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:26:08",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "live_receipts_marked_error": 2,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39113,
+                "nome": "Bruna Vieira",
+                "email": "bv3261999@gmail.com",
+                "telefone": "5547997145562",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:16:56",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "live_receipts_marked_error": 1,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 39107,
+                "nome": "Aldiney Pinaso Domingues",
+                "email": "fredpinaso@gmail.com",
+                "telefone": "5511298822911",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-26 19:03:56",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "live_receipts_marked_error": 2,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 38460,
+                "nome": "João",
+                "email": "ildo.morei@gmail.com",
+                "telefone": "5519997543536",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 20:01:47",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "live_receipts_marked_error": 3,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 38446,
+                "nome": "Levi Oliv",
+                "email": "olivlevi7@gmail.com",
+                "telefone": "5598981836191",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:32:39",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "live_receipts_marked_error": 3,
+            "deleted": 1
+        },
+        {
+            "candidate": {
+                "id": 38440,
+                "nome": "PRISCILPERGER FARIA",
+                "email": "quicopropro@yahoo.com.br",
+                "telefone": "5555980105254",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-22 19:31:35",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "live_receipts_marked_error": 2,
+            "deleted": 1
+        }
+    ],
+    "skipped": [
+        {
+            "candidate": {
+                "id": 43213,
+                "nome": "Lucival Carmo",
+                "email": "lucivalcarmo2@gmail.com",
+                "telefone": "5591985411434",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:25:53",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 2
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 2
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 43207,
+                "nome": "Danielly Gomes de Lima",
+                "email": "danielly29lima@gmail.com",
+                "telefone": "5563993289733",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 19:02:51",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 2
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 43176,
+                "nome": "Andrezza Guanabara",
+                "email": "andrezzagdasilva@gmail.com.nb",
+                "telefone": "5511993773793",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-23 14:43:36",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 3
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 3
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 42683,
+                "nome": "Gutemberg Barbosa Miranda da Silva",
+                "email": "hugoboy714@gmail.com",
+                "telefone": "5581991748311",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-20 19:48:34",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 42117,
+                "nome": "dfdf",
+                "email": "dfd@ghgf.com",
+                "telefone": "5522222222222",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-16 19:26:44",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 41996,
+                "nome": "kath teste",
+                "email": "kkkk@gmail.com",
+                "telefone": "5566666666666",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 20:50:40",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 2
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 41992,
+                "nome": "Jose Dantas",
+                "email": "jdantasneto1965@gmail.com",
+                "telefone": "5582982272525",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-15 20:31:21",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 2
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 2
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 41463,
+                "nome": "Osmane",
+                "email": "sgtoscabral@hotmail.com",
+                "telefone": "5521979041633",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-11 18:51:33",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 41185,
+                "nome": "Emerson",
+                "email": "Kskdkd@jeid.com",
+                "telefone": "5531984884848",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-09 19:02:46",
+                "tags": "ACESSOU_LIVE",
+                "live_receipts": 1
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 41070,
+                "nome": "Emerson Leite",
+                "email": "souza1104@dfdfd.com",
+                "telefone": "5533333333333",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-08 23:36:48",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 3
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 40872,
+                "nome": "Edmilson Pinheiro",
+                "email": "edmilson.psilva.ep@gmail.com",
+                "telefone": "5513997392651",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-06-07 19:21:35",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 4
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "magic_links",
+                    "column": "user_id",
+                    "count": 4
+                }
+            ]
+        },
+        {
+            "candidate": {
+                "id": 39702,
+                "nome": "Jefferson Batista Lucas",
+                "email": "jb.lucas.batista@hotmail.com",
+                "telefone": "5511980223489",
+                "codigo_turma": null,
+                "turma_codigo": null,
+                "created_at": "2026-05-30 19:30:55",
+                "tags": "ACESSOU_LIVE,ESTAVA_OFERTA_MCQDC",
+                "live_receipts": 3
+            },
+            "reason": "has_non_live_links",
+            "blockers": [
+                {
+                    "table": "hotmart_sales",
+                    "column": "matched_user_id",
+                    "count": 1
+                }
+            ]
+        }
+    ]
+}

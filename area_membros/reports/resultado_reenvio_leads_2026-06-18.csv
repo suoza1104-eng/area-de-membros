@@ -1,0 +1,368 @@
+﻿ordem;lead_id;nome;email;telefone;http;ok;user_id;cadastrado;erro;resposta;enviado_em
+1;16933;Antonio Barbosa;antoniobarbosarei28@gmail.com;75998311970;200;True;42231;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42231,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:21
+2;16934;Robson Carlos Barreto;robsoncarlosbarreto128@gmail.com;17996338529;200;True;42232;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42232,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:22
+3;16935;Jorge Alves;cordeirojorge6156@gmail.com;27999250700;200;True;42233;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42233,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:23
+4;16936;Carlos Alberto de jesus sobrinho;carlosalberto-sobrinho@hotmail.com;11981309033;200;True;42234;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42234,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:24
+5;16937;Wellington Carlos;wellingtonizaque1@gmail.com;13988562160;200;True;42235;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42235,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:25
+6;16938;Paulo Sérgio de Oliveira;ps.mo@hotmail.com;91993553324;200;True;42236;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42236,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:26
+7;16939;Schaili Ravena Oliveira Abreu;abreuschaili@gmail.com;27998738507;200;True;42237;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42237,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:27
+8;16940;Ednaldo antonio quirino;ednaldoantonioquirino@gmail.com;83991842526;200;True;42238;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42238,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:28
+9;16941;Douglas Dynegro;douglasdysantos90@gmail.com;61991108119;200;True;42239;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42239,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:29
+10;16942;Natan Cassiano de Alencar Pires;natanpires2016@gmail.com;11952288493;200;True;42240;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42240,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:30
+11;16943;Roque Luiz dos Santos Brito;roquebrittto86@gmail.com;75982784840;200;True;42241;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42241,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:31
+12;16944;Guthyerry Lira da silva;venixtsho@gmail.com;69992839130;200;True;42242;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42242,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:32
+13;16945;Joao Carlos;joaocarlosjpa38@gmail.com;55219907161;200;True;42243;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42243,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:33
+14;16946;Igor Silva Rodrigues;vocepodevp@gmail.com;31973504167;200;True;42244;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42244,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:34
+15;16947;Anderson Papini;andersonpapini12@gmail.com;31989162097;200;True;42245;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42245,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:35
+16;16948;Mateus Jeferson;mneletricaprojetos@gmail.com;31993475081;200;True;42246;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42246,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:36
+17;16949;Entoni Farias;entonilazaro@gmail.com;64996159426;200;True;42247;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42247,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:37
+18;16950;Isaque Souza;isaque.corvete@gmail.com;51992747535;200;True;42248;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42248,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:38
+19;16951;João Paulo Alves da Silva;paulojoao76761@gmail.com;85994059738;200;True;42249;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42249,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:39
+20;16952;Alceu Ferreira;alceulico@gmail.com;55219923808;200;True;42250;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42250,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:40
+21;16953;Fabricio Ferreira;fabraslift@gmail.com;11993508155;200;True;42251;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42251,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:41
+22;16955;Verônica Giovanna Angeloti;veronicaangeloti@gmail.com;16993842428;200;True;42252;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42252,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:42
+23;16956;Rodrigo petraglia zanele;rodrigopetragliazanele1980@gmail.com;11942276519;200;True;42253;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42253,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:43
+24;16957;Francisco Leonardo Nascimento Silva;leos123490@gmail.com;88998173286;200;True;42254;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42254,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:44
+25;16958;Allan Clefi Barros Nina Filho;allanclefi@gmail.com;98988601008;200;True;42255;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42255,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:45
+26;16959;Fidelis santos;informeaqui07@gmail.com;55159914216;200;True;42256;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42256,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:46
+27;16960;Valdeci Neri trindade;valdecineri663@gmail.com;55759813085;200;True;42257;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42257,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:47
+28;16961;Osmar Nascimento Junior;juniorosmar645@gmail.com;55289997981;200;True;42258;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42258,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:48
+29;16963;Carlos Alberto da Silva Cavalcanti;tokedemestrepinturas@gmail.com;11987905166;200;True;42259;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42259,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:49
+30;16964;Michael Veloso Avanso De Matos;michael_avanso@hotmail.com;11997086577;200;True;42260;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42260,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:50
+31;16965;VICTOR BERNARDO;bernardoosilva3@gmail.com;83999166443;200;True;42261;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42261,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:51
+32;16966;João Leno de Sousa;sousajoaolenodesousa@gmail.com;86981415366;200;True;42262;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42262,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:52
+33;16967;Marcelo Vigil;bugavigil@gmail.com;51985219564;200;True;42263;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42263,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:53
+34;16968;Kelvin Nunes;kelvinnunes337@gmail.com;11950527562;200;True;42264;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42264,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:54
+35;16969;Marcelo Silva Brito;britomarcelo064@gmail.com;65998139163;200;True;42265;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42265,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:55
+36;16970;Jose Pedro;pepe.ubilla@hotmail.com;11971487733;200;True;42266;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42266,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:56
+37;16971;Damazio Da Silva;damaziodasailva@gmail.com;55629991799;200;True;42267;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42267,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:57
+38;16972;João Ferreira Gomes;ferreirabh60@gmail.com;31998407423;200;True;42268;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42268,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:58
+39;16973;EZEQUIAS FELIPE SILVA DE JESUS;ezequiasf693@gmail.com;38998304236;200;True;42269;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42269,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:01:59
+40;16974;Marildo Oliveira;marildoo73@gmail.com;91993939747;200;True;42270;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42270,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:00
+41;16975;Anderson Da;andersonb2k61@gmail.com;61991463835;200;True;42271;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42271,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:01
+42;16976;Francisco Pereira;francisco.link2022@gmail.com;15991597809;200;True;42272;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42272,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:02
+43;16977;Maurício hebach filho;hebach@hotmail.com;37999891454;200;True;42273;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42273,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:03
+44;16978;Eli Pereira da Silva;elieltricista2024@gmail.com;34991222160;200;True;42274;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42274,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:04
+45;16979;Fernandes Salvador Farias;fernandosalvadorfarias@gmail.com;11986374297;200;True;42275;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42275,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:05
+46;16980;João Vitor;joaotubyas@gmail.com;21966646184;200;True;42276;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42276,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:06
+47;16981;Jean Carlos de Paula Pinto;jeancarlosdepaulapinto@gmail.com;96984247828;200;True;42277;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42277,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:07
+48;16982;Josué Soares da Silva;josuesoares0625@gmail.com;81986774642;200;True;42278;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42278,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:08
+49;16983;Eduardo da Silva Reis;edureis5518@gmail.com;31992696609;200;True;42279;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42279,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:09
+50;16984;Pedro da Silva Lacerda;pedrinhodasilvalacerda@gmail.com;83998229021;200;True;42280;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42280,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:10
+51;16985;Alexandre Marinho;alexandrealvesmarinho@gmail.com;32984056323;200;True;42281;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42281,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:11
+52;16986;Aloisio COSTA DA SILVA;aloisio2008@gmail.com;21972132943;200;True;42282;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42282,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:12
+53;16987;Erisvaldo de Sousa Oliveira;erisvaldo20sousa@gmail.com;98984694925;200;True;42283;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42283,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:13
+54;16988;Jeorge gustavo rangel de souza;jeorgerangel@yahoo.com.br;81984603155;200;False;;;;"{""ok"":true,""cadastrado"":true,""user_id"":42284,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}<!doctype html>
+<!--[if lt IE 7]> <html class=""no-js ie6 oldie"" lang=""en""> <![endif]-->
+<!--[if IE 7]>    <html class=""no-js ie7 oldie"" lang=""en""> <![endif]-->
+<!--[if IE 8]>    <html class=""no-js ie8 oldie"" lang=""en""> <![endif]-->
+<!--[if gt IE 8]><!--> <html class=""no-js"" lang=""pt-br""> <!--<![endif]-->
+<!--[if IE]>
+<script src=""http://html5shiv.googlecode.com/svn/trunk/html5.js"">
+</script>
+<![endif]-->
+<head>
+	<meta charset=""UTF-8"">
+	<meta name=""robots"" content=""noindex, nofollow""> 
+	<title>503 - Serviço indisponível</title>
+
+	<link rel=""icon"" href=""/cgi-sys/images/favicon.png"" type=""image/png"" />
+
+	<style>
+	html, body, div, span, applet, object, iframe,
+	h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+	a, abbr, acronym, address, big, cite, code,
+	del, dfn, font, img, ins, kbd, q, s, samp,
+	small, strike, sub, sup, tt, var,
+	dl, dt, dd, ol, ul, li,
+	fieldset, form, label, legend,
+	table, caption, tbody, tfoot, thead, tr, th, td {
+		margin: 0;
+		padding: 0;
+		border: 0;
+		outline: 0;
+		font-weight: inherit;
+		font-style: inherit;
+		font-size: 100%;
+		font-family: inherit;
+		vertical-align: baseline;
+	}
+	/* remember to define focus styles! */
+	:focus {
+		outline: 0;
+	}
+	html,
+	body {
+		height:100%;
+	}
+	html {
+       overflow-y: scroll;
+	}
+	body {
+		line-height: 1.2em;
+		color: black;
+		background: white;
+	}
+	ol, ul {
+		margin: 20px 0 20px 60px;
+	}
+	li {
+		margin: 5px 0;
+	}
+	ul a {
+		text-decoration: none;
+	}
+	/* tables still need 'cellspacing=""0""' in the markup */
+	table {
+		border-collapse: separate;
+		border-spacing: 0;
+	}
+	caption, th, td {
+		text-align: left;
+		font-weight: normal;
+	}
+	blockquote:before, blockquote:after,
+	q:before, q:after {
+		content: """";
+	}
+	blockquote, q {
+		quotes: """" """";
+	}
+	body {
+		background-color: #f4f4f4;
+	}
+	#wrapper {
+		width: 760px;
+		margin: 0 auto;
+		min-height:100%;
+		position:relative;
+	}
+	a {
+		color: #285aa8;
+		font-weight: bold;
+	}
+	#logo {
+		text-align: center;
+		display: block;
+		padding: 40px 0;
+	}
+	header {
+		height: 500px;
+	}
+	#error-title {
+		background-color: #285aa8;
+		color: #fff;
+		width: 305px;
+		height: 80px;
+		padding: 28px 23px;
+		-webkit-border-radius: 8px 8px 8px 8px;
+		border-radius: 8px 8px 8px 8px;
+		margin: 111px auto 50px;
+	}
+	h1, h2 {
+		font-family: Arial, ""Helvetica Neue"", Helvetica, sans-serif;
+		text-transform: uppercase;
+		text-align: center;
+	}
+
+	h4 {
+		margin: 15px 0;
+		font-weight: bold;
+	}
+	#error-title h1 { 
+		font-size: 48px;
+		font-weight: 900;
+		line-height: 48px;
+	}
+	#error-title h1 span {
+		display: block;
+		font-size: 24px;
+		font-weight: normal;
+	}
+	#faq_container {
+		font-family: Tahoma, Arial, ""Helvetica Neue"", Helvetica, sans-serif;
+		padding-bottom:72px;   /* Height of the footer element */
+		color: #333333;
+		font-size: 14px;
+	}
+	#faq_container dt {
+		font-size: 14px;
+		text-align: center;
+		margin: 15px 0;
+	}
+	#accordion > dd {
+		padding-bottom: 20px;
+	}
+	#faq_container p {
+		margin: 15px 0;
+	}
+
+	#faq_container p a{
+		text-decoration: none;
+	}
+	#faq_container dd p:first-child, #faq_container dd h4:first-child {
+		margin-top: 0;
+	}
+	footer {
+		font-family: Tahoma, Arial, ""Helvetica Neue"", Helvetica, sans-serif;	
+		text-align: center;
+		width:100%;
+		height:72px;
+		position:absolute;
+		bottom:0;
+		left:0;
+		color: #333333;
+		line-height: 22px;
+	}
+	footer p {
+		padding: 10px 0;
+	}
+	#container #mid403 #gatorbottom{position:relative;left:39px;float:left;}
+    #container #mid403 #xxx{float:left;padding:30px 207px 10px; margin: auto auto -10px auto}
+    #container #mid403 #content{float:left;text-align:center;width:868px;}
+    #container #mid403 #content #errorcode{font-size:30px;font-weight:800;}
+    #container #mid403 #content #banner{margin:20px 0 0 ;}
+    #container #mid403 #content #hostedby{font-weight:800;font-size:25px;font-style:italic;margin:20px 0 0;}
+    #container #mid403 #content #coupon{color:#AB0000;font-size:22px;font-style:italic;}
+    #container #mid403 #content #getstarted a{color:#AB0000;font-size:31px;font-style:italic;font-weight:800;}
+    #container #mid403 #content #getstarted {margin:0 0 35px;}
+    #container #mid403 #content #faq_container {margin: 5px 0 5px 0; padding: 10px 0 10px 0; clear:both;}
+    #container #mid403 #content #accordion{font-size: 90%; width: 650px; min-height: 100px; margin: 0 auto; text-align: center;}
+    #container #mid403 #content #accordion ul {text-align: left;}
+    #container #mid403 #content #accordion ol {text-align: left;}
+    #container #mid403 #content #accordion li {font-size: 90%;}
+    #container #mid403 #content #accordion p {font-size: 95%; text-align: left;}
+    #container #mid403 #content #accordion h3 {font-weight: bold;}
+	  #container #mid403 #content #accordion h4 {font-weight: bold; font-style: italic; text-align: left;}
+	  .content {display:none;}
+	  .first {color: #ff6600;}
+	  .second {color: #3b5998;}
+	  .third {color: #198c19;}
+	  .code { font-family: monospace; background-color: #e5e5e5; border: 1px solid #bdbdbd; padding: 10px; text-align: left;}
+	  #faq_container .code dt, #faq_container .code dl { margin: 0; text-align: left;}
+	  #faq_container .code dd { margin: 5px 0 5px 40px; text-align: left;}
+	  .shell{border: 2px solid gray; background-color: black; color: white; text-align: left;}
+	</style>
+
+	<script type=""text/javascript"" src=""/cgi-sys/js/jquery-1.11.2.min.js"" ></script>
+
+	<script>
+
+	$(document).ready(function() {
+		
+      (function($) {
+
+        var allPanels = $('#accordion > dd').hide();
+        $('#accordion > dt > a').click(function() {
+            $this = $(this);
+            $target =  $this.parent().next();
+            if(!$target.hasClass('active')){
+               //allPanels.removeClass('active').stop().slideUp();
+               $target.addClass('active').stop().slideDown();
+            } else {
+            	$this.parent().next().removeClass('active').stop().slideUp();
+            }
+          return false;
+        });
+
+        $('a#link-trigger').click(function() {
+            $target =  $('#existealgo').parent().next();
+        	if(!$target.hasClass('active')){
+               //allPanels.removeClass('active').stop().slideUp();
+               $target.addClass('active').stop().slideDown();
+            } else {
+            	$this.parent().next().removeClass('active').stop().slideUp();
+            }
+            return true;
+        });
+
+      })(jQuery);
+  });
+	</script>
+
+</head>
+<body>
+	<div id=""wrapper"">
+		<header class=""header"">
+			<a id=""logo"" href=""https://www.hostgator.com.br/?utm_source=interno&utm_medium=link&utm_campaign=page403""><img src=""/cgi-sys/images/logo-403-page.png"" alt=""HostGator Hospedagem de Sites""></a>
+			<div id=""error-title"">
+				<h1>Erro 503<br><span>Serviço indisponível</span></h1>
+			</div>
+		</header>
+	
+		<section>
+	
+			<div id=""faq_container"">
+				 <dl id=""accordion"">
+				 	<dt><a href=""#"">Por que estou vendo esta página?</a></dt>
+						<dd>
+							<p>O Erro 503 geralmente significa que o servidor não está conseguindo responder uma solicitação HTTP em função de algum problema temporário como, por exemplo, uma sobrecarga ou manutenção no servidor.</p>
+							<p>Se o servidor está experimentando uma quantidade muito elevada de tráfego ou está em manutenção, você pode verificar nosso <a href=""http://status.hostgator.com.br/"" title=""Blog de Status"">Blog de Status</a> – que traz as principais atualizações sobre o status de nossa rede, serviços e servidores. Você também pode acompanhar as atualizações nas redes sociais, como <a href=""https://twitter.com/HostGatorBrasil"" title=""Twitter HostGator Brasil"">Twitter</a> e <a href=""https://www.facebook.com/HostgatorBrasil/"" title=""Facebook HostGator Brasil"">Facebook</a>.</p>
+							<p>O erro também pode acontecer em função de algum problema no seu site, o que vai exigir uma revisão adicional da nossa equipe. Caso acredite que a situação seja essa, entre em contato com nosso suporte via <a href=""https://hostgator.com.br/suporte/"" title=""Sistema de Ticket HostGator"">ticket (e-mail)</a> informando a situação. </p>
+						</dd>
+					
+					<dt><a id=""existealgo"" href=""#"">Posso fazer alguma coisa?</a></dt>
+						<dd>
+							<p>Dependendo da situação, você pode realizar algumas ações. Confira abaixo algumas orientações:</p>
+							<h4>1. Mecanismo de cache</h4>
+							<p>Se o seu site está recebendo um grande volume de tráfego, considere o uso de um mecanismo ou plug-in de cache. Outra alternativa é utilizar páginas estática (HTML), em vez de conteúdo dinâmico.</p>
+							<h4>2. Otimização do site</h4>
+							<p>Se optar por continuar com páginas com conteúdo dinâmico, garanta sempre que a plataforma utilizada esteja otimizada – evitando cargas desnecessárias no servidor. Algumas recomendações importantes:</p>
+							<ol>
+								<li>Use recursos locais em vez de remotos;</li>
+								<li>Utilize uma estrutura de links relativos;</li>
+								<li>Minimize o número de regras no seu arquivo .htaccess;</li>
+								<li>Certifique-se que o banco de dados está otimizado;</li>
+								<li>Desative caches obsoletos ou antigos;</li>
+								<li>Desative todos os plug-ins relacionados ao site que você não está utilizando.</li>
+							</ol>
+							<h4>3. Hotlinks</h4>
+							<p>Evite links para recursos no servidor que estão armazenados no interior de sua arquitetura local ou hotlinks que não pertencem a sua estrutura. Considere proteger esses recursos com regras de bloqueio de IP.</p>							
+						</dd>
+				
+					<dt><a href=""#"">Orientações para otimização</a></dt>
+						<dd class=""content"">
+							<p>Confira nos links algumas orientações para otimização das principais aplicações disponíveis para a publicação de sites, blogs e lojas virtuais: </p>
+								<ul>
+									<li><a href=""http://faq.hostgator.com.br/content/70/357/pt-br/como-otimizar-o-uso-de-recursos-da-cpu.html"">Como otimizar o uso de recursos do servidor</a></li>
+									<li><a href=""http://faq.hostgator.com.br/content/70/358/pt-br/guia-de-otimiza%C3%A7%C3%A3o-wordpress.html"">Guia de otimização Wordpress</a></li>
+									<li><a href=""http://faq.hostgator.com.br/content/70/359/pt-br/guia-de-otimiza%C3%A7%C3%A3o-joomla.html"">Guia de Otimização Joomla</a></li>
+									<li><a href=""http://faq.hostgator.com.br/content/70/360/pt-br/guia-de-otimiza%C3%A7%C3%A3o-magento.html"">Guia de Otimização Magento</a></li>
+									<li><a href=""http://faq.hostgator.com.br/content/70/363/pt-br/guia-de-otimiza%C3%A7%C3%A3o-zencart.html"">Guia de Otimização ZenCart</a></li>
+								</ul>
+						</dd>
+				</dl>
+			</div>
+	
+		</section>
+	
+		<footer>
+			<p>Esse site é hospedado pela HostGator<br>
+			<a href=""https://www.hostgator.com.br/hospedagem-de-sites.php?utm_source=interno&utm_medium=link&utm_campaign=page503"">Conheça nossos planos</a></p>
+			
+		</footer>	
+		</div>
+	</body>
+</html>
+";2026-06-18T02:02:14
+55;16989;Adriano Lima da Silva;aquillisadriano@gmail.com;87981748262;200;True;42285;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42285,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:15
+56;16990;Daniel Lucas da costa;sguardrio@gmail.com;21970343260;200;True;42286;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42286,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:16
+57;16991;Caio Henrique Pereira da Silva;clc241508@gmail.com;98981772066;200;True;42287;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42287,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:17
+58;16992;Leonildo Gonçalves Candia;leonildocandia@hotmail.com;11965851624;200;True;42288;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42288,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:18
+59;16993;Wellington Batista Forquim;batista_well@hotmail.com;41995657179;200;True;42289;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42289,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:19
+60;16994;José Neves boa sorte Filho Neves;josenevesboasorte@gmail.co;55279924743;200;True;42290;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42290,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:20
+61;16995;Adriano Silva Santos Dri;arn872011@hotmail.com;81982211373;200;True;42291;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42291,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:21
+62;16996;Gilmar Sousa;gilmarrsousa84@gmail.com;55139880507;200;True;42292;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42292,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:22
+63;16997;Wadson da Silva Lopes;wadsonlopespm@gmail.com;73991229687;200;True;42293;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42293,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:23
+64;16998;Valdemir Brito de Cristo;speednet.fsa@outlook.com;75998973790;200;True;42294;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42294,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:24
+65;16999;denis monteiro ribeiro;denismtribeiro@gmail.com;14997228506;200;True;42295;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42295,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:25
+66;17000;Elielson Gomes;elielsomg029@gmail.com;75999397583;200;True;42296;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42296,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:26
+67;17001;Sérgio Mota;sergiomota.arq@gmail.com;21997010532;200;True;42297;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42297,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:27
+68;17002;Samuel Sousa;eletrica3htecnologia@outlook.com;11967978187;200;True;42298;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42298,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:28
+69;17003;THIAGO BELEM PEIXOTO;thiagobelempeixoto@yahoo.com.br;22997399553;200;True;42299;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42299,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:29
+70;17004;EROCI DE AQUINO PILAR;erocipilar19@gmail.com;66999111087;200;True;42300;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42300,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:30
+71;17005;Pedro Vitor Silva de Oliveira;pedrovitor4019@gmail.com;84998112143;200;True;42301;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42301,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:31
+72;17007;Paulinho Henrique;guerreirodecristo321@gmail.com;82999367737;200;True;42302;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42302,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:32
+73;17008;FILIPE MOABE GOMES DA CRUZ;filipemoabe@gmail.com;31985493691;200;True;42303;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42303,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:33
+74;17009;Diogo Freires;diogofreires@live.com;27997527244;200;True;42304;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42304,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:34
+75;17010;sdfsf gg;sdfsdf@jhjfd.com;31222222222;200;True;42305;True;;"{""ok"":true,""cadastrado"":true,""user_id"":42305,""codigo_turma"":""150626"",""data_live"":""2026-06-27 19:00:00""}";2026-06-18T02:02:35

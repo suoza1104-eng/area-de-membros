@@ -1,0 +1,249 @@
+{
+    "rows": 37,
+    "unique": 36,
+    "duplicates": {
+        "158": 2
+    },
+    "payment_sales": 0,
+    "hotmart_sales_live": 27,
+    "hotmart_sales": 27,
+    "vitalicio": 29,
+    "vitalicio_granted": 28,
+    "vitalicio_missing": 1,
+    "unmatched": [
+        {
+            "tx": "firepay:393",
+            "nome": "Luis Willian aires belfort",
+            "email": "willianmix33@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        }
+    ],
+    "missing_sales": [
+        {
+            "tx": "firepay:583",
+            "nome": "Gelson Elbert Auras de Medeiros",
+            "email": "medeirosgelson@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:576",
+            "nome": "Felipe Da Silva Lopes",
+            "email": "felipefdsl2000@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:557",
+            "nome": "Henrique",
+            "email": "riquecavalheiro29@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:511",
+            "nome": "Luciano Ferreira Duarte",
+            "email": "lucianoita211@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:484",
+            "nome": "Carlos Antônio Turelo",
+            "email": "turelca1@yahoo.com.br",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:469",
+            "nome": "Talvane",
+            "email": "soarestalvane2020@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:454",
+            "nome": "Adailton Novais",
+            "email": "novaisadailton638@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:424",
+            "nome": "Edson Maciel",
+            "email": "emacielaraujo@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:409",
+            "nome": "Flávio Martins Santos",
+            "email": "flaviomartins67@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:408",
+            "nome": "Raimundo Nonato Alves de Lima",
+            "email": "26rnlima@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:398",
+            "nome": "Adinelson",
+            "email": "adiestronda23@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:393",
+            "nome": "Luis Willian aires belfort",
+            "email": "willianmix33@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:380",
+            "nome": "Elton Soares",
+            "email": "eltton13@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:312",
+            "nome": "Igor Lisboa de Paz",
+            "email": "igorlpaz09@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:255",
+            "nome": "Olá Posso ter mais informaões sobre isso",
+            "email": "josiascairesdasilvacaires@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:252",
+            "nome": "Silvano",
+            "email": "silvanobernado@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:236",
+            "nome": "Ricard",
+            "email": "ricardoaborges76@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:223",
+            "nome": "Alderivan Pereira da Silva",
+            "email": "alderivanp7@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:214",
+            "nome": "Fernando lima",
+            "email": "inova.lima.r@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:203",
+            "nome": "Sinesio da silva castro",
+            "email": "sinesioc83@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:190",
+            "nome": "Cristian Martins",
+            "email": "cristianhmartins@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:180",
+            "nome": "Geomario Alves Sobrinho",
+            "email": "geomarioalves90@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:174",
+            "nome": "Emerson Leite de Souza",
+            "email": "souza1104@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:162",
+            "nome": "JOSE ARNALDO SILVA DOS SANTOS",
+            "email": "arnaldo.2017as@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:158",
+            "nome": "Júlio Cesar dos Santos",
+            "email": "dossantosjuliocesar76@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:148",
+            "nome": "Antonio Carlos",
+            "email": "carlos42058@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:135",
+            "nome": "Benedito Rodrigues",
+            "email": "benerodrigues6491@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:107",
+            "nome": "Humbertto Vianna",
+            "email": "humberttoviana@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:79",
+            "nome": "José Silva",
+            "email": "sjosefrancisco053@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:75",
+            "nome": "Emanuel Jesus Freire correa",
+            "email": "e.freire.correa@gmail.com",
+            "produto": "Formação Eletricista Residencial de Alto Nível"
+        },
+        {
+            "tx": "firepay:71",
+            "nome": "MARCIO AUGUSTO DITZEL SLOMPO",
+            "email": "marcioslompo@yahoo.com.br",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:53",
+            "nome": "CLAUDIO JOSÉ",
+            "email": "bqgmonte@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:36",
+            "nome": "JOSE NILTON PEREIRA FRAGA",
+            "email": "joseniltonpereirafraga@gmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:22",
+            "nome": "silva Júlio Cezar",
+            "email": "juliorazec-@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:10",
+            "nome": "Emerson Leite de Souza",
+            "email": "souza1104@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        },
+        {
+            "tx": "firepay:9",
+            "nome": "Emerson Leite de Souza",
+            "email": "souza1104@hotmail.com",
+            "produto": "Iniciação em Montagem de Quadros VITALÍCIO"
+        }
+    ],
+    "missing_lifetime": [
+        {
+            "tx": "firepay:380",
+            "user_id": 55879,
+            "nome": "Elton Soares",
+            "email": "eltton13@hotmail.com",
+            "match": "email",
+            "turma": null
+        }
+    ]
+}

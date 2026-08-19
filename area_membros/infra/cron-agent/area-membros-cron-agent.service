@@ -1,0 +1,10 @@
+[Unit]
+Description=Area de Membros external cron dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/area-membros-cron-agent
+User=root
+Group=root

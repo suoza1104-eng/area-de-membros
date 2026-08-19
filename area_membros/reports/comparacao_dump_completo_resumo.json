@@ -1,0 +1,31 @@
+{
+  "tabelas": {
+    "hub_dispatch_attempts": 41162,
+    "hub_dispatch_queue": 40134,
+    "hub_leads": 17010,
+    "hub_lead_events": 20067
+  },
+  "usuarios_area_membros_atual": 42220,
+  "contatos_unicos_hub_leads": 17010,
+  "eventos_total": 20067,
+  "contatos_unicos_extraidos_eventos": 17215,
+  "ausentes_area_membros_por_eventos": 141,
+  "filas_area_membros_total": 20067,
+  "filas_area_membros_sent": 19876,
+  "filas_area_membros_nao_sent": 191,
+  "falhas_nao_presentes_atualmente": 151,
+  "status_fila_area_membros": {
+    "sent": 19876,
+    "failed": 93,
+    "pending_retry": 3,
+    "pending": 95
+  },
+  "http_ultima_tentativa_falhas": {
+    "422": 96,
+    "0": 95
+  },
+  "arquivos": [
+    "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\leads_ausentes_dump_completo.csv",
+    "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\falhas_envio_area_membros_dump_completo.csv"
+  ]
+}

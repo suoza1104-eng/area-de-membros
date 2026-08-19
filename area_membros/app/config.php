@@ -2,6 +2,26 @@
 // FILE: app/config.php
 declare(strict_types=1);
 
+// Compatibilidade com hospedagens que ainda executam PHP 7.x. O codigo usa
+// helpers nativos do PHP 8 em varios fluxos, inclusive no login por senha.
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool {
+        if ($needle === '') return true;
+        $length = strlen($needle);
+        return $length <= strlen($haystack) && substr($haystack, -$length) === $needle;
+    }
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+
 // Timezone padrão (evita divergência entre site e CRON)
 date_default_timezone_set('America/Sao_Paulo');
 
@@ -12,6 +32,56 @@ $isCli = (PHP_SAPI === 'cli');
 $host = $_SERVER['HTTP_HOST'] ?? '';
 $isLocal = (!$isCli) && (strpos($host, 'localhost') !== false);
 
+function am_cookie_secure(): bool {
+    $https = strtolower((string)($_SERVER['HTTPS'] ?? ''));
+    if ($https !== '' && $https !== 'off') return true;
+    $forwardedProto = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    if ($forwardedProto === 'https') return true;
+    $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?: '';
+    if ($host === 'professoremersonleite.com' || $host === 'www.professoremersonleite.com') return true;
+    return str_starts_with((string)(defined('BASE_URL') ? BASE_URL : ''), 'https://');
+}
+
+function am_cookie_domain(): string {
+    $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?: '';
+    if ($host === 'professoremersonleite.com' || $host === 'www.professoremersonleite.com') {
+        return '.professoremersonleite.com';
+    }
+    return '';
+}
+
+function am_cookie_options(int $expires, bool $httpOnly = true): array {
+    $options = [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => am_cookie_secure(),
+        'httponly' => $httpOnly,
+        'samesite' => 'Lax',
+    ];
+    $domain = am_cookie_domain();
+    if ($domain !== '') $options['domain'] = $domain;
+    return $options;
+}
+
+function am_host_cookie_options(int $expires, bool $httpOnly = true): array {
+    return [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => am_cookie_secure(),
+        'httponly' => $httpOnly,
+        'samesite' => 'Lax',
+    ];
+}
+
+function am_session_cookie_options(int $lifetime): array {
+    $options = am_cookie_options(time() + $lifetime, true);
+    unset($options['expires']);
+    $options['lifetime'] = $lifetime;
+    return $options;
+}
+
 // Erros: mostra apenas em localhost; em produção/CRON, loga sem "quebrar" headers
 ini_set('display_errors', $isLocal ? '1' : '0');
 ini_set('display_startup_errors', $isLocal ? '1' : '0');
@@ -21,6 +91,12 @@ error_reporting(E_ALL);
 // Sessão: só faz sentido no navegador (CRON não usa sessão)
 if (!$isCli && session_status() === PHP_SESSION_NONE) {
     if (!headers_sent()) {
+        // Aulas podem durar mais que os 24 minutos padrão do PHP. Mantém a
+        // sessão por 8 horas; o token persistente continua sendo a segunda
+        // camada de recuperação caso o provedor limpe a sessão antes disso.
+        $sessionLifetime = 60 * 60 * 8;
+        ini_set('session.gc_maxlifetime', (string)$sessionLifetime);
+        session_set_cookie_params(am_session_cookie_options($sessionLifetime));
         session_start();
     }
 }
@@ -53,6 +129,7 @@ if ($isLocal) {
 
 // Senha padrão do certificado (pode trocar depois)
 define('SENHA_CERTIFICADO', 'FERA2025');
+define('APP_VERSION', 'v30');
 
 /**
  * Credenciais do ADMIN (login da área administrativa)
@@ -71,11 +148,53 @@ function getPDO(): PDO
     if ($pdo === null) {
         $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
 
-        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
+        $opts = [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
+            // Evita que uma conexao lenta com o banco remoto trave a pagina
+            // por minutos (o TCP connect padrao no Linux pode chegar a ~127s).
+            PDO::ATTR_TIMEOUT            => 5,
+        ];
+
+        // Tenta conectar com 1 retry rapido para hiccups de rede transitorios.
+        $tentativas = 0;
+        while (true) {
+            try {
+                $pdo = new PDO($dsn, DB_USER, DB_PASS, $opts);
+                break;
+            } catch (PDOException $e) {
+                $tentativas++;
+                if ($tentativas >= 2) throw $e;
+                usleep(300000); // 0,3s antes de tentar de novo
+            }
+        }
     }
 
     return $pdo;
+}
+
+// ── Monitor de requisições lentas (diagnóstico) ──────────────────────────────
+// Registra em app/error_log/slow_requests.log toda requisição que passar de
+// SLOW_REQ_THRESHOLD segundos, para identificar gargalos reais sem precisar
+// reproduzir na frente do usuário. Não altera o comportamento da página.
+if (!defined('SLOW_REQ_MONITOR')) {
+    define('SLOW_REQ_MONITOR', 1);
+    register_shutdown_function(static function () {
+        $start = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        if ($start === null) return;
+        $elapsed = microtime(true) - (float)$start;
+        if ($elapsed < 3.0) return; // só registra o que estiver lento
+        $dir = __DIR__ . '/error_log';
+        if (!is_dir($dir)) @mkdir($dir, 0775, true);
+        $uri  = $_SERVER['REQUEST_URI'] ?? ($_SERVER['SCRIPT_NAME'] ?? PHP_SAPI);
+        $line = sprintf(
+            "[%s] %.2fs %s %s (mem %.1fMB)\n",
+            date('Y-m-d H:i:s'),
+            $elapsed,
+            $_SERVER['REQUEST_METHOD'] ?? PHP_SAPI,
+            $uri,
+            memory_get_peak_usage(true) / 1048576
+        );
+        @file_put_contents($dir . '/slow_requests.log', $line, FILE_APPEND);
+    });
 }

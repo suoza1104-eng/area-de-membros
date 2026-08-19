@@ -1,0 +1,8 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home1/prof2543/public_html/area_membros/
+    - /usr/bin/rsync -av --delete --no-perms --exclude='.git' --exclude='uploads/' --exclude='vendor/' /home1/prof2543/repositories/area-de-membros/ $DEPLOYPATH
+    - /bin/chmod 755 /home1/prof2543/public_html
+    - /bin/chmod 755 $DEPLOYPATH
+    - /bin/chmod -R u=rwX,go=rX $DEPLOYPATH

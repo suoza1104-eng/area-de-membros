@@ -1,0 +1,3 @@
+# Intentionally empty.
+# Do not add ModSecurity directives here; HostGator returns HTTP 500 when
+# SecRuleEngine/SecFilterEngine overrides are not allowed in .htaccess.

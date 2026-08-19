@@ -9,6 +9,9 @@ header('Content-Type: application/json; charset=utf-8');
 @ini_set('log_errors', '1');
 @set_time_limit(60);
 ignore_user_abort(true);
+// Este endpoint nao usa $_SESSION; libera o lock imediatamente para nao
+// prender outras requisicoes do mesmo navegador durante o trabalho lento.
+if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 function api_response(int $status, array $data): void
 {
@@ -88,6 +91,8 @@ $user_id = 0;
 $foi_cadastrado = false;
 $codigo_turma = null;
 $data_live = null;
+$webhooksDisparados = false;
+$effectiveAccess = [];
 
 try {
     $raw = file_get_contents('php://input') ?: '';
@@ -131,6 +136,12 @@ try {
     $utm_campaign = trim((string)($data[$mapUCamp] ?? ''));
     $utm_term     = trim((string)($data[$mapUTerm] ?? ''));
     $utm_content  = trim((string)($data[$mapUCont] ?? ''));
+    $meta_lead_id = preg_replace('/\D+/', '', (string)($data['meta_lead_id'] ?? $data['lead_id'] ?? $data['facebook_lead_id'] ?? '')) ?: '';
+    $fbclid       = trim((string)($data['fbclid'] ?? ''));
+    $fbc          = trim((string)($data['fbc'] ?? $data['_fbc'] ?? ''));
+    $fbp          = trim((string)($data['fbp'] ?? $data['_fbp'] ?? ''));
+    $clientIp     = trim((string)($data['client_ip_address'] ?? $data['ip_address'] ?? $_SERVER['REMOTE_ADDR'] ?? ''));
+    $clientUa     = trim((string)($data['client_user_agent'] ?? $data['user_agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? ''));
 
     if ($email === '' || $tel === '') {
         api_safe_log('warning', 'api_inscrever', 'Dados obrigatórios ausentes', [
@@ -143,6 +154,40 @@ try {
     }
 
     $pdo = getPDO();
+    enrollment_ensure_schema($pdo);
+    foreach ([
+        "ALTER TABLE users ADD COLUMN meta_lead_id VARCHAR(40) NULL",
+        "ALTER TABLE users ADD COLUMN fbclid VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN fbc VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN fbp VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN client_ip_address VARCHAR(64) NULL",
+        "ALTER TABLE users ADD COLUMN client_user_agent VARCHAR(500) NULL",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
+
+    // Garante existência da tabela de histórico de inscrições
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS inscricao_logs (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                user_id      INT NOT NULL,
+                codigo_turma VARCHAR(100) NULL,
+                utm_source   VARCHAR(255) NULL,
+                utm_medium   VARCHAR(255) NULL,
+                utm_campaign VARCHAR(255) NULL,
+                utm_term     VARCHAR(255) NULL,
+                utm_content  VARCHAR(255) NULL,
+                is_novo      TINYINT(1)   NOT NULL DEFAULT 0,
+                created_at   DATETIME     NOT NULL DEFAULT NOW(),
+                INDEX idx_il_user (user_id),
+                INDEX idx_il_date (created_at)
+            )
+        ");
+    } catch (Throwable $e) {
+        // não impede o fluxo
+    }
+
     $pdo->beginTransaction();
 
     // pega turma pela janela atual
@@ -160,12 +205,18 @@ try {
     $turma = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $codigo_turma = $turma['codigo'] ?? null;
+    $codigo_live  = trim((string)($turma['codigo_live'] ?? ''));
     $data_live    = $turma['data_live'] ?? null;
 
     // busca por email
     $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :e LIMIT 1");
     $stmt->execute([':e' => $email]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $turmaAnteriorAtual = $user ? course_access_user_turma_code($user) : '';
+    $reinscricaoMesmaTurma = $user && $turmaAnteriorAtual !== '' && $turmaAnteriorAtual === (string)$codigo_turma;
+    $renovouPrazo = !$reinscricaoMesmaTurma;
+    $priorLifetimeGrant = $user ? course_access_lifetime_entitlement($pdo, (int)$user['id']) : null;
+    $logAccessType = $priorLifetimeGrant ? 'lifetime' : 'free';
 
     if ($user) {
         $upd = $pdo->prepare("
@@ -178,7 +229,13 @@ try {
                    utm_medium = :um,
                    utm_campaign = :uc,
                    utm_term = :ut,
-                   utm_content = :uco
+                   utm_content = :uco,
+                   meta_lead_id = COALESCE(NULLIF(:meta_lead_id, ''), meta_lead_id),
+                   fbclid = COALESCE(NULLIF(:fbclid, ''), fbclid),
+                   fbc = COALESCE(NULLIF(:fbc, ''), fbc),
+                   fbp = COALESCE(NULLIF(:fbp, ''), fbp),
+                   client_ip_address = COALESCE(NULLIF(:client_ip, ''), client_ip_address),
+                   client_user_agent = COALESCE(NULLIF(:client_ua, ''), client_user_agent)
              WHERE id = :id
         ");
         $upd->execute([
@@ -191,6 +248,12 @@ try {
             ':uc'  => $utm_campaign,
             ':ut'  => $utm_term,
             ':uco' => $utm_content,
+            ':meta_lead_id' => $meta_lead_id,
+            ':fbclid' => $fbclid,
+            ':fbc' => $fbc,
+            ':fbp' => $fbp,
+            ':client_ip' => $clientIp,
+            ':client_ua' => mb_substr($clientUa, 0, 500),
             ':id'  => (int)$user['id'],
         ]);
 
@@ -202,9 +265,11 @@ try {
         $ins = $pdo->prepare("
             INSERT INTO users
                 (nome, email, telefone, senha_hash, codigo_turma, data_live,
-                 utm_source, utm_medium, utm_campaign, utm_term, utm_content, created_at)
+                 utm_source, utm_medium, utm_campaign, utm_term, utm_content,
+                 meta_lead_id, fbclid, fbc, fbp, client_ip_address, client_user_agent, created_at)
             VALUES
-                (:n, :e, :t, :sh, :ct, :dl, :us, :um, :uc, :ut, :uco, NOW())
+                (:n, :e, :t, :sh, :ct, :dl, :us, :um, :uc, :ut, :uco,
+                 NULLIF(:meta_lead_id, ''), NULLIF(:fbclid, ''), NULLIF(:fbc, ''), NULLIF(:fbp, ''), NULLIF(:client_ip, ''), NULLIF(:client_ua, ''), NOW())
         ");
         $ins->execute([
             ':n'   => $nome !== '' ? $nome : $email,
@@ -218,6 +283,12 @@ try {
             ':uc'  => $utm_campaign,
             ':ut'  => $utm_term,
             ':uco' => $utm_content,
+            ':meta_lead_id' => $meta_lead_id,
+            ':fbclid' => $fbclid,
+            ':fbc' => $fbc,
+            ':fbp' => $fbp,
+            ':client_ip' => $clientIp,
+            ':client_ua' => mb_substr($clientUa, 0, 500),
         ]);
 
         $user_id = (int)$pdo->lastInsertId();
@@ -244,8 +315,108 @@ try {
         ]);
     }
 
+    // Historiza a inscrição (nova ou re-inscrição) — dentro da mesma transação
+    if ($user_id > 0 && $renovouPrazo) {
+        try {
+            $logIns = $pdo->prepare("
+                INSERT INTO inscricao_logs
+                    (user_id, codigo_turma, utm_source, utm_medium, utm_campaign, utm_term, utm_content, is_novo, access_type, source, created_at)
+                VALUES
+                    (:uid, :ct, :us, :um, :uc, :ut, :uco, :novo, :access_type, :source, NOW())
+            ");
+            $logIns->execute([
+                ':uid'  => $user_id,
+                ':ct'   => $codigo_turma,
+                ':us'   => $utm_source,
+                ':um'   => $utm_medium,
+                ':uc'   => $utm_campaign,
+                ':ut'   => $utm_term,
+                ':uco'  => $utm_content,
+                ':novo' => $foi_cadastrado ? 1 : 0,
+                ':access_type' => $logAccessType,
+                ':source' => 'formulario',
+            ]);
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao registrar inscricao_log', [
+                'user_id' => $user_id,
+                'erro'    => $e->getMessage(),
+            ]);
+        }
+    }
+
     // COMMIT DO CADASTRO PRINCIPAL
-    $pdo->commit();
+    if ($pdo->inTransaction()) {
+        $pdo->commit();
+    } else {
+        api_safe_log('warning', 'api_inscrever', 'Transacao ja estava encerrada antes do commit', [
+            'user_id' => $user_id,
+            'email' => $email,
+        ]);
+    }
+
+    // Captura os eventos antes de responder ao hub. O envio continua assincrono
+    // pelo cron, mas o registro do evento nao depende do trabalho pos-resposta.
+    $qtdInscricoes     = 0;
+    $primeiraInscricao = null;
+    $dataInscAnterior  = null;
+    $turmaAnterior     = null;
+    try {
+        $qtdSt = $pdo->prepare("SELECT COUNT(*), MIN(created_at) FROM inscricao_logs WHERE user_id = :uid");
+        $qtdSt->execute([':uid' => $user_id]);
+        $row = $qtdSt->fetch(PDO::FETCH_NUM);
+        if ($row) {
+            $qtdInscricoes     = (int)$row[0];
+            $primeiraInscricao = $row[1] ?: null;
+        }
+        if ($qtdInscricoes > 1) {
+            $antSt = $pdo->prepare("
+                SELECT created_at, codigo_turma
+                FROM inscricao_logs
+                WHERE user_id = :uid
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            ");
+            $antSt->execute([':uid' => $user_id]);
+            $ant = $antSt->fetch(PDO::FETCH_ASSOC);
+            if ($ant) {
+                $dataInscAnterior = $ant['created_at'] ?: null;
+                $turmaAnterior    = $ant['codigo_turma'] ?: null;
+            }
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao enriquecer extras antes da resposta', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
+    $extras = [
+        'codigo_turma'             => $codigo_turma,
+        'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
+        'data_live'                => $data_live,
+        'qtd_inscricoes'           => $qtdInscricoes,
+        'primeira_inscricao'       => $primeiraInscricao,
+        'data_inscricao_anterior'  => $dataInscAnterior,
+        'turma_anterior'           => $turmaAnterior,
+        'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
+    ];
+    $effectiveAccess = course_access_status($pdo, $user_id);
+    $extras['tipo_inscricao'] = !empty($effectiveAccess['lifetime']) ? 'vitalicia' : 'gratuita';
+    $extras['tipo_inscricao_solicitada'] = 'gratuita';
+    $extras['acesso_vitalicio'] = !empty($effectiveAccess['lifetime']);
+    $extras['acesso_pago'] = !empty($effectiveAccess['is_paid']);
+    $extras['reinscricao_renovou_prazo'] = $renovouPrazo;
+    try {
+        if (function_exists('disparar_webhooks')) {
+            disparar_webhooks($foi_cadastrado ? 'INSCRITO' : 'REINSCRITO', $user_id, $extras);
+            if (empty($effectiveAccess['lifetime']) && $renovouPrazo) {
+                disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+            }
+            $webhooksDisparados = true;
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao capturar eventos antes da resposta', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
 
     // RESPONDE IMEDIATAMENTE PARA O HUB
     api_json_response_no_exit(200, [
@@ -257,6 +428,58 @@ try {
     ]);
 
     api_flush_and_continue();
+
+    // ── Enriquece extras com histórico de inscrições ─────────────────────
+    $qtdInscricoes     = 0;
+    $primeiraInscricao = null;
+    $dataInscAnterior  = null;
+    $turmaAnterior     = null;
+    try {
+        $qtdSt = $pdo->prepare("SELECT COUNT(*), MIN(created_at) FROM inscricao_logs WHERE user_id = :uid");
+        $qtdSt->execute([':uid' => $user_id]);
+        $row = $qtdSt->fetch(PDO::FETCH_NUM);
+        if ($row) {
+            $qtdInscricoes     = (int)$row[0];
+            $primeiraInscricao = $row[1] ?: null;
+        }
+        if ($qtdInscricoes > 1) {
+            // pega a penúltima (a anterior à que acabou de ser registrada)
+            $antSt = $pdo->prepare("
+                SELECT created_at, codigo_turma
+                FROM inscricao_logs
+                WHERE user_id = :uid
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            ");
+            $antSt->execute([':uid' => $user_id]);
+            $ant = $antSt->fetch(PDO::FETCH_ASSOC);
+            if ($ant) {
+                $dataInscAnterior = $ant['created_at'] ?: null;
+                $turmaAnterior    = $ant['codigo_turma'] ?: null;
+            }
+        }
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao enriquecer extras', [
+            'user_id' => $user_id, 'erro' => $e->getMessage(),
+        ]);
+    }
+
+    $extras = [
+        'codigo_turma'             => $codigo_turma,
+        'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
+        'data_live'                => $data_live,
+        'qtd_inscricoes'           => $qtdInscricoes,
+        'primeira_inscricao'       => $primeiraInscricao,
+        'data_inscricao_anterior'  => $dataInscAnterior,
+        'turma_anterior'           => $turmaAnterior,
+        'eh_reinscrito'            => $foi_cadastrado ? 0 : 1,
+    ];
+    $effectiveAccess = course_access_status($pdo, $user_id);
+    $extras['tipo_inscricao'] = !empty($effectiveAccess['lifetime']) ? 'vitalicia' : 'gratuita';
+    $extras['tipo_inscricao_solicitada'] = 'gratuita';
+    $extras['acesso_vitalicio'] = !empty($effectiveAccess['lifetime']);
+    $extras['acesso_pago'] = !empty($effectiveAccess['is_paid']);
+    $extras['reinscricao_renovou_prazo'] = $renovouPrazo;
 
     // tarefas secundárias depois da resposta
     if ($foi_cadastrado) {
@@ -292,8 +515,8 @@ try {
         ]);
 
         try {
-            if (function_exists('disparar_webhooks')) {
-                disparar_webhooks('INSCRITO', $user_id, ['codigo_turma' => $codigo_turma]);
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) {
+                disparar_webhooks('INSCRITO', $user_id, $extras);
             }
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao disparar webhooks INSCRITO', [
@@ -303,11 +526,55 @@ try {
             ]);
         }
     } else {
-        api_safe_log('info', 'api_inscrever', 'Inscricao recebida (usuario já existe)', [
+        // ── RE-INSCRIÇÃO ─────────────────────────────────────────────────
+        try {
+            if (function_exists('adicionar_tag')) {
+                adicionar_tag($user_id, 'REINSCRITO', 'reinscricao', null);
+            }
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao adicionar tag REINSCRITO', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
+        }
+
+        if ($codigo_turma) {
+            try {
+                if (function_exists('adicionar_tag')) {
+                    adicionar_tag($user_id, 'REINSCRITO_TURMA_' . $codigo_turma, 'reinscricao', null);
+                }
+            } catch (Throwable $e) {
+                api_safe_log('warning', 'api_inscrever', 'Falha ao adicionar tag REINSCRITO turma', [
+                    'user_id' => $user_id, 'codigo_turma' => $codigo_turma, 'erro' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        api_safe_log('info', 'api_inscrever', 'Reinscricao recebida', [
             'user_id' => $user_id,
             'turma' => $codigo_turma,
-            'payload' => $data,
+            'qtd' => $qtdInscricoes,
         ]);
+
+        try {
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) {
+                disparar_webhooks('REINSCRITO', $user_id, $extras);
+            }
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao disparar webhooks REINSCRITO', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    if (empty($effectiveAccess['lifetime']) && $renovouPrazo) {
+        try {
+            if (function_exists('adicionar_tag')) adicionar_tag($user_id, 'INSCRICAO_GRATUITA', 'inscricao', null);
+            if (!$webhooksDisparados && function_exists('disparar_webhooks')) disparar_webhooks('INSCRICAO_GRATUITA', $user_id, $extras);
+        } catch (Throwable $e) {
+            api_safe_log('warning', 'api_inscrever', 'Falha ao disparar INSCRICAO_GRATUITA', [
+                'user_id' => $user_id, 'erro' => $e->getMessage(),
+            ]);
+        }
     }
 
     exit;

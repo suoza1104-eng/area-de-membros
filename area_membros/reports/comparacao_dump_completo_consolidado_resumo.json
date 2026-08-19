@@ -1,0 +1,16 @@
+{
+  "leads_canonicos_dump": 17010,
+  "presentes_area_membros": 16870,
+  "ausentes_area_membros": 140,
+  "ausentes_sem_email": 65,
+  "status_ultimo_envio_dos_ausentes": {
+    "failed": 62,
+    "pending_retry": 2,
+    "pending": 76
+  },
+  "http_ultimo_envio_dos_ausentes": {
+    "422": 64,
+    "0": 76
+  },
+  "arquivo": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\leads_ausentes_dump_completo_consolidado.csv"
+}
