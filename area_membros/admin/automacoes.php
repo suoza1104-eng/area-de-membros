@@ -111,6 +111,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: automacoes.php?view=flows&deleted=1');
             exit;
         }
+        if ($action === 'process_now') {
+            $res = automation_flow_process_queue($pdo, 100);
+            header('Location: automacoes.php?view=flows&processed=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
+        if ($action === 'reprocess_flow') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
+            $runs = $pdo->prepare("SELECT r.id, r.user_id, r.version_id, v.graph_json FROM automation_flow_runs r JOIN automation_flow_versions v ON v.id=r.version_id WHERE r.flow_id=:id");
+            $runs->execute(['id'=>$id]);
+            $runRows = $runs->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($runRows as $run) {
+                $graph = json_decode((string)$run['graph_json'], true) ?: [];
+                $trigger = null;
+                foreach (($graph['nodes'] ?? []) as $node) {
+                    if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
+                }
+                if (!$trigger) continue;
+                $pdo->prepare("UPDATE automation_flow_runs SET status='running', finished_at=NULL, last_error=NULL WHERE id=:id")->execute(['id'=>(int)$run['id']]);
+                $pdo->prepare("DELETE FROM automation_flow_jobs WHERE run_id=:id")->execute(['id'=>(int)$run['id']]);
+                $pdo->prepare("INSERT INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")
+                    ->execute(['r'=>(int)$run['id'], 'n'=>(string)$trigger['id']]);
+            }
+            $res = automation_flow_process_queue($pdo, 100);
+            header('Location: automacoes.php?view=flows&reprocessed=' . count($runRows) . '&dispatched=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
         if (in_array($action, ['save','publish'], true)) {
             $flow = automation_flow_find($pdo, (int)$_POST['id']);
             if (!$flow) throw new RuntimeException('Fluxo nao encontrado.');
@@ -229,9 +257,11 @@ include __DIR__ . '/_header.php';
     <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
   </nav>
   <?php if($error): ?><div class="af-error"><?=af_h($error)?></div><?php endif; ?>
-  <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva.</div><?php endif; ?>
+  <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva com sucesso.</div><?php endif; ?>
   <?php if(isset($_GET['deleted'])): ?><div class="af-msg">Fluxo removido.</div><?php endif; ?>
   <?php if(isset($_GET['cloned'])): ?><div class="af-msg">Fluxo clonado como rascunho.</div><?php endif; ?>
+  <?php if(isset($_GET['processed'])): ?><div class="af-msg">Fila processada: <?=(int)$_GET['processed']?> etapa(s) executada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['reprocessed'])): ?><div class="af-msg">Fluxo reprocessado: <?=(int)$_GET['reprocessed']?> execução(ões) re-enfileirada(s) e <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) disparada(s).</div><?php endif; ?>
 
 <?php if($flow):
     $graph = $postedGraph ?? (json_decode((string)$flow['draft_graph_json'], true) ?: automation_flow_blank_graph());
@@ -319,7 +349,10 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
   <section class="af-card">
     <div class="af-flow-head">
       <div><div class="card-header-title">Fluxos de automação</div><p class="text-muted text-xs">Crie, edite, clone, pause ou exclua fluxos centrais. Fluxos publicados recebem novos eventos pelo cron.</p></div>
-      <form method="post" class="af-form af-flow-create"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar novo fluxo</button></form>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="post" style="margin:0;"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="process_now"><button class="btn btn-ghost btn-sm" <?=$canWrite?'':'disabled'?> title="Executa a fila de pendências imediatamente">⚡ Processar fila agora</button></form>
+        <form method="post" class="af-form af-flow-create" style="margin:0;"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar novo fluxo</button></form>
+      </div>
     </div>
     <div class="af-flow-list">
       <?php foreach($flows as $f): ?>
@@ -331,7 +364,13 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
           <div class="af-flow-stat"><strong><?=(int)$f['completed']?></strong><small>Finalizações</small></div>
           <div class="af-flow-stat"><strong><?=(int)$f['failed']?></strong><small>Erros</small></div>
           <div class="af-flow-stat"><strong><?=(int)$f['pending']?></strong><small>Pendentes</small></div>
-          <div class="af-actions"><a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form><?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?><form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form></div>
+          <div class="af-actions">
+            <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a>
+            <form method="post" onsubmit="return confirm('Deseja re-enfileirar e disparar todas as execuções deste fluxo?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Reprocessa e dispara para todas as integrações">Reprocessar</button></form>
+            <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form>
+            <?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?>
+            <form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form>
+          </div>
         </div>
       <?php endforeach; ?>
       <?php if(!$flows): ?><div class="af-flow-empty">Nenhum fluxo central criado.</div><?php endif; ?>
