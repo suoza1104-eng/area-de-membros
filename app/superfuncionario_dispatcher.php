@@ -5,15 +5,23 @@ declare(strict_types=1);
 /**
  * Integração SuperFuncionário (SF)
  * - Mantém credenciais globais (token/base_url/endpoint/timeout)
- * - Mantém regras por evento para criar/atualizar contato, aplicar tags,
- *   enviar campos personalizados e disparar fluxos.
+ * - Mantém regras por evento (gatilho) para:
+ *    - criar/atualizar contato
+ *    - atribuir tags
+ *    - enviar campos personalizados
+ *    - disparar fluxos
+ *
+ * IMPORTANTE:
+ * - Este arquivo não depende do front. Ele é chamado automaticamente por disparar_webhooks().
+ * - A tela de admin superfuncionario.php grava em tabelas próprias (superfuncionario_config / superfuncionario_rules).
  */
 
-/** ---------------------------------
- *  Tabelas (auto-create + migration)
- * ----------------------------------*/
+/** -----------------------------
+ *  Tabelas (auto-create)
+ * ------------------------------*/
 function sf_ensure_tables(PDO $pdo): void
 {
+    // Config (1 linha é o padrão)
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS superfuncionario_config (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -21,13 +29,14 @@ function sf_ensure_tables(PDO $pdo): void
             base_url VARCHAR(255) NOT NULL DEFAULT '',
             token VARCHAR(255) NOT NULL DEFAULT '',
             default_endpoint VARCHAR(255) NOT NULL DEFAULT '/api/contacts',
-            header_mode VARCHAR(30) NOT NULL DEFAULT 'x-access-token',
+            header_mode VARCHAR(30) NOT NULL DEFAULT 'x-access-token', /* x-access-token | bearer */
             timeout_seconds INT NOT NULL DEFAULT 10,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
 
+    // Regras por evento
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS superfuncionario_rules (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -35,9 +44,9 @@ function sf_ensure_tables(PDO $pdo): void
             evento VARCHAR(80) NOT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             tags_text TEXT NULL,
-            flows_text TEXT NULL,
+            flows_text TEXT NULL, /* ids separados por vírgula */
             endpoint_override VARCHAR(255) NULL,
-            fields_json LONGTEXT NULL,
+            fields_json LONGTEXT NULL, /* [{source:'user.email', dest:'EMAIL'}, ...] */
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
             KEY idx_evento (evento),
@@ -45,16 +54,7 @@ function sf_ensure_tables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
 
-    // Migration: adiciona custom_fields_json se não existir (retrocompatibilidade)
-    try {
-        $cols = $pdo->query("SHOW COLUMNS FROM superfuncionario_rules LIKE 'custom_fields_json'")->fetchAll();
-        if (empty($cols)) {
-            $pdo->exec("ALTER TABLE superfuncionario_rules ADD COLUMN custom_fields_json LONGTEXT NULL AFTER fields_json");
-        }
-    } catch (Throwable $e) {
-        // silencioso — não bloqueia se já existir ou sem permissão DDL
-    }
-
+    // Logs (para depurar)
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS superfuncionario_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -106,19 +106,20 @@ function sf_ensure_turma_columns(PDO $pdo): void
     }
 }
 
-/** ---------------------------------
+/** -----------------------------
  *  Config e regras
- * ----------------------------------*/
+ * ------------------------------*/
 function sf_get_config(PDO $pdo): array
 {
     sf_ensure_tables($pdo);
 
-    $st  = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1");
+    $st = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1");
     $row = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: null) : null;
 
     if (!$row) {
+        // cria config padrão
         $pdo->exec("INSERT INTO superfuncionario_config (is_enabled, base_url, token, default_endpoint, header_mode, timeout_seconds)
-                    VALUES (0,'','','/api/contacts','x-access-token',10)");
+                    VALUES (0,'','', '/api/contacts','x-access-token',10)");
         $st2 = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1");
         $row = $st2 ? ($st2->fetch(PDO::FETCH_ASSOC) ?: []) : [];
     }
@@ -133,7 +134,7 @@ function sf_get_config(PDO $pdo): array
     ];
 
     if ($cfg['default_endpoint'] === '') $cfg['default_endpoint'] = '/api/contacts';
-    if (!in_array($cfg['header_mode'], ['x-access-token', 'bearer'], true)) $cfg['header_mode'] = 'x-access-token';
+    if (!in_array($cfg['header_mode'], ['x-access-token','bearer'], true)) $cfg['header_mode'] = 'x-access-token';
     if ($cfg['timeout_seconds'] <= 0) $cfg['timeout_seconds'] = 10;
 
     return $cfg;
@@ -145,28 +146,34 @@ function sf_get_rules_for_event(PDO $pdo, string $evento): array
 
     $st = $pdo->prepare("
         SELECT * FROM superfuncionario_rules
-        WHERE is_active = 1 AND evento = :e
+        WHERE is_active=1 AND evento = :e
         ORDER BY id DESC
     ");
     $st->execute([':e' => $evento]);
     return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
+/** -----------------------------
+ *  Resolver valores (source -> value)
+ *  Suporta:
+ *   - user.<campo>        (ex.: user.email)
+ *   - extra.<campo>       (ex.: extra.codigo_live)
+ *   - payload.<campo>     (ex.: payload.timestamp)
+ *   - users.<coluna>      (busca no banco users pelo user[id])
+ * ------------------------------*/
 function sf_get_user_row(PDO $pdo, array $user): array
 {
     $id = isset($user['id']) ? (int)$user['id'] : 0;
     if ($id <= 0) return $user;
 
     try {
+        // Busca linha completa do usuário (para mapear qualquer coluna existente)
         $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
         $st->execute([':id' => $id]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (is_array($row) && $row) {
+            // preserva chaves padrão do payload
             $row['id'] = $row['id'] ?? $id;
-            // Enriquece com magic_link (gerado sob demanda)
-            if (function_exists('gerar_magic_link')) {
-                try { $row['magic_link'] = gerar_magic_link($id, 30, false); } catch (Throwable $e) {}
-            }
             return $row;
         }
     } catch (Throwable $e) {
@@ -175,315 +182,63 @@ function sf_get_user_row(PDO $pdo, array $user): array
     return $user;
 }
 
-function sf_col_exists(PDO $pdo, string $table, string $col): bool
-{
-    try {
-        $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :col");
-        $st->execute([':col' => $col]);
-        return (bool)$st->fetch(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) {
-        return false;
-    }
-}
-
-function sf_get_turma_codigo_from_context(PDO $pdo, array $userRow, array $extra): string
-{
-    foreach (['codigo_turma', 'turma_codigo'] as $key) {
-        if (!empty($extra[$key])) return trim((string)$extra[$key]);
-    }
-    if (isset($extra['turma']) && is_array($extra['turma']) && !empty($extra['turma']['codigo'])) {
-        return trim((string)$extra['turma']['codigo']);
-    }
-    foreach (['codigo_turma', 'turma_codigo'] as $key) {
-        if (!empty($userRow[$key])) return trim((string)$userRow[$key]);
-    }
-    return '';
-}
-
-function sf_lookup_turma_live_info(PDO $pdo, string $codigoTurma): array
-{
-    $codigoTurma = trim($codigoTurma);
-    if ($codigoTurma === '' || !sf_col_exists($pdo, 'turmas', 'codigo')) return [];
-
-    $cols = ['codigo'];
-    if (sf_col_exists($pdo, 'turmas', 'codigo_live')) $cols[] = 'codigo_live';
-    if (sf_col_exists($pdo, 'turmas', 'data_live')) $cols[] = 'data_live';
-    if (count($cols) === 1) return [];
-
-    try {
-        $st = $pdo->prepare("SELECT " . implode(',', $cols) . " FROM turmas WHERE codigo = :codigo LIMIT 1");
-        $st->execute([':codigo' => $codigoTurma]);
-        return $st->fetch(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) {
-        return [];
-    }
-}
-
-function sf_format_live_br(?string $value): string
-{
-    $value = trim((string)$value);
-    if ($value === '') return '';
-    try {
-        return (new DateTime($value))->format('d/m/Y H:i');
-    } catch (Throwable $e) {
-        return $value;
-    }
-}
-
-function sf_format_live_iso(?string $value): string
-{
-    $value = trim((string)$value);
-    if ($value === '') return '';
-    try {
-        return (new DateTime($value))->format('Y-m-d H:i:s');
-    } catch (Throwable $e) {
-        return $value;
-    }
-}
-
-function sf_enrich_extra_live(PDO $pdo, array $userRow, array $extra): array
-{
-    $codigoTurma = sf_get_turma_codigo_from_context($pdo, $userRow, $extra);
-    $turma = $codigoTurma !== '' ? sf_lookup_turma_live_info($pdo, $codigoTurma) : [];
-
-    $codigoLiveAtual = trim((string)($extra['codigo_live'] ?? ''));
-    $codigoLiveTurma = trim((string)($turma['codigo_live'] ?? ''));
-    if ($codigoLiveTurma !== '' && ($codigoLiveAtual === '' || $codigoLiveAtual === $codigoTurma)) {
-        $extra['codigo_live'] = $codigoLiveTurma;
-    }
-
-    $liveAtual = '';
-    foreach (['turma_live_at', 'data_live'] as $col) {
-        if (!empty($userRow[$col])) {
-            $liveAtual = (string)$userRow[$col];
-            break;
-        }
-    }
-    if ($liveAtual === '' && !empty($extra['data_live_iso'])) {
-        $liveAtual = (string)$extra['data_live_iso'];
-    }
-    if ($liveAtual === '' && !empty($extra['data_live'])) {
-        $liveAtual = (string)$extra['data_live'];
-    }
-    if ($liveAtual === '' && !empty($turma['data_live'])) {
-        $liveAtual = (string)$turma['data_live'];
-    }
-
-    if ($liveAtual !== '') {
-        $extra['data_live'] = sf_format_live_br($liveAtual);
-        $extra['data_live_iso'] = sf_format_live_iso($liveAtual);
-        if (!isset($extra['data']) || !is_array($extra['data'])) {
-            $extra['data'] = [];
-        }
-        $extra['data']['live'] = $extra['data_live'];
-        $extra['data']['live_iso'] = $extra['data_live_iso'];
-        if (isset($extra['reagendamento']) && is_array($extra['reagendamento'])) {
-            $extra['reagendamento']['live_nova'] = $extra['reagendamento']['live_nova'] ?? $extra['data_live'];
-            $extra['reagendamento']['live_nova_iso'] = $extra['reagendamento']['live_nova_iso'] ?? $extra['data_live_iso'];
-        }
-    }
-
-    return $extra;
-}
-
-/** ---------------------------------
- *  Deep path traversal
- *
- *  sf_get_value_by_path(['a' => ['b' => ['c' => 'X']]], 'a.b.c') → 'X'
- *  Retorna null se qualquer segmento não existir.
- * ----------------------------------*/
-function sf_get_value_by_path(array $data, string $path): ?string
-{
-    if ($path === '') return null;
-
-    $parts = explode('.', $path);
-    $cur   = $data;
-
-    foreach ($parts as $part) {
-        if (!is_array($cur) || !array_key_exists($part, $cur)) {
-            return null;
-        }
-        $cur = $cur[$part];
-    }
-
-    if ($cur === null) return null;
-    if (is_bool($cur)) return $cur ? '1' : '0';
-    if (is_scalar($cur)) return (string)$cur;
-    return json_encode($cur, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-}
-
-/** ---------------------------------
- *  Resolver valores (source → value)
- *
- *  Formatos suportados:
- *    literal:texto fixo         → retorna "texto fixo"
- *    {{user.nome}} – {{evento}} → substitui cada placeholder recursivamente
- *    src1|src2|literal:fallback → cadeia de fallback (primeiro não-nulo vence)
- *    user.email                 → deep traversal em $userRow
- *    users.coluna               → deep traversal em $userRow
- *    extra.data.purchase.id     → deep traversal em $extra (suporta N níveis)
- *    payload.timestamp          → deep traversal em $payload
- *    email (sem ponto)          → flat lookup: extra → userRow → payload
- * ----------------------------------*/
 function sf_resolve_source(PDO $pdo, string $source, array $userRow, array $extra, array $payload): ?string
 {
     $source = trim($source);
     if ($source === '') return null;
 
-    // Valor fixo
-    if (strncmp($source, 'literal:', 8) === 0) {
-        return substr($source, 8);
-    }
+    // dot notation
+    $parts = explode('.', $source, 2);
+    if (count($parts) === 2) {
+        [$root, $key] = $parts;
+        $root = strtolower(trim($root));
+        $key = trim($key);
 
-    // Template com placeholders {{path.to.value}}
-    if (strpos($source, '{{') !== false) {
-        $result = preg_replace_callback(
-            '/\{\{([^}]+)\}\}/',
-            static function (array $m) use ($pdo, $userRow, $extra, $payload): string {
-                return sf_resolve_source($pdo, trim($m[1]), $userRow, $extra, $payload) ?? '';
-            },
-            $source
-        );
-        return ($result !== null && trim($result) !== '') ? $result : null;
-    }
-
-    // Cadeia de fallbacks separada por |
-    if (strpos($source, '|') !== false) {
-        foreach (explode('|', $source) as $alt) {
-            $val = sf_resolve_source($pdo, trim($alt), $userRow, $extra, $payload);
-            if ($val !== null && $val !== '') return $val;
+        if ($root === 'user') {
+            return isset($userRow[$key]) ? (string)$userRow[$key] : null;
         }
-        return null;
-    }
-
-    // Dot notation — deep traversal a partir do root reconhecido
-    if (strpos($source, '.') !== false) {
-        $dotPos = (int)strpos($source, '.');
-        $root   = strtolower(substr($source, 0, $dotPos));
-        $key    = substr($source, $dotPos + 1);
-
-        if ($root === 'user' || $root === 'users') {
-            return sf_get_value_by_path($userRow, $key);
+        if ($root === 'users') {
+            return isset($userRow[$key]) ? (string)$userRow[$key] : null;
         }
         if ($root === 'extra') {
-            return sf_get_value_by_path($extra, $key);
+            return isset($extra[$key]) ? (is_scalar($extra[$key]) ? (string)$extra[$key] : json_encode($extra[$key])) : null;
         }
         if ($root === 'payload') {
-            return sf_get_value_by_path($payload, $key);
+            return isset($payload[$key]) ? (is_scalar($payload[$key]) ? (string)$payload[$key] : json_encode($payload[$key])) : null;
         }
     }
 
-    // Flat lookup: extra → userRow → payload (raiz)
-    if (array_key_exists($source, $extra)) {
-        $v = $extra[$source];
-        return is_scalar($v) ? (string)$v : json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    // fallback: tenta direto no extra, depois userRow, depois payload
+    if (isset($extra[$source])) {
+        return is_scalar($extra[$source]) ? (string)$extra[$source] : json_encode($extra[$source]);
     }
-    if (array_key_exists($source, $userRow)) {
+    if (isset($userRow[$source])) {
         return (string)$userRow[$source];
     }
-    if (array_key_exists($source, $payload)) {
-        $v = $payload[$source];
-        return is_scalar($v) ? (string)$v : json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (isset($payload[$source])) {
+        return is_scalar($payload[$source]) ? (string)$payload[$source] : json_encode($payload[$source]);
     }
 
     return null;
 }
 
-/** ---------------------------------
- *  Constrói lista de campos personalizados
- *
- *  Retorna:
- *    'fields'        → array de ['field_name' => ..., 'value' => ...]
- *    'resolved_keys' → nomes dos campos que foram resolvidos com sucesso
- *    'skipped_keys'  → nomes dos campos ignorados (source retornou null)
- * ----------------------------------*/
-function sf_build_custom_fields(PDO $pdo, array $pairs, array $userRow, array $extra, array $payload): array
-{
-    $fields       = [];
-    $resolvedKeys = [];
-    $skippedKeys  = [];
-
-    foreach ($pairs as $p) {
-        $src = trim((string)($p['source'] ?? ''));
-        $dst = trim((string)($p['dest'] ?? ''));
-        if ($src === '' || $dst === '') continue;
-
-        $val = sf_resolve_source($pdo, $src, $userRow, $extra, $payload);
-        if ($val === null) {
-            $skippedKeys[] = $dst . '(' . $src . ')';
-            continue;
-        }
-        $fields[]       = ['field_name' => $dst, 'value' => $val];
-        $resolvedKeys[] = $dst;
-    }
-
-    return [
-        'fields'        => $fields,
-        'resolved_keys' => $resolvedKeys,
-        'skipped_keys'  => $skippedKeys,
-    ];
-}
-
-/** ---------------------------------
+/** -----------------------------
  *  HTTP (cURL)
- * ----------------------------------*/
+ * ------------------------------*/
 function sf_http_post_json(string $url, array $headers, array $body, int $timeoutSeconds): array
 {
+    $ch = curl_init($url);
     $payload = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-    $hdr   = $headers;
+    $hdr = $headers;
     $hdr[] = 'Content-Type: application/json';
-
-    if (!function_exists('curl_init')) {
-        $respHeaders = [];
-        $context = stream_context_create([
-            'http' => [
-                'method'        => 'POST',
-                'header'        => implode("\r\n", $hdr),
-                'content'       => $payload,
-                'timeout'       => $timeoutSeconds,
-                'ignore_errors' => true,
-            ],
-        ]);
-
-        $resp = @file_get_contents($url, false, $context);
-        $err = '';
-        if ($resp === false) {
-            $lastError = error_get_last();
-            $err = (string)($lastError['message'] ?? 'Falha HTTP sem cURL');
-            $resp = '';
-        }
-
-        if (isset($http_response_header) && is_array($http_response_header)) {
-            $respHeaders = $http_response_header;
-        }
-        $code = 0;
-        foreach ($respHeaders as $line) {
-            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', (string)$line, $m)) {
-                $code = (int)$m[1];
-                break;
-            }
-        }
-
-        return [
-            'ok'           => ($err === '' && $code >= 200 && $code < 300),
-            'http_status'  => $code,
-            'error'        => $err,
-            'response'     => is_string($resp) ? $resp : '',
-            'request_json' => $payload,
-        ];
-    }
-
-    $ch = curl_init($url);
 
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER     => $hdr,
         CURLOPT_POSTFIELDS     => $payload,
-        CURLOPT_CONNECTTIMEOUT => 5,   // limita a fase de conexao
         CURLOPT_TIMEOUT        => $timeoutSeconds,
-        CURLOPT_NOSIGNAL       => 1,   // garante que os timeouts sejam respeitados
     ]);
 
     $resp = curl_exec($ch);
@@ -492,113 +247,101 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
     curl_close($ch);
 
     return [
-        'ok'           => ($err === '' && $code >= 200 && $code < 300),
-        'http_status'  => $code,
-        'error'        => $err,
-        'response'     => is_string($resp) ? $resp : '',
+        'ok' => ($err === '' && $code >= 200 && $code < 300),
+        'http_status' => $code,
+        'error' => $err,
+        'response' => is_string($resp) ? $resp : '',
         'request_json' => $payload,
     ];
 }
 
-/** ---------------------------------
+/** -----------------------------
  *  Disparo principal (chamado pelo app)
- * ----------------------------------*/
-function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
+ * ------------------------------*/
+function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): void
 {
-    $userId = isset($user['id']) ? (int)$user['id'] : 0;
-    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
-        return false;
-    }
-
     $cfg = sf_get_config($pdo);
-    if ((int)$cfg['is_enabled'] !== 1) return false;
-    if ($cfg['token'] === '') return false;
+    if ((int)$cfg['is_enabled'] !== 1) return;
+    if ($cfg['token'] === '') return;
 
+    // Regra por evento (mesmo esquema dos Webhooks)
     $rules = sf_get_rules_for_event($pdo, $evento);
-    if (!empty($extra['_integration_rule']) && is_array($extra['_integration_rule'])) {
-        $inlineRule = $extra['_integration_rule'];
-        if (($inlineRule['evento'] ?? $evento) === $evento) {
-            $inlineRule['id'] = 0;
-            $rules[] = $inlineRule;
-        }
-    }
-    if (!$rules) return false;
+    if (!$rules) return;
 
-    $userRow = sf_get_user_row($pdo, $user);
-    $extra = sf_enrich_extra_live($pdo, $userRow, $extra);
-
-    // Payload base disponível como contexto de resolução
+    // payload base (para uso em placeholders / debug)
     $payload = [
-        'evento'    => $evento,
-        'user'      => $user,
-        'extra'     => $extra,
+        'evento' => $evento,
+        'user'   => $user,
+        'extra'  => $extra,
         'timestamp' => date('c'),
     ];
 
-    $sentOk = false;
+    $userRow = sf_get_user_row($pdo, $user);
 
     foreach ($rules as $rule) {
         $ruleId = (int)($rule['id'] ?? 0);
 
-        $tags   = [];
-        $flows  = [];
+        $tags = [];
+        $flows = [];
+        $fields = [];
 
-        // Tags (1 por linha)
+        // tags (1 por linha)
         $tagsText = (string)($rule['tags_text'] ?? '');
         foreach (preg_split('/\R+/', $tagsText) as $t) {
             $t = trim($t);
             if ($t !== '') $tags[] = $t;
         }
 
-        // Flows (csv de IDs numéricos)
+        // flows (csv)
         $flowsText = (string)($rule['flows_text'] ?? '');
         foreach (explode(',', $flowsText) as $f) {
             $f = trim($f);
             if ($f !== '' && ctype_digit($f)) $flows[] = (int)$f;
         }
 
-        // Campos personalizados — prefere custom_fields_json, cai em fields_json (retrocompat)
-        $fieldsJson = '';
-        $cfRaw = trim((string)($rule['custom_fields_json'] ?? ''));
-        $fjRaw = trim((string)($rule['fields_json'] ?? ''));
-        if ($cfRaw !== '') {
-            $fieldsJson = $cfRaw;
-        } elseif ($fjRaw !== '') {
-            $fieldsJson = $fjRaw;
-        }
-
+        // fields mapping
+        $fieldsJson = (string)($rule['fields_json'] ?? '');
         $pairs = [];
         if ($fieldsJson !== '') {
             $tmp = json_decode($fieldsJson, true);
             if (is_array($tmp)) $pairs = $tmp;
         }
 
-        $fieldResult = sf_build_custom_fields($pdo, $pairs, $userRow, $extra, $payload);
-        $fields      = $fieldResult['fields'];
+        foreach ($pairs as $p) {
+            $src = trim((string)($p['source'] ?? ''));
+            $dst = trim((string)($p['dest'] ?? ''));
+            if ($src === '' || $dst === '') continue;
 
-        // Endpoint
-        $base     = rtrim($cfg['base_url'], '/');
+            $val = sf_resolve_source($pdo, $src, $userRow, $extra, $payload);
+            if ($val === null) continue;
+
+            $fields[] = ['field_name' => $dst, 'value' => $val];
+        }
+
+        // endpoint final
+        $base = rtrim($cfg['base_url'], '/');
         if ($base === '') $base = 'https://app.superfuncionario.com.br';
         $endpoint = trim((string)($rule['endpoint_override'] ?? ''));
         if ($endpoint === '') $endpoint = $cfg['default_endpoint'];
         if ($endpoint === '') $endpoint = '/api/contacts';
 
-        $url = $base . (substr($endpoint, 0, 1) === '/' ? $endpoint : '/' . $endpoint);
+        $url = $base . (((substr($endpoint,0,1)==='/') ? $endpoint : '/' . $endpoint));
 
-        // Contato mínimo
+        // monta contato mínimo
         $email = trim((string)($userRow['email'] ?? ($user['email'] ?? '')));
         $phone = trim((string)($userRow['telefone'] ?? ($user['telefone'] ?? '')));
         $name  = trim((string)($userRow['nome'] ?? ($user['nome'] ?? '')));
 
+        // separa nome (best-effort)
         $first = $name;
         $last  = '';
         if (strpos($name, ' ') !== false) {
             $chunks = preg_split('/\s+/', $name);
-            $first  = array_shift($chunks) ?: $name;
-            $last   = implode(' ', $chunks);
+            $first = array_shift($chunks) ?: $name;
+            $last = implode(' ', $chunks);
         }
 
-        // Actions
+        // actions no formato do Swagger /contacts (mais simples e 1 request só)
         $actions = [];
         foreach ($tags as $t) {
             $actions[] = ['action' => 'add_tag', 'tag_name' => $t];
@@ -610,20 +353,24 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             $actions[] = ['action' => 'send_flow', 'flow_id' => $fid];
         }
 
-        $body = array_filter([
-            'email'      => $email !== '' ? $email : null,
-            'phone'      => $phone !== '' ? $phone : null,
+        $body = [
+            // SF aceita email e/ou phone. Se ambos vazios, não adianta enviar.
+            'email' => $email !== '' ? $email : null,
+            'phone' => $phone !== '' ? $phone : null,
             'first_name' => $first !== '' ? $first : null,
             'last_name'  => $last !== '' ? $last : null,
-            'actions'    => $actions,
-        ], static fn($v) => $v !== null);
+            'actions' => $actions,
+        ];
+
+        // limpa nulls
+        $body = array_filter($body, fn($v) => $v !== null);
 
         if (empty($body['email']) && empty($body['phone'])) {
             sf_log($pdo, $evento, $ruleId, false, null, 'Contato sem email/telefone', $payload, '');
             continue;
         }
 
-        // Headers
+        // headers
         $headers = [];
         if ($cfg['header_mode'] === 'bearer') {
             $headers[] = 'Authorization: Bearer ' . $cfg['token'];
@@ -632,17 +379,6 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
         }
 
         $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
-        if ((bool)$res['ok']) {
-            $sentOk = true;
-        }
-
-        // Log enriquecido com metadados dos campos personalizados
-        $logRequest = json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']];
-        $logRequest['_debug'] = [
-            'custom_fields_count' => count($fields),
-            'custom_fields_keys'  => $fieldResult['resolved_keys'],
-            'skipped_keys'        => $fieldResult['skipped_keys'],
-        ];
 
         sf_log(
             $pdo,
@@ -651,12 +387,10 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             (bool)$res['ok'],
             (int)$res['http_status'],
             (string)($res['error'] ?? ''),
-            $logRequest,
+            json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']],
             (string)($res['response'] ?? '')
         );
     }
-
-    return $sentOk;
 }
 
 function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStatus, string $errorText, $request, string $responseText): void
@@ -679,153 +413,4 @@ function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStat
     } catch (Throwable $e) {
         // nunca quebra o app por causa de log
     }
-}
-
-/** ---------------------------------
- *  Disparo SF para aluno de live de turma
- *
- *  Usa a config de SF da própria turma (sf_tags_text / sf_flows_text / sf_fields_json),
- *  não as regras globais da tela SuperFuncionário.
- *
- *  @param array $turmaSf  Linha da turma com: codigo, data_live, codigo_live,
- *                         sf_tags_text, sf_flows_text, sf_fields_json
- *  @param array $aluno    Linha do usuário (com andamento/aulas_concluidas/aulas_totais injetados)
- *  @param array $extra    Dados extras para resolução de source (ex.: extra.andamento)
- * ----------------------------------*/
-function sf_disparar_live_turma(PDO $pdo, array $turmaSf, array $aluno, array $extra): void
-{
-    $userId = isset($aluno['id']) ? (int)$aluno['id'] : 0;
-    if ($userId > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) {
-        return;
-    }
-
-    $cfg = sf_get_config($pdo);
-    if ((int)$cfg['is_enabled'] !== 1) return;
-    if ($cfg['token'] === '') return;
-
-    $evento = 'LIVE_TURMA_' . ($turmaSf['codigo'] ?? '');
-
-    // Tags
-    $tags = [];
-    foreach (preg_split('/\R+/', (string)($turmaSf['sf_tags_text'] ?? '')) as $t) {
-        $t = trim($t);
-        if ($t !== '') $tags[] = $t;
-    }
-
-    // Flows
-    $flows = [];
-    foreach (explode(',', (string)($turmaSf['sf_flows_text'] ?? '')) as $f) {
-        $f = trim($f);
-        if ($f !== '' && ctype_digit($f)) $flows[] = (int)$f;
-    }
-
-    // Campos personalizados
-    $pairs = [];
-    $fieldsJson = trim((string)($turmaSf['sf_fields_json'] ?? ''));
-    if ($fieldsJson !== '') {
-        $tmp = json_decode($fieldsJson, true);
-        if (is_array($tmp)) $pairs = $tmp;
-    }
-
-    $userRow = sf_get_user_row($pdo, $aluno);
-
-    $payload = [
-        'evento'    => $evento,
-        'user'      => $aluno,
-        'extra'     => $extra,
-        'timestamp' => date('c'),
-    ];
-
-    $fieldResult = sf_build_custom_fields($pdo, $pairs, $userRow, $extra, $payload);
-    $fields      = $fieldResult['fields'];
-
-    // Endpoint
-    $base     = rtrim($cfg['base_url'], '/');
-    if ($base === '') $base = 'https://app.superfuncionario.com.br';
-    $endpoint = $cfg['default_endpoint'] ?: '/api/contacts';
-    $url      = $base . (substr($endpoint, 0, 1) === '/' ? $endpoint : '/' . $endpoint);
-
-    // Contato mínimo
-    $email = trim((string)($userRow['email']    ?? ($aluno['email']    ?? '')));
-    $phone = trim((string)($userRow['telefone'] ?? ($aluno['telefone'] ?? '')));
-    $name  = trim((string)($userRow['nome']     ?? ($aluno['nome']     ?? '')));
-
-    $first = $name;
-    $last  = '';
-    if (strpos($name, ' ') !== false) {
-        $chunks = preg_split('/\s+/', $name);
-        $first  = array_shift($chunks) ?: $name;
-        $last   = implode(' ', $chunks);
-    }
-
-    // Actions
-    $actions = [];
-    foreach ($tags as $t) {
-        $actions[] = ['action' => 'add_tag', 'tag_name' => $t];
-    }
-    foreach ($fields as $f) {
-        $actions[] = ['action' => 'set_field_value', 'field_name' => $f['field_name'], 'value' => $f['value']];
-    }
-    foreach ($flows as $fid) {
-        $actions[] = ['action' => 'send_flow', 'flow_id' => $fid];
-    }
-
-    $body = array_filter([
-        'email'      => $email !== '' ? $email : null,
-        'phone'      => $phone !== '' ? $phone : null,
-        'first_name' => $first !== '' ? $first : null,
-        'last_name'  => $last !== '' ? $last : null,
-        'actions'    => $actions,
-    ], static fn($v) => $v !== null);
-
-    if (empty($body['email']) && empty($body['phone'])) {
-        sf_log($pdo, $evento, null, false, null, 'Aluno sem email/telefone', $payload, '');
-        return;
-    }
-
-    $headers = [];
-    if ($cfg['header_mode'] === 'bearer') {
-        $headers[] = 'Authorization: Bearer ' . $cfg['token'];
-    } else {
-        $headers[] = 'X-ACCESS-TOKEN: ' . $cfg['token'];
-    }
-
-    $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
-
-    $logRequest = json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']];
-    $responseJson = json_decode((string)($res['response'] ?? ''), true);
-    $logRequest['_debug'] = [
-        'custom_fields_count' => count($fields),
-        'custom_fields_keys'  => $fieldResult['resolved_keys'],
-        'skipped_keys'        => $fieldResult['skipped_keys'],
-        'source'              => 'live_turma',
-        'turma'               => $turmaSf['codigo'] ?? '',
-        'planned_at'          => $turmaSf['live_disparo_data'] ?? null,
-        'actual_at'           => date('Y-m-d H:i:s'),
-        'contact'             => [
-            'email' => $email,
-            'phone' => $phone,
-            'name'  => $name,
-        ],
-        'actions_count'       => count($actions),
-        'tags_requested'      => $tags,
-        'flows_requested'     => $flows,
-        'fields_requested'    => array_values(array_map(static fn($f) => $f['field_name'] ?? '', $fields)),
-        'sf_response'         => [
-            'success'         => is_array($responseJson) && array_key_exists('success', $responseJson) ? (bool)$responseJson['success'] : null,
-            'contact_created' => is_array($responseJson) && array_key_exists('contact_created', $responseJson) ? (bool)$responseJson['contact_created'] : null,
-            'contact_id'      => is_array($responseJson) ? (string)($responseJson['data']['id'] ?? '') : '',
-        ],
-    ];
-
-    sf_log(
-        $pdo,
-        $evento,
-        null,
-        (bool)$res['ok'],
-        (int)$res['http_status'],
-        (string)($res['error'] ?? ''),
-        $logRequest,
-        (string)($res['response'] ?? '')
-    );
 }

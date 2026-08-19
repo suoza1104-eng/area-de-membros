@@ -358,11 +358,32 @@ function push_flow_dispatch_integration(PDO $pdo, array $config, array $user, ar
         if (!mc_disparar_evento($pdo, $event, $user, $extra)) throw new RuntimeException('ManyChat não encontrou regra ativa ou recusou o disparo.');
     } elseif ($provider === 'webhook') {
         require_once __DIR__ . '/webhook_dispatcher.php';
-        if (ctype_digit($target)) {
+        if (preg_match('#^https?://#i', $target)) {
+            $eventName = (string)($job['event_code'] ?? 'AUTOMATION_FLOW');
+            $extraEnriched = wh_enrich_extra_with_codigo_live($pdo, $user, $extra);
+            $payload = build_webhook_payload($eventName, $user, $extraEnriched);
+            if (!empty($extra['flow_payload'])) {
+                $payload['custom'] = $extra['flow_payload'];
+            }
+            $userId = isset($user['id']) ? (int)$user['id'] : null;
+            enviar_webhook_http(
+                $pdo,
+                null,
+                $userId,
+                $eventName,
+                $target,
+                'POST',
+                null,
+                'json',
+                $payload
+            );
+        } elseif (ctype_digit($target)) {
             $st = $pdo->prepare('SELECT * FROM webhooks WHERE id=:id AND ativo=1 LIMIT 1'); $st->execute(['id'=>(int)$target]); $row = $st->fetch(PDO::FETCH_ASSOC);
             if (!$row) throw new RuntimeException('Webhook configurado não foi encontrado ou está inativo.');
             disparar_webhook_configurado($pdo, $row, $event, $user, $extra, true);
-        } else disparar_evento_webhooks($pdo, $event, $user, $extra);
+        } else {
+            disparar_evento_webhooks($pdo, $event, $user, $extra);
+        }
     } else throw new RuntimeException('Integração não suportada.');
     return ['provider'=>$provider,'target'=>$target,'event'=>$event];
 }

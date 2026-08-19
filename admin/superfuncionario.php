@@ -9,7 +9,6 @@ $pdo = getPDO();
 
 // menu ativo
 $menu = 'superfuncionario';
-$view=(string)($_GET['view']??(isset($_GET['edit'])?'rules':(isset($_GET['sf_edit'])?'live':'overview')));if(!in_array($view,['overview','rules','reference','live','logs','settings'],true))$view='overview';
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function post_str(string $k): string { return trim((string)($_POST[$k] ?? '')); }
@@ -44,228 +43,42 @@ function sf_format_datetime_local(?string $dbValue): string {
     return $ts ? date('d/m/Y H:i:s', $ts) : '';
 }
 
-function sf_admin_table_exists(PDO $pdo, string $table): bool {
-    try {
-        $st = $pdo->prepare("SHOW TABLES LIKE :t");
-        $st->execute([':t' => $table]);
-        return (bool)$st->fetchColumn();
-    } catch (Throwable $e) { return false; }
-}
-
-function sf_admin_first_table(PDO $pdo, array $tables): ?string {
-    foreach ($tables as $table) {
-        if (sf_admin_table_exists($pdo, $table)) return $table;
-    }
-    return null;
-}
-
-function sf_admin_live_filter($raw): array {
-    $cfg = ['include_any'=>[],'exclude_any'=>[],'exclude_purchase'=>0,'exclude_cert'=>0,'exclude_zero'=>0,'exclude_rescheduled'=>1];
-    $json = json_decode(trim((string)$raw), true);
-    if (is_array($json)) {
-        $cfg['include_any'] = array_values(array_filter(array_map('intval', $json['include_any'] ?? []), fn($v)=>$v>0));
-        $cfg['exclude_any'] = array_values(array_filter(array_map('intval', $json['exclude_any'] ?? []), fn($v)=>$v>0));
-        foreach (['exclude_purchase','exclude_cert','exclude_zero'] as $k) $cfg[$k] = (int)(!!($json[$k] ?? 0));
-        $cfg['exclude_rescheduled'] = array_key_exists('exclude_rescheduled', $json) ? (int)(!!$json['exclude_rescheduled']) : 1;
-    }
-    return $cfg;
-}
-
-function sf_admin_user_has_any_tag(PDO $pdo, ?string $relTable, int $userId, array $tagIds): bool {
-    if (!$relTable || $userId <= 0 || !$tagIds) return false;
-    try {
-        $in = implode(',', array_fill(0, count($tagIds), '?'));
-        $st = $pdo->prepare("SELECT 1 FROM `$relTable` WHERE user_id = ? AND tag_id IN ($in) LIMIT 1");
-        $st->execute(array_merge([$userId], $tagIds));
-        return (bool)$st->fetchColumn();
-    } catch (Throwable $e) { return false; }
-}
-
-function sf_admin_user_tags(PDO $pdo, ?string $relTable, int $userId): string {
-    if (!$relTable || $userId <= 0 || !sf_admin_table_exists($pdo, 'tags')) return '';
-    try {
-        $st = $pdo->prepare("SELECT t.nome FROM `$relTable` ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = :u ORDER BY t.nome ASC LIMIT 12");
-        $st->execute([':u' => $userId]);
-        return implode(', ', array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN) ?: []));
-    } catch (Throwable $e) { return ''; }
-}
-
-function sf_admin_user_has_certificate(PDO $pdo, int $userId): bool {
-    if ($userId <= 0 || !sf_admin_table_exists($pdo, 'certificates')) return false;
-    try {
-        $st = $pdo->prepare("SELECT 1 FROM certificates WHERE user_id = :u LIMIT 1");
-        $st->execute([':u'=>$userId]);
-        return (bool)$st->fetchColumn();
-    } catch (Throwable $e) { return false; }
-}
-
-function sf_admin_user_has_purchase(PDO $pdo, int $userId): bool {
-    if ($userId <= 0) return false;
-    try {
-        if (sf_admin_table_exists($pdo, 'hotmart_sales')) {
-            $st = $pdo->prepare("SELECT 1 FROM hotmart_sales WHERE matched_user_id = :u AND LOWER(COALESCE(status,'')) IN ('aprovado','completo','approved','complete','paid') LIMIT 1");
-            $st->execute([':u'=>$userId]);
-            if ($st->fetchColumn()) return true;
-        }
-    } catch (Throwable $e) {}
-    return false;
-}
-
-function sf_admin_user_has_reschedule(PDO $pdo, int $userId, ?string $turmaLiveAt): bool {
-    if ($userId <= 0 || !sf_admin_table_exists($pdo, 'reagendamentos_live')) return false;
-    try {
-        $st = $pdo->prepare("SELECT new_turma_live_at FROM reagendamentos_live WHERE user_id=:u AND status IN ('reagendado','enviado') AND new_turma_live_at IS NOT NULL AND new_turma_live_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR) ORDER BY created_at DESC, id DESC LIMIT 1");
-        $st->execute([':u'=>$userId]);
-        $newLive = (string)($st->fetchColumn() ?: '');
-        if ($newLive === '') return false;
-        $newTs = strtotime($newLive);
-        $turmaTs = $turmaLiveAt ? strtotime($turmaLiveAt) : false;
-        if (!$newTs || !$turmaTs) return true;
-        return abs($newTs - $turmaTs) > 60;
-    } catch (Throwable $e) { return false; }
-}
-
-function sf_admin_total_required_lessons(PDO $pdo): int {
-    if (!sf_admin_table_exists($pdo, 'lessons')) return 0;
-    try { return (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1 AND conta_para_conclusao = 1")->fetchColumn(); }
-    catch (Throwable $e) {
-        try { return (int)$pdo->query("SELECT COUNT(*) FROM lessons WHERE ativo = 1")->fetchColumn(); }
-        catch (Throwable $e2) { return 0; }
-    }
-}
-
-function sf_admin_progress(PDO $pdo, int $userId, int $total): int {
-    if ($userId <= 0 || $total <= 0 || !sf_admin_table_exists($pdo, 'lesson_progress')) return 0;
-    try {
-        $st = $pdo->prepare("SELECT COUNT(*) FROM lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id WHERE lp.user_id=:u AND lp.status='completed' AND l.ativo=1 AND l.conta_para_conclusao=1");
-        $st->execute([':u'=>$userId]);
-        return max(0, min(100, (int)round(((int)$st->fetchColumn() / $total) * 100)));
-    } catch (Throwable $e) { return 0; }
-}
-
-function sf_admin_audience(PDO $pdo, array $turma, int $limit = 0): array {
-    $codigo = (string)($turma['codigo'] ?? '');
-    $filter = sf_admin_live_filter($turma['live_filter_tag_ids'] ?? null);
-    $relTable = sf_admin_first_table($pdo, ['user_tags','usuarios_tags','aluno_tags','users_tags','tags_users','user_tag_rel','user_tag_relations']);
-    $totalLessons = sf_admin_total_required_lessons($pdo);
-    $rows = [];
-    $total = 0;
-    $skipped = ['tags'=>0,'certificado'=>0,'compra'=>0,'progresso'=>0,'reagendado'=>0];
-    if ($codigo === '') return ['total'=>0,'rows'=>[],'skipped'=>$skipped];
-
-    try {
-        $st = $pdo->prepare("SELECT * FROM users WHERE codigo_turma = :c ORDER BY nome ASC, id ASC");
-        $st->execute([':c'=>$codigo]);
-        $users = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) { $users = []; }
-
-    foreach ($users as $u) {
-        $uid = (int)($u['id'] ?? 0);
-        if ($filter['include_any'] && !sf_admin_user_has_any_tag($pdo, $relTable, $uid, $filter['include_any'])) { $skipped['tags']++; continue; }
-        if ($filter['exclude_any'] && sf_admin_user_has_any_tag($pdo, $relTable, $uid, $filter['exclude_any'])) { $skipped['tags']++; continue; }
-        if ((int)$filter['exclude_cert'] === 1 && sf_admin_user_has_certificate($pdo, $uid)) { $skipped['certificado']++; continue; }
-        if ((int)$filter['exclude_purchase'] === 1 && sf_admin_user_has_purchase($pdo, $uid)) { $skipped['compra']++; continue; }
-        $progress = sf_admin_progress($pdo, $uid, $totalLessons);
-        if ((int)$filter['exclude_zero'] === 1 && $progress <= 0) { $skipped['progresso']++; continue; }
-        if ((int)$filter['exclude_rescheduled'] === 1 && sf_admin_user_has_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $skipped['reagendado']++; continue; }
-        $total++;
-        if ($limit <= 0 || count($rows) < $limit) {
-            $rows[] = [
-                'nome' => (string)($u['nome'] ?? ''),
-                'email' => (string)($u['email'] ?? ''),
-                'telefone' => (string)($u['telefone'] ?? ''),
-                'turma' => (string)($u['codigo_turma'] ?? $codigo),
-                'tags' => sf_admin_user_tags($pdo, $relTable, $uid),
-                'andamento' => $progress,
-            ];
-        }
-    }
-    return ['total'=>$total,'rows'=>$rows,'skipped'=>$skipped];
-}
-
-function sf_admin_log_summary(PDO $pdo, string $codigo, ?string $plannedAt): array {
-    $out = ['total'=>0,'ok'=>0,'fail'=>0,'api_fail'=>0,'first'=>'','last'=>'','planned'=>$plannedAt ?: '', 'tags'=>[], 'flows'=>[], 'contacts_created'=>0];
-    if ($codigo === '') return $out;
-    try {
-        $st = $pdo->prepare("SELECT ok,http_status,request_json,response_text,created_at FROM superfuncionario_logs WHERE evento = :e ORDER BY id DESC LIMIT 600");
-        $st->execute([':e'=>'LIVE_TURMA_' . $codigo]);
-        $logs = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) { return $out; }
-    foreach ($logs as $l) {
-        $out['total']++;
-        if ((int)($l['ok'] ?? 0) === 1) $out['ok']++; else $out['fail']++;
-        $created = (string)($l['created_at'] ?? '');
-        if ($created !== '') {
-            if ($out['last'] === '') $out['last'] = $created;
-            $out['first'] = $created;
-        }
-        $req = json_decode((string)($l['request_json'] ?? ''), true);
-        $dbg = is_array($req) ? (array)($req['_debug'] ?? []) : [];
-        foreach ((array)($dbg['tags_requested'] ?? []) as $tag) if ($tag !== '') $out['tags'][(string)$tag] = true;
-        foreach ((array)($dbg['flows_requested'] ?? []) as $flow) if ($flow !== '') $out['flows'][(string)$flow] = true;
-        $resp = json_decode((string)($l['response_text'] ?? ''), true);
-        if (is_array($resp) && array_key_exists('success', $resp) && !$resp['success']) $out['api_fail']++;
-        if (is_array($resp) && !empty($resp['contact_created'])) $out['contacts_created']++;
-    }
-    $out['tags'] = array_keys($out['tags']);
-    $out['flows'] = array_keys($out['flows']);
-    return $out;
-}
-
-function sf_admin_ensure_live_dispatch_logs(PDO $pdo): void {
-    try {
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS live_turma_dispatch_logs (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                turma_id INT NULL,
-                turma_codigo VARCHAR(80) NULL,
-                planned_at DATETIME NULL,
-                started_at DATETIME NOT NULL,
-                finished_at DATETIME NULL,
-                total_alunos INT NOT NULL DEFAULT 0,
-                elegiveis INT NOT NULL DEFAULT 0,
-                sf_ok INT NOT NULL DEFAULT 0,
-                sf_fail INT NOT NULL DEFAULT 0,
-                webhook_ok INT NOT NULL DEFAULT 0,
-                webhook_fail INT NOT NULL DEFAULT 0,
-                skipped_json LONGTEXT NULL,
-                status VARCHAR(30) NOT NULL DEFAULT 'iniciado',
-                message TEXT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                KEY idx_live_dispatch_turma (turma_codigo),
-                KEY idx_live_dispatch_started (started_at),
-                KEY idx_live_dispatch_status (status)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        ");
-    } catch (Throwable $e) {}
-}
-
-function sf_admin_skipped_summary(?string $json): string {
-    $data = json_decode((string)$json, true);
-    if (!is_array($data)) return '-';
-    $labels = [
-        'include_tag_table_missing' => 'sem tabela de tags',
-        'andamento_zero' => 'andamento zero',
-        'tag_excluida' => 'tag excluida',
-        'certificado' => 'certificado',
-        'compra' => 'compra',
-        'live_reagendada' => 'live reagendada',
-    ];
-    $parts = [];
-    foreach ($labels as $key => $label) {
-        $n = (int)($data[$key] ?? 0);
-        if ($n > 0) $parts[] = $label . ': ' . $n;
-    }
-    return $parts ? implode(' | ', $parts) : '-';
-}
-
 // garante tabelas
 sf_ensure_tables($pdo);
-sf_admin_ensure_live_dispatch_logs($pdo);
 
-// ===== eventos centralizados =====
-$eventOptions = automation_trigger_options($pdo);
-$eventGroups = automation_trigger_groups($pdo);
+// ===== eventos (mesmos do Webhooks) =====
+$eventOptions = [
+    'INSCRITO'              => 'Aluno se cadastrou na área de membros (primeira vez)',
+    'REINSCRITO'            => 'Aluno se inscreveu novamente (já existente)',
+    'PRIMEIRO_LOGIN'        => 'Aluno fez login pela primeira vez na plataforma',
+    'ASSISTIU_ALGUMA_AULA'  => 'Aluno assistiu pelo menos 10 segundos de qualquer aula',
+    'CONCLUIU_TRILHA'       => 'Concluiu todas as aulas obrigatórias',
+    'RETORNO_AGENDADO'      => 'Retorno de contato agendado chegou',
+    'CERT_EMITIDO'          => 'Certificado emitido com sucesso',
+    'REENVIO_CERTIFICADO'   => 'Reenvio de certificado',
+    'CERT_SENHA_ERRADA'     => 'Tentativa de senha de certificado incorreta',
+    'LIVE_TURMA'            => 'Disparo de live por turma (regra global)',
+    'LIVE_REAGENDADA'       => 'Live reagendada',
+    'LIVE_REAGENDAMENTO_LEMBRETE' => 'Lembrete de live reagendada',
+    'LIVE_REAGENDAMENTO_EXPIRADO' => 'Reagendamento expirado',
+    'LIVE_ACESSOU'          => 'Live — aluno acessou (via webhook externo)',
+    'LIVE_OFERTA'           => 'Live — ficou até a oferta',
+    'LIVE_COMPRA'           => 'Live — clicou na compra',
+    'LIVE_EVENTO'           => 'Live — evento customizado',
+];
+
+// dinâmico por aula
+try {
+    $stLessons = $pdo->query("SELECT id, titulo FROM lessons ORDER BY ordem ASC, id ASC");
+    while ($ls = $stLessons->fetch(PDO::FETCH_ASSOC)) {
+        $lessonId   = (int)($ls['id'] ?? 0);
+        $lessonName = trim((string)($ls['titulo'] ?? 'Aula sem título'));
+        if ($lessonId > 0) {
+            $code = 'VIU_AULA_' . $lessonId;
+            $eventOptions[$code] = $code . ' – ' . $lessonName;
+        }
+    }
+} catch (Throwable $e) { /* ignora */ }
 
 // ===== opções de campos (origem) =====
 $fieldOptions = [
@@ -276,45 +89,23 @@ $fieldOptions = [
         'user.nome'       => 'Nome',
         'user.email'      => 'Email',
         'user.telefone'   => 'Telefone',
-        'user.data_live'  => 'Live atual do aluno (banco: Y-m-d H:i:s)',
-        'user.turma_live_at' => 'Live atual do aluno (banco: Y-m-d H:i:s)',
         'user.magic_link' => 'Magic link (URL de auto-login, 30 dias)',
     ],
     'Extra — INSCRITO / REINSCRITO / LIVE' => [
-        'extra.codigo_turma'              => 'Código da turma atual do aluno',
-        'extra.codigo_live'               => 'Código/slug da live da turma',
-        'extra.data_live'                 => 'Data da live atual em BR (dd/mm/aaaa hh:mm)',
-        'extra.data.live'                 => 'Data da live atual em BR (alias de extra.data_live)',
-        'extra.data_live_iso'             => 'Data da live atual em banco (Y-m-d H:i:s)',
-        'extra.data.live_iso'             => 'Data da live atual em banco (alias de extra.data_live_iso)',
-        'extra.tipo_inscricao'            => 'Tipo da inscricao: gratuita ou vitalicia',
-        'extra.tipo_inscricao_solicitada' => 'Tipo solicitado no canal de entrada, antes de preservar direitos existentes',
-        'extra.acesso_vitalicio'          => '1 quando o aluno possui acesso vitalicio',
-        'extra.acesso_pago'               => '1 somente quando o vitalicio veio de pagamento real',
-        'extra.acesso.dias_restantes'     => 'Dias restantes do acesso temporario',
-        'extra.reinscricao_renovou_prazo' => '1 quando a reinscricao realmente iniciou um novo prazo',
-        'extra.live_url'                  => 'Link da sala/live quando configurado',
-        'extra.reagendamento_id'          => 'ID do histórico de reagendamento',
-        'extra.qtd_inscricoes'            => 'Total de inscrições do aluno',
-        'extra.primeira_inscricao'        => 'Data da 1ª inscrição',
-        'extra.data_inscricao_anterior'   => 'Data da penúltima inscrição',
-        'extra.turma_anterior'            => 'Turma da inscrição anterior',
-        'extra.eh_reinscrito'             => '0 = novo, 1 = reinscrito',
-        'extra.andamento'                 => '% de conclusão no LIVE_TURMA',
-        'extra.aulas_concluidas'          => 'Aulas obrigatórias concluídas',
-        'extra.aulas_totais'              => 'Total de aulas obrigatórias',
-    ],
-    'Extra - WHATSAPP_GRUPOS' => [
-        'extra.telefone' => 'telefone limpo',
-        'extra.group_id' => 'ID do grupo',
-        'extra.participant_id' => 'ID participante/LID',
-        'extra.author_id' => 'ID autor da acao',
-        'extra.action_original' => 'action original da Evolution',
-        'extra.tipo_interpretado' => 'evento interpretado',
-        'extra.payload_log_id' => 'ID do payload no monitor',
-        'extra.blacklist.id' => 'ID da blacklist',
-        'extra.blacklist.reason' => 'motivo da blacklist',
-        'extra.blacklist.origem' => 'origem da blacklist',
+        'extra.codigo_turma'              => 'codigo_turma',
+        'extra.codigo_live'               => 'codigo_live',
+        'extra.data_live'                 => 'data_live',
+        'extra.data_live_iso'             => 'data_live_iso',
+        'extra.live_url'                  => 'live_url',
+        'extra.reagendamento_id'          => 'reagendamento_id',
+        'extra.qtd_inscricoes'            => 'qtd_inscricoes (total de inscrições do aluno)',
+        'extra.primeira_inscricao'        => 'primeira_inscricao (data da 1ª inscrição)',
+        'extra.data_inscricao_anterior'   => 'data_inscricao_anterior (penúltima inscrição)',
+        'extra.turma_anterior'            => 'turma_anterior (turma da inscrição anterior)',
+        'extra.eh_reinscrito'             => 'eh_reinscrito (0 = novo / 1 = reinscrito)',
+        'extra.andamento'                 => 'andamento (% conclusão — LIVE_TURMA)',
+        'extra.aulas_concluidas'          => 'aulas_concluidas (LIVE_TURMA)',
+        'extra.aulas_totais'              => 'aulas_totais (LIVE_TURMA)',
     ],
     'Extra — CERT_EMITIDO' => [
         'extra.pdf_url'           => 'pdf_url (link do certificado)',
@@ -349,9 +140,7 @@ $fieldOptions = [
 $eventHints = [
     'RETORNO_AGENDADO'   => 'Extras disponiveis: <code>extra.tipo</code>, <code>extra.scheduled_at</code>, <code>extra.assunto</code>, <code>extra.mensagem</code>, <code>extra.mensagem_renderizada</code>, <code>extra.agendamento_id</code>',
     'INSCRITO'           => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.codigo_live</code>, <code>extra.data_live</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.eh_reinscrito</code> (=0)',
-    'INSCRICAO_GRATUITA' => 'Disponiveis: <code>extra.tipo_inscricao</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.acesso_vitalicio</code> (=0), <code>extra.acesso_pago</code> (=0)',
-    'INSCRICAO_VITALICIA' => 'Disponiveis: <code>extra.tipo_inscricao</code>, <code>extra.codigo_turma</code>, <code>extra.acesso_vitalicio</code> (=1), <code>extra.acesso_pago</code>',
-    'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code>, <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.tipo_inscricao</code> (acesso efetivo), <code>extra.tipo_inscricao_solicitada</code>, <code>extra.acesso_vitalicio</code>, <code>extra.acesso_pago</code>, <code>extra.reinscricao_renovou_prazo</code>',
+    'REINSCRITO'         => 'Disponíveis: <code>user.magic_link</code> (auto-login), <code>extra.codigo_turma</code>, <code>extra.qtd_inscricoes</code>, <code>extra.primeira_inscricao</code>, <code>extra.data_inscricao_anterior</code>, <code>extra.turma_anterior</code>, <code>extra.eh_reinscrito</code> (=1)',
     'PRIMEIRO_LOGIN'     => 'Disparado UMA ÚNICA VEZ — na primeira vez que o aluno acessa a plataforma. Tag PRIMEIRO_LOGIN aplicada automaticamente. Disponíveis: <code>user.id</code>, <code>user.nome</code>, <code>user.email</code>, <code>user.magic_link</code>',
     'CONCLUIU_TRILHA'    => 'Extras disponíveis: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code>, <code>extra.aulas_totais</code>',
     'CERT_EMITIDO'       => 'Extras disponíveis: <code>extra.pdf_url</code> (link do PDF), <code>extra.codigo_certificado</code>, <code>extra.curso</code>, <code>extra.emitido_em</code>',
@@ -360,10 +149,6 @@ $eventHints = [
     'LIVE_REAGENDADA'    => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>, <code>extra.reagendamento</code>',
     'LIVE_REAGENDAMENTO_LEMBRETE' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
     'LIVE_REAGENDAMENTO_EXPIRADO' => 'Extras disponiveis: <code>extra.reagendamento_id</code>, <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.data_live_iso</code>, <code>extra.live_url</code>',
-    'WHATSAPP_GRUPO_ENTROU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_ENTROU e aplicada no aluno.',
-    'WHATSAPP_GRUPO_SAIU' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_SAIU e aplicada no aluno.',
-    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.author_id</code>, <code>extra.action_original</code>, <code>extra.payload_log_id</code>. A tag WHATSAPP_GRUPO_REMOVIDO_ADMIN e aplicada no aluno.',
-    'WHATSAPP_BLACKLIST_DETECTADO' => 'Extras disponiveis: <code>extra.telefone</code>, <code>extra.group_id</code>, <code>extra.participant_id</code>, <code>extra.blacklist.id</code>, <code>extra.blacklist.reason</code>. A tag WHATSAPP_BLACKLIST_DETECTADO e aplicada no aluno. A remocao e as notificacoes seguem a configuracao da tela IA WhatsApp.',
 ];
 
 // pega colunas reais da tabela users (para você mapear qualquer dado salvo)
@@ -491,46 +276,12 @@ if (isset($_GET['toggle'])) {
     exit;
 }
 
-// === AJAX: preview do publico da turma com os filtros atuais do formulario ===
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_audience_preview') {
-    header('Content-Type: application/json; charset=utf-8');
-    $tid = (int)($_POST['turma_id'] ?? 0);
-    if ($tid <= 0) {
-        echo json_encode(['ok'=>false,'msg'=>'Turma invalida']);
-        exit;
-    }
-    try {
-        $stTurma = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
-        $stTurma->execute([':id'=>$tid]);
-        $turma = $stTurma->fetch(PDO::FETCH_ASSOC);
-        if (!$turma) {
-            echo json_encode(['ok'=>false,'msg'=>'Turma nao encontrada']);
-            exit;
-        }
-
-        $includeSel = is_array($_POST['live_include_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_include_tag_ids']), fn($v)=>$v>0)) : [];
-        $excludeSel = is_array($_POST['live_exclude_tag_ids'] ?? null) ? array_values(array_filter(array_map('intval', $_POST['live_exclude_tag_ids']), fn($v)=>$v>0)) : [];
-        $includeRescheduled = isset($_POST['live_include_rescheduled']) ? 1 : 0;
-        $turma['live_filter_tag_ids'] = json_encode([
-            'include_any' => $includeSel,
-            'exclude_any' => $excludeSel,
-            'exclude_purchase' => isset($_POST['live_exclude_purchase']) ? 1 : 0,
-            'exclude_cert' => isset($_POST['live_exclude_cert']) ? 1 : 0,
-            'exclude_rescheduled' => $includeRescheduled ? 0 : 1,
-        ], JSON_UNESCAPED_UNICODE);
-
-        $audience = sf_admin_audience($pdo, $turma);
-        echo json_encode(['ok'=>true] + $audience, JSON_UNESCAPED_UNICODE);
-    } catch (Throwable $e) {
-        echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);
-    }
-    exit;
-}
-
 // === POST: salvar config SF por turma ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_turma_save') {
     $tid        = (int)($_POST['turma_id'] ?? 0);
     $sfEnabled  = isset($_POST['sf_enabled']) ? 1 : 0;
+    $sfTags     = trim($_POST['sf_tags_text'] ?? '');
+    $sfFlows    = trim($_POST['sf_flows_text'] ?? '');
     $sfOffsetRaw = trim((string)($_POST['sf_live_offset'] ?? '0:00'));
     $delayMs    = max(0, min(30000, (int)($_POST['delay_ms'] ?? 500)));
     $excludePurchase = isset($_POST['live_exclude_purchase']) ? 1 : 0;
@@ -549,6 +300,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
             'exclude_rescheduled' => $excludeRescheduled,
         ], JSON_UNESCAPED_UNICODE);
     }
+    $sfSources  = $_POST['sf_field_source'] ?? [];
+    $sfDests    = $_POST['sf_field_dest'] ?? [];
+    $sfPairs    = [];
+    if (is_array($sfSources) && is_array($sfDests)) {
+        $n = min(count($sfSources), count($sfDests));
+        for ($i = 0; $i < $n; $i++) {
+            $src = trim((string)$sfSources[$i]);
+            $dst = trim((string)$sfDests[$i]);
+            if ($src !== '' && $dst !== '') $sfPairs[] = ['source'=>$src,'dest'=>$dst];
+        }
+    }
+    $sfFieldsJson = $sfPairs ? json_encode($sfPairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+
     $offsetMinutes = sf_parse_live_offset_minutes($sfOffsetRaw);
     if ($offsetMinutes === null) {
         header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Deslocamento de disparo invalido. Use formatos como -2:30, 0:00 ou 1:15.'));
@@ -569,8 +333,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
                 $liveDisparoData = $live->format('Y-m-d H:i:s');
             }
 
-            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=NULL,sf_flows_text=NULL,sf_fields_json=NULL,delay_ms=:delay,live_filter_tag_ids=:filters,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
-                ->execute([':sfen'=>$sfEnabled,':delay'=>$delayMs,':filters'=>$filterCfg,':ldd'=>$liveDisparoData,':id'=>$tid]);
+            $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,delay_ms=:delay,live_filter_tag_ids=:filters,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
+                ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':delay'=>$delayMs,':filters'=>$filterCfg,':ldd'=>$liveDisparoData,':id'=>$tid]);
         } catch (Throwable $e) {
             header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Erro ao salvar configuracao da turma: ' . $e->getMessage()));
             exit;
@@ -584,7 +348,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
 $cfg = sf_get_config($pdo);
 
 $rules = $pdo->query("SELECT * FROM superfuncionario_rules ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-$sfLogStats=['ok'=>0,'failed'=>0];try{$sfLogStats=$pdo->query("SELECT SUM(ok=1) ok,SUM(ok=0) failed FROM (SELECT ok FROM superfuncionario_logs ORDER BY id DESC LIMIT 100) x")->fetch(PDO::FETCH_ASSOC)?:$sfLogStats;}catch(Throwable $e){}
 
 $edit = null;
 if (isset($_GET['edit'])) {
@@ -634,8 +397,6 @@ include __DIR__ . '/_header.php';
 ?>
 
 <style>
-.int-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}.int-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.int-nav a.active,.int-nav a:hover{background:var(--primary-dim);color:var(--primary)}.int-overview{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:16px}.int-kpi{padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.int-kpi small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.int-kpi strong{display:block;font-size:24px;margin-top:5px}@media(max-width:750px){.int-overview{grid-template-columns:repeat(2,1fr)}}
-    .int-nav{position:sticky;top:60px;z-index:30;background:var(--bg);padding-top:8px}
     :root {
         --bg:      #020617;
         --bg-card: #0b1120;
@@ -845,21 +606,6 @@ include __DIR__ . '/_header.php';
     .live-actions .btn.sm { width:36px; height:32px; padding:0; justify-content:center; flex:0 0 auto; }
     .log-ok   { color: #4ade80; }
     .log-fail { color: #f87171; }
-    .sf-metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:10px 0 12px; }
-    .sf-metric-card { border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,.025); padding:10px 12px; }
-    .sf-metric-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px; }
-    .sf-metric-value { font-size:18px; font-weight:800; color:var(--text); }
-    .sf-metric-sub { font-size:11px; color:var(--muted); margin-top:4px; line-height:1.4; }
-    .sf-details-row { display:none; background:rgba(255,255,255,.018); }
-    .sf-details-row.open { display:table-row; }
-    .sf-audience-card { border:1px solid rgba(59,130,246,.28); border-radius:12px; background:rgba(59,130,246,.055); padding:14px; margin:0 0 16px; }
-    .sf-audience-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-    .sf-audience-count { font-size:28px; line-height:1; font-weight:800; color:#bfdbfe; }
-    .sf-audience-list { margin-top:12px; border-top:1px solid var(--border); padding-top:10px; }
-    .sf-audience-table { width:100%; border-collapse:collapse; table-layout:fixed; }
-    .sf-audience-table th,.sf-audience-table td { border-bottom:1px solid var(--border); padding:7px 6px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .sf-audience-toggle { cursor:pointer; color:#bfdbfe; font-size:12px; font-weight:700; margin-top:10px; }
-    @media(max-width: 900px) { .sf-metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
     .empty-state {
         text-align: center; padding: 32px; color: var(--muted);
@@ -878,13 +624,11 @@ include __DIR__ . '/_header.php';
 <?php endforeach; ?>
 </datalist>
 
-<div class="sf-wrap int-view-<?=h($view)?>">
+<div class="sf-wrap">
     <div class="page-header">
         <h1>SuperFuncionário</h1>
         <p>Configure as credenciais globais e crie regras de disparo por evento — tags, fluxos e campos personalizados.</p>
     </div>
-    <nav class="int-nav"><?php foreach(['overview'=>'Visão geral','rules'=>'Integrações','reference'=>'Referências','live'=>'Live por turma','logs'=>'Logs','settings'=>'Configurações'] as $k=>$label):?><a class="<?=$view===$k?'active':''?>" href="superfuncionario.php?view=<?=$k?>"><?=h($label)?></a><?php endforeach;?></nav>
-    <?php if($view==='overview'):?><div class="int-overview"><div class="int-kpi"><small>Status da integração</small><strong><?=!empty($cfg['is_enabled'])?'Ativa':'Pausada'?></strong></div><div class="int-kpi"><small>Integrações ativas</small><strong><?=count(array_filter($rules,fn($r)=>(int)$r['is_active']===1))?></strong></div><div class="int-kpi"><small>Sucessos recentes</small><strong class="log-ok"><?=(int)$sfLogStats['ok']?></strong></div><div class="int-kpi"><small>Falhas recentes</small><strong class="<?=(int)$sfLogStats['failed']?'log-fail':''?>"><?=(int)$sfLogStats['failed']?></strong></div></div><?php endif;?>
 
     <div class="grid-2">
 
@@ -964,10 +708,6 @@ include __DIR__ . '/_header.php';
                     'LIVE_REAGENDADA'   => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url', 'extra.reagendamento'],
                     'LIVE_REAGENDAMENTO_LEMBRETE' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
                     'LIVE_REAGENDAMENTO_EXPIRADO' => ['extra.reagendamento_id', 'extra.codigo_turma', 'extra.data_live', 'extra.data_live_iso', 'extra.live_url'],
-                    'WHATSAPP_GRUPO_ENTROU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
-                    'WHATSAPP_GRUPO_SAIU' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
-                    'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.author_id', 'extra.action_original', 'extra.payload_log_id'],
-                    'WHATSAPP_BLACKLIST_DETECTADO' => ['extra.telefone', 'extra.group_id', 'extra.participant_id', 'extra.blacklist.id', 'extra.blacklist.reason', 'extra.payload_log_id'],
                 ];
                 foreach ($payloadRef as $ev => $fields): ?>
                     <div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);">
@@ -1018,35 +758,10 @@ include __DIR__ . '/_header.php';
                                     <button type="button" class="evento-toggle-btn" id="sf-btn-ev-toggle">▼ Ver eventos</button>
                                 </div>
                                 <div class="evento-dropdown" id="sf-ev-dropdown">
-                                    <?php foreach ($eventGroups as $group): ?>
-                                        <div class="ev-group-label"><?= h((string)$group['label']) ?></div>
-                                        <?php foreach (($group['items'] ?? []) as $item):
-                                            $badge = strtolower((string)($item['tag'] ?? 'evento'));
-                                            $pill = str_contains($badge, 'live') ? 'live' : (str_contains($badge, 'cert') ? 'cert' : (str_contains($badge, 'aula') ? 'aula' : 'aluno'));
-                                        ?>
-                                            <div class="evento-opcao" data-value="<?= h((string)$item['code']) ?>">
-                                                <strong><?= h((string)$item['code']) ?> <span class="ev-pill <?= h($pill) ?>"><?= h((string)($item['tag'] ?? 'Evento')) ?></span></strong>
-                                                <em><?= h((string)($item['desc'] ?? $item['label'] ?? $item['code'])) ?></em>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    <?php endforeach; ?>
-                                    <?php if (false): ?>
                                     <div class="ev-group-label">Aluno</div>
                                     <div class="evento-opcao" data-value="INSCRITO">
                                         <strong>INSCRITO <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado quando um novo aluno se cadastra na área de membros pela primeira vez.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="INSCRICAO_GRATUITA">
-                                        <strong>INSCRICAO_GRATUITA <span class="ev-pill aluno">Aluno</span></strong>
-                                        <em>Aluno recebeu acesso temporario conforme o prazo configurado na turma.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="INSCRICAO_VITALICIA">
-                                        <strong>INSCRICAO_VITALICIA <span class="ev-pill aluno">Aluno</span></strong>
-                                        <em>Aluno recebeu acesso vitalicio por pagamento ou concessao.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="ACESSO_VITALICIO_LIBERADO">
-                                        <strong>ACESSO_VITALICIO_LIBERADO <span class="ev-pill aluno">Aluno</span></strong>
-                                        <em>O acesso vitalicio foi efetivamente liberado.</em>
                                     </div>
                                     <div class="evento-opcao" data-value="REINSCRITO">
                                         <strong>REINSCRITO <span class="ev-pill aluno">Aluno</span></strong>
@@ -1067,23 +782,6 @@ include __DIR__ . '/_header.php';
                                     <div class="evento-opcao" data-value="RETORNO_AGENDADO">
                                         <strong>RETORNO_AGENDADO <span class="ev-pill aluno">Aluno</span></strong>
                                         <em>Disparado pelo cron quando um retorno de contato chega na data e hora marcada.</em>
-                                    </div>
-                                    <div class="ev-group-label">WhatsApp Grupos</div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_ENTROU">
-                                        <strong>WHATSAPP_GRUPO_ENTROU <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado entrou em grupo monitorado.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_SAIU">
-                                        <strong>WHATSAPP_GRUPO_SAIU <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado saiu por conta propria de grupo monitorado.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">
-                                        <strong>WHATSAPP_GRUPO_REMOVIDO_ADMIN <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Aluno identificado foi removido por admin de grupo monitorado.</em>
-                                    </div>
-                                    <div class="evento-opcao" data-value="WHATSAPP_BLACKLIST_DETECTADO">
-                                        <strong>WHATSAPP_BLACKLIST_DETECTADO <span class="ev-pill aluno">WhatsApp</span></strong>
-                                        <em>Numero em blacklist entrou no grupo. A automacao de remocao e alerta e configurada na tela IA WhatsApp.</em>
                                     </div>
                                     <div class="ev-group-label">Certificado</div>
                                     <div class="evento-opcao" data-value="CERT_EMITIDO">
@@ -1145,7 +843,6 @@ include __DIR__ . '/_header.php';
                                         echo '</div>';
                                     }
                                     ?>
-                                    <?php endif; ?>
                                 </div>
                             </div>
                             <div class="note" style="margin-top:5px;">Clique para selecionar o evento. Apenas um evento por regra.</div>
@@ -1297,18 +994,18 @@ include __DIR__ . '/_header.php';
         <div class="card-header">
             <div class="card-icon orange">🚀</div>
             <div class="card-header-text">
-                <h2>Disparo de Live por Turma</h2>
-                <p>Configure horario, intervalo e filtros do publico. As acoes do SF usam o gatilho global LIVE_TURMA.</p>
+                <h2>Disparo de Live por Turma — SF específico</h2>
+                <p>Configure tags, fluxos e campos SF exclusivos por turma, disparados automaticamente na data da live.</p>
             </div>
         </div>
 
         <div class="sf-hint" style="margin-bottom:16px;">
-            <b>Como funciona:</b> quando a data/hora de disparo da turma chega, o sistema enfileira todos os alunos filtrados e dispara o gatilho global <b>LIVE_TURMA</b>, respeitando o delay configurado entre alunos.
+            <b>Como funciona:</b> quando a data/hora de disparo da turma chega, o sistema enfileira todos os alunos filtrados e os envia para o SF respeitando o delay configurado. Use <b>regras globais LIVE_TURMA</b> acima para regras que valem para todas as turmas, ou configure aqui para personalizar por turma.
         </div>
 
         <?php if (isset($_GET['saved']) && $_GET['saved'] == '1'): ?>
             <div style="margin-bottom:16px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);color:#4ade80;font-size:13px;">
-                ✓ Configuracao de disparo da turma salva com sucesso!
+                ✓ Configuração de SF da turma salva com sucesso!
             </div>
         <?php endif; ?>
 
@@ -1322,6 +1019,13 @@ include __DIR__ . '/_header.php';
             <!-- FORM -->
             <div>
                 <?php if ($sfEditTurma):
+                    $sfTEditPairs = [];
+                    $sfTFieldsRaw = trim((string)($sfEditTurma['sf_fields_json'] ?? ''));
+                    if ($sfTFieldsRaw !== '') {
+                        $tmp = json_decode($sfTFieldsRaw, true);
+                        if (is_array($tmp)) $sfTEditPairs = $tmp;
+                    }
+                    if (!$sfTEditPairs) $sfTEditPairs = [['source'=>'','dest'=>'']];
                     $sfLiveOffset = sf_format_live_offset((string)($sfEditTurma['data_live'] ?? ''), (string)($sfEditTurma['live_disparo_data'] ?? ''));
                     $sfLiveIso = !empty($sfEditTurma['data_live']) ? date('c', strtotime((string)$sfEditTurma['data_live'])) : '';
                     $sfDisparoPreview = sf_format_datetime_local((string)($sfEditTurma['live_disparo_data'] ?? ''));
@@ -1342,7 +1046,6 @@ include __DIR__ . '/_header.php';
                     $sfExcPurchase = (int)$sfFilter['exclude_purchase'] === 1;
                     $sfExcCert = (int)$sfFilter['exclude_cert'] === 1;
                     $sfIncludeRescheduled = (int)$sfFilter['exclude_rescheduled'] !== 1;
-                    $sfAudience = sf_admin_audience($pdo, $sfEditTurma);
                 ?>
                     <form method="post" id="form-sf-turma" style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:12px;padding:20px;">
                         <input type="hidden" name="action" value="sf_turma_save">
@@ -1429,48 +1132,41 @@ include __DIR__ . '/_header.php';
                             </div>
                         </div>
 
-                        <div class="sf-audience-card">
-                            <div class="sf-audience-top">
-                                <div>
-                                    <div class="sf-metric-label">Publico previsto deste disparo</div>
-                                    <div class="sf-metric-sub" id="sf-audience-status">Calculado com os filtros selecionados nesta tela.</div>
-                                </div>
-                                <div class="sf-audience-count" id="sf-audience-count"><?= (int)$sfAudience['total'] ?></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                            <div>
+                                <label class="lbl">Tags SF — uma por linha</label>
+                                <textarea name="sf_tags_text" placeholder="ex: LIVE_CONFIRMADO" style="min-height:80px;"><?= h((string)($sfEditTurma['sf_tags_text'] ?? '')) ?></textarea>
                             </div>
-                            <div class="sf-metric-sub" id="sf-audience-skipped">
-                                Fora do envio: compra <?= (int)$sfAudience['skipped']['compra'] ?>,
-                                certificado <?= (int)$sfAudience['skipped']['certificado'] ?>,
-                                tags <?= (int)$sfAudience['skipped']['tags'] ?>,
-                                progresso <?= (int)$sfAudience['skipped']['progresso'] ?>,
-                                reagendados <?= (int)$sfAudience['skipped']['reagendado'] ?>.
+                            <div>
+                                <label class="lbl">Flow IDs — separados por vírgula</label>
+                                <input type="text" name="sf_flows_text" value="<?= h((string)($sfEditTurma['sf_flows_text'] ?? '')) ?>" placeholder="ex: 123, 456">
+                                <div class="note">IDs numéricos dos fluxos do SF.</div>
                             </div>
-                            <details class="sf-audience-list">
-                                <summary class="sf-audience-toggle">Mostrar pessoas atingidas</summary>
-                                <div id="sf-audience-body">
-                                    <?php if (empty($sfAudience['rows'])): ?>
-                                        <div class="note">Nenhum aluno elegivel com os filtros atuais.</div>
-                                    <?php else: ?>
-                                        <div style="overflow-x:auto;margin-top:8px;">
-                                        <table class="sf-audience-table">
-                                            <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Turma</th><th>Tags</th><th>%</th></tr></thead>
-                                            <tbody>
-                                            <?php foreach ($sfAudience['rows'] as $ar): ?>
-                                                <tr>
-                                                    <td title="<?= h($ar['nome']) ?>"><?= h($ar['nome']) ?></td>
-                                                    <td title="<?= h($ar['email']) ?>"><?= h($ar['email']) ?></td>
-                                                    <td><?= h($ar['telefone']) ?></td>
-                                                    <td><?= h($ar['turma']) ?></td>
-                                                    <td title="<?= h($ar['tags']) ?>"><?= h($ar['tags'] ?: '-') ?></td>
-                                                    <td><?= (int)$ar['andamento'] ?>%</td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            </details>
                         </div>
+
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">Campos personalizados</div>
+
+                        <div class="sf-hint" style="margin-bottom:10px;">
+                            <b>Origem</b> — selecione da lista ou digite:<br>
+                            • Aluno: <code>user.email</code>, <code>user.nome</code>, <code>user.telefone</code><br>
+                            • Turma: <code>extra.codigo_turma</code>, <code>extra.data_live</code>, <code>extra.codigo_live</code><br>
+                            • Progresso: <code>extra.andamento</code>, <code>extra.aulas_concluidas</code><br>
+                            • Fixo: <code>literal:texto</code> | Template: <code>{{user.nome}} - {{extra.andamento}}%</code>
+                        </div>
+
+                        <div id="sf-turma-fields">
+                            <?php foreach ($sfTEditPairs as $p): ?>
+                            <div class="field-row">
+                                <input type="text" name="sf_field_source[]" list="sf-turma-source-list"
+                                       value="<?= h((string)($p['source'] ?? '')) ?>"
+                                       placeholder="ex: user.email ou extra.data_live">
+                                <input type="text" name="sf_field_dest[]" value="<?= h((string)($p['dest'] ?? '')) ?>"
+                                       placeholder="Campo destino no SF">
+                                <button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <button type="button" class="btn ghost sm" onclick="addSfTurmaRow()" style="margin-bottom:14px;">+ Adicionar campo</button>
 
                         <div style="display:flex;gap:10px;flex-wrap:wrap;">
                             <button class="btn" type="submit">💾 Salvar configuração</button>
@@ -1490,7 +1186,7 @@ include __DIR__ . '/_header.php';
                 <div>
                 <table class="log-table live-sf-table">
                     <colgroup>
-                        <col><col><col><col><col><col>
+                        <col><col><col><col><col><col><col><col>
                     </colgroup>
                     <thead>
                     <tr>
@@ -1498,6 +1194,8 @@ include __DIR__ . '/_header.php';
                         <th>Data Live</th>
                         <th>Disparo</th>
                         <th>SF</th>
+                        <th>Tags</th>
+                        <th>Flows</th>
                         <th>Disparado</th>
                         <th>Ações</th>
                     </tr>
@@ -1506,8 +1204,8 @@ include __DIR__ . '/_header.php';
                     <?php foreach ($sfTurmasList as $stl):
                         $stlSfOn  = (int)($stl['sf_enabled'] ?? 0) === 1;
                         $stlDisp  = (int)($stl['live_disparada'] ?? 0) === 1;
-                        $stlSummary = sf_admin_log_summary($pdo, (string)($stl['codigo'] ?? ''), (string)($stl['live_disparo_data'] ?? ''));
-                        $stlRate = $stlSummary['total'] > 0 ? round(($stlSummary['ok'] / $stlSummary['total']) * 100, 1) : 0;
+                        $stlTags  = trim((string)($stl['sf_tags_text'] ?? ''));
+                        $stlFlows = trim((string)($stl['sf_flows_text'] ?? ''));
                     ?>
                         <tr>
                             <td style="font-weight:600;"><?= h((string)$stl['codigo']) ?></td>
@@ -1518,6 +1216,8 @@ include __DIR__ . '/_header.php';
                                     <?= $stlSfOn ? '● ON' : '○ OFF' ?>
                                 </span>
                             </td>
+                            <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;" title="<?= h($stlTags) ?>"><?= h($stlTags ?: '—') ?></td>
+                            <td style="color:var(--muted);font-size:11px;"><?= h($stlFlows ?: '—') ?></td>
                             <td>
                                 <span class="badge <?= $stlDisp ? 'badge-on' : 'badge-off' ?>">
                                     <?= $stlDisp ? '● Sim' : '○ Não' ?>
@@ -1526,25 +1226,8 @@ include __DIR__ . '/_header.php';
                             <td>
                                 <div class="live-actions">
                                 <a href="?sf_edit=<?= (int)$stl['id'] ?>" class="btn ghost sm">⚙️</a>
-                                <button type="button" class="btn ghost sm" onclick="toggleSfMetrics(<?= (int)$stl['id'] ?>)" title="Metricas">&#128200;</button>
                                 <a href="turmas.php?reset_disparo=<?= (int)$stl['id'] ?>" class="btn ghost sm" onclick="return confirm('Resetar disparo desta turma?')" title="Resetar">↺</a>
                                 </div>
-                            </td>
-                        </tr>
-                        <tr id="sf-metrics-<?= (int)$stl['id'] ?>" class="sf-details-row">
-                            <td colspan="6">
-                                <div class="sf-metric-grid">
-                                    <div class="sf-metric-card"><div class="sf-metric-label">Disparos</div><div class="sf-metric-value"><?= (int)$stlSummary['total'] ?></div><div class="sf-metric-sub">Registros no SF</div></div>
-                                    <div class="sf-metric-card"><div class="sf-metric-label">Acertos</div><div class="sf-metric-value"><?= (int)$stlSummary['ok'] ?></div><div class="sf-metric-sub"><?= h((string)$stlRate) ?>% de sucesso HTTP</div></div>
-                                    <div class="sf-metric-card"><div class="sf-metric-label">Falhas</div><div class="sf-metric-value"><?= (int)$stlSummary['fail'] ?></div><div class="sf-metric-sub">API success=false: <?= (int)$stlSummary['api_fail'] ?></div></div>
-                                    <div class="sf-metric-card"><div class="sf-metric-label">Contatos criados</div><div class="sf-metric-value"><?= (int)$stlSummary['contacts_created'] ?></div><div class="sf-metric-sub">Demais ja existiam</div></div>
-                                </div>
-                                <div class="sf-metric-sub">
-                                    Planejado: <?= h(sf_format_datetime_local((string)$stlSummary['planned'])) ?: '-' ?> |
-                                    Primeiro envio real: <?= h(sf_format_datetime_local((string)$stlSummary['first'])) ?: '-' ?> |
-                                    Ultimo envio real: <?= h(sf_format_datetime_local((string)$stlSummary['last'])) ?: '-' ?>
-                                </div>
-                                <div class="note">O SuperFuncionario retorna sucesso por contato. Erro individual de tag/flow so aparece aqui se a API retornar essa falha no response.</div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -1554,78 +1237,6 @@ include __DIR__ . '/_header.php';
                 <?php endif; ?>
             </div>
         </div>
-    </div>
-
-    <?php
-    $liveDispatchLogs = [];
-    try {
-        $liveDispatchLogs = $pdo->query("
-            SELECT *
-              FROM live_turma_dispatch_logs
-          ORDER BY id DESC
-             LIMIT 30
-        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $e) {}
-    ?>
-    <div class="card">
-        <div class="card-header">
-            <div class="card-icon blue">&#128202;</div>
-            <div class="card-header-text">
-                <h2>Execucoes do cron de live</h2>
-                <p>Resumo por turma: quantos alunos foram encontrados, filtrados, enviados e quais motivos impediram disparos.</p>
-            </div>
-        </div>
-        <?php if (!$liveDispatchLogs): ?>
-            <div class="empty-state">Ainda nao ha resumo de execucao. Ele sera gravado automaticamente nos proximos disparos de turma.</div>
-        <?php else: ?>
-        <div style="overflow-x:auto;">
-            <table class="log-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Turma</th>
-                        <th>Planejado</th>
-                        <th>Executado</th>
-                        <th>Alunos</th>
-                        <th>SF</th>
-                        <th>Webhook</th>
-                        <th>Status</th>
-                        <th>Excluidos</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($liveDispatchLogs as $dl): ?>
-                    <tr>
-                        <td style="color:var(--muted)"><?= (int)$dl['id'] ?></td>
-                        <td style="font-weight:700"><?= h((string)($dl['turma_codigo'] ?? '')) ?></td>
-                        <td style="white-space:nowrap;font-size:11px;"><?= h(sf_format_datetime_local((string)($dl['planned_at'] ?? ''))) ?></td>
-                        <td style="white-space:nowrap;font-size:11px;">
-                            <?= h(sf_format_datetime_local((string)($dl['started_at'] ?? ''))) ?>
-                            <?php if (!empty($dl['finished_at'])): ?><div class="note"><?= h(sf_format_datetime_local((string)$dl['finished_at'])) ?></div><?php endif; ?>
-                        </td>
-                        <td style="font-size:11px;">
-                            Total: <?= (int)($dl['total_alunos'] ?? 0) ?><br>
-                            Elegiveis: <?= (int)($dl['elegiveis'] ?? 0) ?>
-                        </td>
-                        <td style="font-size:11px;">
-                            OK: <?= (int)($dl['sf_ok'] ?? 0) ?><br>
-                            Falha: <?= (int)($dl['sf_fail'] ?? 0) ?>
-                        </td>
-                        <td style="font-size:11px;">
-                            OK: <?= (int)($dl['webhook_ok'] ?? 0) ?><br>
-                            Falha: <?= (int)($dl['webhook_fail'] ?? 0) ?>
-                        </td>
-                        <td>
-                            <span class="badge <?= (string)($dl['status'] ?? '') === 'concluido' ? 'badge-on' : 'badge-off' ?>"><?= h((string)($dl['status'] ?? '')) ?></span>
-                            <div class="note"><?= h((string)($dl['message'] ?? '')) ?></div>
-                        </td>
-                        <td style="font-size:11px;white-space:normal;"><?= h(sf_admin_skipped_summary($dl['skipped_json'] ?? null)) ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php endif; ?>
     </div>
 
     <!-- ===== LOGS ===== -->
@@ -1722,7 +1333,6 @@ include __DIR__ . '/_header.php';
 </div><!-- /.sf-wrap -->
 
 <script>
-const sfView=<?=json_encode($view)?>;document.querySelectorAll('.card h2').forEach(h=>{const t=h.textContent.trim(),card=h.closest('.card'),show=sfView==='overview'?false:(sfView==='settings'?t==='Credenciais globais':sfView==='reference'?t==='Extras por evento':sfView==='rules'?(t==='Nova integração'||t==='Editar integração'||t==='Integrações cadastradas'):sfView==='live'?(t==='Disparo de Live por Turma'||t==='Execucoes do cron de live'):sfView==='logs'?t==='Logs recentes':true);if(!show)card.style.display='none';});document.querySelectorAll('.grid-2').forEach(g=>{g.style.gridTemplateColumns='minmax(0,1fr)';Array.from(g.children).forEach(col=>{const cards=Array.from(col.querySelectorAll(':scope > .card'));if(cards.length&&!cards.some(c=>c.style.display!=='none'))col.style.display='none';});});
 function removeRow(btn) { btn.closest('.field-row').remove(); }
 function addRow() {
     var c = document.getElementById('fields');
@@ -1799,6 +1409,20 @@ document.getElementById('form-rule').addEventListener('submit', function(e) {
     }
 });
 
+function removeSfTurmaRow(btn) { btn.closest('.field-row').remove(); }
+function addSfTurmaRow() {
+    var c = document.getElementById('sf-turma-fields');
+    if (!c) return;
+    var d = document.createElement('div');
+    d.className = 'field-row';
+    d.innerHTML =
+        '<input type="text" name="sf_field_source[]" list="sf-turma-source-list" placeholder="ex: user.email ou extra.data_live">' +
+        '<input type="text" name="sf_field_dest[]" placeholder="Campo destino no SF">' +
+        '<button class="btnx" type="button" onclick="removeSfTurmaRow(this)">×</button>';
+    c.appendChild(d);
+    d.querySelector('input').focus();
+}
+
 function parseSfLiveOffset(raw) {
     raw = String(raw || '').trim();
     if (raw === '') return 0;
@@ -1852,76 +1476,6 @@ if (sfTurmaForm) {
             alert('Informe o deslocamento no formato -2:30, 0:00 ou 1:15.');
         }
     });
-
-    var sfAudienceTimer = null;
-    function sfAudienceEsc(v) {
-        return String(v == null ? '' : v).replace(/[&<>"']/g, function(ch) {
-            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch];
-        });
-    }
-    function sfAudienceRowsHtml(rows, total) {
-        rows = Array.isArray(rows) ? rows : [];
-        total = parseInt(total || 0, 10);
-        if (!rows.length) return '<div class="note">Nenhum aluno elegivel com os filtros atuais.</div>';
-        var html = '<div style="overflow-x:auto;margin-top:8px;"><table class="sf-audience-table">'
-            + '<thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Turma</th><th>Tags</th><th>%</th></tr></thead><tbody>';
-        rows.forEach(function(u) {
-            html += '<tr>'
-                + '<td title="' + sfAudienceEsc(u.nome) + '">' + sfAudienceEsc(u.nome) + '</td>'
-                + '<td title="' + sfAudienceEsc(u.email) + '">' + sfAudienceEsc(u.email) + '</td>'
-                + '<td>' + sfAudienceEsc(u.telefone) + '</td>'
-                + '<td>' + sfAudienceEsc(u.turma) + '</td>'
-                + '<td title="' + sfAudienceEsc(u.tags) + '">' + sfAudienceEsc(u.tags || '-') + '</td>'
-                + '<td>' + parseInt(u.andamento || 0, 10) + '%</td>'
-                + '</tr>';
-        });
-        html += '</tbody></table>';
-        return html + '</div>';
-    }
-    async function updateSfAudiencePreview() {
-        var countEl = document.getElementById('sf-audience-count');
-        var skippedEl = document.getElementById('sf-audience-skipped');
-        var bodyEl = document.getElementById('sf-audience-body');
-        var statusEl = document.getElementById('sf-audience-status');
-        if (!countEl || !skippedEl || !bodyEl) return;
-
-        countEl.textContent = '...';
-        if (statusEl) statusEl.textContent = 'Recalculando com os filtros selecionados...';
-        var fd = new FormData(sfTurmaForm);
-        fd.set('action', 'sf_turma_audience_preview');
-        try {
-            var res = await fetch('superfuncionario.php', {method:'POST', body:fd});
-            var j = await res.json();
-            if (!j.ok) throw new Error(j.msg || 'Erro ao calcular publico');
-            var skipped = j.skipped || {};
-            countEl.textContent = parseInt(j.total || 0, 10);
-            skippedEl.textContent = 'Fora do envio: compra ' + parseInt(skipped.compra || 0, 10)
-                + ', certificado ' + parseInt(skipped.certificado || 0, 10)
-                + ', tags ' + parseInt(skipped.tags || 0, 10)
-                + ', progresso ' + parseInt(skipped.progresso || 0, 10)
-                + ', reagendados ' + parseInt(skipped.reagendado || 0, 10) + '.';
-            bodyEl.innerHTML = sfAudienceRowsHtml(j.rows || [], j.total || 0);
-            if (statusEl) statusEl.textContent = 'Calculado com os filtros selecionados nesta tela.';
-        } catch (e) {
-            countEl.textContent = '?';
-            if (statusEl) statusEl.textContent = 'Nao foi possivel recalcular agora.';
-            bodyEl.innerHTML = '<div class="note">Erro ao recalcular: ' + sfAudienceEsc(e.message) + '</div>';
-        }
-    }
-    function scheduleSfAudiencePreview() {
-        clearTimeout(sfAudienceTimer);
-        sfAudienceTimer = setTimeout(updateSfAudiencePreview, 250);
-    }
-    sfTurmaForm.querySelectorAll('input[name="live_exclude_purchase"],input[name="live_exclude_cert"],input[name="live_include_rescheduled"],input[name="live_include_tag_ids[]"],input[name="live_exclude_tag_ids[]"]').forEach(function(el) {
-        el.addEventListener('change', scheduleSfAudiencePreview);
-        el.addEventListener('input', scheduleSfAudiencePreview);
-    });
-}
-
-function toggleSfMetrics(id) {
-    var row = document.getElementById('sf-metrics-' + id);
-    if (!row) return;
-    row.classList.toggle('open');
 }
 </script>
 
