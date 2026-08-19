@@ -190,11 +190,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Cria o evento e a execução direta para este fluxo específico
             $payload = json_encode($testExtra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $sourceKey = 'test_manual_' . microtime(true) . '_' . bin2hex(random_bytes(6));
-            $pdo->prepare("INSERT INTO automation_flow_events (event_code, user_id, source_key, payload_json, matched_flows, created_at) VALUES (:e, :u, :s, :p, 1, NOW())")
+            $pdo->prepare("INSERT INTO automation_flow_events (event_code, user_id, source_key, payload_json, matched_flows) VALUES (:e, :u, :s, :p, 1)")
                 ->execute([':e' => $event, ':u' => $testUserId, ':s' => $sourceKey, ':p' => $payload]);
             $eventId = (int)$pdo->lastInsertId();
 
-            $pdo->prepare("INSERT INTO automation_flow_runs (flow_id, version_id, event_id, user_id, status, created_at) VALUES (:f, :v, :e, :u, 'running', NOW())")
+            $pdo->prepare("INSERT INTO automation_flow_runs (flow_id, version_id, event_id, user_id, status, started_at) VALUES (:f, :v, :e, :u, 'running', NOW())")
                 ->execute([':f' => $id, ':v' => (int)$flow['current_version_id'], ':e' => $eventId, ':u' => $testUserId]);
             $runId = (int)$pdo->lastInsertId();
 
