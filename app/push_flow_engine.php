@@ -404,10 +404,19 @@ function push_flow_render_template(string $template, array $user, array $extra):
 function push_flow_send_push(PDO $pdo, array $config, int $userId, array $job): array
 {
     if (function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $userId)) return ['skipped'=>'user_blocked'];
+    $extra=json_decode((string)($job['event_payload']??''),true)?:[];
+    $liveRaw = (string)($extra['data_live'] ?? $extra['live_at'] ?? '');
+    if ($liveRaw !== '') {
+        $liveTs = strtotime($liveRaw);
+        // Se a live começou há mais de 60 minutos, não dispara aviso atrasado
+        if ($liveTs && $liveTs < (time() - 3600)) {
+            return ['skipped'=>'live_already_ended', 'live_at'=>$liveRaw];
+        }
+    }
     push_ensure_schema($pdo);
     $target = 'flow_job:' . (int)$job['id'];
     $st = $pdo->prepare("SELECT id FROM push_notifications WHERE target_type='flow_job' AND target_value=:target ORDER BY id DESC LIMIT 1"); $st->execute(['target'=>$target]); $notificationId = (int)$st->fetchColumn();
-    $user=buscar_usuario_por_id($userId)?:['id'=>$userId];$extra=json_decode((string)($job['event_payload']??''),true)?:[];
+    $user=buscar_usuario_por_id($userId)?:['id'=>$userId];
     $title = mb_substr(trim(push_flow_render_template((string)($config['title'] ?? ''),$user,$extra)), 0, 150); $body = mb_substr(trim(push_flow_render_template((string)($config['body'] ?? ''),$user,$extra)), 0, 500); $clickUrl = push_normalize_click_url(trim(push_flow_render_template((string)($config['clickUrl'] ?? 'trilha.php'),$user,$extra)) ?: 'trilha.php');
     $devicesSt = $pdo->prepare("SELECT * FROM push_devices WHERE user_id=:user AND status='active' AND installed_at IS NOT NULL AND notification_permission='granted' AND token IS NOT NULL AND token<>''"); $devicesSt->execute(['user'=>$userId]); $devices = $devicesSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     if ($notificationId <= 0) {
