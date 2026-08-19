@@ -212,8 +212,8 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
         $sampleLate = $stLate->fetch(PDO::FETCH_ASSOC) ?: null;
 
         // Análise detalhada das etapas das amostras A e B
-        $earlyAnalysis = $sampleEarly ? automation_analyze_run_steps($pdo, (int)$sampleEarly['run_id'], $graph, $now) : null;
-        $lateAnalysis = $sampleLate ? automation_analyze_run_steps($pdo, (int)$sampleLate['run_id'], $graph, $now) : null;
+        $earlyAnalysis = $sampleEarly ? automation_analyze_run_steps($pdo, (int)$sampleEarly['run_id'], $graph, $now, $sampleEarly) : null;
+        $lateAnalysis = $sampleLate ? automation_analyze_run_steps($pdo, (int)$sampleLate['run_id'], $graph, $now, $sampleLate) : null;
 
         if ($earlyAnalysis && !empty($earlyAnalysis['issues'])) {
             foreach ($earlyAnalysis['issues'] as $iss) {
@@ -417,10 +417,33 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
 }
 
 /**
+ * Formata a diferença temporal em formato legível (+35m, +1h 20m, No horário).
+ */
+function automation_format_delay(?int $diffSeconds): string
+{
+    if ($diffSeconds === null) return '-';
+    if (abs($diffSeconds) < 60) return 'No horário (0m)';
+    $sign = $diffSeconds > 0 ? '+' : '-';
+    $totalMinutes = (int)abs(round($diffSeconds / 60));
+    $hours = (int)floor($totalMinutes / 60);
+    $minutes = $totalMinutes % 60;
+    if ($hours > 0) {
+        return "{$sign}{$hours}h {$minutes}m";
+    }
+    return "{$sign}{$minutes}m";
+}
+
+/**
  * Analisa as etapas e jobs de uma execução específica para detectar travamentos ou atrasos.
  */
-function automation_analyze_run_steps(PDO $pdo, int $runId, array $graph, DateTimeImmutable $now): array
+function automation_analyze_run_steps(PDO $pdo, int $runId, array $graph, DateTimeImmutable $now, ?array $runData = null): array
 {
+    if (!$runData) {
+        $stRun = $pdo->prepare("SELECT started_at, finished_at, status FROM automation_flow_runs WHERE id = :rid");
+        $stRun->execute([':rid' => $runId]);
+        $runData = $stRun->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
+
     $stSteps = $pdo->prepare("
         SELECT s.* FROM automation_flow_steps s 
         WHERE s.run_id = :rid 
@@ -440,12 +463,40 @@ function automation_analyze_run_steps(PDO $pdo, int $runId, array $graph, DateTi
     $issues = [];
     $stepTimeline = [];
 
+    $currentPlannedStr = (string)($runData['started_at'] ?? '');
+    $currentPlanned = $currentPlannedStr !== '' ? new DateTimeImmutable($currentPlannedStr, $now->getTimezone()) : $now;
+
     foreach ($steps as $s) {
         $nodeType = (string)$s['node_type'];
         $status = (string)$s['status'];
         $startedAtStr = (string)$s['started_at'];
-        $finishedAtStr = (string)($s['finished_at'] ?? '');
+        $finishedAtStr = (string)($s['finished_at'] ?? $startedAtStr);
         $errMsg = (string)($s['error_message'] ?? '');
+        $out = json_decode((string)($s['output_json'] ?? ''), true) ?: [];
+
+        $actualDt = $finishedAtStr !== '' ? new DateTimeImmutable($finishedAtStr, $now->getTimezone()) : new DateTimeImmutable($startedAtStr, $now->getTimezone());
+
+        $plannedAtStr = $currentPlanned->format('Y-m-d H:i:s');
+        $diffSeconds = $actualDt->getTimestamp() - $currentPlanned->getTimestamp();
+
+        // Se for um bloco wait com agendamento futuro
+        if (!empty($out['resume_at'])) {
+            try {
+                $resumeDt = new DateTimeImmutable((string)$out['resume_at'], $now->getTimezone());
+                if ($status === 'scheduled') {
+                    $plannedAtStr = $currentPlanned->format('Y-m-d H:i:s');
+                    $diffSeconds = $actualDt->getTimestamp() - $currentPlanned->getTimestamp();
+                    $currentPlanned = $resumeDt;
+                } else {
+                    $currentPlanned = $resumeDt;
+                    $plannedAtStr = $currentPlanned->format('Y-m-d H:i:s');
+                    $diffSeconds = $actualDt->getTimestamp() - $currentPlanned->getTimestamp();
+                }
+            } catch (Throwable $e) {}
+        }
+
+        $delayFormatted = automation_format_delay($diffSeconds);
+        $delaySeverity = abs($diffSeconds) > 1800 ? 'critical' : (abs($diffSeconds) > 300 ? 'warning' : 'ok');
 
         $timelineItem = [
             'node_id' => (string)$s['node_id'],
@@ -453,6 +504,10 @@ function automation_analyze_run_steps(PDO $pdo, int $runId, array $graph, DateTi
             'status' => $status,
             'started_at' => $startedAtStr,
             'finished_at' => $finishedAtStr,
+            'planned_at' => $plannedAtStr,
+            'delay_seconds' => $diffSeconds,
+            'delay_formatted' => $delayFormatted,
+            'delay_severity' => $delaySeverity,
             'error' => $errMsg,
         ];
 

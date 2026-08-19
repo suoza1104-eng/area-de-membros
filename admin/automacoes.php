@@ -585,56 +585,75 @@ function openDiagModal(fid) {
   html += '<div style="margin-top:14px;"><strong style="font-size:13px;color:#fff;">🧪 Teste 1: Dupla Amostragem Temporal (Leads Reais no Fluxo)</strong></div>';
   html += '<div class="af-diag-grid">';
   
-  // Amostra A
-  html += '<div class="af-diag-card">';
-  html += '<strong>Amostra A (Entrou Antes / Maduro)</strong>';
-  if (d.sample_early) {
-    html += '<div style="color:var(--muted);font-size:10px;margin-bottom:6px;">Aluno: <b style="color:#fff;">' + (d.sample_early.user || 'ID #' + d.sample_early.run_id) + '</b><br>Entrada: ' + d.sample_early.started_at + ' · Status: <span class="af-pill">' + d.sample_early.status + '</span></div>';
-    if (d.sample_early.analysis && d.sample_early.analysis.steps && d.sample_early.analysis.steps.length) {
-      html += '<div class="af-diag-timeline">';
-      d.sample_early.analysis.steps.forEach(st => {
-        html += '<div class="af-diag-step"><span>[' + st.node_type + '] ' + st.node_id + '</span><span style="color:' + (st.status === 'completed' ? '#86efac' : (st.status === 'failed' ? '#f87171' : '#facc15')) + ';">' + st.status + ' (' + (st.started_at ? st.started_at.slice(11,16) : '') + ')</span></div>';
-      });
-      html += '</div>';
-    } else {
-      html += '<div style="color:var(--muted);font-size:10px;">Sem etapas executadas ainda.</div>';
-    }
-  } else {
-    html += '<div style="color:var(--muted);font-size:10px;">Nenhuma execução encontrada nesta janela.</div>';
-  }
-  html += '</div>';
+  function renderSampleBox(title, sample) {
+    let sHtml = '<div class="af-diag-card">';
+    sHtml += '<strong style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' + title + '</strong>';
+    if (sample) {
+      sHtml += '<div style="color:var(--muted);font-size:11px;margin-bottom:10px;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;border:1px solid rgba(255,255,255,0.05);">';
+      sHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">';
+      sHtml += '<span>Aluno: <b style="color:#fff;">' + (sample.user || 'ID #' + sample.run_id) + '</b></span>';
+      sHtml += '<span><span class="af-pill">' + sample.status + '</span></span>';
+      sHtml += '</div>';
+      sHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">';
+      sHtml += '<div>Início: <b style="color:#cbd5e1;">' + (sample.started_at ? sample.started_at.slice(5,16) : '-') + '</b></div>';
+      sHtml += '<div>Término: <b style="color:#fff;">' + (sample.finished_at ? sample.finished_at.slice(5,16) : 'Em andamento') + '</b></div>';
+      sHtml += '</div>';
+      sHtml += '</div>';
 
-  // Amostra B
-  html += '<div class="af-diag-card">';
-  html += '<strong>Amostra B (Entrou Depois / Recente)</strong>';
-  if (d.sample_late) {
-    html += '<div style="color:var(--muted);font-size:10px;margin-bottom:6px;">Aluno: <b style="color:#fff;">' + (d.sample_late.user || 'ID #' + d.sample_late.run_id) + '</b><br>Entrada: ' + d.sample_late.started_at + ' · Status: <span class="af-pill">' + d.sample_late.status + '</span></div>';
-    if (d.sample_late.analysis && d.sample_late.analysis.steps && d.sample_late.analysis.steps.length) {
-      html += '<div class="af-diag-timeline">';
-      d.sample_late.analysis.steps.forEach(st => {
-        html += '<div class="af-diag-step"><span>[' + st.node_type + '] ' + st.node_id + '</span><span style="color:' + (st.status === 'completed' ? '#86efac' : (st.status === 'failed' ? '#f87171' : '#facc15')) + ';">' + st.status + ' (' + (st.started_at ? st.started_at.slice(11,16) : '') + ')</span></div>';
-      });
-      html += '</div>';
+      if (sample.analysis && sample.analysis.steps && sample.analysis.steps.length) {
+        sHtml += '<div class="af-diag-timeline">';
+        sample.analysis.steps.forEach(st => {
+          let diffColor = '#86efac';
+          if (st.delay_severity === 'critical') diffColor = '#f87171';
+          else if (st.delay_severity === 'warning') diffColor = '#facc15';
+
+          let statusColor = st.status === 'completed' ? '#86efac' : (st.status === 'failed' ? '#f87171' : '#facc15');
+
+          sHtml += '<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:6px;">';
+          sHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+          sHtml += '<span style="font-weight:700;color:#e2e8f0;font-size:11px;">[' + st.node_type + '] ' + st.node_id + '</span>';
+          sHtml += '<span class="af-pill" style="font-size:9px;color:' + statusColor + ';">' + st.status + '</span>';
+          sHtml += '</div>';
+          sHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">';
+          sHtml += '<div>Planejado: <b style="color:#cbd5e1;">' + (st.planned_at ? st.planned_at.slice(11,16) : '-') + '</b></div>';
+          sHtml += '<div>Real: <b style="color:#fff;">' + (st.finished_at ? st.finished_at.slice(11,16) : (st.started_at ? st.started_at.slice(11,16) : '-')) + '</b></div>';
+          sHtml += '<div>Diferença: <b style="color:' + diffColor + ';">' + (st.delay_formatted || '-') + '</b></div>';
+          sHtml += '</div>';
+          if (st.error) {
+            sHtml += '<div style="color:#f87171;font-size:10px;margin-top:4px;">⚠️ ' + st.error + '</div>';
+          }
+          sHtml += '</div>';
+        });
+        sHtml += '</div>';
+      } else {
+        sHtml += '<div style="color:var(--muted);font-size:10px;padding:8px;">Sem etapas executadas ainda.</div>';
+      }
     } else {
-      html += '<div style="color:var(--muted);font-size:10px;">Sem etapas executadas ainda.</div>';
+      sHtml += '<div style="color:var(--muted);font-size:10px;padding:8px;">Nenhuma execução encontrada nesta janela.</div>';
     }
-  } else {
-    html += '<div style="color:var(--muted);font-size:10px;">Nenhuma execução adicional encontrada.</div>';
+    sHtml += '</div>';
+    return sHtml;
   }
-  html += '</div>';
+
+  html += renderSampleBox('Amostra A (Entrou Antes / Maduro)', d.sample_early);
+  html += renderSampleBox('Amostra B (Entrou Depois / Recente)', d.sample_late);
   html += '</div>';
 
   // Benchmark de SLA
   if (d.benchmark && d.benchmark.samples && d.benchmark.samples.length) {
     html += '<div style="margin-top:14px;"><strong style="font-size:13px;color:#fff;">📊 Teste 2: Benchmark de SLA (Últimos ' + d.benchmark.samples.length + ' Concluídos)</strong></div>';
-    html += '<div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#081020;margin-top:6px;font-size:11px;">';
-    html += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">';
-    html += '<span>Duração Teórica: <strong>~' + d.benchmark.theoretical_minutes + ' min</strong></span>';
+    html += '<div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:#081020;margin-top:6px;font-size:11px;">';
+    html += '<div style="display:flex;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">';
+    html += '<span>Duração Teórica Projetada: <strong style="color:#38bdf8;">~' + d.benchmark.theoretical_minutes + ' min</strong></span>';
     html += '<span>Média Real dos Concluídos: <strong style="color:' + (d.benchmark.avg_duration_minutes > d.benchmark.theoretical_minutes * 2 ? '#f87171' : '#86efac') + ';">~' + d.benchmark.avg_duration_minutes + ' min</strong></span>';
     html += '</div>';
-    html += '<div class="af-table"><table><thead><tr><th>Aluno</th><th>Início</th><th>Término</th><th>Duração Real</th></tr></thead><tbody>';
+    html += '<div class="af-table"><table><thead><tr><th>Aluno</th><th>Início</th><th>Término Real</th><th>Duração Gasta</th><th>Status do SLA</th></tr></thead><tbody>';
     d.benchmark.samples.forEach(s => {
-      html += '<tr><td>' + (s.nome || s.email || 'Lead #' + s.run_id) + '</td><td>' + s.started_at + '</td><td>' + s.finished_at + '</td><td><strong>' + s.duration_minutes + ' min</strong></td></tr>';
+      let dur = +s.duration_minutes || 0;
+      let theo = +d.benchmark.theoretical_minutes || 0;
+      let diffMins = theo > 0 ? (dur - theo) : 0;
+      let slaTag = diffMins > 60 ? '<span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;">+' + diffMins + 'm atraso</span>' : (diffMins > 10 ? '<span class="af-pill" style="background:#f59e0b;color:#fff;">+' + diffMins + 'm</span>' : '<span class="af-pill" style="background:#15803d;color:#fff;">No prazo</span>');
+      html += '<tr><td><strong>' + (s.nome || s.email || 'Lead #' + s.run_id) + '</strong></td><td>' + (s.started_at ? s.started_at.slice(5,16) : '-') + '</td><td>' + (s.finished_at ? s.finished_at.slice(5,16) : '-') + '</td><td><strong>' + dur + ' min</strong></td><td>' + slaTag + '</td></tr>';
     });
     html += '</tbody></table></div>';
     html += '</div>';
