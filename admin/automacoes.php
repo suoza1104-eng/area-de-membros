@@ -383,7 +383,8 @@ include __DIR__ . '/_header.php';
           </span>
         </div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.25);font-weight:700;padding:8px 14px;border-radius:8px;cursor:pointer;" onclick="openGlobalDiagModal()">🔍 Ver Detalhes das Inconsistências</button>
         <form method="post" style="margin:0;">
           <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
           <input type="hidden" name="action" value="acknowledge_diagnostics">
@@ -700,6 +701,62 @@ function openDiagModal(fid) {
   document.getElementById('diagModalContent').innerHTML = html;
   document.getElementById('diagModal').classList.add('open');
 }
+
+const globalDiag = <?=json_encode($latestDiag, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG)?>;
+function openGlobalDiagModal() {
+  if (!globalDiag) return alert('Nenhum diagnóstico registrado ainda.');
+  document.getElementById('diagModalTitle').textContent = 'Relatório Geral de Inconsistências';
+  document.getElementById('diagModalSubtitle').textContent = 'Varredura de ' + (globalDiag.check_time || '-') + ' · Total de inconformidades: ' + (globalDiag.issues_count || 0);
+
+  let html = '';
+
+  if (globalDiag.infra_issues && globalDiag.infra_issues.length) {
+    html += '<div style="margin-bottom:16px;">';
+    html += '<strong style="color:#f87171;font-size:13px;display:block;margin-bottom:8px;">⚙️ Infraestrutura e Crons</strong>';
+    globalDiag.infra_issues.forEach(iss => {
+      html += '<div style="padding:10px 12px;border-radius:8px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;margin-bottom:6px;font-size:11px;">';
+      html += '<strong>[' + (iss.type || 'CRON') + ']</strong> ' + (iss.message || iss.label);
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += '<div style="margin-bottom:16px;">';
+  html += '<strong style="color:#fff;font-size:13px;display:block;margin-bottom:8px;">⚡ Inconsistências por Fluxo</strong>';
+  
+  let hasFlowIssues = false;
+  if (globalDiag.flows && globalDiag.flows.length) {
+    globalDiag.flows.forEach(fl => {
+      if (fl.issues && fl.issues.length) {
+        hasFlowIssues = true;
+        html += '<div style="padding:12px;border-radius:10px;background:#081020;border:1px solid #ef4444;margin-bottom:10px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '<strong style="color:#fff;font-size:13px;">' + fl.flow_name + '</strong>';
+        html += '<button type="button" class="btn btn-ghost btn-xs" style="color:#f87171;border-color:#ef4444;" onclick="openDiagModal(' + fl.flow_id + ')">🔍 Abrir Raio-X</button>';
+        html += '</div>';
+        
+        fl.issues.forEach(iss => {
+          html += '<div style="font-size:11px;color:#fca5a5;margin-top:4px;display:flex;gap:6px;">';
+          html += '<span>•</span><span>' + (iss.message || iss.type) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+    });
+  }
+
+  if (!hasFlowIssues && (!globalDiag.infra_issues || !globalDiag.infra_issues.length)) {
+    html += '<div style="padding:14px;border-radius:10px;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:#86efac;font-size:12px;">';
+    html += '✅ Nenhuma inconsistência encontrada nesta varredura. Todos os fluxos estão saudáveis.';
+    html += '</div>';
+  }
+
+  html += '</div>';
+
+  document.getElementById('diagModalContent').innerHTML = html;
+  document.getElementById('diagModal').classList.add('open');
+}
+
 function closeDiagModal() {
   document.getElementById('diagModal').classList.remove('open');
 }
