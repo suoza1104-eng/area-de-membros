@@ -585,6 +585,17 @@ function openDiagModal(fid) {
   html += '<div style="margin-top:14px;"><strong style="font-size:13px;color:#fff;">🧪 Teste 1: Dupla Amostragem Temporal (Leads Reais no Fluxo)</strong></div>';
   html += '<div class="af-diag-grid">';
   
+  function formatDelayJs(diffSecs) {
+    if (diffSecs === null || diffSecs === undefined || isNaN(diffSecs)) return '-';
+    if (Math.abs(diffSecs) < 60) return 'No horário (0m)';
+    let sign = diffSecs > 0 ? '+' : '-';
+    let mins = Math.abs(Math.round(diffSecs / 60));
+    let hours = Math.floor(mins / 60);
+    let remMins = mins % 60;
+    if (hours > 0) return sign + hours + 'h ' + remMins + 'm';
+    return sign + remMins + 'm';
+  }
+
   function renderSampleBox(title, sample) {
     let sHtml = '<div class="af-diag-card">';
     sHtml += '<strong style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' + title + '</strong>';
@@ -602,10 +613,37 @@ function openDiagModal(fid) {
 
       if (sample.analysis && sample.analysis.steps && sample.analysis.steps.length) {
         sHtml += '<div class="af-diag-timeline">';
+        let currentPlanDate = sample.started_at ? new Date(sample.started_at.replace(/-/g, '/')) : null;
+
         sample.analysis.steps.forEach(st => {
+          let plannedStr = '';
+          let delayTxt = st.delay_formatted || '';
+          let severity = st.delay_severity || 'ok';
+
+          if (st.planned_at && st.planned_at.length >= 16) {
+            plannedStr = st.planned_at.slice(11, 16);
+            currentPlanDate = new Date(st.planned_at.replace(/-/g, '/'));
+          } else if (currentPlanDate) {
+            let hh = String(currentPlanDate.getHours()).padStart(2, '0');
+            let mm = String(currentPlanDate.getMinutes()).padStart(2, '0');
+            plannedStr = hh + ':' + mm;
+          }
+
+          let actualStr = (st.finished_at && st.finished_at.length >= 16 ? st.finished_at.slice(11, 16) : (st.started_at && st.started_at.length >= 16 ? st.started_at.slice(11, 16) : '-'));
+
+          if (!delayTxt || delayTxt === '-') {
+            let actDateStr = st.finished_at || st.started_at;
+            if (currentPlanDate && actDateStr && actDateStr.length >= 16) {
+              let actDate = new Date(actDateStr.replace(/-/g, '/'));
+              let diffSecs = (actDate.getTime() - currentPlanDate.getTime()) / 1000;
+              delayTxt = formatDelayJs(diffSecs);
+              severity = Math.abs(diffSecs) > 1800 ? 'critical' : (Math.abs(diffSecs) > 300 ? 'warning' : 'ok');
+            }
+          }
+
           let diffColor = '#86efac';
-          if (st.delay_severity === 'critical') diffColor = '#f87171';
-          else if (st.delay_severity === 'warning') diffColor = '#facc15';
+          if (severity === 'critical') diffColor = '#f87171';
+          else if (severity === 'warning') diffColor = '#facc15';
 
           let statusColor = st.status === 'completed' ? '#86efac' : (st.status === 'failed' ? '#f87171' : '#facc15');
 
@@ -615,9 +653,9 @@ function openDiagModal(fid) {
           sHtml += '<span class="af-pill" style="font-size:9px;color:' + statusColor + ';">' + st.status + '</span>';
           sHtml += '</div>';
           sHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">';
-          sHtml += '<div>Planejado: <b style="color:#cbd5e1;">' + (st.planned_at ? st.planned_at.slice(11,16) : '-') + '</b></div>';
-          sHtml += '<div>Real: <b style="color:#fff;">' + (st.finished_at ? st.finished_at.slice(11,16) : (st.started_at ? st.started_at.slice(11,16) : '-')) + '</b></div>';
-          sHtml += '<div>Diferença: <b style="color:' + diffColor + ';">' + (st.delay_formatted || '-') + '</b></div>';
+          sHtml += '<div>Planejado: <b style="color:#cbd5e1;">' + (plannedStr || '-') + '</b></div>';
+          sHtml += '<div>Real: <b style="color:#fff;">' + actualStr + '</b></div>';
+          sHtml += '<div>Diferença: <b style="color:' + diffColor + ';">' + (delayTxt || '-') + '</b></div>';
           sHtml += '</div>';
           if (st.error) {
             sHtml += '<div style="color:#f87171;font-size:10px;margin-top:4px;">⚠️ ' + st.error + '</div>';
