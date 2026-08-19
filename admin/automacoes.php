@@ -120,14 +120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             $flow = automation_flow_find($pdo, $id);
             if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
-            // SEGURO: Apenas reprocessa execuções com falha, pendentes ou em andamento
             $runs = $pdo->prepare("
                 SELECT r.id, r.user_id, r.version_id, v.graph_json 
                 FROM automation_flow_runs r 
                 JOIN automation_flow_versions v ON v.id=r.version_id 
-                WHERE r.flow_id=:id 
-                  AND (r.status IN ('failed','running') 
-                       OR EXISTS (SELECT 1 FROM automation_flow_jobs j WHERE j.run_id=r.id AND j.status IN ('queued','retry','scheduled','processing')))
+                WHERE r.flow_id=:id
             ");
             $runs->execute(['id'=>$id]);
             $runRows = $runs->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -151,17 +148,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             $flow = automation_flow_find($pdo, $id);
             if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
-            $graph = json_decode((string)($flow['current_graph_json'] ?? $flow['draft_graph_json']), true) ?: [];
+            $vst = $pdo->prepare("SELECT graph_json FROM automation_flow_versions WHERE id=:v LIMIT 1");
+            $vst->execute([':v' => (int)($flow['current_version_id'] ?? 0)]);
+            $graphJson = (string)($vst->fetchColumn() ?: ($flow['draft_graph_json'] ?? '{}'));
+            $graph = json_decode($graphJson, true) ?: [];
             $trigger = null;
             foreach (($graph['nodes'] ?? []) as $node) {
                 if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
             }
+            if (!$trigger) throw new RuntimeException('O fluxo não possui bloco de gatilho.');
             $event = (string)($trigger['config']['event'] ?? 'PAGAMENTO_APROVADO');
-            // Busca o admin ou último usuário para o teste
-            $testUserId = (int)($_SESSION['user_id'] ?? 0);
-            if ($testUserId <= 0) {
-                $testUserId = (int)($pdo->query("SELECT id FROM users ORDER BY id DESC LIMIT 1")->fetchColumn() ?: 1);
+            $filterTurma = (string)($trigger['config']['filter'] ?? '');
+
+            // Busca o último aluno com essa turma ou o último cadastrado
+            $testUser = null;
+            if ($filterTurma !== '') {
+                $ust = $pdo->prepare("SELECT * FROM users WHERE codigo_turma=:t OR turma_codigo=:t ORDER BY id DESC LIMIT 1");
+                $ust->execute([':t' => $filterTurma]);
+                $testUser = $ust->fetch(PDO::FETCH_ASSOC);
             }
+            if (!$testUser) {
+                $testUser = $pdo->query("SELECT * FROM users ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: ['id'=>1,'nome'=>'Aluno Teste','email'=>'teste@exemplo.com','telefone'=>'11999999999'];
+            }
+            $testUserId = (int)$testUser['id'];
+
             $testExtra = [
                 'gateway' => 'teste_painel',
                 'transacao_id' => 'TESTE-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 8)),
@@ -171,11 +181,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'moeda' => 'BRL',
                 'metodo' => 'credit_card',
                 'produto_nome' => 'Curso de Teste (Disparo Manual)',
+                'codigo_turma' => $filterTurma ?: ($testUser['codigo_turma'] ?? 'GERAL'),
                 'utm_source' => 'painel_admin',
                 'utm_campaign' => 'teste_automacao',
                 'is_test' => true,
             ];
-            automation_flow_capture_event($pdo, $event, $testUserId, $testExtra);
+
+            // Cria o evento e a execução direta para este fluxo específico
+            $payload = json_encode($testExtra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $sourceKey = 'test_manual_' . microtime(true) . '_' . bin2hex(random_bytes(6));
+            $pdo->prepare("INSERT INTO automation_flow_events (event_code, user_id, source_key, payload_json, matched_flows, created_at) VALUES (:e, :u, :s, :p, 1, NOW())")
+                ->execute([':e' => $event, ':u' => $testUserId, ':s' => $sourceKey, ':p' => $payload]);
+            $eventId = (int)$pdo->lastInsertId();
+
+            $pdo->prepare("INSERT INTO automation_flow_runs (flow_id, version_id, event_id, user_id, status, created_at) VALUES (:f, :v, :e, :u, 'running', NOW())")
+                ->execute([':f' => $id, ':v' => (int)$flow['current_version_id'], ':e' => $eventId, ':u' => $testUserId]);
+            $runId = (int)$pdo->lastInsertId();
+
+            $pdo->prepare("INSERT INTO automation_flow_jobs (run_id, node_id, status, available_at, input_json) VALUES (:r, :n, 'queued', NOW(), '{}')")
+                ->execute([':r' => $runId, ':n' => (string)$trigger['id']]);
+
             $res = automation_flow_process_queue($pdo, 100);
             header('Location: automacoes.php?view=flows&tested=1&dispatched=' . (int)($res['processed'] ?? 0));
             exit;
