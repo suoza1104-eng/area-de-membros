@@ -103,6 +103,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 60,
             'timeout' => 300,
         ],
+        'diagnostico_fluxos' => [
+            'label' => 'Diagnostico de Automacoes',
+            'description' => 'Varre todos os fluxos ativos, infraestrutura e provedores gerando auditoria automatica.',
+            'script' => __DIR__ . '/../cron/processar_diagnostico_fluxos.php',
+            'interval' => 240, // 4 horas / 3x ao dia
+            'timeout' => 120,
+        ],
     ];
 }
 

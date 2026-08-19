@@ -710,7 +710,7 @@ function automation_flow_process_job(PDO $pdo, array $job): string
     }
 }
 
-function automation_flow_process_queue(PDO $pdo, int $limit = 50): array
+function automation_flow_process_queue(PDO $pdo, int $limit = 150): array
 {
     $done=['processed'=>0,'completed'=>0,'scheduled'=>0,'retry'=>0,'failed'=>0,'skipped'=>0,'canceled'=>0];
     for ($i=0; $i<$limit; $i++) {

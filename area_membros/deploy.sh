@@ -37,9 +37,7 @@ run_php_cron "$DEPLOY_DIR/cron/processar_reagendamentos_live.php" "reagendamento
 run_php_cron "$DEPLOY_DIR/cron/processar_metricas_negocio.php" "metricas_negocio"
 run_php_cron "$DEPLOY_DIR/cron/processar_fluxos_push.php" "fluxos_push"
 run_php_cron "$DEPLOY_DIR/cron/processar_automacoes.php" "automacoes"
-run_php_cron "$DEPLOY_DIR/cron/processar_emails.php" "emails"
-run_php_cron "$DEPLOY_DIR/cron/processar_torpedo_voz.php" "torpedo_voz"
-run_php_cron "$DEPLOY_DIR/cron/processar_whatsapp_ai.php" "whatsapp_ai"
+run_php_cron "$DEPLOY_DIR/cron/processar_diagnostico_fluxos.php" "diagnostico_fluxos"
 run_php_cron "$DEPLOY_DIR/cron/processar_meta_leads_qualificados.php" "meta_leads_qualificados"
 
 git fetch --all -q
