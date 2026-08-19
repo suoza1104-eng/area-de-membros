@@ -120,7 +120,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             $flow = automation_flow_find($pdo, $id);
             if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
-            $runs = $pdo->prepare("SELECT r.id, r.user_id, r.version_id, v.graph_json FROM automation_flow_runs r JOIN automation_flow_versions v ON v.id=r.version_id WHERE r.flow_id=:id");
+            // SEGURO: Apenas reprocessa execuções com falha, pendentes ou em andamento
+            $runs = $pdo->prepare("
+                SELECT r.id, r.user_id, r.version_id, v.graph_json 
+                FROM automation_flow_runs r 
+                JOIN automation_flow_versions v ON v.id=r.version_id 
+                WHERE r.flow_id=:id 
+                  AND (r.status IN ('failed','running') 
+                       OR EXISTS (SELECT 1 FROM automation_flow_jobs j WHERE j.run_id=r.id AND j.status IN ('queued','retry','scheduled','processing')))
+            ");
             $runs->execute(['id'=>$id]);
             $runRows = $runs->fetchAll(PDO::FETCH_ASSOC) ?: [];
             foreach ($runRows as $run) {
@@ -137,6 +145,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $res = automation_flow_process_queue($pdo, 100);
             header('Location: automacoes.php?view=flows&reprocessed=' . count($runRows) . '&dispatched=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
+        if ($action === 'test_flow') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
+            $graph = json_decode((string)($flow['current_graph_json'] ?? $flow['draft_graph_json']), true) ?: [];
+            $trigger = null;
+            foreach (($graph['nodes'] ?? []) as $node) {
+                if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
+            }
+            $event = (string)($trigger['config']['event'] ?? 'PAGAMENTO_APROVADO');
+            // Busca o admin ou último usuário para o teste
+            $testUserId = (int)($_SESSION['user_id'] ?? 0);
+            if ($testUserId <= 0) {
+                $testUserId = (int)($pdo->query("SELECT id FROM users ORDER BY id DESC LIMIT 1")->fetchColumn() ?: 1);
+            }
+            $testExtra = [
+                'gateway' => 'teste_painel',
+                'transacao_id' => 'TESTE-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 8)),
+                'valor_bruto' => 197.00,
+                'valor_liquido' => 180.00,
+                'taxa' => 17.00,
+                'moeda' => 'BRL',
+                'metodo' => 'credit_card',
+                'produto_nome' => 'Curso de Teste (Disparo Manual)',
+                'utm_source' => 'painel_admin',
+                'utm_campaign' => 'teste_automacao',
+                'is_test' => true,
+            ];
+            automation_flow_capture_event($pdo, $event, $testUserId, $testExtra);
+            $res = automation_flow_process_queue($pdo, 100);
+            header('Location: automacoes.php?view=flows&tested=1&dispatched=' . (int)($res['processed'] ?? 0));
             exit;
         }
         if (in_array($action, ['save','publish'], true)) {
@@ -261,7 +302,8 @@ include __DIR__ . '/_header.php';
   <?php if(isset($_GET['deleted'])): ?><div class="af-msg">Fluxo removido.</div><?php endif; ?>
   <?php if(isset($_GET['cloned'])): ?><div class="af-msg">Fluxo clonado como rascunho.</div><?php endif; ?>
   <?php if(isset($_GET['processed'])): ?><div class="af-msg">Fila processada: <?=(int)$_GET['processed']?> etapa(s) executada(s).</div><?php endif; ?>
-  <?php if(isset($_GET['reprocessed'])): ?><div class="af-msg">Fluxo reprocessado: <?=(int)$_GET['reprocessed']?> execução(ões) re-enfileirada(s) e <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) disparada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['reprocessed'])): ?><div class="af-msg">Reprocessamento concluído: <?=(int)$_GET['reprocessed']?> execução(ões) pendente(s)/com falha re-enfileirada(s) e <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) disparada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['tested'])): ?><div class="af-msg">Disparo de teste gerado e enviado com sucesso para a integração! Confira na aba Logs detalhados.</div><?php endif; ?>
 
 <?php if($flow):
     $graph = $postedGraph ?? (json_decode((string)$flow['draft_graph_json'], true) ?: automation_flow_blank_graph());
@@ -366,7 +408,8 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
           <div class="af-flow-stat"><strong><?=(int)$f['pending']?></strong><small>Pendentes</small></div>
           <div class="af-actions">
             <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a>
-            <form method="post" onsubmit="return confirm('Deseja re-enfileirar e disparar todas as execuções deste fluxo?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Reprocessa e dispara para todas as integrações">Reprocessar</button></form>
+            <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="test_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Gera 1 disparo de teste e envia na hora para a integração">Testar</button></form>
+            <form method="post" onsubmit="return confirm('Deseja re-enfileirar e disparar as execuções pendentes/com falha deste fluxo?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Reprocessa apenas pendentes ou com falha">Reprocessar Pendentes</button></form>
             <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form>
             <?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?>
             <form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form>
