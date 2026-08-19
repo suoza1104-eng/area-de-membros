@@ -267,16 +267,19 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             $benchmarkAnalysis['avg_duration_minutes'] = round($avgDuration, 1);
             $benchmarkAnalysis['max_duration_minutes'] = $maxDuration;
             $benchmarkAnalysis['min_duration_minutes'] = $minDuration;
-            $benchmarkAnalysis['sla_deviation_ratio'] = round($ratio, 2);
+            // Se houver atraso significativo em relação à duração teórica projetada:
+            $toleratedDelayMinutes = max(10, (int)($totalTheoMinutes * 0.5));
+            $maxExpectedMinutes = $totalTheoMinutes + $toleratedDelayMinutes;
 
-            // Se a média real for maior que 2x a duração teórica + tolerância de 30min
-            if ($totalTheoMinutes >= 15 && $avgDuration > ($totalTheoMinutes * 2.0 + 30)) {
+            if ($avgDuration > $maxExpectedMinutes) {
+                $diffDelay = round($avgDuration - $totalTheoMinutes);
                 $issues[] = [
                     'source' => 'sla_benchmark',
                     'type' => 'sla_excessive_delay',
-                    'message' => "Desvio Crítico de SLA: Fluxo projetado para ~{$totalTheoMinutes}m, mas os últimos " . count($lastCompleted) . " leads levaram em média " . round($avgDuration) . "m para concluir.",
+                    'message' => "Desvio Crítico de SLA: Fluxo projetado para ~{$totalTheoMinutes} min, mas os últimos " . count($lastCompleted) . " leads levaram em média " . round($avgDuration) . " min (+{$diffDelay}m de atraso na fila/cron).",
                     'avg_minutes' => round($avgDuration),
                     'theo_minutes' => $totalTheoMinutes,
+                    'delay_minutes' => $diffDelay,
                 ];
             }
         }
