@@ -44,6 +44,100 @@ function automation_diagnostics_ensure_schema(PDO $pdo): void
     $ready = true;
 }
 
+function automation_diagnostics_previous_sample_exclusions(PDO $pdo, int $flowId): array
+{
+    $exclusions = ['run_ids' => [], 'user_ids' => []];
+
+    try {
+        $st = $pdo->prepare("
+            SELECT run_id_early, run_id_late, summary_json
+            FROM automation_flow_diagnostics
+            WHERE flow_id = :fid
+            ORDER BY check_time DESC, id DESC
+            LIMIT 1
+        ");
+        $st->execute([':fid' => $flowId]);
+        $previous = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$previous) return $exclusions;
+
+        foreach (['run_id_early', 'run_id_late'] as $key) {
+            $runId = (int)($previous[$key] ?? 0);
+            if ($runId > 0) $exclusions['run_ids'][] = $runId;
+        }
+
+        $summary = json_decode((string)($previous['summary_json'] ?? '{}'), true);
+        if (is_array($summary)) {
+            foreach (['sample_early', 'sample_late'] as $sampleKey) {
+                $runId = (int)($summary[$sampleKey]['run_id'] ?? 0);
+                $userId = (int)($summary[$sampleKey]['user_id'] ?? 0);
+                if ($runId > 0) $exclusions['run_ids'][] = $runId;
+                if ($userId > 0) $exclusions['user_ids'][] = $userId;
+            }
+
+            foreach (($summary['benchmark']['samples'] ?? []) as $sample) {
+                if (!is_array($sample)) continue;
+                $runId = (int)($sample['run_id'] ?? 0);
+                $userId = (int)($sample['user_id'] ?? 0);
+                if ($runId > 0) $exclusions['run_ids'][] = $runId;
+                if ($userId > 0) $exclusions['user_ids'][] = $userId;
+            }
+        }
+
+        $exclusions['run_ids'] = array_values(array_unique(array_filter(array_map('intval', $exclusions['run_ids']))));
+        if ($exclusions['run_ids']) {
+            $placeholders = [];
+            $params = [];
+            foreach ($exclusions['run_ids'] as $idx => $runId) {
+                $ph = ':prev_run_' . $idx;
+                $placeholders[] = $ph;
+                $params[$ph] = $runId;
+            }
+            $stUsers = $pdo->prepare("SELECT DISTINCT user_id FROM automation_flow_runs WHERE id IN (" . implode(',', $placeholders) . ") AND user_id IS NOT NULL AND user_id > 0");
+            $stUsers->execute($params);
+            foreach ($stUsers->fetchAll(PDO::FETCH_COLUMN) ?: [] as $userId) {
+                $userId = (int)$userId;
+                if ($userId > 0) $exclusions['user_ids'][] = $userId;
+            }
+        }
+
+        $exclusions['user_ids'] = array_values(array_unique(array_filter(array_map('intval', $exclusions['user_ids']))));
+    } catch (Throwable $e) {
+        return ['run_ids' => [], 'user_ids' => []];
+    }
+
+    return $exclusions;
+}
+
+function automation_diagnostics_exclusion_sql(array $exclusions, string $alias = 'r', string $prefix = 'ex'): array
+{
+    $sql = '';
+    $params = [];
+
+    $runIds = array_values(array_unique(array_filter(array_map('intval', $exclusions['run_ids'] ?? []))));
+    if ($runIds) {
+        $placeholders = [];
+        foreach ($runIds as $idx => $runId) {
+            $ph = ':' . $prefix . '_run_' . $idx;
+            $placeholders[] = $ph;
+            $params[$ph] = $runId;
+        }
+        $sql .= " AND {$alias}.id NOT IN (" . implode(',', $placeholders) . ")";
+    }
+
+    $userIds = array_values(array_unique(array_filter(array_map('intval', $exclusions['user_ids'] ?? []))));
+    if ($userIds) {
+        $placeholders = [];
+        foreach ($userIds as $idx => $userId) {
+            $ph = ':' . $prefix . '_user_' . $idx;
+            $placeholders[] = $ph;
+            $params[$ph] = $userId;
+        }
+        $sql .= " AND ({$alias}.user_id IS NULL OR {$alias}.user_id NOT IN (" . implode(',', $placeholders) . "))";
+    }
+
+    return [$sql, $params];
+}
+
 /**
  * Calcula a duração teórica projetada do fluxo a partir dos nós Wait (em minutos).
  */
@@ -167,6 +261,8 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
 
         $flowStatus = 'healthy';
         $issues = [];
+        $previousSampleExclusions = automation_diagnostics_previous_sample_exclusions($pdo, $flowId);
+        [$sampleExclusionSql, $sampleExclusionParams] = automation_diagnostics_exclusion_sql($previousSampleExclusions, 'r', 'sample_prev');
 
         // --- TESTE 1: DUAS AMOSTRAS EM ANDAMENTO / RECENTES (A = Mais Antiga, B = Mais Recente) ---
         $sampleEarly = null;
@@ -179,10 +275,11 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
             WHERE r.flow_id = :fid AND r.started_at <= DATE_SUB(NOW(), INTERVAL :mins MINUTE)
+            {$sampleExclusionSql}
             ORDER BY r.started_at DESC
             LIMIT 1
         ");
-        $stEarly->execute([':fid' => $flowId, ':mins' => $earlyThresholdMinutes]);
+        $stEarly->execute([':fid' => $flowId, ':mins' => $earlyThresholdMinutes] + $sampleExclusionParams);
         $sampleEarly = $stEarly->fetch(PDO::FETCH_ASSOC) ?: null;
 
         // Se não achou com >60%, pega a execução em andamento mais antiga de hoje
@@ -192,23 +289,33 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
                 FROM automation_flow_runs r
                 LEFT JOIN users u ON u.id = r.user_id
                 WHERE r.flow_id = :fid AND r.started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                {$sampleExclusionSql}
                 ORDER BY r.started_at ASC
                 LIMIT 1
             ");
-            $stEarlyFallback->execute([':fid' => $flowId]);
+            $stEarlyFallback->execute([':fid' => $flowId] + $sampleExclusionParams);
             $sampleEarly = $stEarlyFallback->fetch(PDO::FETCH_ASSOC) ?: null;
         }
 
         // Amostra B: Lead que entrou mais recentemente (para comparar com a Amostra A)
+        $lateExclusions = $previousSampleExclusions;
+        if ($sampleEarly) {
+            $lateExclusions['run_ids'][] = (int)$sampleEarly['run_id'];
+            if ((int)($sampleEarly['user_id'] ?? 0) > 0) {
+                $lateExclusions['user_ids'][] = (int)$sampleEarly['user_id'];
+            }
+        }
+        [$lateExclusionSql, $lateExclusionParams] = automation_diagnostics_exclusion_sql($lateExclusions, 'r', 'sample_late');
         $stLate = $pdo->prepare("
             SELECT r.id run_id, r.user_id, r.status, r.started_at, r.finished_at, u.nome, u.email
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
-            WHERE r.flow_id = :fid " . ($sampleEarly ? "AND r.id <> " . (int)$sampleEarly['run_id'] : "") . "
+            WHERE r.flow_id = :fid
+            {$lateExclusionSql}
             ORDER BY r.started_at DESC
             LIMIT 1
         ");
-        $stLate->execute([':fid' => $flowId]);
+        $stLate->execute([':fid' => $flowId] + $lateExclusionParams);
         $sampleLate = $stLate->fetch(PDO::FETCH_ASSOC) ?: null;
 
         // Análise detalhada das etapas das amostras A e B
@@ -235,6 +342,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
         }
 
         // --- TESTE 2: BENCHMARK DE SLA DOS ÚLTIMOS 5 CONCLUÍDOS ---
+        [$benchmarkExclusionSql, $benchmarkExclusionParams] = automation_diagnostics_exclusion_sql($previousSampleExclusions, 'r', 'bench_prev');
         $stCompleted = $pdo->prepare("
             SELECT r.id run_id, r.user_id, r.started_at, r.finished_at, u.nome, u.email,
                    TIMESTAMPDIFF(MINUTE, r.started_at, r.finished_at) AS duration_minutes
@@ -242,10 +350,11 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             LEFT JOIN users u ON u.id = r.user_id
             WHERE r.flow_id = :fid AND r.status = 'completed' AND r.finished_at IS NOT NULL
               AND r.finished_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)
+              {$benchmarkExclusionSql}
             ORDER BY r.finished_at DESC
             LIMIT 5
         ");
-        $stCompleted->execute([':fid' => $flowId]);
+        $stCompleted->execute([':fid' => $flowId] + $benchmarkExclusionParams);
         $lastCompleted = $stCompleted->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $benchmarkAnalysis = [
@@ -358,6 +467,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             'sample_early' => $sampleEarly ? [
                 'user' => $sampleEarly['nome'] ?: $sampleEarly['email'],
                 'run_id' => (int)$sampleEarly['run_id'],
+                'user_id' => (int)($sampleEarly['user_id'] ?? 0),
                 'started_at' => (string)$sampleEarly['started_at'],
                 'status' => (string)$sampleEarly['status'],
                 'analysis' => $earlyAnalysis,
@@ -365,6 +475,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             'sample_late' => $sampleLate ? [
                 'user' => $sampleLate['nome'] ?: $sampleLate['email'],
                 'run_id' => (int)$sampleLate['run_id'],
+                'user_id' => (int)($sampleLate['user_id'] ?? 0),
                 'started_at' => (string)$sampleLate['started_at'],
                 'status' => (string)$sampleLate['status'],
                 'analysis' => $lateAnalysis,
