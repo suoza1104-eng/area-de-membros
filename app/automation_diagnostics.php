@@ -241,6 +241,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
             WHERE r.flow_id = :fid AND r.status = 'completed' AND r.finished_at IS NOT NULL
+              AND r.finished_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)
             ORDER BY r.finished_at DESC
             LIMIT 5
         ");
@@ -257,7 +258,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             'samples' => $lastCompleted,
         ];
 
-        if ($lastCompleted) {
+        if (count($lastCompleted) >= 3) {
             $durations = array_map(fn($row) => max(0, (int)$row['duration_minutes']), $lastCompleted);
             $avgDuration = array_sum($durations) / count($durations);
             $maxDuration = max($durations);

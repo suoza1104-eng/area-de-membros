@@ -78,13 +78,22 @@ $__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 // ──────────────────────────────────────────────────────────────────────────
 
 $__supportUnread = 0;
-try {
-    $pdoBadge = getPDO();
-    $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
-    if ($stBadge && $stBadge->fetchColumn()) {
-        $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
-    }
-} catch (Throwable $ignored) {}
+$__supportCache = $_SESSION['admin_support_unread_cache'] ?? null;
+if (is_array($__supportCache) && (time() - (int)($__supportCache['ts'] ?? 0)) < 20) {
+    $__supportUnread = (int)($__supportCache['count'] ?? 0);
+} else {
+    try {
+        $pdoBadge = getPDO();
+        $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
+        if ($stBadge && $stBadge->fetchColumn()) {
+            $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
+        }
+    } catch (Throwable $ignored) {}
+    $_SESSION['admin_support_unread_cache'] = [
+        'ts' => time(),
+        'count' => $__supportUnread,
+    ];
+}
 
 $titleMap = [
     'dashboard'        => 'Dashboard',
@@ -124,6 +133,11 @@ $titleMap = [
 ];
 $pageTitle = $page_title ?? ($titleMap[$currentMenu] ?? 'Admin');
 
+$__cfgCache = $_SESSION['admin_app_config_cache'] ?? null;
+if (is_array($__cfgCache) && (time() - (int)($__cfgCache['ts'] ?? 0)) < 60) {
+    $__courseTitle = (string)($__cfgCache['course_title'] ?? 'Área de Membros');
+    $__logoUrl = (string)($__cfgCache['logo_url'] ?? '');
+} else {
 try {
     $__pdo = getPDO();
     $__cfg = $__pdo->query("SELECT course_title, logo_url FROM app_config WHERE id = 1 LIMIT 1")->fetch();
@@ -132,6 +146,13 @@ try {
 } catch (Throwable $e) {
     $__courseTitle = 'Área de Membros';
     $__logoUrl     = '';
+}
+
+    $_SESSION['admin_app_config_cache'] = [
+        'ts' => time(),
+        'course_title' => $__courseTitle,
+        'logo_url' => $__logoUrl,
+    ];
 }
 
 function __esc(string $v): string {
@@ -145,9 +166,11 @@ function __esc(string $v): string {
 <title><?= __esc($pageTitle) ?> — Admin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
 <style>
 /* ===== EXTENDED DESIGN SYSTEM ===== */
 :root {
