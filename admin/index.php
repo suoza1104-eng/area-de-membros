@@ -183,6 +183,33 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
+$__dashboardCacheFile = null;
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && empty($_GET['nocache'])) {
+    $__cacheDir = __DIR__ . '/../app/cache/admin_dashboard';
+    if (!is_dir($__cacheDir)) @mkdir($__cacheDir, 0775, true);
+    if (is_dir($__cacheDir) && is_writable($__cacheDir)) {
+        $__cacheKey = sha1(json_encode([
+            'v' => defined('APP_VERSION') ? APP_VERSION : '1',
+            'query' => $_SERVER['QUERY_STRING'] ?? '',
+            'tipo' => $_SESSION['admin_tipo'] ?? '',
+            'equipe' => $_SESSION['equipe_id'] ?? '',
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $__dashboardCacheFile = $__cacheDir . '/' . $__cacheKey . '.html';
+        if (is_file($__dashboardCacheFile) && (time() - filemtime($__dashboardCacheFile)) < 60) {
+            header('X-Dashboard-Cache: HIT');
+            readfile($__dashboardCacheFile);
+            exit;
+        }
+        ob_start(static function (string $html) use ($__dashboardCacheFile): string {
+            if (http_response_code() < 300 && strlen($html) > 1000) {
+                @file_put_contents($__dashboardCacheFile, $html, LOCK_EX);
+            }
+            return $html;
+        });
+        header('X-Dashboard-Cache: MISS');
+    }
+}
+
 // Login/logout ja foram tratados acima. Daqui pra frente o painel so LE a
 // sessao. Liberamos o lock para que outras abas/cliques do admin nao fiquem
 // presos enquanto este dashboard (muitas queries) carrega.
