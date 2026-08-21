@@ -174,6 +174,9 @@ function sf_get_user_row(PDO $pdo, array $user): array
         if (is_array($row) && $row) {
             // preserva chaves padrão do payload
             $row['id'] = $row['id'] ?? $id;
+            if (function_exists('gerar_magic_link')) {
+                try { $row['magic_link'] = gerar_magic_link($id, 30, false); } catch (Throwable $e) {}
+            }
             return $row;
         }
     } catch (Throwable $e) {
@@ -258,15 +261,15 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
 /** -----------------------------
  *  Disparo principal (chamado pelo app)
  * ------------------------------*/
-function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): void
+function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
     $cfg = sf_get_config($pdo);
-    if ((int)$cfg['is_enabled'] !== 1) return;
-    if ($cfg['token'] === '') return;
+    if ((int)$cfg['is_enabled'] !== 1) return false;
+    if ($cfg['token'] === '') return false;
 
     // Regra por evento (mesmo esquema dos Webhooks)
     $rules = sf_get_rules_for_event($pdo, $evento);
-    if (!$rules) return;
+    if (!$rules) return false;
 
     // payload base (para uso em placeholders / debug)
     $payload = [
@@ -277,6 +280,14 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
     ];
 
     $userRow = sf_get_user_row($pdo, $user);
+    if (!isset($userRow['magic_link']) && function_exists('gerar_magic_link')) {
+        $uid = (int)($userRow['id'] ?? ($user['id'] ?? 0));
+        if ($uid > 0) {
+            try { $userRow['magic_link'] = gerar_magic_link($uid, 30, false); } catch (Throwable $e) {}
+        }
+    }
+    $payload['user'] = $userRow;
+    $sentOk = false;
 
     foreach ($rules as $rule) {
         $ruleId = (int)($rule['id'] ?? 0);
@@ -379,6 +390,7 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
         }
 
         $res = sf_http_post_json($url, $headers, $body, (int)$cfg['timeout_seconds']);
+        if ((bool)$res['ok']) $sentOk = true;
 
         sf_log(
             $pdo,
@@ -391,6 +403,8 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             (string)($res['response'] ?? '')
         );
     }
+
+    return $sentOk;
 }
 
 function sf_log(PDO $pdo, string $evento, ?int $ruleId, bool $ok, ?int $httpStatus, string $errorText, $request, string $responseText): void
