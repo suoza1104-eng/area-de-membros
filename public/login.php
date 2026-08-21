@@ -39,6 +39,12 @@ function am_login_digits(string $value): string {
     return preg_replace('/\D+/', '', $value) ?: '';
 }
 
+function am_normalize_login_email(string $email): string {
+    $email = trim($email);
+    $email = (string)preg_replace('/\s+/', '', $email);
+    return strtolower($email);
+}
+
 function am_login_password_candidates(string $senha, string $telefone): array {
     $raw = trim($senha);
     $digits = am_login_digits($raw);
@@ -352,7 +358,7 @@ $emailForm       = $cookieEmail;
 $lembrarMarcado  = $cookieEmail !== '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email   = trim((string)($_POST['email']  ?? ''));
+    $email   = am_normalize_login_email((string)($_POST['email']  ?? ''));
     $senha   = trim((string)($_POST['senha']  ?? ''));
     $lembrar = !empty($_POST['lembrar_email']);
 
@@ -375,8 +381,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
 
         if (!$passwordOk) {
-            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $blocked ? 'blocked_user' : ($user ? 'invalid_password' : 'user_not_found'));
+            $failureReason = $blocked ? 'blocked_user' : ($user ? 'invalid_password' : 'user_not_found');
+            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $failureReason);
             $mensagemErro = $blocked ? 'Seu acesso está bloqueado. Fale com a equipe de suporte.' : 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
+            if ($loginIgnorePassword && $failureReason === 'user_not_found') {
+                $mensagemErro = 'Não encontrei esse e-mail cadastrado. A senha não bloqueia o acesso; confira se digitou o mesmo e-mail da inscrição ou fale com o suporte.';
+            }
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
 
