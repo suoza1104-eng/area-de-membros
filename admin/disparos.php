@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
+require_once __DIR__ . '/../app/funcoes.php';
 
 session_start();
 if (empty($_SESSION['admin_logado'])) {
@@ -259,6 +260,18 @@ if ($acao !== '') {
     }
 
     function dpUsuarioValor(array $usuario, string $chave): string {
+        if ($chave === 'magic_link') {
+            $uid = (int)($usuario['id'] ?? 0);
+            if ($uid > 0 && function_exists('gerar_magic_link')) {
+                try {
+                    return gerar_magic_link($uid, 30, false);
+                } catch (Throwable $e) {
+                    return '';
+                }
+            }
+            return '';
+        }
+
         $map = [
             'turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
             'codigo_turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
@@ -831,8 +844,12 @@ if ($acao !== '') {
 
         // Listar
         case 'listar':
-            $rows = $pdo->query("SELECT id, nome, status, tipo, agendado_em, total_enviados, total_erros, criado_em FROM disparos ORDER BY criado_em DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
-            echo json_encode(['ok'=>true,'data'=>$rows]);
+            try {
+                $rows = $pdo->query("SELECT id, nome, status, tipo, agendado_em, total_enviados, total_erros, criado_em FROM disparos ORDER BY criado_em DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
+                echo json_encode(['ok'=>true,'data'=>$rows]);
+            } catch (Throwable $e) {
+                echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);
+            }
             exit;
 
         // Logs e resumo de um disparo
@@ -1485,9 +1502,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Lista ─────────────────────────────────────────────────────────────────────
 async function dpCarregarLista() {
-    const r = await fetch('disparos.php?acao=listar');
-    const j = await r.json();
     const cont = document.getElementById('dpListContainer');
+    let j;
+    try {
+        const r = await fetch('disparos.php?acao=listar', {credentials: 'same-origin'});
+        const txt = await r.text();
+        try { j = JSON.parse(txt); }
+        catch (e) { throw new Error('Resposta invalida do servidor ao listar disparos'); }
+        if (!r.ok || !j.ok) throw new Error((j && j.msg) ? j.msg : 'Falha ao carregar disparos');
+    } catch (e) {
+        cont.innerHTML = `<div class="dp-empty" style="color:#f87171">Erro ao carregar disparos.<br>${dpEsc(e.message || e)}</div>`;
+        return;
+    }
     if (!j.ok || !j.data.length) {
         cont.innerHTML = '<div class="dp-empty">Nenhum disparo criado ainda.<br>Clique em <strong>Novo Disparo</strong> para começar.</div>';
         return;
