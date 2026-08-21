@@ -302,13 +302,18 @@ if ($acao !== '') {
         return (string)$valor;
     }
 
-    function dpResolverValorAcao(array $usuario, string $valor): string {
+    function dpResolverValorAcao(array $usuario, string $valor, array $acoes = []): string {
         $valor = trim($valor);
         if ($valor === '') return '';
         if (strpos($valor, 'literal:') === 0) return substr($valor, 8);
         if (strpos($valor, 'user.') === 0) return dpUsuarioValor($usuario, substr($valor, 5));
-        return preg_replace_callback('/\{\{\s*user\.([a-zA-Z0-9_]+)\s*\}\}/', function($m) use ($usuario) {
-            return dpUsuarioValor($usuario, $m[1]);
+        if (strpos($valor, 'users.') === 0) return dpUsuarioValor($usuario, substr($valor, 6));
+        if (strpos($valor, 'extra.') === 0) return dpUsuarioValor($usuario, substr($valor, 6));
+        if ($valor === 'evento') return dpEventoDisparo($acoes);
+        if ($valor === 'timestamp') return date('c');
+        $valor = str_replace(['{{evento}}', '{{ timestamp }}', '{{timestamp}}'], [dpEventoDisparo($acoes), date('c'), date('c')], $valor);
+        return preg_replace_callback('/\{\{\s*(user|users|extra)\.([a-zA-Z0-9_]+)\s*\}\}/', function($m) use ($usuario) {
+            return dpUsuarioValor($usuario, $m[2]);
         }, $valor);
     }
 
@@ -438,7 +443,7 @@ if ($acao !== '') {
             } elseif ($tipo === 'custom_field') {
                 $campo = trim((string)($a['campo'] ?? ''));
                 if ($campo === '') continue;
-                $valor = dpValorCampoManyChat($campo, dpResolverValorAcao($userRow, (string)($a['valor'] ?? '')));
+                $valor = dpValorCampoManyChat($campo, dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''), $acoes));
                 $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', '/fb/subscriber/setCustomFields', [
                     'subscriber_id' => $subscriberId,
                     'fields' => [['field_name' => $campo, 'field_value' => $valor]],
@@ -518,7 +523,7 @@ if ($acao !== '') {
                 $sfAcoes[] = [
                     'action' => 'set_field_value',
                     'field_name' => trim((string)$a['campo']),
-                    'value' => dpResolverValorAcao($usuario, (string)($a['valor'] ?? '')),
+                    'value' => dpResolverValorAcao($usuario, (string)($a['valor'] ?? ''), $acoes),
                 ];
             }
         }
@@ -629,7 +634,7 @@ if ($acao !== '') {
         }
 
         $stUsers = $pdo->prepare(
-            "SELECT u.id, u.nome, u.email, u.telefone,
+            "SELECT u.*,
                     u.codigo_turma,
                     u.data_live AS user_data_live,
                     u.turma_live_at,
@@ -957,7 +962,7 @@ if ($acao !== '') {
                 }
 
                 $stUsers = $pdo->prepare(
-                    "SELECT u.id, u.nome, u.email, u.telefone,
+                    "SELECT u.*,
                             u.codigo_turma,
                             u.data_live AS user_data_live,
                             u.turma_live_at,
@@ -1069,6 +1074,76 @@ sort($eventosDisparo, SORT_NATURAL | SORT_FLAG_CASE);
 foreach ($eventosPorCanal as $canal => $eventos) {
     $eventosPorCanal[$canal] = array_values($eventos);
     sort($eventosPorCanal[$canal], SORT_NATURAL | SORT_FLAG_CASE);
+}
+
+$campoValorGrupos = [
+    'Payload fixo' => [
+        'evento' => 'Evento do disparo',
+        'timestamp' => 'Timestamp ISO',
+        'literal:valor fixo' => 'Texto fixo',
+        '{{user.nome}} - {{extra.codigo_turma}}' => 'Template',
+    ],
+    'Aluno' => [
+        'user.id' => 'ID',
+        'user.nome' => 'Nome',
+        'user.email' => 'Email',
+        'user.telefone' => 'Telefone',
+        'user.magic_link' => 'Link direto de login',
+    ],
+    'Turma / Live' => [
+        'extra.codigo_turma' => 'Codigo da turma',
+        'extra.codigo_live' => 'Codigo da live',
+        'extra.data_live' => 'Data da live',
+        'extra.data_live_iso' => 'Data da live ISO',
+        'extra.live_url' => 'URL da live',
+        'extra.reagendamento_id' => 'ID do reagendamento',
+    ],
+    'Inscricao / Reinscricao' => [
+        'extra.qtd_inscricoes' => 'Total de inscricoes',
+        'extra.primeira_inscricao' => 'Primeira inscricao',
+        'extra.data_inscricao_anterior' => 'Inscricao anterior',
+        'extra.turma_anterior' => 'Turma anterior',
+        'extra.eh_reinscrito' => '0 novo / 1 reinscrito',
+    ],
+    'Progresso' => [
+        'extra.andamento' => 'Percentual de conclusao',
+        'extra.aulas_concluidas' => 'Aulas concluidas',
+        'extra.aulas_totais' => 'Total de aulas',
+    ],
+    'Certificado' => [
+        'extra.pdf_url' => 'Link do PDF',
+        'extra.codigo_certificado' => 'Codigo do certificado',
+        'extra.curso' => 'Curso',
+        'extra.emitido_em' => 'Data de emissao',
+        'extra.certificado_id' => 'ID do certificado',
+    ],
+    'Retorno agendado' => [
+        'extra.agendamento_id' => 'ID do agendamento',
+        'extra.tipo' => 'Tipo',
+        'extra.scheduled_at' => 'Data agendada',
+        'extra.assunto' => 'Assunto',
+        'extra.mensagem' => 'Mensagem original',
+        'extra.mensagem_renderizada' => 'Mensagem renderizada',
+        'extra.origem' => 'Origem',
+    ],
+    'Erro / suporte' => [
+        'extra.motivo' => 'Motivo',
+    ],
+    'Users tabela' => [],
+];
+try {
+    foreach ($pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $col) {
+        $name = trim((string)($col['Field'] ?? ''));
+        if (preg_match('/(senha|password|token|secret|hash|key)/i', $name)) continue;
+        if ($name !== '') $campoValorGrupos['Users tabela']['users.' . $name] = 'users.' . $name;
+    }
+} catch (Throwable $e) {}
+
+$campoValorDatalist = [];
+foreach ($campoValorGrupos as $grupo => $campos) {
+    foreach ($campos as $valor => $label) {
+        $campoValorDatalist[$valor] = $grupo . ' - ' . $label;
+    }
 }
 
 $currentMenu = 'disparos';
@@ -1183,6 +1258,57 @@ require_once __DIR__ . '/_header.php';
     text-transform: uppercase; letter-spacing: .5px;
     margin-bottom: 10px;
 }
+.dp-field-ref {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255,255,255,.025);
+    margin-bottom: 10px;
+}
+.dp-field-ref summary {
+    cursor: pointer;
+    padding: 9px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+.dp-field-ref-body {
+    border-top: 1px solid var(--border);
+    padding: 10px;
+    max-height: 260px;
+    overflow: auto;
+}
+.dp-field-group { margin-bottom: 12px; }
+.dp-field-group-title {
+    font-size: 10px;
+    font-weight: 800;
+    color: #93c5fd;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 6px;
+}
+.dp-field-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+    gap: 6px;
+}
+.dp-field-token {
+    border: 1px solid rgba(148,163,184,.18);
+    border-radius: 6px;
+    background: rgba(15,23,42,.65);
+    padding: 6px 7px;
+    font-size: 11px;
+    color: #e2e8f0;
+    cursor: pointer;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dp-field-token:hover { border-color: rgba(250,204,21,.45); background: rgba(250,204,21,.08); }
+.dp-field-token small { display: block; color: var(--text-muted); font-size: 10px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp-field-help { color: var(--text-muted); font-size: 11px; line-height: 1.6; margin-bottom: 10px; }
+.dp-field-help code { background: rgba(255,255,255,.06); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
 .filter-row {
     display: flex; gap: 6px; align-items: center; margin-bottom: 6px;
     flex-wrap: wrap;
@@ -1454,17 +1580,33 @@ require_once __DIR__ . '/_header.php';
       <!-- AÇÕES -->
       <div class="filter-group">
         <div class="filter-group-header">Ações</div>
+        <details class="dp-field-ref">
+          <summary>Campos disponiveis para valor/origem</summary>
+          <div class="dp-field-ref-body">
+            <div class="dp-field-help">
+              Use direto como <code>user.magic_link</code>, fixo como <code>literal:texto</code>, ou template como <code>{{user.nome}} - {{extra.codigo_turma}}</code>.
+              Clique em um campo para preencher o valor da ultima acao de campo personalizado.
+            </div>
+            <?php foreach ($campoValorGrupos as $grupo => $campos): if (!$campos) continue; ?>
+              <div class="dp-field-group">
+                <div class="dp-field-group-title"><?= htmlspecialchars((string)$grupo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+                <div class="dp-field-list">
+                  <?php foreach ($campos as $valorCampo => $labelCampo): ?>
+                    <button type="button" class="dp-field-token" onclick="dpUsarCampoValor('<?= htmlspecialchars((string)$valorCampo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>')">
+                      <?= htmlspecialchars((string)$valorCampo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                      <small><?= htmlspecialchars((string)$labelCampo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small>
+                    </button>
+                  <?php endforeach; ?>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        </details>
         <div id="dpAcoes"></div>
         <datalist id="dpCampoValorSugestoes">
-          <option value="user.nome"></option>
-          <option value="user.id"></option>
-          <option value="user.email"></option>
-          <option value="user.telefone"></option>
-          <option value="user.turma"></option>
-          <option value="user.codigo_turma"></option>
-          <option value="user.data_live"></option>
-          <option value="literal:valor fixo"></option>
-          <option value="{{user.nome}} - {{user.turma}}"></option>
+          <?php foreach ($campoValorDatalist as $valorCampo => $labelCampo): ?>
+          <option value="<?= htmlspecialchars((string)$valorCampo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" label="<?= htmlspecialchars((string)$labelCampo, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"></option>
+          <?php endforeach; ?>
         </datalist>
         <button class="btn-add-filter" onclick="dpAddAcao()">+ Adicionar ação</button>
       </div>
@@ -1861,6 +2003,28 @@ function dpMakeFilterRow(tipos, data, cont) {
 
 function dpAddFiltroInc(data) { dpMakeFilterRow(INC_TIPOS, data || null, document.getElementById('dpFiltrosInc')); }
 function dpAddFiltroExc(data) { dpMakeFilterRow(EXC_TIPOS, data || null, document.getElementById('dpFiltrosExc')); }
+
+function dpUsarCampoValor(valor) {
+    const rows = Array.from(document.querySelectorAll('#dpAcoes .acao-row'));
+    let input = null;
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        if (row.querySelector('select')?.value === 'custom_field') {
+            input = row.querySelector('.acao-valor');
+            break;
+        }
+    }
+    if (!input) {
+        dpAddAcao({tipo:'custom_field', campo:'', valor:''});
+        const last = Array.from(document.querySelectorAll('#dpAcoes .acao-row')).pop();
+        input = last ? last.querySelector('.acao-valor') : null;
+    }
+    if (input) {
+        input.value = valor;
+        input.focus();
+        dpAtualizarPreview();
+    }
+}
 
 function dpBuildAcaoInputs(tipo, data) {
     const valor = data ? (data.valor || '') : '';
