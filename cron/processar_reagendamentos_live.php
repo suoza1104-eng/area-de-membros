@@ -172,12 +172,16 @@ try {
             'extra' => $extra,
         ]);
 
-        $ok = _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra);
+        $dispatchResult = function_exists('_disparar_webhooks_sync_resultado')
+            ? _disparar_webhooks_sync_resultado('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra)
+            : ['ok' => _disparar_webhooks_sync('LIVE_REAGENDAMENTO_LEMBRETE', (int)$r['user_id'], $extra)];
+        $ok = (bool)($dispatchResult['ok'] ?? false);
         if ($ok) {
             $pdo->prepare("UPDATE reagendamentos_live SET status='enviado', sf_sent_at=NOW(), expired_checked_at=NULL WHERE id=:id AND status='processando'")
                 ->execute([':id' => (int)$r['id']]);
             rl_cron_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_cron_resultado', 'sucesso', 'Lembrete enviado pelo cron.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                'resultado' => $dispatchResult,
             ]);
             $stats['sent']++;
         } else {
@@ -185,6 +189,7 @@ try {
                 ->execute([':id' => (int)$r['id']]);
             rl_cron_log($pdo, (int)$r['id'], (int)$r['user_id'], 'lembrete_cron_resultado', 'falha', 'Integracao nao confirmou o disparo pelo cron.', [
                 'evento' => 'LIVE_REAGENDAMENTO_LEMBRETE',
+                'resultado' => $dispatchResult,
             ]);
             $stats['failed']++;
         }

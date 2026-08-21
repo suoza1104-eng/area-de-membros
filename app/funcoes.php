@@ -408,10 +408,31 @@ function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = 
 /**
  * Execução síncrona real do disparo (usada no cron e no shutdown da web).
  */
-function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): bool {
+function _evento_tem_webhook_ativo(PDO $pdo, string $evento): bool {
+    try {
+        $st = $pdo->query("SELECT evento FROM webhooks WHERE ativo = 1 AND evento IS NOT NULL AND evento <> ''");
+        foreach ($st->fetchAll(PDO::FETCH_COLUMN) ?: [] as $raw) {
+            foreach (array_filter(array_map('trim', explode(',', (string)$raw))) as $ev) {
+                if ($ev === $evento) return true;
+            }
+        }
+    } catch (Throwable $e) {}
+    return false;
+}
+
+function _disparar_webhooks_sync_resultado(string $evento, ?int $user_id = null, array $extra = []): array {
     $pdo = getPDO();
     if (usuario_bloqueado_disparos($pdo, $user_id)) {
-        return false;
+        return [
+            'ok' => false,
+            'blocked' => true,
+            'webhook' => false,
+            'webhook_configured' => false,
+            'sf' => false,
+            'manychat' => false,
+            'whatsapp_notification' => false,
+            'errors' => ['Aluno bloqueado para disparos'],
+        ];
     }
 
     // Monta dados básicos do usuário (se informado)
@@ -431,13 +452,51 @@ function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $ex
     }
 
     // Usa o dispatcher central para enviar para todos os webhooks ativos
-    disparar_evento_webhooks($pdo, $evento, $user, $extra);
+    $errors = [];
+    $webhookConfigured = _evento_tem_webhook_ativo($pdo, $evento);
+    $webhookOk = false;
+    try {
+        disparar_evento_webhooks($pdo, $evento, $user, $extra);
+        $webhookOk = $webhookConfigured;
+    } catch (Throwable $e) {
+        $errors[] = 'webhook: ' . $e->getMessage();
+    }
 
     // Disparo opcional para SuperFuncionário (se houver regras ativas)
-    $sfOk = sf_disparar_evento($pdo, $evento, $user, $extra);
-    $mcOk = mc_disparar_evento($pdo, $evento, $user, $extra);
-    $whatsappNotificationOk = whatsapp_event_notifications_dispatch($pdo, $evento, $user, $extra);
-    return $sfOk || $mcOk || $whatsappNotificationOk;
+    try {
+        $sfOk = (bool)sf_disparar_evento($pdo, $evento, $user, $extra);
+    } catch (Throwable $e) {
+        $sfOk = false;
+        $errors[] = 'sf: ' . $e->getMessage();
+    }
+    try {
+        $mcOk = (bool)mc_disparar_evento($pdo, $evento, $user, $extra);
+    } catch (Throwable $e) {
+        $mcOk = false;
+        $errors[] = 'manychat: ' . $e->getMessage();
+    }
+    try {
+        $whatsappNotificationOk = (bool)whatsapp_event_notifications_dispatch($pdo, $evento, $user, $extra);
+    } catch (Throwable $e) {
+        $whatsappNotificationOk = false;
+        $errors[] = 'whatsapp_notification: ' . $e->getMessage();
+    }
+
+    return [
+        'ok' => $webhookOk || $sfOk || $mcOk || $whatsappNotificationOk,
+        'blocked' => false,
+        'webhook' => $webhookOk,
+        'webhook_configured' => $webhookConfigured,
+        'sf' => $sfOk,
+        'manychat' => $mcOk,
+        'whatsapp_notification' => $whatsappNotificationOk,
+        'errors' => $errors,
+    ];
+}
+
+function _disparar_webhooks_sync(string $evento, ?int $user_id = null, array $extra = []): bool {
+    $result = _disparar_webhooks_sync_resultado($evento, $user_id, $extra);
+    return (bool)($result['ok'] ?? false);
 }
 
 function reagendamento_live_ensure_logs(PDO $pdo): void {
