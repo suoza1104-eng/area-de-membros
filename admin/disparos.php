@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
-require_once __DIR__ . '/../app/funcoes.php';
 
 session_start();
 if (empty($_SESSION['admin_logado'])) {
@@ -78,6 +77,32 @@ if ($acao !== '') {
             catch (Throwable $e) { $cache[$t] = false; }
         }
         return $cache[$t];
+    }
+
+    function dpGerarMagicLink(PDO $pdo, int $userId, int $ttlDays = 30): string {
+        if ($userId <= 0) return '';
+        try {
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS magic_links (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id     INT NOT NULL,
+                    token       VARCHAR(64) NOT NULL,
+                    expires_at  DATETIME NOT NULL,
+                    one_shot    TINYINT(1) NOT NULL DEFAULT 0,
+                    used_at     DATETIME NULL,
+                    created_at  DATETIME NOT NULL DEFAULT NOW(),
+                    UNIQUE KEY uk_ml_token (token),
+                    INDEX idx_ml_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $token = bin2hex(random_bytes(32));
+            $exp = date('Y-m-d H:i:s', time() + 86400 * max(1, $ttlDays));
+            $pdo->prepare("INSERT INTO magic_links (user_id, token, expires_at, one_shot) VALUES (:uid, :tok, :exp, 0)")
+                ->execute([':uid' => $userId, ':tok' => $token, ':exp' => $exp]);
+            return rtrim((string)BASE_URL, '/') . '/login.php?am=' . $token;
+        } catch (Throwable $e) {
+            return '';
+        }
     }
 
     // Helper: constrói WHERE de audiência a partir de filtros_json
@@ -261,15 +286,9 @@ if ($acao !== '') {
 
     function dpUsuarioValor(array $usuario, string $chave): string {
         if ($chave === 'magic_link') {
+            global $pdo;
             $uid = (int)($usuario['id'] ?? 0);
-            if ($uid > 0 && function_exists('gerar_magic_link')) {
-                try {
-                    return gerar_magic_link($uid, 30, false);
-                } catch (Throwable $e) {
-                    return '';
-                }
-            }
-            return '';
+            return ($uid > 0 && $pdo instanceof PDO) ? dpGerarMagicLink($pdo, $uid, 30) : '';
         }
 
         $map = [
@@ -1504,15 +1523,24 @@ document.addEventListener('DOMContentLoaded', () => {
 async function dpCarregarLista() {
     const cont = document.getElementById('dpListContainer');
     let j;
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(() => ctrl.abort(), 8000);
     try {
-        const r = await fetch('disparos.php?acao=listar', {credentials: 'same-origin'});
+        const r = await fetch('disparos.php?acao=listar&_=' + Date.now(), {
+            cache: 'no-store',
+            credentials: 'same-origin',
+            signal: ctrl.signal
+        });
         const txt = await r.text();
         try { j = JSON.parse(txt); }
         catch (e) { throw new Error('Resposta invalida do servidor ao listar disparos'); }
         if (!r.ok || !j.ok) throw new Error((j && j.msg) ? j.msg : 'Falha ao carregar disparos');
     } catch (e) {
-        cont.innerHTML = `<div class="dp-empty" style="color:#f87171">Erro ao carregar disparos.<br>${dpEsc(e.message || e)}</div>`;
+        const msg = e && e.name === 'AbortError' ? 'Tempo esgotado ao carregar disparos' : (e.message || e);
+        cont.innerHTML = `<div class="dp-empty" style="color:#f87171">Erro ao carregar disparos.<br>${dpEsc(msg)}</div>`;
         return;
+    } finally {
+        clearTimeout(timeoutId);
     }
     if (!j.ok || !j.data.length) {
         cont.innerHTML = '<div class="dp-empty">Nenhum disparo criado ainda.<br>Clique em <strong>Novo Disparo</strong> para começar.</div>';
