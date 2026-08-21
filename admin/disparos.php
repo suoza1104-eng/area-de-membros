@@ -1369,7 +1369,7 @@ require_once __DIR__ . '/_header.php';
         <input type="text" id="dpEvento" list="dpEventoSugestoes" value="DISPARO_MANUAL" placeholder="DISPARO_MANUAL">
         <datalist id="dpEventoSugestoes">
           <?php foreach ($eventosDisparo as $ev): ?>
-          <option value="<?= h($ev) ?>"></option>
+          <option value="<?= htmlspecialchars((string)$ev, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"></option>
           <?php endforeach; ?>
         </datalist>
       </div>
