@@ -31,7 +31,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa turmas com horário de disparo atingido.',
             'script' => __DIR__ . '/../cron/processar_lives.php',
             'interval' => 1,
-            'timeout' => 120,
+            'timeout' => 300,
         ],
         'agendamentos_retorno' => [
             'label' => 'Agendamentos de retorno',
@@ -102,6 +102,13 @@ function cron_manager_base_definitions(): array {
             'script' => __DIR__ . '/../cron/processar_meta_form_utms.php',
             'interval' => 60,
             'timeout' => 300,
+        ],
+        'diagnostico_fluxos' => [
+            'label' => 'Diagnostico de Automacoes',
+            'description' => 'Varre todos os fluxos ativos, infraestrutura e provedores gerando auditoria automatica.',
+            'script' => __DIR__ . '/../cron/processar_diagnostico_fluxos.php',
+            'interval' => 240, // 4 horas / 3x ao dia
+            'timeout' => 120,
         ],
     ];
 }
@@ -245,9 +252,40 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     try {
         $pdo->exec("
             UPDATE cron_managed_tasks
-               SET timeout_seconds = 120
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 1,
+                   timeout_seconds = GREATEST(timeout_seconds, 300),
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'lives_turma'
-               AND timeout_seconds > 120
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 1
+                    OR timeout_seconds < 300
+                    OR next_run_at IS NULL
+               )
+        ");
+    } catch (Throwable $e) {}
+
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 1,
+                   timeout_seconds = GREATEST(timeout_seconds, 300),
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'whatsapp_grupos'
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 1
+                    OR timeout_seconds < 300
+                    OR next_run_at IS NULL
+               )
         ");
     } catch (Throwable $e) {}
 

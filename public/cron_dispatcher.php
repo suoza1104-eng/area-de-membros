@@ -61,6 +61,8 @@ try {
     // é barata e o gerenciador impede execução duplicada quando o agente novo
     // também solicitar fluxos_push diretamente.
     if ($taskKey === 'agendamentos_retorno') {
+        $result['companion_lives_turma'] = cron_manager_execute($pdo, 'lives_turma', $source, false);
+        $result['companion_whatsapp_grupos'] = cron_manager_execute($pdo, 'whatsapp_grupos', $source, false);
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
         $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
         $result['companion_torpedo_voz'] = cron_manager_execute($pdo, 'torpedo_voz', $source, false);
@@ -68,6 +70,9 @@ try {
         $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);
         $result['companion_meta_leads_qualificados'] = cron_manager_execute($pdo, 'meta_leads_qualificados', $source, false);
         $result['companion_meta_form_utms'] = cron_manager_execute($pdo, 'meta_form_utms', $source, false);
+        $result['companion_metricas_negocio'] = cron_manager_execute($pdo, 'metricas_negocio', $source, false);
+        $result['companion_dom_pagamentos'] = cron_manager_execute($pdo, 'dom_pagamentos', $source, false);
+        $result['companion_diagnostico_fluxos'] = cron_manager_execute($pdo, 'diagnostico_fluxos', $source, false);
     }
     cron_manager_heartbeat($pdo, $source, $taskKey, (string)($result['reason'] ?? $result['status'] ?? 'ok'), false);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

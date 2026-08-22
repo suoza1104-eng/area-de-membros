@@ -560,7 +560,16 @@ if (!$turmas) {
             'message' => 'Nenhuma turma pendente encontrada para disparo manual.',
         ];
     }
-    // Sem nada pra disparar (silencioso)
+    if (empty($GLOBALS['cron_manager_task_key'])) {
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode([
+        'ok' => true,
+        'processed' => 0,
+        'sent' => 0,
+        'failed' => 0,
+        'message' => 'Nenhuma turma pendente para disparo de live.',
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
     exit;
 }
 
