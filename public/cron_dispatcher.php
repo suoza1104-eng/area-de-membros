@@ -61,6 +61,8 @@ try {
     // é barata e o gerenciador impede execução duplicada quando o agente novo
     // também solicitar fluxos_push diretamente.
     if ($taskKey === 'agendamentos_retorno') {
+        $result['companion_lives_turma'] = cron_manager_execute($pdo, 'lives_turma', $source, false);
+        $result['companion_whatsapp_grupos'] = cron_manager_execute($pdo, 'whatsapp_grupos', $source, false);
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
         $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
         $result['companion_torpedo_voz'] = cron_manager_execute($pdo, 'torpedo_voz', $source, false);
