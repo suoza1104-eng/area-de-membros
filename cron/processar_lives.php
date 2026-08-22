@@ -570,6 +570,9 @@ if (!$turmas) {
         'failed' => 0,
         'message' => 'Nenhuma turma pendente para disparo de live.',
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    if (!empty($GLOBALS['cron_manager_task_key'])) {
+        return;
+    }
     exit;
 }
 
