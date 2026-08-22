@@ -76,10 +76,204 @@ function carregar_status_disparos_live(PDO $pdo): array {
     return $status;
 }
 
+function live_diag_dt(?string $dt): string {
+    if (!$dt) return '';
+    $ts = strtotime($dt);
+    return $ts ? date('d/m/Y H:i:s', $ts) : (string)$dt;
+}
+
+function live_diag_seconds(?string $start, ?string $end = null): int {
+    if (!$start) return 0;
+    $a = strtotime($start);
+    $b = $end ? strtotime($end) : time();
+    if (!$a || !$b || $b < $a) return 0;
+    return max(0, $b - $a);
+}
+
+function live_diag_duration(int $seconds): string {
+    if ($seconds <= 0) return '0s';
+    $h = intdiv($seconds, 3600);
+    $m = intdiv($seconds % 3600, 60);
+    $s = $seconds % 60;
+    if ($h > 0) return sprintf('%dh %02dm %02ds', $h, $m, $s);
+    if ($m > 0) return sprintf('%dm %02ds', $m, $s);
+    return $s . 's';
+}
+
+function live_disparo_diagnostico(PDO $pdo, int $turmaId): array {
+    $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $turmaId]);
+    $turma = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$turma) return ['ok' => false, 'message' => 'Turma nao encontrada.'];
+
+    $codigo = (string)($turma['codigo'] ?? '');
+    $dispatch = null;
+    try {
+        $st = $pdo->prepare("SELECT * FROM live_turma_dispatch_logs WHERE turma_id = :id ORDER BY id DESC LIMIT 1");
+        $st->execute([':id' => $turmaId]);
+        $dispatch = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable $e) {}
+
+    $dispatchId = (int)($dispatch['id'] ?? 0);
+    $recipientStats = ['sent' => 0, 'skipped' => 0, 'failed' => 0, 'pending' => 0, 'processing' => 0];
+    $skipStats = [];
+    $recent = [];
+    $slow = [];
+    $lastRecipientAt = '';
+    $maxProcessedUserId = 0;
+    if ($dispatchId > 0) {
+        try {
+            $rs = $pdo->prepare("SELECT status, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id = :id GROUP BY status");
+            $rs->execute([':id' => $dispatchId]);
+            foreach ($rs->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                $recipientStats[(string)$row['status']] = (int)$row['qtd'];
+            }
+            $ss = $pdo->prepare("SELECT COALESCE(skip_reason, '') reason, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id = :id AND status = 'skipped' GROUP BY COALESCE(skip_reason, '') ORDER BY qtd DESC");
+            $ss->execute([':id' => $dispatchId]);
+            foreach ($ss->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                $skipStats[] = ['reason' => (string)$row['reason'], 'total' => (int)$row['qtd']];
+            }
+            $maxProcessedUserId = (int)$pdo->query("SELECT COALESCE(MAX(user_id),0) FROM live_turma_dispatch_recipients WHERE dispatch_id = " . $dispatchId . " AND status IN ('sent','skipped','failed')")->fetchColumn();
+            $lastRecipientAt = (string)$pdo->query("SELECT COALESCE(MAX(updated_at),'') FROM live_turma_dispatch_recipients WHERE dispatch_id = " . $dispatchId)->fetchColumn();
+            $rr = $pdo->prepare("
+                SELECT user_id, nome, email, telefone, status, skip_reason, attempts,
+                       webhook_ok, webhook_fail, sf_ok, sf_fail, manychat_ok, manychat_fail,
+                       error_message, started_at, finished_at, updated_at,
+                       TIMESTAMPDIFF(MICROSECOND, started_at, finished_at) DIV 1000 AS duration_ms
+                  FROM live_turma_dispatch_recipients
+                 WHERE dispatch_id = :id
+              ORDER BY updated_at DESC, id DESC
+                 LIMIT 60
+            ");
+            $rr->execute([':id' => $dispatchId]);
+            $recent = $rr->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $sr = $pdo->prepare("
+                SELECT user_id, nome, email, telefone, status, skip_reason, attempts,
+                       error_message, started_at, finished_at, updated_at,
+                       TIMESTAMPDIFF(MICROSECOND, started_at, finished_at) DIV 1000 AS duration_ms
+                  FROM live_turma_dispatch_recipients
+                 WHERE dispatch_id = :id
+                   AND started_at IS NOT NULL
+                   AND finished_at IS NOT NULL
+              ORDER BY duration_ms DESC
+                 LIMIT 10
+            ");
+            $sr->execute([':id' => $dispatchId]);
+            $slow = $sr->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (Throwable $e) {}
+    }
+
+    $totalAlunos = 0;
+    $remainingAfterCursor = 0;
+    $nextUserId = 0;
+    try {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM users WHERE codigo_turma = :codigo");
+        $st->execute([':codigo' => $codigo]);
+        $totalAlunos = (int)$st->fetchColumn();
+        $cursor = max((int)($turma['live_dispatch_cursor_user_id'] ?? 0), $maxProcessedUserId);
+        $st = $pdo->prepare("SELECT COUNT(*) total, COALESCE(MIN(id),0) next_user FROM users WHERE codigo_turma = :codigo AND id > :cursor");
+        $st->execute([':codigo' => $codigo, ':cursor' => $cursor]);
+        $rem = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        $remainingAfterCursor = (int)($rem['total'] ?? 0);
+        $nextUserId = (int)($rem['next_user'] ?? 0);
+    } catch (Throwable $e) {
+        $cursor = (int)($turma['live_dispatch_cursor_user_id'] ?? 0);
+    }
+
+    $cronTask = [];
+    $cronRuns = [];
+    try {
+        $cronTask = $pdo->query("SELECT task_key, enabled, mode, timeout_seconds, next_run_at, running_until, running_token IS NOT NULL AS has_token, last_attempt_at, last_started_at, last_finished_at, last_success_at, last_status, last_duration_ms, last_message FROM cron_managed_tasks WHERE task_key='lives_turma' LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: [];
+        $cronRuns = $pdo->query("SELECT id, source, trigger_type, status, started_at, finished_at, duration_ms, LEFT(COALESCE(output_text,''), 600) output_text, error_message FROM cron_managed_runs WHERE task_key='lives_turma' ORDER BY id DESC LIMIT 8")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+
+    $status = (string)($dispatch['status'] ?? '');
+    $active = in_array($status, ['queued', 'iniciado', 'processando'], true);
+    $startedAt = (string)($dispatch['started_at'] ?? '');
+    $finishedAt = (string)($dispatch['finished_at'] ?? '');
+    $elapsed = live_diag_seconds($startedAt, $finishedAt ?: null);
+    $processed = array_sum($recipientStats);
+    $sent = (int)$recipientStats['sent'];
+    $fail = (int)$recipientStats['failed'];
+    $skipped = (int)$recipientStats['skipped'];
+    $rate = $elapsed > 0 ? $processed / max(1, $elapsed) : 0.0;
+    $etaSeconds = ($rate > 0 && $remainingAfterCursor > 0) ? (int)ceil($remainingAfterCursor / $rate) : 0;
+    $heartbeatRaw = (string)($dispatch['last_heartbeat_at'] ?? '');
+    if ($lastRecipientAt !== '' && (!$heartbeatRaw || strtotime($lastRecipientAt) > strtotime($heartbeatRaw))) $heartbeatRaw = $lastRecipientAt;
+    $heartbeatAge = $heartbeatRaw ? max(0, time() - (int)strtotime($heartbeatRaw)) : 0;
+    $locked = !empty($cronTask['has_token']);
+    $stale = $active && $locked && $heartbeatAge > 180;
+
+    return [
+        'ok' => true,
+        'turma' => [
+            'id' => $turmaId,
+            'codigo' => $codigo,
+            'data_live' => live_diag_dt((string)($turma['data_live'] ?? '')),
+            'live_disparo_data' => live_diag_dt((string)($turma['live_disparo_data'] ?? '')),
+            'live_disparada' => (int)($turma['live_disparada'] ?? 0),
+            'total_alunos' => $totalAlunos,
+            'cursor' => (int)($cursor ?? 0),
+            'next_user_id' => $nextUserId,
+        ],
+        'dispatch' => [
+            'id' => $dispatchId,
+            'status' => $status ?: 'sem_disparo',
+            'active' => $active,
+            'started_at' => live_diag_dt($startedAt),
+            'finished_at' => live_diag_dt($finishedAt),
+            'last_heartbeat_at' => live_diag_dt($heartbeatRaw),
+            'heartbeat_age_seconds' => $heartbeatAge,
+            'heartbeat_age' => live_diag_duration($heartbeatAge),
+            'elapsed_seconds' => $elapsed,
+            'elapsed' => live_diag_duration($elapsed),
+            'eta_seconds' => $etaSeconds,
+            'eta' => $etaSeconds > 0 ? live_diag_duration($etaSeconds) : '',
+            'eta_at' => $etaSeconds > 0 ? date('d/m/Y H:i:s', time() + $etaSeconds) : '',
+            'batch_runs' => (int)($dispatch['batch_runs'] ?? 0),
+            'message' => (string)($dispatch['message'] ?? ''),
+            'total_alunos_lidos' => (int)($dispatch['total_alunos'] ?? 0),
+            'elegiveis_log' => (int)($dispatch['elegiveis'] ?? 0),
+            'sf_ok' => (int)($dispatch['sf_ok'] ?? 0),
+            'sf_fail' => (int)($dispatch['sf_fail'] ?? 0),
+            'webhook_ok' => (int)($dispatch['webhook_ok'] ?? 0),
+            'webhook_fail' => (int)($dispatch['webhook_fail'] ?? 0),
+            'manychat_ok' => (int)($dispatch['manychat_ok'] ?? 0),
+            'manychat_fail' => (int)($dispatch['manychat_fail'] ?? 0),
+        ],
+        'progress' => [
+            'processed' => $processed,
+            'sent' => $sent,
+            'skipped' => $skipped,
+            'failed' => $fail,
+            'pending' => (int)$recipientStats['pending'] + (int)$recipientStats['processing'],
+            'remaining_after_cursor' => $remainingAfterCursor,
+            'percent' => $totalAlunos > 0 ? round(($processed / $totalAlunos) * 100, 2) : 0,
+            'rate_per_minute' => round($rate * 60, 2),
+            'skip_reasons' => $skipStats,
+        ],
+        'cron' => [
+            'task' => $cronTask,
+            'locked' => $locked,
+            'stale' => $stale,
+            'runs' => $cronRuns,
+        ],
+        'recent_recipients' => $recent,
+        'slowest_recipients' => $slow,
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string)($_GET['acao'] ?? '') === 'status_disparos_live') {
     header('Content-Type: application/json; charset=UTF-8');
     header('Cache-Control: no-store, no-cache, must-revalidate');
     echo json_encode(['ok' => true, 'status' => carregar_status_disparos_live($pdo)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string)($_GET['acao'] ?? '') === 'diagnostico_disparo_live') {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    echo json_encode(live_disparo_diagnostico($pdo, (int)($_GET['turma_id'] ?? 0)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
@@ -338,6 +532,37 @@ include __DIR__ . '/_header.php';
 .live-dispatch-summary { min-width:180px; }
 .live-dispatch-counts { display:flex; flex-wrap:wrap; gap:2px 10px; margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; }
 .live-dispatch-counts strong { color:var(--text); font-weight:700; }
+.live-status-button { appearance:none; cursor:pointer; font:inherit; font-weight:700; }
+.live-status-button:hover { filter:brightness(1.12); }
+.live-diag-modal { position:fixed; inset:0; z-index:1000; display:none; background:rgba(2,6,23,.74); backdrop-filter: blur(8px); }
+.live-diag-modal.open { display:flex; align-items:stretch; justify-content:flex-end; }
+.live-diag-panel { width:min(1120px, 100vw); height:100vh; overflow:auto; background:var(--bg-card); border-left:1px solid var(--border); box-shadow:-20px 0 60px rgba(0,0,0,.35); padding:18px; }
+.live-diag-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:14px; }
+.live-diag-title { margin:0; font-size:18px; }
+.live-diag-sub { color:var(--muted); font-size:12px; margin-top:4px; }
+.live-diag-close { min-width:34px; min-height:34px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,.04); color:var(--text); cursor:pointer; font-size:20px; line-height:1; }
+.live-diag-kpis { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; margin-bottom:14px; }
+.live-diag-card { border:1px solid var(--border); border-radius:8px; padding:10px; background:rgba(255,255,255,.025); min-width:0; }
+.live-diag-card span { display:block; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+.live-diag-card strong { display:block; font-size:18px; color:var(--text); overflow-wrap:anywhere; }
+.live-diag-card small { display:block; color:var(--muted); font-size:11px; margin-top:4px; overflow-wrap:anywhere; }
+.live-diag-progress { height:10px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; margin:8px 0 14px; border:1px solid var(--border); }
+.live-diag-progress > div { height:100%; width:0%; background:#22c55e; transition:width .25s ease; }
+.live-diag-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
+.live-diag-section { border:1px solid var(--border); border-radius:8px; padding:12px; background:rgba(255,255,255,.02); min-width:0; }
+.live-diag-section h4 { margin:0 0 10px; font-size:13px; }
+.live-diag-list { display:grid; gap:7px; font-size:12px; }
+.live-diag-row { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; border-bottom:1px solid rgba(255,255,255,.06); padding-bottom:7px; }
+.live-diag-row:last-child { border-bottom:0; padding-bottom:0; }
+.live-diag-row span { color:var(--muted); }
+.live-diag-row strong { text-align:right; overflow-wrap:anywhere; }
+.live-diag-table-wrap { overflow:auto; border:1px solid var(--border); border-radius:8px; }
+.live-diag-table { width:100%; border-collapse:collapse; font-size:11px; }
+.live-diag-table th, .live-diag-table td { padding:7px 8px; border-bottom:1px solid rgba(255,255,255,.06); text-align:left; vertical-align:top; white-space:nowrap; }
+.live-diag-table th { color:var(--muted); font-weight:700; background:rgba(255,255,255,.03); position:sticky; top:0; }
+.live-diag-alert { border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.09); color:#fecaca; padding:10px; border-radius:8px; margin-bottom:12px; font-size:12px; display:none; }
+.live-diag-alert.show { display:block; }
+@media (max-width: 980px) { .live-diag-kpis { grid-template-columns:repeat(2, minmax(0, 1fr)); } .live-diag-grid { grid-template-columns:1fr; } }
 .turmas-table-wrap { width: 100%; max-width:100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
 .table-turmas td, .table-turmas th { font-size: 12px; }
 .table-turmas td { vertical-align: middle; }
@@ -640,7 +865,7 @@ include __DIR__ . '/_header.php';
                     <?php endif; ?>
                 </td>
                 <td class="live-dispatch-summary" data-label="Envio da live" data-live-dispatch-turma="<?= (int)$t['id'] ?>">
-                    <span class="<?= h($statusDisparoClasse) ?>" data-live-status><?= h($statusDisparoLabel) ?></span>
+                    <button type="button" class="<?= h($statusDisparoClasse) ?> live-status-button" data-live-status data-live-diag-open="<?= (int)$t['id'] ?>"><?= h($statusDisparoLabel) ?></button>
                     <div class="live-dispatch-counts" <?= $statusDisparo ? '' : 'hidden' ?>>
                         <span>Enviados: <strong data-live-enviados><?= (int)($statusDisparo['enviados'] ?? 0) ?></strong></span>
                         <span>Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong></span>
@@ -657,7 +882,7 @@ include __DIR__ . '/_header.php';
                     ?>
                     <div class="turma-actions">
                     <?php if ($disparoEmAndamento): ?>
-                        <button type="button" class="btn-sm" data-live-progress-button disabled title="A fila desta turma ainda esta sendo processada">Disparo em andamento</button>
+                        <button type="button" class="btn-sm" data-live-progress-button data-live-diag-open="<?= (int)$t['id'] ?>" title="Abrir diagnostico ao vivo da fila">Disparo em andamento</button>
                     <?php elseif ($manualLivePermitido): ?>
                         <form method="post" onsubmit="return confirm(<?= h(json_encode($confirmacaoDisparo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>)">
                             <input type="hidden" name="acao" value="disparar_live_turma_manual">
@@ -685,6 +910,52 @@ include __DIR__ . '/_header.php';
     <?php endif; ?>
 </div>
 
+<div class="live-diag-modal" id="liveDiagModal" aria-hidden="true">
+    <div class="live-diag-panel" role="dialog" aria-modal="true" aria-labelledby="liveDiagTitle">
+        <div class="live-diag-head">
+            <div>
+                <h3 class="live-diag-title" id="liveDiagTitle">Diagnostico do disparo</h3>
+                <div class="live-diag-sub" id="liveDiagSub">Carregando...</div>
+            </div>
+            <button type="button" class="live-diag-close" id="liveDiagClose" aria-label="Fechar">&times;</button>
+        </div>
+        <div class="live-diag-alert" id="liveDiagAlert"></div>
+        <div class="live-diag-kpis">
+            <div class="live-diag-card"><span>Status</span><strong id="ldStatus">-</strong><small id="ldStatusHint">-</small></div>
+            <div class="live-diag-card"><span>Enviados</span><strong id="ldSent">0</strong><small id="ldSentHint">-</small></div>
+            <div class="live-diag-card"><span>Restantes</span><strong id="ldRemaining">0</strong><small id="ldPercent">0%</small></div>
+            <div class="live-diag-card"><span>Tempo</span><strong id="ldElapsed">0s</strong><small id="ldStarted">-</small></div>
+            <div class="live-diag-card"><span>Previsao</span><strong id="ldEta">-</strong><small id="ldEtaAt">-</small></div>
+            <div class="live-diag-card"><span>Velocidade</span><strong id="ldRate">0/min</strong><small id="ldHeartbeat">-</small></div>
+        </div>
+        <div class="live-diag-progress"><div id="ldProgressBar"></div></div>
+        <div class="live-diag-grid">
+            <div class="live-diag-section">
+                <h4>Fila e Cron</h4>
+                <div class="live-diag-list" id="ldCronList"></div>
+            </div>
+            <div class="live-diag-section">
+                <h4>Canais e Filtros</h4>
+                <div class="live-diag-list" id="ldChannelList"></div>
+            </div>
+        </div>
+        <div class="live-diag-grid">
+            <div class="live-diag-section">
+                <h4>Ultimos envios</h4>
+                <div class="live-diag-table-wrap"><table class="live-diag-table"><thead><tr><th>Aluno</th><th>Status</th><th>Canal</th><th>Duracao</th><th>Atualizado</th></tr></thead><tbody id="ldRecentRows"></tbody></table></div>
+            </div>
+            <div class="live-diag-section">
+                <h4>Mais lentos</h4>
+                <div class="live-diag-table-wrap"><table class="live-diag-table"><thead><tr><th>Aluno</th><th>Status</th><th>Duracao</th><th>Erro</th></tr></thead><tbody id="ldSlowRows"></tbody></table></div>
+            </div>
+        </div>
+        <div class="live-diag-section">
+            <h4>Ultimos crons</h4>
+            <div class="live-diag-table-wrap"><table class="live-diag-table"><thead><tr><th>ID</th><th>Status</th><th>Inicio</th><th>Fim</th><th>Duracao</th><th>Mensagem</th></tr></thead><tbody id="ldCronRows"></tbody></table></div>
+        </div>
+    </div>
+</div>
+
 </div><!-- /.page-turmas -->
 
 <?php if ($cloneFill): ?>
@@ -698,6 +969,46 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var currentKey = '';
     var currentDir = 'asc';
+    var liveDiagModal = document.getElementById('liveDiagModal');
+    var liveDiagTurmaId = '';
+    var liveDiagTimer = null;
+
+    function txt(value) {
+        return value === null || value === undefined || value === '' ? '-' : String(value);
+    }
+
+    function escHtml(value) {
+        return txt(value).replace(/[&<>"']/g, function (ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch];
+        });
+    }
+
+    function fmtMs(value) {
+        var n = Number(value || 0);
+        if (!n || n < 0) return '-';
+        if (n >= 1000) return (n / 1000).toFixed(2) + 's';
+        return Math.round(n) + 'ms';
+    }
+
+    function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = txt(value);
+    }
+
+    function canal(row) {
+        var out = [];
+        if (Number(row.sf_ok || 0)) out.push('SF ok');
+        if (Number(row.sf_fail || 0)) out.push('SF erro');
+        if (Number(row.webhook_ok || 0)) out.push('Webhook ok');
+        if (Number(row.webhook_fail || 0)) out.push('Webhook erro');
+        if (Number(row.manychat_ok || 0)) out.push('ManyChat ok');
+        if (Number(row.manychat_fail || 0)) out.push('ManyChat erro');
+        return out.length ? out.join(', ') : '-';
+    }
+
+    function diagRow(label, value) {
+        return '<div class="live-diag-row"><span>' + escHtml(label) + '</span><strong>' + escHtml(value) + '</strong></div>';
+    }
 
     function atualizarIndicadorDisparo(cell, info) {
         var codigo = String(info.status || '');
@@ -709,7 +1020,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var badge = cell.querySelector('[data-live-status]');
         var counts = cell.querySelector('.live-dispatch-counts');
 
-        badge.className = classe;
+        badge.className = classe + ' live-status-button';
         badge.textContent = label;
         counts.hidden = false;
         cell.querySelector('[data-live-enviados]').textContent = String(Number(info.enviados || 0));
@@ -755,6 +1066,112 @@ document.addEventListener('DOMContentLoaded', function () {
     if (table.querySelector('[data-live-dispatch-turma] [data-live-status].badge-warn')) {
         window.setTimeout(consultarAndamentoDisparos, 2000);
     }
+
+    async function carregarDiagnostico() {
+        if (!liveDiagTurmaId) return;
+        var url = new URL(window.location.href);
+        url.search = '';
+        url.searchParams.set('acao', 'diagnostico_disparo_live');
+        url.searchParams.set('turma_id', liveDiagTurmaId);
+        var response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}, cache: 'no-store'});
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        renderDiagnostico(await response.json());
+    }
+
+    function renderDiagnostico(data) {
+        if (!data || !data.ok) {
+            setText('liveDiagSub', data && data.message ? data.message : 'Falha ao carregar diagnostico.');
+            return;
+        }
+        var turma = data.turma || {};
+        var dispatch = data.dispatch || {};
+        var progress = data.progress || {};
+        var cron = data.cron || {};
+        var task = cron.task || {};
+        var alert = document.getElementById('liveDiagAlert');
+        document.getElementById('liveDiagTitle').textContent = 'Disparo da turma ' + txt(turma.codigo);
+        setText('liveDiagSub', 'Live: ' + txt(turma.data_live) + ' | Disparo planejado: ' + txt(turma.live_disparo_data));
+        setText('ldStatus', txt(dispatch.status));
+        setText('ldStatusHint', cron.locked ? (cron.stale ? 'Lock sem progresso' : 'Cron em execucao') : 'Sem lock ativo');
+        setText('ldSent', Number(progress.sent || 0).toLocaleString('pt-BR'));
+        setText('ldSentHint', 'Excluidos: ' + Number(progress.skipped || 0).toLocaleString('pt-BR') + ' | Erros: ' + Number(progress.failed || 0).toLocaleString('pt-BR'));
+        setText('ldRemaining', Number(progress.remaining_after_cursor || 0).toLocaleString('pt-BR'));
+        setText('ldPercent', Number(progress.percent || 0).toFixed(2).replace('.', ',') + '% de ' + Number(turma.total_alunos || 0).toLocaleString('pt-BR'));
+        setText('ldElapsed', txt(dispatch.elapsed));
+        setText('ldStarted', 'Inicio: ' + txt(dispatch.started_at));
+        setText('ldEta', dispatch.eta || '-');
+        setText('ldEtaAt', dispatch.eta_at ? ('Fim estimado: ' + dispatch.eta_at) : '-');
+        setText('ldRate', Number(progress.rate_per_minute || 0).toFixed(2).replace('.', ',') + '/min');
+        setText('ldHeartbeat', 'Ultimo progresso: ' + txt(dispatch.last_heartbeat_at) + ' (' + txt(dispatch.heartbeat_age) + ')');
+        document.getElementById('ldProgressBar').style.width = Math.max(0, Math.min(100, Number(progress.percent || 0))) + '%';
+        if (cron.stale) {
+            alert.textContent = 'Atencao: existe lock de cron sem progresso recente. O recuperador automatico deve liberar a rotina para retomar.';
+            alert.classList.add('show');
+        } else {
+            alert.classList.remove('show');
+        }
+        document.getElementById('ldCronList').innerHTML =
+            diagRow('Timeout configurado', (task.timeout_seconds || 0) + 's') +
+            diagRow('Lock ativo', cron.locked ? 'Sim' : 'Nao') +
+            diagRow('Running until', task.running_until || '-') +
+            diagRow('Proximo cron', task.next_run_at || '-') +
+            diagRow('Ultima tentativa', task.last_attempt_at || '-') +
+            diagRow('Ultimo status', task.last_status || '-') +
+            diagRow('Mensagem', task.last_message || '-');
+        var skips = (progress.skip_reasons || []).map(function (s) {
+            return txt(s.reason || 'sem motivo') + ': ' + Number(s.total || 0).toLocaleString('pt-BR');
+        }).join(' | ');
+        document.getElementById('ldChannelList').innerHTML =
+            diagRow('Cursor', turma.cursor || 0) +
+            diagRow('Proximo user_id', turma.next_user_id || '-') +
+            diagRow('SF ok / erro', Number(dispatch.sf_ok || 0).toLocaleString('pt-BR') + ' / ' + Number(dispatch.sf_fail || 0).toLocaleString('pt-BR')) +
+            diagRow('Webhook ok / erro', Number(dispatch.webhook_ok || 0).toLocaleString('pt-BR') + ' / ' + Number(dispatch.webhook_fail || 0).toLocaleString('pt-BR')) +
+            diagRow('ManyChat ok / erro', Number(dispatch.manychat_ok || 0).toLocaleString('pt-BR') + ' / ' + Number(dispatch.manychat_fail || 0).toLocaleString('pt-BR')) +
+            diagRow('Filtros aplicados', skips || '-');
+        document.getElementById('ldRecentRows').innerHTML = (data.recent_recipients || []).map(function (r) {
+            return '<tr><td>' + escHtml((r.nome || '-') + ' #' + (r.user_id || '')) + '<br><span style="color:var(--muted)">' + escHtml(r.email || r.telefone || '') + '</span></td><td>' + escHtml(r.status || '-') + '<br><span style="color:var(--muted)">' + escHtml(r.skip_reason || r.error_message || '') + '</span></td><td>' + escHtml(canal(r)) + '</td><td>' + escHtml(fmtMs(r.duration_ms)) + '</td><td>' + escHtml(r.updated_at || r.finished_at || '-') + '</td></tr>';
+        }).join('') || '<tr><td colspan="5">Nenhum destinatario registrado.</td></tr>';
+        document.getElementById('ldSlowRows').innerHTML = (data.slowest_recipients || []).map(function (r) {
+            return '<tr><td>' + escHtml((r.nome || '-') + ' #' + (r.user_id || '')) + '</td><td>' + escHtml(r.status || '-') + '</td><td>' + escHtml(fmtMs(r.duration_ms)) + '</td><td>' + escHtml(r.error_message || r.skip_reason || '-') + '</td></tr>';
+        }).join('') || '<tr><td colspan="4">Sem duracoes registradas.</td></tr>';
+        document.getElementById('ldCronRows').innerHTML = (cron.runs || []).map(function (r) {
+            return '<tr><td>' + escHtml(r.id) + '</td><td>' + escHtml(r.status) + '</td><td>' + escHtml(r.started_at) + '</td><td>' + escHtml(r.finished_at || '-') + '</td><td>' + escHtml(fmtMs(r.duration_ms)) + '</td><td>' + escHtml(r.error_message || r.output_text || '-') + '</td></tr>';
+        }).join('') || '<tr><td colspan="6">Sem execucoes.</td></tr>';
+    }
+
+    function abrirDiagnostico(turmaId) {
+        liveDiagTurmaId = String(turmaId || '');
+        if (!liveDiagTurmaId) return;
+        liveDiagModal.classList.add('open');
+        liveDiagModal.setAttribute('aria-hidden', 'false');
+        setText('liveDiagSub', 'Carregando...');
+        clearInterval(liveDiagTimer);
+        carregarDiagnostico().catch(function (e) { setText('liveDiagSub', 'Falha ao carregar: ' + e.message); });
+        liveDiagTimer = setInterval(function () {
+            carregarDiagnostico().catch(function (e) { console.error('Falha no diagnostico ao vivo:', e); });
+        }, 3000);
+    }
+
+    function fecharDiagnostico() {
+        liveDiagModal.classList.remove('open');
+        liveDiagModal.setAttribute('aria-hidden', 'true');
+        liveDiagTurmaId = '';
+        clearInterval(liveDiagTimer);
+        liveDiagTimer = null;
+    }
+
+    document.querySelectorAll('[data-live-diag-open]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            abrirDiagnostico(btn.getAttribute('data-live-diag-open'));
+        });
+    });
+    document.getElementById('liveDiagClose').addEventListener('click', fecharDiagnostico);
+    liveDiagModal.addEventListener('click', function (event) {
+        if (event.target === liveDiagModal) fecharDiagnostico();
+    });
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && liveDiagModal.classList.contains('open')) fecharDiagnostico();
+    });
 
     function readValue(row, key) {
         var cell = row.querySelector('[data-sort-' + key + ']');
