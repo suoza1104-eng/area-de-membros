@@ -204,6 +204,9 @@ function mc_build_custom_fields(PDO $pdo, array $pairs, array $userRow, array $e
             continue;
         }
         $field = mc_prepare_custom_field($src, $dst, $value, $valueType);
+        $field['_source'] = $src;
+        $field['_dest'] = $dst;
+        $field['_raw_value'] = $value;
         $fields[] = $field;
         $resolved[] = $dst;
     }
@@ -233,8 +236,11 @@ function mc_parse_custom_field_dest(string $dest): array
 
 function mc_detect_custom_field_format(string $source, string $dest, string $value, string $format): string
 {
-    if (in_array($format, ['text', 'number', 'date', 'datetime'], true)) return $format;
     $hint = strtolower($source . ' ' . $dest);
+    if ($format === 'date' && preg_match('/(datetime|date_time|hora|time|inicio|fim|start|end|agendad)/', $hint) && preg_match('/(?:\d{1,2}:\d{2}|T\d{2}:\d{2})/', $value)) {
+        return 'datetime';
+    }
+    if (in_array($format, ['text', 'number', 'date', 'datetime'], true)) return $format;
     if (!preg_match('/\b(data|date|datetime|hora|time|created|updated|paid|expires|vencimento|agendad)/', $hint)) return 'text';
     if (!mc_parse_datetime_value($value)) return 'text';
     if (preg_match('/(datetime|date_time|hora|time|inicio|fim|start|end|created|updated|paid_at|expires_at|agendad)/', $hint)) return 'datetime';
@@ -633,6 +639,24 @@ function mc_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
                 'custom_field_key' => $fieldResult['resolved_keys'][$idx] ?? null,
                 'skipped_keys' => $fieldResult['skipped_keys'],
             ]);
+            if (!(bool)$res['ok'] && stripos((string)($res['response'] ?? ''), 'date&time custom field') !== false) {
+                $retryField = mc_prepare_custom_field((string)($field['_source'] ?? ''), (string)($field['_dest'] ?? ''), (string)($field['_raw_value'] ?? $field['field_value']), 'datetime');
+                $retryBody = ['subscriber_id' => $subscriberId, 'field_value' => $retryField['field_value']];
+                if (!empty($retryField['field_id'])) {
+                    $retryBody['field_id'] = (int)$retryField['field_id'];
+                    $retryPath = '/fb/subscriber/setCustomField';
+                    $retryAction = 'set_custom_field_retry_datetime';
+                } else {
+                    $retryBody['field_name'] = (string)($retryField['field_name'] ?? '');
+                    $retryPath = '/fb/subscriber/setCustomFieldByName';
+                    $retryAction = 'set_custom_field_by_name_retry_datetime';
+                }
+                $res = mc_api($pdo, $cfg, $evento, $ruleId, $retryAction, 'POST', $retryPath, $retryBody, $subscriberId, $logContext + [
+                    'custom_field_key' => $fieldResult['resolved_keys'][$idx] ?? null,
+                    'skipped_keys' => $fieldResult['skipped_keys'],
+                    'retry_reason' => 'manychat_date_time_field',
+                ]);
+            }
             if ((bool)$res['ok']) $sentOk = true;
         }
 
