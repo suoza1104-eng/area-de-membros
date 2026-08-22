@@ -515,6 +515,18 @@ function live_dispatch_recipient(PDO $pdo, int $dispatchId, array $turma, array 
     } catch (Throwable $e) {}
 }
 
+function live_dispatch_advance_cursor(PDO $pdo, array $turma, int $userId): void {
+    $turmaId = (int)($turma['id'] ?? 0);
+    if ($turmaId <= 0 || $userId <= 0) return;
+    try {
+        $pdo->prepare("
+            UPDATE turmas
+               SET live_dispatch_cursor_user_id = GREATEST(COALESCE(live_dispatch_cursor_user_id, 0), :cursor)
+             WHERE id = :id
+        ")->execute([':cursor' => $userId, ':id' => $turmaId]);
+    } catch (Throwable $e) {}
+}
+
 function live_turma_sf_rule(array $turma): ?array {
     $tags = trim((string)($turma['sf_tags_text'] ?? ''));
     $flows = trim((string)($turma['sf_flows_text'] ?? ''));
@@ -744,12 +756,12 @@ $prog = calc_andamento($pdo, $uid, (int)$totalObrigatoriasGlobal);
 $aluno['andamento']        = $prog['andamento'];
 $aluno['aulas_concluidas'] = $prog['concluidas'];
 $aluno['aulas_totais']     = $prog['total'];
-if ($excludeZero && (int)$aluno['andamento'] <= 0) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'andamento_zero'); continue; }
-if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'tag_excluida'); continue; }
-if ($excludeCert && user_has_certificate($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'certificado_emitido'); continue; }
-if ($excludePurchase && user_has_purchase($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'compra_identificada'); continue; }
-if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'live_reagendada'); continue; }
-if ($webhookEnabled && live_already_logged($pdo, $uid, $codigo, (string)($turma['live_disparo_data'] ?? ''))) { $stats['already_sent']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'sent', 'ja_constava_em_webhook_logs'); continue; }
+if ($excludeZero && (int)$aluno['andamento'] <= 0) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'andamento_zero'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
+if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'tag_excluida'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
+if ($excludeCert && user_has_certificate($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'certificado_emitido'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
+if ($excludePurchase && user_has_purchase($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'compra_identificada'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
+if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'live_reagendada'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
+if ($webhookEnabled && live_already_logged($pdo, $uid, $codigo, (string)($turma['live_disparo_data'] ?? ''))) { $stats['already_sent']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'sent', 'ja_constava_em_webhook_logs'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
 
 $payload = build_live_payload($turma, $aluno);
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
@@ -791,6 +803,7 @@ $payload = build_live_payload($turma, $aluno);
         }
 
         live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, $sentOk ? 'sent' : 'failed', $sentOk ? null : implode('; ', $errors), $json ?: '{}');
+        live_dispatch_advance_cursor($pdo, $turma, $uid);
 
         // log no webhook_logs (se tabela existir)
         try {
