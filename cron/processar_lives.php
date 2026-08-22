@@ -524,6 +524,12 @@ function live_dispatch_advance_cursor(PDO $pdo, array $turma, int $userId): void
                SET live_dispatch_cursor_user_id = GREATEST(COALESCE(live_dispatch_cursor_user_id, 0), :cursor)
              WHERE id = :id
         ")->execute([':cursor' => $userId, ':id' => $turmaId]);
+        $pdo->prepare("
+            UPDATE live_turma_dispatch_logs
+               SET last_heartbeat_at = NOW()
+             WHERE turma_id = :id
+               AND status IN ('iniciado','processando','queued')
+        ")->execute([':id' => $turmaId]);
     } catch (Throwable $e) {}
 }
 

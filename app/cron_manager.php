@@ -354,6 +354,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     } catch (Throwable $e) {}
 
     cron_manager_recover_expired_runs($pdo);
+    cron_manager_recover_stale_live_run($pdo);
 
     if (cron_manager_token($pdo) === '') {
         cron_manager_rotate_token($pdo);
@@ -515,6 +516,76 @@ function cron_manager_recover_expired_runs(PDO $pdo): int {
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
+    }
+}
+
+function cron_manager_recover_stale_live_run(PDO $pdo): int {
+    try {
+        $st = $pdo->query("
+            SELECT running_token, last_started_at
+              FROM cron_managed_tasks
+             WHERE task_key = 'lives_turma'
+               AND running_token IS NOT NULL
+               AND last_started_at IS NOT NULL
+               AND last_started_at <= DATE_SUB(NOW(), INTERVAL 3 MINUTE)
+             LIMIT 1
+        ");
+        $task = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: null) : null;
+        if (!$task) return 0;
+
+        $progress = $pdo->query("
+            SELECT MAX(progress_at)
+              FROM (
+                    SELECT MAX(last_heartbeat_at) AS progress_at
+                      FROM live_turma_dispatch_logs
+                     WHERE status IN ('iniciado','processando','queued')
+                    UNION ALL
+                    SELECT MAX(updated_at) AS progress_at
+                      FROM live_turma_dispatch_recipients
+                     WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+              ) p
+        ")->fetchColumn();
+        $progressAt = $progress ? strtotime((string)$progress) : false;
+        if ($progressAt && $progressAt > time() - 180) return 0;
+
+        $runToken = (string)($task['running_token'] ?? '');
+        if ($runToken === '') return 0;
+
+        $pdo->beginTransaction();
+        try {
+            $finishRun = $pdo->prepare("
+                UPDATE cron_managed_runs
+                   SET status='timeout',
+                       finished_at=NOW(),
+                       duration_ms=TIMESTAMPDIFF(MICROSECOND, started_at, NOW()) DIV 1000,
+                       error_message='Liberado automaticamente: live_turma sem progresso recente.'
+                 WHERE run_token=:run_token
+                   AND status='running'
+            ");
+            $finishRun->execute([':run_token' => $runToken]);
+
+            $releaseTask = $pdo->prepare("
+                UPDATE cron_managed_tasks
+                   SET running_until=NULL,
+                       running_token=NULL,
+                       last_finished_at=NOW(),
+                       last_status='timeout',
+                       last_message='Liberado automaticamente: live_turma sem progresso recente.',
+                       next_run_at=NOW(),
+                       total_errors=total_errors+1
+                 WHERE task_key='lives_turma'
+                   AND running_token=:run_token
+            ");
+            $releaseTask->execute([':run_token' => $runToken]);
+            $count = $releaseTask->rowCount() === 1 ? 1 : 0;
+            $pdo->commit();
+            return $count;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            return 0;
+        }
+    } catch (Throwable $e) {
+        return 0;
     }
 }
 
