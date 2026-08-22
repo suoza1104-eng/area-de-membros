@@ -225,7 +225,7 @@ function mc_detect_custom_field_format(string $source, string $dest, string $val
     $hint = strtolower($source . ' ' . $dest);
     if (!preg_match('/\b(data|date|datetime|hora|time|created|updated|paid|expires|vencimento|agendad)/', $hint)) return 'text';
     if (!mc_parse_datetime_value($value)) return 'text';
-    if (preg_match('/\b(datetime|date_time|hora|time|created|updated|paid_at|expires_at|agendad)/', $hint)) return 'datetime';
+    if (preg_match('/(datetime|date_time|hora|time|inicio|fim|start|end|created|updated|paid_at|expires_at|agendad)/', $hint)) return 'datetime';
     return 'date';
 }
 
