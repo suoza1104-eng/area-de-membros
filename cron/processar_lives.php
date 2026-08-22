@@ -9,8 +9,8 @@ $pdo = getPDO();
 $agora = date('Y-m-d H:i:s');
 $manualTurmaId = isset($GLOBALS['manual_live_turma_id']) ? (int)$GLOBALS['manual_live_turma_id'] : 0;
 $startedAt = microtime(true);
-$maxRuntimeSeconds = $manualTurmaId > 0 ? 105 : 240;
-$maxTurmaRuntimeSeconds = $manualTurmaId > 0 ? 105 : 55;
+$maxRuntimeSeconds = $manualTurmaId > 0 ? 105 : 170;
+$maxTurmaRuntimeSeconds = $manualTurmaId > 0 ? 105 : 45;
 $maxStudentsPerRun = 120;
 
 /**
