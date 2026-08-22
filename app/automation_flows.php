@@ -341,12 +341,31 @@ function automation_flow_next(array $graph, string $nodeId, string $handle = 'de
     return null;
 }
 
-function automation_flow_claim(PDO $pdo): ?array
+function automation_flow_claim(PDO $pdo, ?int $flowId = null): ?array
 {
     automation_flows_ensure_schema($pdo);
     $token=bin2hex(random_bytes(16));
+    $flowWhere = $flowId !== null && $flowId > 0 ? ' AND r.flow_id = :flow_id' : '';
+    $claimWindow = $flowWhere !== '' ? 5000 : 300;
     $pdo->beginTransaction();
-    $rows=$pdo->query("SELECT j.id,j.node_id,j.available_at,r.user_id,v.graph_json FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id JOIN automation_flow_versions v ON v.id=r.version_id WHERE ((j.status IN ('queued','retry','scheduled') AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW())) ORDER BY j.available_at,j.id LIMIT 300 FOR UPDATE")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $st = $pdo->prepare("
+        SELECT j.id,j.node_id,j.available_at,r.user_id,v.graph_json
+          FROM automation_flow_jobs j
+          JOIN automation_flow_runs r ON r.id=j.run_id
+          JOIN automation_flow_versions v ON v.id=r.version_id
+         WHERE (
+                (j.status IN ('queued','retry','scheduled') AND j.available_at<=NOW())
+                OR (j.status='processing' AND j.lease_until<NOW())
+               )
+               {$flowWhere}
+      ORDER BY j.available_at,j.id
+         LIMIT {$claimWindow}
+         FOR UPDATE
+    ");
+    $params = [];
+    if ($flowWhere !== '') $params['flow_id'] = $flowId;
+    $st->execute($params);
+    $rows=$st->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $id=automation_flow_pick_claim_id($pdo, $rows);
     if (!$id) { $pdo->commit(); return null; }
     $pdo->prepare("UPDATE automation_flow_jobs SET status='processing',attempts=attempts+1,lease_token=:t,lease_until=DATE_ADD(NOW(),INTERVAL 90 SECOND) WHERE id=:id")->execute(['t'=>$token,'id'=>$id]);
@@ -366,9 +385,16 @@ function automation_flow_pick_claim_id(PDO $pdo, array $rows): int
         try {
             $graph = json_decode((string)($row['graph_json'] ?? ''), true) ?: [];
             foreach ($graph['nodes'] ?? [] as $node) {
-                if ((string)($node['id'] ?? '') !== (string)($row['node_id'] ?? '') || (string)($node['type'] ?? '') !== 'voice') continue;
-                $tags = automation_flow_voice_preferred_tags(is_array($node['config'] ?? null) ? $node['config'] : []);
-                if ($tags && automation_flow_user_has_any_tag_name($pdo, (int)($row['user_id'] ?? 0), $tags)) $score = $idx;
+                if ((string)($node['id'] ?? '') !== (string)($row['node_id'] ?? '')) continue;
+                $type = (string)($node['type'] ?? '');
+                if (in_array($type, ['integration','email','push','action','end'], true)) $score = 100000 + $idx;
+                elseif (in_array($type, ['condition','wait'], true)) $score = 200000 + $idx;
+                elseif ($type === 'trigger') $score = 900000 + $idx;
+                elseif ($type === 'voice') {
+                    $score = 300000 + $idx;
+                    $tags = automation_flow_voice_preferred_tags(is_array($node['config'] ?? null) ? $node['config'] : []);
+                    if ($tags && automation_flow_user_has_any_tag_name($pdo, (int)($row['user_id'] ?? 0), $tags)) $score = $idx;
+                }
                 break;
             }
         } catch (Throwable $e) {}
@@ -444,6 +470,12 @@ function automation_flow_is_voice_concurrency_limit_error(string $error): bool
         || str_contains($normalized, 'too many requests');
 }
 
+function automation_flow_str_limit(string $value, int $length): string
+{
+    if (function_exists('mb_substr')) return mb_substr($value, 0, $length);
+    return substr($value, 0, $length);
+}
+
 function automation_flow_reschedule_voice_limit(PDO $pdo, array $job, array $input, string $error): string
 {
     $provider = voice_provider($pdo);
@@ -456,7 +488,7 @@ function automation_flow_reschedule_voice_limit(PDO $pdo, array $job, array $inp
     $delay = min($max, max($spacing, $previousDelay + $step));
     $input['_voice_limit_delay_seconds'] = $delay;
     $input['_voice_limit_reschedules'] = (int)($input['_voice_limit_reschedules'] ?? 0) + 1;
-    $input['_voice_limit_last_error'] = mb_substr($error, 0, 300);
+    $input['_voice_limit_last_error'] = automation_flow_str_limit($error, 300);
 
     $st = $pdo->prepare("SELECT UNIX_TIMESTAMP(MAX(j.available_at)) FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id WHERE r.flow_id=:flow AND j.node_id=:node AND j.status IN ('queued','retry','scheduled','processing')");
     $st->execute(['flow' => (int)$job['flow_id'], 'node' => (string)$job['node_id']]);
@@ -751,7 +783,7 @@ function automation_flow_process_job(PDO $pdo, array $job): string
         return 'completed';
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        $err=mb_substr($e->getMessage(),0,1000);
+        $err=automation_flow_str_limit($e->getMessage(),1000);
         if ($type === 'voice' && automation_flow_is_voice_concurrency_limit_error($err)) {
             $availableAt = automation_flow_reschedule_voice_limit($pdo, $job, $input, $err);
             $pdo->prepare("UPDATE automation_flow_steps SET status='scheduled',error_message=:e,output_json=:o,finished_at=NOW() WHERE id=:id")
@@ -777,11 +809,11 @@ function automation_flow_process_job(PDO $pdo, array $job): string
     }
 }
 
-function automation_flow_process_queue(PDO $pdo, int $limit = 150): array
+function automation_flow_process_queue(PDO $pdo, int $limit = 150, ?int $flowId = null): array
 {
     $done=['processed'=>0,'completed'=>0,'scheduled'=>0,'retry'=>0,'failed'=>0,'skipped'=>0,'canceled'=>0];
     for ($i=0; $i<$limit; $i++) {
-        $job=automation_flow_claim($pdo);
+        $job=automation_flow_claim($pdo, $flowId);
         if (!$job) break;
         $status=automation_flow_process_job($pdo,$job);
         $done['processed']++;
