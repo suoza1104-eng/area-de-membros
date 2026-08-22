@@ -460,7 +460,11 @@ function live_dispatch_update_log(PDO $pdo, int $dispatchId, array $stats, strin
                    total_alunos = total_alunos + :total,
                    elegiveis = elegiveis + :eligible,
                    webhook_ok = webhook_ok + :ok,
-                   webhook_fail = webhook_fail + :fail
+                   webhook_fail = webhook_fail + :fail,
+                   sf_ok = sf_ok + :sf_ok,
+                   sf_fail = sf_fail + :sf_fail,
+                   manychat_ok = manychat_ok + :manychat_ok,
+                   manychat_fail = manychat_fail + :manychat_fail
              WHERE id = :id
         ")->execute([
             ':status' => $status,
@@ -470,6 +474,10 @@ function live_dispatch_update_log(PDO $pdo, int $dispatchId, array $stats, strin
             ':eligible' => (int)($stats['eligible'] ?? 0),
             ':ok' => (int)($stats['sent'] ?? 0),
             ':fail' => (int)($stats['failed'] ?? 0),
+            ':sf_ok' => (int)($stats['sf_ok'] ?? 0),
+            ':sf_fail' => (int)($stats['sf_fail'] ?? 0),
+            ':manychat_ok' => (int)($stats['manychat_ok'] ?? 0),
+            ':manychat_fail' => (int)($stats['manychat_fail'] ?? 0),
             ':id' => $dispatchId,
         ]);
     } catch (Throwable $e) {}
@@ -507,6 +515,37 @@ function live_dispatch_recipient(PDO $pdo, int $dispatchId, array $turma, array 
     } catch (Throwable $e) {}
 }
 
+function live_turma_sf_rule(array $turma): ?array {
+    $tags = trim((string)($turma['sf_tags_text'] ?? ''));
+    $flows = trim((string)($turma['sf_flows_text'] ?? ''));
+    $fields = trim((string)($turma['sf_fields_json'] ?? ''));
+    if ($tags === '' && $flows === '' && $fields === '') return null;
+    return [
+        'id' => 0,
+        'tags_text' => $tags,
+        'flows_text' => $flows,
+        'fields_json' => $fields,
+        'endpoint_override' => null,
+    ];
+}
+
+function live_payload_extra(array $turma, array $aluno, array $payload): array {
+    $extra = [
+        'codigo_turma' => (string)($turma['codigo'] ?? ($aluno['codigo_turma'] ?? '')),
+        'codigo_live' => (string)($turma['codigo_live'] ?? ''),
+        'data_live' => (string)($turma['data_live'] ?? ''),
+        'data_live_iso' => (string)($turma['data_live'] ?? ''),
+        'live_disparo_data' => (string)($turma['live_disparo_data'] ?? ''),
+        'andamento' => $aluno['andamento'] ?? null,
+        'aulas_concluidas' => $aluno['aulas_concluidas'] ?? null,
+        'aulas_totais' => $aluno['aulas_totais'] ?? null,
+        'turma' => $payload['turma'] ?? [],
+    ];
+    $turmaRule = live_turma_sf_rule($turma);
+    if ($turmaRule !== null) $extra['_integration_rule'] = $turmaRule;
+    return $extra;
+}
+
 function live_already_logged(PDO $pdo, int $userId, string $codigo, ?string $plannedAt): bool {
     if ($userId <= 0 || $codigo === '' || !table_exists($pdo, 'webhook_logs')) return false;
     try {
@@ -536,8 +575,10 @@ $stmt = $pdo->prepare("
     SELECT *
       FROM turmas
      WHERE live_disparada = 0
-       AND live_webhook_enabled = 1
-       AND webhook_live_url IS NOT NULL AND webhook_live_url <> ''
+       AND (
+            (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
+            OR sf_enabled = 1
+       )
        AND live_disparo_data IS NOT NULL
        {$whereManual}
   ORDER BY live_disparo_data ASC, id ASC
@@ -594,7 +635,9 @@ foreach ($turmas as $turma) {
     if ($codigo === '') continue;
 
     $url = trim((string)($turma['webhook_live_url'] ?? ''));
-    if ($url === '') continue;
+    $webhookEnabled = (int)($turma['live_webhook_enabled'] ?? 0) === 1 && $url !== '';
+    $sfEnabled = (int)($turma['sf_enabled'] ?? 0) === 1;
+    if (!$webhookEnabled && !$sfEnabled) continue;
 
     $delay = (int)($turma['delay_ms'] ?? 500);
     if ($delay < 0) $delay = 0;
@@ -617,6 +660,10 @@ foreach ($turmas as $turma) {
         'failed' => 0,
         'skipped' => 0,
         'already_sent' => 0,
+        'sf_ok' => 0,
+        'sf_fail' => 0,
+        'manychat_ok' => 0,
+        'manychat_fail' => 0,
     ];
 
     // ----------------------------------------------------------------------------------
@@ -702,21 +749,52 @@ if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)
 if ($excludeCert && user_has_certificate($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'certificado_emitido'); continue; }
 if ($excludePurchase && user_has_purchase($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'compra_identificada'); continue; }
 if ($excludeRescheduled && user_has_active_live_reschedule($pdo, $uid, (string)($turma['data_live'] ?? ''))) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'live_reagendada'); continue; }
-if (live_already_logged($pdo, $uid, $codigo, (string)($turma['live_disparo_data'] ?? ''))) { $stats['already_sent']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'sent', 'ja_constava_em_webhook_logs'); continue; }
+if ($webhookEnabled && live_already_logged($pdo, $uid, $codigo, (string)($turma['live_disparo_data'] ?? ''))) { $stats['already_sent']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'sent', 'ja_constava_em_webhook_logs'); continue; }
 
 $payload = build_live_payload($turma, $aluno);
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
         $stats['eligible']++;
 
-        [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
-        $sentOk = ($err === '' && $status >= 200 && $status < 400);
-        if ($sentOk) $stats['sent']++;
-        else $stats['failed']++;
-        live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, $sentOk ? 'sent' : 'failed', $sentOk ? null : (($err ?: ('HTTP ' . $status))), $json ?: '{}');
+        $sentOk = false;
+        $errors = [];
+        $status = null;
+        $resp = '';
+        $err = '';
+
+        if ($webhookEnabled) {
+            [$status, $resp, $err] = post_json($url, $json ?: '{}', 15);
+            $webhookOk = ($err === '' && $status >= 200 && $status < 400);
+            if ($webhookOk) {
+                $stats['sent']++;
+                $sentOk = true;
+            } else {
+                $stats['failed']++;
+                $errors[] = $err ?: ('Webhook HTTP ' . $status);
+            }
+        }
+
+        if ($sfEnabled && function_exists('sf_disparar_evento')) {
+            $sfUser = [
+                'id' => $aluno['id'] ?? null,
+                'nome' => $aluno['nome'] ?? null,
+                'email' => $aluno['email'] ?? null,
+                'telefone' => $aluno['telefone'] ?? null,
+            ];
+            $sfOk = sf_disparar_evento($pdo, 'LIVE_TURMA', $sfUser, live_payload_extra($turma, $aluno, $payload));
+            if ($sfOk) {
+                $stats['sf_ok']++;
+                $sentOk = true;
+            } else {
+                $stats['sf_fail']++;
+                $errors[] = 'SuperFuncionario sem envio confirmado';
+            }
+        }
+
+        live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, $sentOk ? 'sent' : 'failed', $sentOk ? null : implode('; ', $errors), $json ?: '{}');
 
         // log no webhook_logs (se tabela existir)
         try {
-            if (table_exists($pdo, 'webhook_logs')) {
+            if ($webhookEnabled && table_exists($pdo, 'webhook_logs')) {
                 $log = $pdo->prepare("
                     INSERT INTO webhook_logs
                         (webhook_id, user_id, evento, payload_json, response_status, response_body, error_message, created_at)
