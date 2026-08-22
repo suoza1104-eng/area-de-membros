@@ -520,6 +520,9 @@ function cron_manager_recover_expired_runs(PDO $pdo): int {
 }
 
 function cron_manager_recover_stale_live_run(PDO $pdo): int {
+    $minRunAgeSeconds = 90;
+    $maxIdleSeconds = 90;
+
     try {
         $st = $pdo->query("
             SELECT running_token, last_started_at
@@ -527,7 +530,7 @@ function cron_manager_recover_stale_live_run(PDO $pdo): int {
              WHERE task_key = 'lives_turma'
                AND running_token IS NOT NULL
                AND last_started_at IS NOT NULL
-               AND last_started_at <= DATE_SUB(NOW(), INTERVAL 3 MINUTE)
+               AND last_started_at <= DATE_SUB(NOW(), INTERVAL {$minRunAgeSeconds} SECOND)
              LIMIT 1
         ");
         $task = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: null) : null;
@@ -546,7 +549,7 @@ function cron_manager_recover_stale_live_run(PDO $pdo): int {
               ) p
         ")->fetchColumn();
         $progressAt = $progress ? strtotime((string)$progress) : false;
-        if ($progressAt && $progressAt > time() - 180) return 0;
+        if ($progressAt && $progressAt > time() - $maxIdleSeconds) return 0;
 
         $runToken = (string)($task['running_token'] ?? '');
         if ($runToken === '') return 0;
@@ -555,10 +558,10 @@ function cron_manager_recover_stale_live_run(PDO $pdo): int {
         try {
             $finishRun = $pdo->prepare("
                 UPDATE cron_managed_runs
-                   SET status='timeout',
+                   SET status='recovered',
                        finished_at=NOW(),
                        duration_ms=TIMESTAMPDIFF(MICROSECOND, started_at, NOW()) DIV 1000,
-                       error_message='Liberado automaticamente: live_turma sem progresso recente.'
+                       error_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.'
                  WHERE run_token=:run_token
                    AND status='running'
             ");
@@ -569,10 +572,9 @@ function cron_manager_recover_stale_live_run(PDO $pdo): int {
                    SET running_until=NULL,
                        running_token=NULL,
                        last_finished_at=NOW(),
-                       last_status='timeout',
-                       last_message='Liberado automaticamente: live_turma sem progresso recente.',
-                       next_run_at=NOW(),
-                       total_errors=total_errors+1
+                       last_status='recovered',
+                       last_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.',
+                       next_run_at=NOW()
                  WHERE task_key='lives_turma'
                    AND running_token=:run_token
             ");
