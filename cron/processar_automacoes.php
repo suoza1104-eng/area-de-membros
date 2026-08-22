@@ -20,7 +20,7 @@ $priority = $pdo->query("
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 foreach ($priority as $flow) {
-    $partial = automation_flow_process_queue($pdo, 120, (int)$flow['id']);
+    $partial = automation_flow_process_queue($pdo, 60, (int)$flow['id']);
     $partial['flow_id'] = (int)$flow['id'];
     $partial['flow_name'] = (string)$flow['name'];
     $result['priority'][] = $partial;
