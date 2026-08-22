@@ -443,11 +443,22 @@ if ($acao !== '') {
             } elseif ($tipo === 'custom_field') {
                 $campo = trim((string)($a['campo'] ?? ''));
                 if ($campo === '') continue;
-                $valor = dpValorCampoManyChat($campo, dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''), $acoes));
-                $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', '/fb/subscriber/setCustomFields', [
+                $valorBruto = dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''), $acoes);
+                $field = function_exists('mc_prepare_custom_field')
+                    ? mc_prepare_custom_field((string)($a['valor'] ?? ''), $campo, $valorBruto)
+                    : ['field_name' => $campo, 'field_value' => dpValorCampoManyChat($campo, $valorBruto)];
+                $body = [
                     'subscriber_id' => $subscriberId,
-                    'fields' => [['field_name' => $campo, 'field_value' => $valor]],
-                ], $subscriberId, $logContext);
+                    'field_value' => $field['field_value'],
+                ];
+                if (!empty($field['field_id'])) {
+                    $body['field_id'] = (int)$field['field_id'];
+                    $path = '/fb/subscriber/setCustomField';
+                } else {
+                    $body['field_name'] = (string)($field['field_name'] ?? $campo);
+                    $path = '/fb/subscriber/setCustomFieldByName';
+                }
+                $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', $path, $body, $subscriberId, $logContext);
                 $ok = $ok || (bool)$res['ok'];
                 $results[] = ['acao' => 'custom_field', 'campo' => $campo, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
             }

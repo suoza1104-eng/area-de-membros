@@ -195,10 +195,79 @@ function mc_build_custom_fields(PDO $pdo, array $pairs, array $userRow, array $e
             $skipped[] = $dst . '(' . $src . ')';
             continue;
         }
-        $fields[] = ['field_name' => $dst, 'field_value' => $value];
+        $field = mc_prepare_custom_field($src, $dst, $value);
+        $fields[] = $field;
         $resolved[] = $dst;
     }
     return ['fields' => $fields, 'resolved_keys' => $resolved, 'skipped_keys' => $skipped];
+}
+
+function mc_parse_custom_field_dest(string $dest): array
+{
+    $dest = trim($dest);
+    $format = 'auto';
+    if (preg_match('/^(date|data|datetime|date_time)\s*:\s*(.+)$/i', $dest, $m)) {
+        $format = in_array(strtolower($m[1]), ['datetime', 'date_time'], true) ? 'datetime' : 'date';
+        $dest = trim($m[2]);
+    }
+    if (preg_match('/^(?:field_?id|id)\s*:\s*(\d+)$/i', $dest, $m)) {
+        return ['field_id' => (int)$m[1], 'field_name' => '', 'format' => $format];
+    }
+    if (preg_match('/^\d+$/', $dest)) {
+        return ['field_id' => (int)$dest, 'field_name' => '', 'format' => $format];
+    }
+    return ['field_id' => 0, 'field_name' => $dest, 'format' => $format];
+}
+
+function mc_detect_custom_field_format(string $source, string $dest, string $value, string $format): string
+{
+    if (in_array($format, ['date', 'datetime'], true)) return $format;
+    $hint = strtolower($source . ' ' . $dest);
+    if (!preg_match('/\b(data|date|datetime|hora|time|created|updated|paid|expires|vencimento|agendad)/', $hint)) return 'text';
+    if (!mc_parse_datetime_value($value)) return 'text';
+    if (preg_match('/\b(datetime|date_time|hora|time|created|updated|paid_at|expires_at|agendad)/', $hint)) return 'datetime';
+    return 'date';
+}
+
+function mc_parse_datetime_value(string $value): ?DateTimeImmutable
+{
+    $value = trim($value);
+    if ($value === '') return null;
+    try {
+        if (preg_match('/^\d{13}$/', $value)) {
+            return (new DateTimeImmutable('@' . ((int)floor(((int)$value) / 1000))))->setTimezone(new DateTimeZone('America/Sao_Paulo'));
+        }
+        if (preg_match('/^\d{10}$/', $value)) {
+            return (new DateTimeImmutable('@' . (int)$value))->setTimezone(new DateTimeZone('America/Sao_Paulo'));
+        }
+        if (preg_match('/^\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?$/', $value)) {
+            $fmt = str_contains($value, ':') ? (substr_count($value, ':') === 2 ? 'd/m/Y H:i:s' : 'd/m/Y H:i') : 'd/m/Y';
+            $dt = DateTimeImmutable::createFromFormat($fmt, $value, new DateTimeZone('America/Sao_Paulo'));
+            return $dt ?: null;
+        }
+        return new DateTimeImmutable($value, new DateTimeZone('America/Sao_Paulo'));
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function mc_format_custom_field_value(string $source, string $dest, string $value, string $format): string
+{
+    $detected = mc_detect_custom_field_format($source, $dest, $value, $format);
+    if ($detected === 'text') return $value;
+    $dt = mc_parse_datetime_value($value);
+    if (!$dt) return $value;
+    if ($detected === 'date') return $dt->format('Y-m-d');
+    return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s+00:00');
+}
+
+function mc_prepare_custom_field(string $source, string $dest, string $value): array
+{
+    $parsed = mc_parse_custom_field_dest($dest);
+    $field = ['field_value' => mc_format_custom_field_value($source, $dest, $value, (string)$parsed['format'])];
+    if ((int)$parsed['field_id'] > 0) $field['field_id'] = (int)$parsed['field_id'];
+    else $field['field_name'] = (string)$parsed['field_name'];
+    return $field;
 }
 
 function mc_http_json(string $method, string $url, string $token, array $body, int $timeoutSeconds): array
@@ -532,19 +601,19 @@ function mc_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             if ((bool)$res['ok']) $sentOk = true;
         }
 
-        if ($fieldResult['fields']) {
-            $body = [
-                'subscriber_id' => $subscriberId,
-                'fields' => $fieldResult['fields'],
-                '_debug' => [
-                    'custom_fields_keys' => $fieldResult['resolved_keys'],
-                    'skipped_keys' => $fieldResult['skipped_keys'],
-                ],
-            ];
-            $sendBody = $body;
-            unset($sendBody['_debug']);
-            $res = mc_api($pdo, $cfg, $evento, $ruleId, 'set_custom_fields', 'POST', '/fb/subscriber/setCustomFields', $sendBody, $subscriberId, $logContext + [
-                'custom_fields_keys' => $fieldResult['resolved_keys'],
+        foreach ($fieldResult['fields'] as $idx => $field) {
+            $body = ['subscriber_id' => $subscriberId, 'field_value' => $field['field_value']];
+            if (!empty($field['field_id'])) {
+                $body['field_id'] = (int)$field['field_id'];
+                $path = '/fb/subscriber/setCustomField';
+                $action = 'set_custom_field';
+            } else {
+                $body['field_name'] = (string)($field['field_name'] ?? '');
+                $path = '/fb/subscriber/setCustomFieldByName';
+                $action = 'set_custom_field_by_name';
+            }
+            $res = mc_api($pdo, $cfg, $evento, $ruleId, $action, 'POST', $path, $body, $subscriberId, $logContext + [
+                'custom_field_key' => $fieldResult['resolved_keys'][$idx] ?? null,
                 'skipped_keys' => $fieldResult['skipped_keys'],
             ]);
             if ((bool)$res['ok']) $sentOk = true;

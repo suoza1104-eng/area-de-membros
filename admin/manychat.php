@@ -332,6 +332,10 @@ include __DIR__ . '/_header.php';
                     <b>Progresso e certificado</b>
                     <code>extra.andamento</code><code>extra.aulas_concluidas</code><code>extra.pdf_url</code><code>extra.codigo_certificado</code>
                 </div>
+                <div class="mc-ref-item">
+                    <b>Destino no Manychat</b>
+                    <code>Nome do campo</code><code>field_id:123</code><code>date:field_id:123</code><code>datetime:Campo</code>
+                </div>
             </div>
         </div>
 
@@ -380,12 +384,13 @@ include __DIR__ . '/_header.php';
                         <?php foreach ($editPairs as $pair): ?>
                             <div class="mc-field-grid">
                                 <input list="mc-field-options" name="field_source[]" value="<?= h($pair['source'] ?? '') ?>" placeholder="Origem. Ex.: user.email">
-                                <input name="field_dest[]" value="<?= h($pair['dest'] ?? '') ?>" placeholder="Campo no Manychat">
+                                <input name="field_dest[]" value="<?= h($pair['dest'] ?? '') ?>" placeholder="Nome do campo, field_id:123, date:Campo ou datetime:Campo">
                                 <button class="btnx" type="button" onclick="this.closest('.mc-field-grid').remove()">x</button>
                             </div>
                         <?php endforeach; ?>
                     </div>
                     <button class="btn ghost sm" type="button" onclick="mcAddField()">Adicionar campo</button>
+                    <div class="note">Use o nome exato do campo no Manychat ou o ID com <code>field_id:123</code>. Para campos de data, use <code>date:</code> antes do destino; para data e hora, use <code>datetime:</code>.</div>
                 </div>
                 <button class="btn" type="submit"><?= $edit ? 'Salvar regra' : 'Adicionar regra' ?></button>
                 <?php if ($edit): ?><a class="btn ghost" href="manychat.php">Cancelar</a><?php endif; ?>
@@ -476,7 +481,7 @@ function mcAddField() {
     var div = document.createElement('div');
     div.className = 'mc-field-grid';
     div.innerHTML = '<input list="mc-field-options" name="field_source[]" placeholder="Origem. Ex.: user.email">' +
-        '<input name="field_dest[]" placeholder="Campo no Manychat">' +
+        '<input name="field_dest[]" placeholder="Nome do campo, field_id:123, date:Campo ou datetime:Campo">' +
         "<button class=\"btnx\" type=\"button\" onclick=\"this.closest('.mc-field-grid').remove()\">x</button>";
     wrap.appendChild(div);
 }
