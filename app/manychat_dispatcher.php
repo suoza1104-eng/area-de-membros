@@ -531,13 +531,6 @@ function mc_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int $ruleId
             ], $subscriberId);
         }
     }
-    if ($subscriberId !== '' && $email !== '') {
-        mc_api($pdo, $cfg, $evento, $ruleId, 'set_email_custom_field', 'POST', '/fb/subscriber/setCustomFieldByName', [
-            'subscriber_id' => $subscriberId,
-            'field_name' => 'E-mail',
-            'field_value' => $email,
-        ], $subscriberId);
-    }
     return $subscriberId;
 }
 
@@ -545,6 +538,8 @@ function mc_get_or_create_subscriber(PDO $pdo, array $cfg, string $evento, ?int 
 {
     $email = trim((string)($userRow['email'] ?? ''));
     $phone = trim((string)($userRow['telefone'] ?? ''));
+    $localId = mc_find_local_subscriber($pdo, $userRow, $email, $phone);
+    if ($localId !== '') return $localId;
     if ($email !== '') {
         $id = mc_find_subscriber($pdo, $cfg, $evento, $ruleId, 'email', $email);
         if ($id !== '') return $id;

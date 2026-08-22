@@ -66,7 +66,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa etapas vencidas dos fluxos unificados de email, push e integracoes.',
             'script' => __DIR__ . '/../cron/processar_automacoes.php',
             'interval' => 1,
-            'timeout' => 180,
+            'timeout' => 300,
         ],
         'torpedo_voz' => [
             'label' => 'Torpedo de Voz',
