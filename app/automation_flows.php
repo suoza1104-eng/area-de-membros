@@ -252,6 +252,22 @@ function automation_flow_payment_product_matches(array $extra, string $filter): 
     return false;
 }
 
+function automation_flow_payment_product_filters(array $config): array
+{
+    $values = [];
+    if (isset($config['paymentProducts']) && is_array($config['paymentProducts'])) {
+        foreach ($config['paymentProducts'] as $value) {
+            $value = trim((string)$value);
+            if ($value !== '') $values[] = $value;
+        }
+    }
+    foreach ([$config['paymentProduct'] ?? '', $config['productFilter'] ?? ''] as $value) {
+        $value = trim((string)$value);
+        if ($value !== '') $values[] = $value;
+    }
+    return array_values(array_unique($values));
+}
+
 function automation_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
 {
     $c = is_array($node['config'] ?? null) ? $node['config'] : [];
@@ -262,8 +278,17 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
         if ((int)($extra['_scheduled_version_id'] ?? 0) !== $versionId) return false;
         if ((string)($extra['_scheduled_node_id'] ?? '') !== (string)($node['id'] ?? '')) return false;
     }
-    $paymentProduct = trim((string)($c['paymentProduct'] ?? $c['productFilter'] ?? ''));
-    if ($paymentProduct !== '' && !automation_flow_payment_product_matches($extra, $paymentProduct)) return false;
+    $paymentProducts = automation_flow_payment_product_filters($c);
+    if ($paymentProducts) {
+        $matchedPaymentProduct = false;
+        foreach ($paymentProducts as $paymentProduct) {
+            if (automation_flow_payment_product_matches($extra, $paymentProduct)) {
+                $matchedPaymentProduct = true;
+                break;
+            }
+        }
+        if (!$matchedPaymentProduct) return false;
+    }
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $user['turma_codigo'] ?? '', $extra['codigo_turma'] ?? ''] as $value) {
