@@ -187,15 +187,23 @@ function mc_build_custom_fields(PDO $pdo, array $pairs, array $userRow, array $e
     $resolved = [];
     $skipped = [];
     foreach ($pairs as $p) {
+        $sourceMode = (string)($p['sourceMode'] ?? $p['mode'] ?? 'variable');
         $src = trim((string)($p['source'] ?? ''));
         $dst = trim((string)($p['dest'] ?? ''));
-        if ($src === '' || $dst === '') continue;
-        $value = mc_resolve_source($pdo, $src, $userRow, $extra, $payload);
+        $valueType = (string)($p['valueType'] ?? $p['type'] ?? 'auto');
+        if ($dst === '') continue;
+        if ($sourceMode === 'fixed') {
+            $value = (string)($p['fixedValue'] ?? $p['value'] ?? $src);
+            $src = 'literal:' . $value;
+        } else {
+            if ($src === '') continue;
+            $value = mc_resolve_source($pdo, $src, $userRow, $extra, $payload);
+        }
         if ($value === null) {
             $skipped[] = $dst . '(' . $src . ')';
             continue;
         }
-        $field = mc_prepare_custom_field($src, $dst, $value);
+        $field = mc_prepare_custom_field($src, $dst, $value, $valueType);
         $fields[] = $field;
         $resolved[] = $dst;
     }
@@ -206,8 +214,12 @@ function mc_parse_custom_field_dest(string $dest): array
 {
     $dest = trim($dest);
     $format = 'auto';
-    if (preg_match('/^(date|data|datetime|date_time)\s*:\s*(.+)$/i', $dest, $m)) {
-        $format = in_array(strtolower($m[1]), ['datetime', 'date_time'], true) ? 'datetime' : 'date';
+    if (preg_match('/^(text|texto|number|numero|date|data|datetime|date_time)\s*:\s*(.+)$/i', $dest, $m)) {
+        $kind = strtolower($m[1]);
+        if (in_array($kind, ['datetime', 'date_time'], true)) $format = 'datetime';
+        elseif (in_array($kind, ['number', 'numero'], true)) $format = 'number';
+        elseif (in_array($kind, ['text', 'texto'], true)) $format = 'text';
+        else $format = 'date';
         $dest = trim($m[2]);
     }
     if (preg_match('/^(?:field_?id|id)\s*:\s*(\d+)$/i', $dest, $m)) {
@@ -221,7 +233,7 @@ function mc_parse_custom_field_dest(string $dest): array
 
 function mc_detect_custom_field_format(string $source, string $dest, string $value, string $format): string
 {
-    if (in_array($format, ['date', 'datetime'], true)) return $format;
+    if (in_array($format, ['text', 'number', 'date', 'datetime'], true)) return $format;
     $hint = strtolower($source . ' ' . $dest);
     if (!preg_match('/\b(data|date|datetime|hora|time|created|updated|paid|expires|vencimento|agendad)/', $hint)) return 'text';
     if (!mc_parse_datetime_value($value)) return 'text';
@@ -255,16 +267,21 @@ function mc_format_custom_field_value(string $source, string $dest, string $valu
 {
     $detected = mc_detect_custom_field_format($source, $dest, $value, $format);
     if ($detected === 'text') return $value;
+    if ($detected === 'number') {
+        $normalized = str_replace(',', '.', preg_replace('/[^\d,.\-]+/', '', $value) ?? $value);
+        return is_numeric($normalized) ? (string)(0 + $normalized) : $value;
+    }
     $dt = mc_parse_datetime_value($value);
     if (!$dt) return $value;
     if ($detected === 'date') return $dt->format('Y-m-d');
     return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s+00:00');
 }
 
-function mc_prepare_custom_field(string $source, string $dest, string $value): array
+function mc_prepare_custom_field(string $source, string $dest, string $value, string $formatOverride = 'auto'): array
 {
     $parsed = mc_parse_custom_field_dest($dest);
-    $field = ['field_value' => mc_format_custom_field_value($source, $dest, $value, (string)$parsed['format'])];
+    $format = in_array($formatOverride, ['text', 'number', 'date', 'datetime'], true) ? $formatOverride : (string)$parsed['format'];
+    $field = ['field_value' => mc_format_custom_field_value($source, $dest, $value, $format)];
     if ((int)$parsed['field_id'] > 0) $field['field_id'] = (int)$parsed['field_id'];
     else $field['field_name'] = (string)$parsed['field_name'];
     return $field;
