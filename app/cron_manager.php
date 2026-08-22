@@ -31,7 +31,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa turmas com horário de disparo atingido.',
             'script' => __DIR__ . '/../cron/processar_lives.php',
             'interval' => 1,
-            'timeout' => 300,
+            'timeout' => 1800,
         ],
         'agendamentos_retorno' => [
             'label' => 'Agendamentos de retorno',
@@ -255,7 +255,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
                SET enabled = 1,
                    mode = IF(mode = 'disabled', 'redundant', mode),
                    interval_minutes = 1,
-                   timeout_seconds = GREATEST(timeout_seconds, 300),
+                   timeout_seconds = GREATEST(timeout_seconds, 1800),
                    fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
                    next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'lives_turma'
@@ -263,7 +263,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
                     enabled <> 1
                     OR mode = 'disabled'
                     OR interval_minutes <> 1
-                    OR timeout_seconds < 300
+                    OR timeout_seconds < 1800
                     OR next_run_at IS NULL
                )
         ");
