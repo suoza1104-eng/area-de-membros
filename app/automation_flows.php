@@ -212,6 +212,46 @@ function automation_flow_publish(PDO $pdo, int $id, string $name, string $descri
     $pdo->commit();
 }
 
+function automation_flow_match_norm(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') return '';
+    $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+    if (is_string($converted) && $converted !== '') $value = $converted;
+    $value = strtolower($value);
+    $value = preg_replace('/\s+/', ' ', $value) ?: $value;
+    return trim($value);
+}
+
+function automation_flow_extra_path_value(array $extra, array $path)
+{
+    $value = $extra;
+    foreach ($path as $key) {
+        if (!is_array($value) || !array_key_exists($key, $value)) return null;
+        $value = $value[$key];
+    }
+    return is_scalar($value) ? (string)$value : null;
+}
+
+function automation_flow_payment_product_matches(array $extra, string $filter): bool
+{
+    $needle = automation_flow_match_norm($filter);
+    if ($needle === '') return true;
+    $paths = [
+        ['product_name'], ['product_code'], ['checkout_id'], ['external_product_id'],
+        ['produto_nome'], ['produto_id'], ['curso'], ['course'], ['course_name'],
+        ['pagamento', 'product_name'], ['pagamento', 'product_code'], ['pagamento', 'checkout_id'],
+        ['pagamento', 'produto_nome'], ['pagamento', 'produto_id'],
+        ['metadata', 'product_name'], ['metadata', 'product_code'], ['metadata', 'checkout_id'],
+        ['payload', 'product_name'], ['payload', 'product_code'], ['payload', 'checkout_id'],
+    ];
+    foreach ($paths as $path) {
+        $value = automation_flow_extra_path_value($extra, $path);
+        if ($value !== null && automation_flow_match_norm($value) === $needle) return true;
+    }
+    return false;
+}
+
 function automation_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
 {
     $c = is_array($node['config'] ?? null) ? $node['config'] : [];
@@ -222,6 +262,8 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
         if ((int)($extra['_scheduled_version_id'] ?? 0) !== $versionId) return false;
         if ((string)($extra['_scheduled_node_id'] ?? '') !== (string)($node['id'] ?? '')) return false;
     }
+    $paymentProduct = trim((string)($c['paymentProduct'] ?? $c['productFilter'] ?? ''));
+    if ($paymentProduct !== '' && !automation_flow_payment_product_matches($extra, $paymentProduct)) return false;
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $user['turma_codigo'] ?? '', $extra['codigo_turma'] ?? ''] as $value) {
