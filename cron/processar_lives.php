@@ -527,6 +527,24 @@ function live_dispatch_advance_cursor(PDO $pdo, array $turma, int $userId): void
     } catch (Throwable $e) {}
 }
 
+function live_dispatch_recipient_done(PDO $pdo, int $dispatchId, int $userId): bool {
+    if ($dispatchId <= 0 || $userId <= 0) return false;
+    try {
+        $st = $pdo->prepare("
+            SELECT 1
+              FROM live_turma_dispatch_recipients
+             WHERE dispatch_id = :dispatch_id
+               AND user_id = :user_id
+               AND status IN ('sent', 'skipped')
+             LIMIT 1
+        ");
+        $st->execute([':dispatch_id' => $dispatchId, ':user_id' => $userId]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 function live_turma_sf_rule(array $turma): ?array {
     $tags = trim((string)($turma['sf_tags_text'] ?? ''));
     $flows = trim((string)($turma['sf_flows_text'] ?? ''));
@@ -756,6 +774,7 @@ $prog = calc_andamento($pdo, $uid, (int)$totalObrigatoriasGlobal);
 $aluno['andamento']        = $prog['andamento'];
 $aluno['aulas_concluidas'] = $prog['concluidas'];
 $aluno['aulas_totais']     = $prog['total'];
+if (live_dispatch_recipient_done($pdo, $dispatchId, $uid)) { $stats['already_sent']++; live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
 if ($excludeZero && (int)$aluno['andamento'] <= 0) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'andamento_zero'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
 if ($excludeTagIds && user_has_any_tag($pdo, $tagRelTable, $uid, $excludeTagIds)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'tag_excluida'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
 if ($excludeCert && user_has_certificate($pdo, $uid)) { $stats['skipped']++; live_dispatch_recipient($pdo, $dispatchId, $turma, $aluno, 'skipped', 'certificado_emitido'); live_dispatch_advance_cursor($pdo, $turma, $uid); continue; }
