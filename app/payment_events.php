@@ -116,7 +116,7 @@ function payment_event_compact_payload(array $row): array
         'valor_bruto','valor_liquido','taxa','gross_amount_cents','net_amount_cents','fee_amount_cents',
         'installments','product_name','product_code','checkout_id','checkout_url','pix_qrcode','pix_qrcode_url',
         'pix_expires_at','boleto_url','boleto_line','buyer_name','buyer_email','buyer_phone','buyer_document',
-        'payment_event_id','occurred_at','metadata',
+        'payment_event_id','occurred_at','aluno_identificado','metadata',
     ];
     $out = [];
     foreach ($keys as $key) {
@@ -136,6 +136,87 @@ function payment_event_business_identity(array $data): string
     ];
     $parts = array_values(array_filter($parts, static fn($value) => $value !== '' && $value !== '0'));
     return $parts ? hash('sha256', implode('|', $parts)) : '';
+}
+
+function payment_event_trigger_payload(array $data, array $metadata, int $eventId, string $provider, string $status, string $eventCode, string $transactionCode): array
+{
+    return payment_event_compact_payload([
+        'gateway'=>$provider,
+        'evento'=>$eventCode,
+        'status'=>$status,
+        'transaction_code'=>$transactionCode,
+        'provider_transaction_id'=>$data['provider_transaction_id'] ?? '',
+        'payment_method'=>$data['payment_method'] ?? '',
+        'currency'=>$data['currency'] ?? 'BRL',
+        'valor_bruto'=>((int)($data['gross_amount_cents'] ?? 0)) / 100,
+        'valor_liquido'=>((int)($data['net_amount_cents'] ?? 0)) / 100,
+        'taxa'=>((int)($data['fee_amount_cents'] ?? 0)) / 100,
+        'gross_amount_cents'=>(int)($data['gross_amount_cents'] ?? 0),
+        'net_amount_cents'=>(int)($data['net_amount_cents'] ?? 0),
+        'fee_amount_cents'=>(int)($data['fee_amount_cents'] ?? 0),
+        'installments'=>$data['installments'] ?? null,
+        'product_name'=>$data['product_name'] ?? '',
+        'product_code'=>$data['product_code'] ?? '',
+        'checkout_id'=>$data['checkout_id'] ?? '',
+        'checkout_url'=>$data['checkout_url'] ?? '',
+        'pix_qrcode'=>$data['pix_qrcode'] ?? '',
+        'pix_qrcode_url'=>$data['pix_qrcode_url'] ?? '',
+        'pix_expires_at'=>$data['pix_expires_at'] ?? '',
+        'boleto_url'=>$data['boleto_url'] ?? '',
+        'boleto_line'=>$data['boleto_line'] ?? '',
+        'buyer_name'=>$data['buyer_name'] ?? '',
+        'buyer_email'=>$data['buyer_email'] ?? '',
+        'buyer_phone'=>$data['buyer_phone'] ?? '',
+        'buyer_document'=>$data['buyer_document'] ?? '',
+        'payment_event_id'=>$eventId,
+        'occurred_at'=>$data['occurred_at'] ?? date('Y-m-d H:i:s'),
+        'aluno_identificado'=>(int)($data['user_id'] ?? 0) > 0 ? 1 : 0,
+        'metadata'=>$metadata,
+    ]);
+}
+
+function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode, array $extra): int
+{
+    try {
+        require_once __DIR__ . '/automation_flows.php';
+        automation_flows_ensure_schema($pdo);
+        $flows = $pdo->query("SELECT f.id flow_id,f.current_version_id,v.graph_json FROM automation_flows f JOIN automation_flow_versions v ON v.id=f.current_version_id WHERE f.status='active'")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if (!$flows) return 0;
+
+        $payload = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        $source = hash('sha256', 'payment_unmatched|' . strtoupper($eventCode) . '|' . ($extra['transaction_code'] ?? '') . '|' . ($extra['payment_event_id'] ?? '') . '|' . $payload);
+        $pdo->beginTransaction();
+        $pdo->prepare('INSERT IGNORE INTO automation_flow_events(event_code,user_id,source_key,payload_json) VALUES(:e,0,:s,:p)')
+            ->execute(['e'=>$eventCode,'s'=>$source,'p'=>$payload]);
+        $st = $pdo->prepare('SELECT id FROM automation_flow_events WHERE source_key=:s');
+        $st->execute(['s'=>$source]);
+        $eventId = (int)$st->fetchColumn();
+        if ($eventId <= 0) { $pdo->rollBack(); return 0; }
+
+        $matched = 0;
+        foreach ($flows as $flow) {
+            $graph = json_decode((string)$flow['graph_json'], true) ?: [];
+            $trigger = null;
+            foreach (($graph['nodes'] ?? []) as $node) {
+                if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
+            }
+            if (!$trigger || !automation_flow_trigger_matches($trigger, ['id'=>0], $extra, $eventCode, (int)$flow['flow_id'], (int)$flow['current_version_id'])) continue;
+            $run = $pdo->prepare("INSERT IGNORE INTO automation_flow_runs(flow_id,version_id,event_id,user_id,status) VALUES(:f,:v,:e,0,'running')");
+            $run->execute(['f'=>$flow['flow_id'],'v'=>$flow['current_version_id'],'e'=>$eventId]);
+            if ($run->rowCount() !== 1) continue;
+            $runId = (int)$pdo->lastInsertId();
+            $pdo->prepare("INSERT IGNORE INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")
+                ->execute(['r'=>$runId,'n'=>(string)$trigger['id']]);
+            $matched++;
+        }
+        $pdo->prepare('UPDATE automation_flow_events SET matched_flows=:m WHERE id=:id')->execute(['m'=>$matched,'id'=>$eventId]);
+        $pdo->commit();
+        return $matched;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        @error_log('payment_event_capture_unmatched_automation: ' . $e->getMessage());
+        return 0;
+    }
 }
 
 function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string $genericEvent, int $grossCents, string $businessIdentity): bool
@@ -257,40 +338,16 @@ function payment_event_register(PDO $pdo, array $data): array
             $businessIdentity
         );
 
-        if ($isNew && !$alreadyTriggeredBusiness && $userId > 0 && $eventId > 0 && function_exists('capturar_fluxos_automacao')) {
-            $extra = payment_event_compact_payload([
-                'gateway'=>$provider,
-                'evento'=>$eventCode,
-                'status'=>$status,
-                'transaction_code'=>$transactionCode,
-                'provider_transaction_id'=>$data['provider_transaction_id'] ?? '',
-                'payment_method'=>$data['payment_method'] ?? '',
-                'currency'=>$data['currency'] ?? 'BRL',
-                'valor_bruto'=>((int)($data['gross_amount_cents'] ?? 0)) / 100,
-                'valor_liquido'=>((int)($data['net_amount_cents'] ?? 0)) / 100,
-                'taxa'=>((int)($data['fee_amount_cents'] ?? 0)) / 100,
-                'gross_amount_cents'=>(int)($data['gross_amount_cents'] ?? 0),
-                'net_amount_cents'=>(int)($data['net_amount_cents'] ?? 0),
-                'fee_amount_cents'=>(int)($data['fee_amount_cents'] ?? 0),
-                'installments'=>$data['installments'] ?? null,
-                'product_name'=>$data['product_name'] ?? '',
-                'product_code'=>$data['product_code'] ?? '',
-                'checkout_id'=>$data['checkout_id'] ?? '',
-                'checkout_url'=>$data['checkout_url'] ?? '',
-                'pix_qrcode'=>$data['pix_qrcode'] ?? '',
-                'pix_qrcode_url'=>$data['pix_qrcode_url'] ?? '',
-                'pix_expires_at'=>$data['pix_expires_at'] ?? '',
-                'boleto_url'=>$data['boleto_url'] ?? '',
-                'boleto_line'=>$data['boleto_line'] ?? '',
-                'buyer_name'=>$data['buyer_name'] ?? '',
-                'buyer_email'=>$data['buyer_email'] ?? '',
-                'buyer_phone'=>$data['buyer_phone'] ?? '',
-                'buyer_document'=>$data['buyer_document'] ?? '',
-                'payment_event_id'=>$eventId,
-                'occurred_at'=>$data['occurred_at'] ?? date('Y-m-d H:i:s'),
-                'metadata'=>$metadata,
-            ]);
-            capturar_fluxos_automacao($eventCode, $userId, $extra);
+        if ($isNew && !$alreadyTriggeredBusiness && $eventId > 0) {
+            $extra = payment_event_trigger_payload($data, $metadata, $eventId, $provider, $status, $eventCode, $transactionCode);
+            if ($userId > 0 && function_exists('capturar_fluxos_automacao')) {
+                capturar_fluxos_automacao($eventCode, $userId, $extra);
+            } elseif ($userId <= 0) {
+                payment_event_capture_unmatched_automation($pdo, $eventCode, $extra);
+                if (function_exists('_disparar_webhooks_sync')) {
+                    _disparar_webhooks_sync($eventCode, null, $extra);
+                }
+            }
             $pdo->prepare("UPDATE student_payment_events SET triggered_at=NOW(),trigger_count=trigger_count+1 WHERE id=:id")
                 ->execute([':id'=>$eventId]);
             $triggered++;
