@@ -9,7 +9,8 @@ $pdo = getPDO();
 $agora = date('Y-m-d H:i:s');
 $manualTurmaId = isset($GLOBALS['manual_live_turma_id']) ? (int)$GLOBALS['manual_live_turma_id'] : 0;
 $startedAt = microtime(true);
-$maxRuntimeSeconds = $manualTurmaId > 0 ? 105 : 95;
+$maxRuntimeSeconds = $manualTurmaId > 0 ? 105 : 240;
+$maxTurmaRuntimeSeconds = $manualTurmaId > 0 ? 105 : 55;
 $maxStudentsPerRun = 120;
 
 /**
@@ -606,18 +607,28 @@ live_dispatch_ensure_schema($pdo);
 // 1) Pega turmas aptas: habilitado, não disparada, com URL, e hora de disparo <= agora
 //    Regra: se live_disparo_data vazio -> usa data_live
 // ----------------------------------------------------------------------------------
-$whereManual = $manualTurmaId > 0 ? " AND id = :manual_id" : " AND live_disparo_data <= :agora";
+$whereManual = $manualTurmaId > 0 ? " AND t.id = :manual_id" : " AND t.live_disparo_data <= :agora";
 $stmt = $pdo->prepare("
-    SELECT *
-      FROM turmas
-     WHERE live_disparada = 0
+    SELECT t.*, lp.progress_at AS live_dispatch_last_progress_at
+      FROM turmas t
+ LEFT JOIN (
+            SELECT turma_id, MAX(last_heartbeat_at) AS progress_at
+              FROM live_turma_dispatch_logs
+             WHERE status IN ('iniciado','processando','queued')
+          GROUP BY turma_id
+       ) lp ON lp.turma_id = t.id
+     WHERE t.live_disparada = 0
        AND (
-            (live_webhook_enabled = 1 AND webhook_live_url IS NOT NULL AND webhook_live_url <> '')
-            OR sf_enabled = 1
+            (t.live_webhook_enabled = 1 AND t.webhook_live_url IS NOT NULL AND t.webhook_live_url <> '')
+            OR t.sf_enabled = 1
        )
-       AND live_disparo_data IS NOT NULL
+       AND t.live_disparo_data IS NOT NULL
        {$whereManual}
-  ORDER BY live_disparo_data ASC, id ASC
+  ORDER BY
+       CASE WHEN t.live_dispatch_started_at IS NULL AND t.live_dispatch_cursor_user_id = 0 THEN 0 ELSE 1 END ASC,
+       COALESCE(lp.progress_at, t.live_dispatch_started_at, t.live_disparo_data) ASC,
+       t.live_disparo_data ASC,
+       t.id ASC
      LIMIT 5
 ");
 if ($manualTurmaId > 0) {
@@ -667,6 +678,7 @@ $tagRelTable = first_existing_table($pdo, [
 ]);
 
 foreach ($turmas as $turma) {
+    $turmaStartedAt = microtime(true);
     $codigo = (string)($turma['codigo'] ?? '');
     if ($codigo === '') continue;
 
@@ -767,7 +779,9 @@ foreach ($turmas as $turma) {
     $lastProcessedUserId = $cursor;
     $stoppedByBudget = false;
     foreach ($alunos as $aluno) {
-        if ((microtime(true) - $startedAt) >= $maxRuntimeSeconds) {
+        $elapsedGlobal = microtime(true) - $startedAt;
+        $elapsedTurma = microtime(true) - $turmaStartedAt;
+        if ($elapsedGlobal >= $maxRuntimeSeconds || $elapsedTurma >= $maxTurmaRuntimeSeconds) {
             $stoppedByBudget = true;
             break;
         }
