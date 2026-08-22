@@ -125,6 +125,52 @@ function course_access_lifetime_entitlement(PDO $pdo, int $userId): ?array
     return $grant ?: null;
 }
 
+function course_access_unlock_paid_user(PDO $pdo, int $userId, string $source = 'course_access'): void
+{
+    if ($userId <= 0) return;
+
+    try {
+        if (course_access_column_exists($pdo, 'users', 'bloquear')) {
+            $set = 'bloquear = 0';
+            if (course_access_column_exists($pdo, 'users', 'desbloqueado_em')) {
+                $set .= ', desbloqueado_em = NOW()';
+            }
+            $pdo->prepare("UPDATE users SET {$set} WHERE id = :id AND COALESCE(bloquear, 0) <> 0 LIMIT 1")
+                ->execute([':id' => $userId]);
+        }
+    } catch (Throwable $e) {
+        @error_log('course_access_unlock_paid_user users: ' . $e->getMessage());
+    }
+
+    try {
+        if (function_exists('obter_ou_criar_tag_id')) {
+            $bloquearTagId = (int)obter_ou_criar_tag_id('BLOQUEAR');
+            if ($bloquearTagId > 0) {
+                $pdo->prepare("DELETE FROM user_tags WHERE user_id = :user_id AND tag_id = :tag_id")
+                    ->execute([':user_id' => $userId, ':tag_id' => $bloquearTagId]);
+            }
+
+            $desbloquearTagId = (int)obter_ou_criar_tag_id('DESBLOQUEAR');
+            if ($desbloquearTagId > 0) {
+                $st = $pdo->prepare("SELECT id FROM user_tags WHERE user_id = :user_id AND tag_id = :tag_id LIMIT 1");
+                $st->execute([':user_id' => $userId, ':tag_id' => $desbloquearTagId]);
+                if (!$st->fetch(PDO::FETCH_ASSOC)) {
+                    $pdo->prepare("
+                        INSERT INTO user_tags (user_id, tag_id, origem, referencia_id, created_at)
+                        VALUES (:user_id, :tag_id, :origem, NULL, NOW())
+                    ")->execute([
+                        ':user_id' => $userId,
+                        ':tag_id' => $desbloquearTagId,
+                        ':origem' => $source !== '' ? $source : 'course_access',
+                    ]);
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        @error_log('course_access_unlock_paid_user tags: ' . $e->getMessage());
+    }
+}
+
 function course_access_status(PDO $pdo, int $userId): array
 {
     course_access_ensure_schema($pdo);
@@ -269,7 +315,7 @@ function course_access_grant_lifetime(
             is_paid = VALUES(is_paid),
             payload_json = VALUES(payload_json)
     ");
-    return $st->execute([
+    $ok = $st->execute([
         ':user_id' => $userId,
         ':turma_codigo' => $turmaCodigo !== '' ? $turmaCodigo : null,
         ':offer_code' => $offerCode !== '' ? $offerCode : null,
@@ -279,6 +325,10 @@ function course_access_grant_lifetime(
         ':is_paid' => $isPaid ? 1 : 0,
         ':payload_json' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
     ]);
+    if ($ok && $isPaid) {
+        course_access_unlock_paid_user($pdo, $userId, $source);
+    }
+    return $ok;
 }
 
 function course_access_normalize_phone(?string $phone): string
