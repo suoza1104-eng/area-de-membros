@@ -20,6 +20,202 @@ if (!$canWrite) {
 }
 function af_h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function af_check_csrf(string $csrf): void { if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) throw new RuntimeException('Sessao expirada. Recarregue a pagina.'); }
+function af_json(array $payload, int $status = 200): void
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    exit;
+}
+function af_test_max_id(PDO $pdo, string $table): int
+{
+    try { return (int)$pdo->query("SELECT COALESCE(MAX(id),0) FROM {$table}")->fetchColumn(); }
+    catch (Throwable $e) { return 0; }
+}
+function af_test_new_logs(PDO $pdo, string $table, int $afterId): array
+{
+    try {
+        $st = $pdo->prepare("SELECT * FROM {$table} WHERE id>:id ORDER BY id ASC LIMIT 80");
+        $st->execute(['id' => $afterId]);
+        return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+function af_flow_test_extra(PDO $pdo, array $trigger, array $user): array
+{
+    $filter = trim((string)($trigger['config']['filter'] ?? ''));
+    $turma = $filter !== '' ? $filter : trim((string)($user['codigo_turma'] ?? $user['turma_codigo'] ?? ''));
+    $liveAt = '';
+    $codigoLive = '';
+    $linkLive = 'trilha.php';
+    if ($turma !== '') {
+        try {
+            $st = $pdo->prepare("SELECT data_live,codigo_live,webhook_live_url FROM turmas WHERE codigo=:c LIMIT 1");
+            $st->execute(['c' => $turma]);
+            $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+            $liveAt = trim((string)($row['data_live'] ?? ''));
+            $codigoLive = trim((string)($row['codigo_live'] ?? ''));
+            if (trim((string)($row['webhook_live_url'] ?? '')) !== '') $linkLive = trim((string)$row['webhook_live_url']);
+        } catch (Throwable $e) {}
+    }
+    $now = new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo'));
+    if ($liveAt === '') $liveAt = $now->format('Y-m-d H:i:s');
+    $live = null;
+    try { $live = new DateTimeImmutable($liveAt, new DateTimeZone('America/Sao_Paulo')); } catch (Throwable $e) {}
+    return [
+        'event_id' => 'automation-test-' . bin2hex(random_bytes(5)),
+        'is_test' => true,
+        'teste_painel' => true,
+        'codigo_turma' => $turma,
+        'codigo_live' => $codigoLive,
+        'data_live' => $live ? $live->format('d/m/Y H:i:s') : $liveAt,
+        'data_live_iso' => $live ? $live->format(DateTimeInterface::ATOM) : $liveAt,
+        'live_at' => $liveAt,
+        'hora_live' => $live ? $live->format('H:i:s') : '',
+        'link_live' => $linkLive,
+        'gateway' => 'teste_painel',
+        'transaction_code' => 'TESTE-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 8)),
+        'product_name' => 'Produto de Teste da Automacao',
+        'product_code' => 'TESTE',
+        'checkout_id' => 'TESTE',
+        'valor_bruto' => 197.00,
+        'valor_liquido' => 180.00,
+        'moeda' => 'BRL',
+    ];
+}
+function af_run_flow_test(PDO $pdo, array $flow, array $graph, int $userId): array
+{
+    $nodes = is_array($graph['nodes'] ?? null) ? $graph['nodes'] : [];
+    $map = [];
+    $trigger = null;
+    foreach ($nodes as $node) {
+        $id = (string)($node['id'] ?? '');
+        if ($id === '') continue;
+        $map[$id] = $node;
+        if (($node['type'] ?? '') === 'trigger' && !$trigger) $trigger = $node;
+    }
+    if (!$trigger) throw new RuntimeException('O fluxo nao possui gatilho inicial.');
+    $user = buscar_usuario_por_id($userId);
+    if (!$user) throw new RuntimeException('Usuario de teste nao encontrado.');
+    $event = (string)($trigger['config']['event'] ?? 'TESTE_AUTOMACAO');
+    $extra = af_flow_test_extra($pdo, $trigger, $user);
+    $payload = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $versionId = (int)($flow['current_version_id'] ?? 0);
+    $graphJson = json_encode($graph, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $manychatAfter = af_test_max_id($pdo, 'manychat_logs');
+    $webhookAfter = af_test_max_id($pdo, 'webhook_logs');
+    $sfAfter = af_test_max_id($pdo, 'superfuncionario_logs');
+
+    $pdo->prepare("INSERT INTO automation_flow_events(event_code,user_id,source_key,payload_json,matched_flows) VALUES(:e,:u,:s,:p,1)")
+        ->execute([
+            'e' => $event,
+            'u' => $userId,
+            's' => hash('sha256', 'manual-test|' . (int)$flow['id'] . '|' . $userId . '|' . microtime(true) . '|' . random_int(1, PHP_INT_MAX)),
+            'p' => $payload,
+        ]);
+    $eventId = (int)$pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO automation_flow_runs(flow_id,version_id,event_id,user_id,status,started_at) VALUES(:f,:v,:e,:u,'running',NOW())")
+        ->execute(['f' => (int)$flow['id'], 'v' => $versionId, 'e' => $eventId, 'u' => $userId]);
+    $runId = (int)$pdo->lastInsertId();
+
+    $steps = [];
+    $node = $trigger;
+    $input = ['_test_mode' => true];
+    $ok = true;
+    for ($guard = 0; $node && $guard < 200; $guard++) {
+        $nodeId = (string)($node['id'] ?? '');
+        $type = (string)($node['type'] ?? '');
+        $config = is_array($node['config'] ?? null) ? $node['config'] : [];
+        $label = (string)($config['label'] ?? $type);
+        $started = microtime(true);
+        $jobId = 0;
+        try {
+            $pdo->prepare("INSERT INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'processing',NOW(),:i)")
+                ->execute(['r' => $runId, 'n' => $nodeId, 'i' => json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+            $jobId = (int)$pdo->lastInsertId();
+            $job = [
+                'id' => $jobId,
+                'run_id' => $runId,
+                'flow_id' => (int)$flow['id'],
+                'version_id' => $versionId,
+                'event_id' => $eventId,
+                'event_code' => $event,
+                'user_id' => $userId,
+                'node_id' => $nodeId,
+                'graph_json' => $graphJson,
+                'event_payload' => $payload,
+                'payload_json' => $payload,
+                'input_json' => json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'run_status' => 'running',
+                'lease_token' => '',
+            ];
+            $handle = 'default';
+            $output = [];
+            if ($type === 'trigger') {
+                $output = ['event' => $event, 'test_payload' => $extra];
+            } elseif ($type === 'condition') {
+                $result = email_flow_condition($pdo, $config, $userId, $user);
+                $handle = $result ? 'yes' : 'no';
+                $output = ['result' => $result, 'route' => $handle];
+            } elseif ($type === 'wait') {
+                $output = ['simulated_wait' => true, 'would_resume_at' => push_flow_wait_until($config), 'advanced_without_waiting' => true];
+            } elseif ($type === 'email') {
+                $output = automation_flow_send_email($pdo, $job, $config, $user);
+            } elseif ($type === 'push') {
+                $output = push_flow_send_push($pdo, $config, $userId, $job);
+            } elseif ($type === 'voice') {
+                $output = voice_automation_start_call($pdo, $config, $user, $job, $extra);
+            } elseif ($type === 'action') {
+                (($config['action'] ?? '') === 'remove_tag' ? remover_tag_usuario($userId, (string)($config['tag'] ?? '')) : adicionar_tag($userId, (string)($config['tag'] ?? ''), 'automation_test', $runId));
+                $output = ['tag' => (string)($config['tag'] ?? ''), 'action' => (string)($config['action'] ?? 'add_tag')];
+            } elseif ($type === 'integration') {
+                $output = push_flow_dispatch_integration($pdo, $config, $user, $extra, $job);
+            } elseif ($type === 'end') {
+                $output = ['ended' => true];
+            } else {
+                throw new RuntimeException('Bloco nao suportado: ' . $type);
+            }
+            $nextId = $type === 'end' ? null : automation_flow_next($graph, $nodeId, $handle);
+            $output['next_node'] = $nextId;
+            $outJson = json_encode($output, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            $pdo->prepare("INSERT INTO automation_flow_steps(run_id,job_id,node_id,node_type,status,output_json,finished_at) VALUES(:r,:j,:n,:t,'completed',:o,NOW())")
+                ->execute(['r' => $runId, 'j' => $jobId, 'n' => $nodeId, 't' => $type, 'o' => $outJson]);
+            $pdo->prepare("UPDATE automation_flow_jobs SET status='completed',output_json=:o,last_error=NULL WHERE id=:id")
+                ->execute(['o' => $outJson, 'id' => $jobId]);
+            $steps[] = ['node_id' => $nodeId, 'type' => $type, 'label' => $label, 'status' => 'completed', 'handle' => $handle, 'duration_ms' => (int)round((microtime(true) - $started) * 1000), 'output' => $output];
+            $node = $nextId && isset($map[$nextId]) ? $map[$nextId] : null;
+        } catch (Throwable $e) {
+            $ok = false;
+            $err = mb_substr($e->getMessage(), 0, 1000);
+            if ($jobId > 0) {
+                $pdo->prepare("INSERT INTO automation_flow_steps(run_id,job_id,node_id,node_type,status,error_message,finished_at) VALUES(:r,:j,:n,:t,'failed',:e,NOW())")
+                    ->execute(['r' => $runId, 'j' => $jobId, 'n' => $nodeId, 't' => $type, 'e' => $err]);
+                $pdo->prepare("UPDATE automation_flow_jobs SET status='failed',last_error=:e WHERE id=:id")->execute(['e' => $err, 'id' => $jobId]);
+            }
+            $steps[] = ['node_id' => $nodeId, 'type' => $type, 'label' => $label, 'status' => 'failed', 'duration_ms' => (int)round((microtime(true) - $started) * 1000), 'error' => $err];
+            $nextId = $type === 'end' ? null : automation_flow_next($graph, $nodeId, 'default');
+            $node = $nextId && isset($map[$nextId]) ? $map[$nextId] : null;
+            if (!$node) break;
+        }
+    }
+    $pdo->prepare("UPDATE automation_flow_runs SET status=:s,finished_at=NOW(),last_error=:e WHERE id=:id")
+        ->execute(['s' => $ok ? 'completed' : 'completed', 'e' => $ok ? null : 'Teste concluiu com falha em um ou mais blocos.', 'id' => $runId]);
+    return [
+        'ok' => $ok,
+        'run_id' => $runId,
+        'event_id' => $eventId,
+        'event' => $event,
+        'user' => ['id' => $userId, 'nome' => $user['nome'] ?? '', 'email' => $user['email'] ?? '', 'telefone' => $user['telefone'] ?? '', 'codigo_turma' => $user['codigo_turma'] ?? ($user['turma_codigo'] ?? '')],
+        'extra' => $extra,
+        'steps' => $steps,
+        'provider_logs' => [
+            'manychat' => af_test_new_logs($pdo, 'manychat_logs', $manychatAfter),
+            'webhooks' => af_test_new_logs($pdo, 'webhook_logs', $webhookAfter),
+            'superfuncionario' => af_test_new_logs($pdo, 'superfuncionario_logs', $sfAfter),
+        ],
+    ];
+}
 function af_problem_node_ids(array $graph, bool $publish = false): array
 {
     $bad = [];
@@ -117,6 +313,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $res = automation_flow_process_queue($pdo, 100);
             header('Location: automacoes.php?view=flows&processed=' . (int)($res['processed'] ?? 0));
             exit;
+        }
+        if ($action === 'simulate_flow') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo nao encontrado.');
+            $graph = automation_flow_decode_graph((string)($_POST['graph_json'] ?? ''));
+            $userId = (int)($_POST['test_user_id'] ?? 0);
+            $userQuery = trim((string)($_POST['test_user_query'] ?? ''));
+            if ($userId < 1 && $userQuery !== '') {
+                if (ctype_digit($userQuery)) {
+                    $userId = (int)$userQuery;
+                } else {
+                    $ust = $pdo->prepare("SELECT id FROM users WHERE email=:q ORDER BY id DESC LIMIT 1");
+                    $ust->execute(['q' => $userQuery]);
+                    $userId = (int)$ust->fetchColumn();
+                }
+            }
+            if ($userId < 1) throw new RuntimeException('Selecione um usuario de teste.');
+            af_json(af_run_flow_test($pdo, $flow, $graph, $userId));
         }
         if ($action === 'reprocess_flow') {
             $id = (int)($_POST['id'] ?? 0);
@@ -236,6 +451,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
+        if ((string)($_POST['action'] ?? '') === 'simulate_flow') af_json(['ok' => false, 'error' => $e->getMessage()], 400);
         if ($postedGraph !== null && !$problemNodeIds) $problemNodeIds = af_problem_node_ids($postedGraph, (string)($_POST['action'] ?? '') === 'publish');
         $error = $e->getMessage();
     }
@@ -315,6 +531,16 @@ try {
     }
 } catch (Throwable $e) {}
 $tags = $pdo->query("SELECT nome FROM tags WHERE ativo=1 ORDER BY nome")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+$testUsers = [];
+try {
+    $testUsers = $pdo->query("
+        SELECT id,nome,email,telefone,codigo_turma,turma_codigo
+        FROM users
+        WHERE email IS NOT NULL AND email<>''
+        ORDER BY id DESC
+        LIMIT 500
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 $integrationFieldOptions = [
     'user.id' => 'ID do aluno',
     'user.nome' => 'Nome',
@@ -404,6 +630,7 @@ include __DIR__ . '/_header.php';
 .af-diag-step{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);font-size:10px}
 .afe{display:flex;flex-direction:column;gap:12px}.afe-top{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.afe-id{display:grid;grid-template-columns:minmax(180px,320px) minmax(220px,1fr);gap:8px;flex:1}.afe-id input{width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}.afe-note{padding:9px 12px;border:1px solid #38bdf844;border-radius:9px;background:var(--info-dim);color:#bae6fd;font-size:11px}.afe-editor{height:calc(100vh - 190px);min-height:600px;display:grid;grid-template-columns:190px minmax(440px,1fr) 330px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#070d18}.afe-palette,.afe-inspector{overflow:auto;background:var(--bg-card);padding:14px}.afe-palette{border-right:1px solid var(--border)}.afe-inspector{border-left:1px solid var(--border)}.afe-title{font-size:12px;font-weight:800;margin-bottom:4px}.afe-copy{font-size:10px;color:var(--muted);margin-bottom:12px;line-height:1.45}.afe-list{display:grid;gap:8px}.afe-item{display:flex;gap:8px;align-items:center;width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;font-weight:700;text-align:left;cursor:grab}.afe-dot{width:9px;height:9px;border-radius:50%;background:var(--c)}.afe-canvas{position:relative;overflow:hidden;touch-action:none;cursor:grab;background-color:#090f1b;background-image:radial-gradient(circle,#94a3b82e 1px,transparent 1px);background-size:22px 22px}.afe-canvas.is-panning{cursor:grabbing}.afe-view{position:absolute;width:3200px;height:2200px;transform-origin:0 0}.afe-edges,.afe-nodes{position:absolute;inset:0;width:3200px;height:2200px}.afe-edges{z-index:1;pointer-events:auto}.afe-nodes{z-index:2;pointer-events:none}.afe-edge{fill:none;stroke:#64748b;stroke-width:2}.afe-edge-hit{fill:none;stroke:transparent;stroke-width:18;cursor:pointer;pointer-events:stroke}.afe-edge-g:hover .afe-edge,.afe-edge-g.selected .afe-edge{stroke:#facc15;stroke-width:3}.afe-edge-trash{cursor:pointer;pointer-events:all}.afe-edge-trash circle{fill:#ef4444;stroke:#fecaca;stroke-width:1}.afe-edge-trash text{fill:#fff;font-size:16px;font-weight:800;text-anchor:middle;dominant-baseline:central}.afe-node{position:absolute;width:210px;min-height:92px;border:1px solid var(--c);border-radius:12px;background:#0d1526;box-shadow:0 10px 28px #0006;user-select:none;pointer-events:auto}.afe-node.selected{box-shadow:0 0 0 3px #facc1544}.afe-node.has-error{border-color:#fb7185;box-shadow:0 0 0 3px #fb718555,0 10px 28px #0006}.afe-node.has-error .afe-node-head{border-bottom-color:#fb718566}.afe-node-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:move}.afe-node-body{padding:10px 12px;color:#94a3b8;font-size:10px}.afe-port{position:absolute;width:14px;height:14px;border:2px solid #e2e8f0;border-radius:50%;background:var(--c);cursor:crosshair;z-index:3}.afe-port.in{left:-8px;top:40px}.afe-port.out{right:-8px;bottom:12px}.afe-port.yes{bottom:34px;background:#22c55e}.afe-port.no{bottom:8px;background:#ef4444}.afe-port.pending{box-shadow:0 0 0 5px #facc1544}.afe-port-label{position:absolute;right:13px;font-size:8px;font-weight:800;color:#94a3b8}.afe-port-label.yes{bottom:35px}.afe-port-label.no{bottom:9px}.afe-tools{position:absolute;right:12px;bottom:12px;z-index:5;display:flex;gap:5px;padding:5px;border:1px solid var(--border);border-radius:10px;background:#080e1ae8}.afe-tools button{min-width:32px;height:30px;border-radius:7px;background:var(--bg-card);color:var(--text)}.afe-fields{display:grid;gap:11px}.afe-field label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase}.afe-field input,.afe-field select,.afe-field textarea{width:100%;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:11px}.afe-event-row{display:grid;grid-template-columns:1fr auto;gap:6px}.afe-event-menu{display:none;max-height:360px;overflow:auto;margin-top:6px;padding:8px;border:1px solid var(--border-light,var(--border));border-radius:10px;background:#081020}.afe-event-menu.open{display:block}.afe-event-group{margin:9px 0 5px;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase}.afe-event-option{display:block;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--text);text-align:left}.afe-event-option:hover,.afe-event-option.active{background:#1f2937}.afe-event-option strong{display:flex;gap:6px;align-items:center}.afe-badge{padding:2px 6px;border-radius:999px;background:#14532d;color:#86efac;font-size:9px}.afe-event-option p{margin:4px 0 0;color:var(--muted);font-size:10px;line-height:1.35}.afe-config-box{display:grid;gap:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#081020}.afe-pair-row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:6px;padding:7px;border:1px solid var(--border);border-radius:9px;background:var(--bg)}.afe-pair-row button{grid-column:1/-1;border:1px solid var(--border);border-radius:8px;background:transparent;color:#94a3b8;min-height:28px}.afe-rule{padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg);display:grid;gap:6px}.afe-rule-head{display:flex;justify-content:space-between;gap:5px}.afe-rule-remove{background:transparent;color:#f87171}.afe-check{display:flex;gap:7px;font-size:10px}.afe-check input{width:auto}.afe-empty{padding:30px 5px;text-align:center;color:var(--muted);font-size:11px}@media(max-width:900px){.afe-top{flex-wrap:wrap}.afe-id{order:3;flex-basis:100%;grid-template-columns:1fr}.afe-editor{height:auto;grid-template-columns:1fr}.afe-canvas{height:620px}.afe-list{grid-template-columns:repeat(3,1fr)}}
 .afe-push-preview{position:fixed;inset:0;z-index:13000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,6,15,.82);backdrop-filter:blur(5px)}.afe-push-preview.open{display:flex}.afe-preview-dialog{width:min(420px,100%);border:1px solid var(--border);border-radius:18px;padding:18px;background:#111827;box-shadow:0 24px 80px #000}.afe-preview-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.afe-preview-head strong{font-size:14px}.afe-preview-close{border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#0b1220;color:#fff}.afe-android{border-radius:18px;padding:18px 12px 24px;background:linear-gradient(#263238,#101820);color:#fff}.afe-android-clock{text-align:center;font-size:11px;margin-bottom:16px;color:#d8e0e4}.afe-notification{display:grid;grid-template-columns:42px minmax(0,1fr) 24px;gap:9px;width:min(300px,100%);margin:auto;padding:13px;border-radius:14px;background:#f5f5f5;color:#172027;box-shadow:0 8px 25px rgba(0,0,0,.3)}.afe-notification img{width:42px;height:42px;border-radius:10px;object-fit:cover}.afe-notification>div{min-width:0}.afe-notification-title{width:94px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:800}.afe-notification-body{display:-webkit-box;width:185px;max-width:100%;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin-top:4px;color:#4b5563;font-size:12px;line-height:1.35}.afe-notification.expanded{width:100%}.afe-notification.expanded .afe-notification-title{width:auto;white-space:normal}.afe-notification.expanded .afe-notification-body{display:block;width:auto}.afe-notification-expand{border:0;background:transparent;color:#374151;font-size:18px;align-self:start;cursor:pointer}.afe-preview-note{margin-top:12px;color:#94a3b8;font-size:10px;line-height:1.45}.afe-push-risk{padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);font-size:10px;line-height:1.5;color:var(--muted)}.afe-push-risk strong{color:var(--text)}.afe-push-risk .risk{color:#f87171;font-weight:800}.afe-push-risk.warning{border-color:rgba(248,113,113,.45);background:rgba(127,29,29,.14)}.afe-push-risk-ok{color:#86efac}.afe-preview-risk{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(127,29,29,.18);color:#fca5a5;font-size:10px}.afe-preview-risk:empty{display:none}
+.afe-test-modal{position:fixed;inset:0;z-index:13500;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(2,6,15,.84);backdrop-filter:blur(6px)}.afe-test-modal.open{display:flex}.afe-test-dialog{width:min(900px,100%);max-height:92vh;overflow:auto;border:1px solid var(--border);border-radius:18px;padding:18px;background:#0d1526;box-shadow:0 24px 90px #000;color:var(--text)}.afe-test-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}.afe-test-head strong{display:block;font-size:16px}.afe-test-head span{display:block;margin-top:3px;color:var(--muted);font-size:11px}.afe-test-controls{display:grid;grid-template-columns:minmax(220px,1fr) minmax(190px,.75fr) auto;gap:10px;align-items:end;margin-bottom:12px}.afe-test-controls label span{display:block;margin-bottom:5px;color:var(--muted);font-size:10px;text-transform:uppercase}.afe-test-controls select,.afe-test-controls input{width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text)}.afe-test-status{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#081020;color:#cbd5e1;font-size:12px;margin-bottom:12px}.afe-test-status.ok{border-color:#22c55e;color:#86efac}.afe-test-status.err{border-color:#ef4444;color:#fca5a5}.afe-test-result{display:grid;gap:10px}.afe-test-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}.afe-test-summary div,.afe-test-step,.afe-provider-log{padding:10px;border:1px solid var(--border);border-radius:10px;background:#081020}.afe-test-summary small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.afe-test-summary strong{display:block;margin-top:3px;font-size:13px}.afe-test-step{display:grid;gap:7px}.afe-test-step-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.afe-test-step-head strong{font-size:13px}.afe-test-step-head span{font-size:10px;color:#94a3b8}.afe-test-step.completed{border-color:rgba(34,197,94,.45)}.afe-test-step.failed{border-color:rgba(239,68,68,.65)}.afe-test-step pre,.afe-provider-log pre{max-height:260px;overflow:auto;margin:0;padding:9px;border-radius:8px;background:#020617;color:#cbd5e1;font-size:10px;white-space:pre-wrap;word-break:break-word}.afe-provider-group{display:grid;gap:8px}.afe-provider-group h4{margin:4px 0 0;font-size:12px}.afe-provider-log.ok{border-color:rgba(34,197,94,.45)}.afe-provider-log.fail{border-color:rgba(239,68,68,.65)}@media(max-width:720px){.afe-test-controls{grid-template-columns:1fr}}
 </style>
 <div class="af">
   <div class="af-head">
@@ -470,7 +697,7 @@ include __DIR__ . '/_header.php';
 ?>
   <form method="post" id="afeForm" class="afe">
     <input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="id" value="<?=(int)$flow['id']?>"><input type="hidden" name="lock_version" value="<?=(int)$flow['lock_version']?>"><input type="hidden" name="graph_json" id="afeGraph"><input type="hidden" name="action" id="afeAction" value="save">
-    <div class="afe-top"><a class="btn btn-ghost" href="automacoes.php">← Voltar</a><div class="afe-id"><input name="name" maxlength="180" value="<?=af_h($formName)?>" required><input name="description" maxlength="500" value="<?=af_h($formDescription)?>" placeholder="Descrição opcional"></div><div class="af-actions"><button class="btn btn-ghost" type="submit" data-action="save" <?=$canWrite?'':'disabled'?>>Salvar rascunho</button><button class="btn btn-primary" type="submit" data-action="publish" <?=$canWrite?'':'disabled'?>>Publicar versão</button></div></div>
+    <div class="afe-top"><a class="btn btn-ghost" href="automacoes.php">← Voltar</a><div class="afe-id"><input name="name" maxlength="180" value="<?=af_h($formName)?>" required><input name="description" maxlength="500" value="<?=af_h($formDescription)?>" placeholder="Descrição opcional"></div><div class="af-actions"><button class="btn btn-ghost" type="button" id="afeOpenTest" <?=$canWrite?'':'disabled'?>>Testar fluxo</button><button class="btn btn-ghost" type="submit" data-action="save" <?=$canWrite?'':'disabled'?>>Salvar rascunho</button><button class="btn btn-primary" type="submit" data-action="publish" <?=$canWrite?'':'disabled'?>>Publicar versão</button></div></div>
     <div class="afe-note">Esta central não desmonta as automações antigas. Fluxos publicados aqui passam a receber eventos novos pela captura central.</div>
     <div class="afe-editor">
       <aside class="afe-palette"><div class="afe-title">Blocos</div><div class="afe-copy">Arraste para o canvas ou clique.</div><div class="afe-list" id="afePalette"></div></aside>
@@ -478,6 +705,18 @@ include __DIR__ . '/_header.php';
       <aside class="afe-inspector"><div class="afe-title">Configuração do bloco</div><div class="afe-copy">Selecione um bloco para editar.</div><div id="afeInspector"></div></aside>
     </div>
   </form>
+  <div class="afe-test-modal" id="afeTestModal">
+    <div class="afe-test-dialog">
+      <div class="afe-test-head"><div><strong>Teste do fluxo</strong><span>Executa o canvas atual para um aluno escolhido e registra o passo a passo.</span></div><button type="button" class="afe-preview-close" id="afeTestClose">Fechar</button></div>
+      <div class="afe-test-controls">
+        <label><span>Aluno recente</span><select id="afeTestUser"><option value="">Selecione ou digite ao lado</option><?php foreach($testUsers as $tu): ?><option value="<?=(int)$tu['id']?>"><?=af_h('#' . (int)$tu['id'] . ' - ' . trim((string)($tu['nome'] ?? '')) . ' - ' . (string)($tu['email'] ?? '') . ' - turma ' . ((string)($tu['codigo_turma'] ?? '') ?: (string)($tu['turma_codigo'] ?? '')))?></option><?php endforeach; ?></select></label>
+        <label><span>ID ou e-mail</span><input id="afeTestUserQuery" placeholder="ex: 58 ou souza1104@hotmail.com"></label>
+        <button type="button" class="btn btn-primary" id="afeRunTest">Executar teste agora</button>
+      </div>
+      <div class="afe-test-status" id="afeTestStatus">Selecione um aluno e execute o teste.</div>
+      <div class="afe-test-result" id="afeTestResult"></div>
+    </div>
+  </div>
   <div class="afe-push-preview" id="afePushPreview"><div class="afe-preview-dialog"><div class="afe-preview-head"><strong>Previa recolhida no Android</strong><button type="button" class="afe-preview-close" id="afePreviewClose">Fechar</button></div><div class="afe-android"><div class="afe-android-clock">12:45 · Notificacoes</div><div class="afe-notification" id="afeNotificationMock"><img src="<?=af_h($pushPreviewIcon)?>" alt=""><div><div class="afe-notification-title" id="afePreviewTitle"></div><div class="afe-notification-body" id="afePreviewBody"></div></div><button type="button" class="afe-notification-expand" id="afePreviewExpand" aria-label="Expandir">⌄</button></div></div><div class="afe-preview-risk" id="afePreviewRisk"></div><div class="afe-preview-note">Esta visualizacao usa um espaco conservador baseado no teste real. O Android pode variar conforme aparelho e tamanho da fonte. Clique na seta para comparar com a versao expandida.</div></div></div>
   <script>
 (()=>{const canWrite=<?= $canWrite ? 'true':'false' ?>,triggers=<?=json_encode($triggers,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,triggerGroups=<?=json_encode($triggerGroups,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,templates=<?=json_encode($templates,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,voiceMedia=<?=json_encode($voiceMedia,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,turmas=<?=json_encode($turmas,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,paymentProducts=<?=json_encode($paymentProductOptions,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,integrationFieldOptions=<?=json_encode($integrationFieldOptions,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,tags=<?=json_encode($tags,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,pushNotifications=<?=json_encode($pushNotifications,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,voiceCampaigns=<?=json_encode($voiceCampaigns,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,abStats=<?=json_encode($abStats,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>,problemNodeIds=<?=json_encode($problemNodeIds,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG)?>;let graph=<?=json_encode($graph,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_HEX_TAG)?>;if(!Array.isArray(graph.nodes)||!Array.isArray(graph.edges))graph={schemaVersion:3,nodes:[],edges:[],viewport:{x:80,y:60,zoom:1}};graph.schemaVersion=3;graph.nodes.forEach(n=>{n.config=n.config||{};if(n.type==='push'&&n.config.label==='Enviar push')n.config.label='Enviar notificação';if(n.type==='condition'&&!Array.isArray(n.config.rules))n.config.rules=[{field:n.config.field||'tag',operator:n.config.operator||'has',value:n.config.value||''}]});
@@ -545,6 +784,15 @@ function mountVoiceMediaControls(c){const select=document.getElementById('iVoice
 function mountVoiceAdvancedControls(c){const fields=inspector.querySelector('.afe-fields'),removeBtn=document.getElementById('removeNode');if(!fields||document.getElementById('iVoiceMaxQueueEnabled'))return;c.preferredTags=Array.isArray(c.preferredTags)?c.preferredTags:[];const box=document.createElement('div');box.className='afe-fields';box.innerHTML=voiceDeadlineControls(c)+voicePreferredTagsField(c);if(removeBtn)removeBtn.before(box);else fields.appendChild(box);const syncQueueVisibility=()=>{const on=document.getElementById('iVoiceMaxQueueEnabled')?.checked,field=document.getElementById('iVoiceMaxQueueDuration')?.closest('.afe-field');if(field)field.style.display=on?'':'none'};bind('iVoiceMaxQueueEnabled',e=>{c.maxQueueEnabled=e.target.checked;if(c.maxQueueEnabled&&(+c.maxQueueDuration||0)<1)c.maxQueueDuration=10;syncQueueVisibility();render()},'change');bind('iVoiceMaxQueueDuration',e=>{c.maxQueueDuration=Math.max(1,parseInt(e.target.value||'1',10)||1);render()});bind('iVoiceMaxQueueUnit',e=>{c.maxQueueUnit=e.target.value;render()},'change');bind('iVoicePreferredTags',e=>{c.preferredTags=[...e.target.selectedOptions].map(o=>o.value).filter(Boolean);render()},'change');syncQueueVisibility()}
 const baseInspect=inspect;inspect=function(){baseInspect();const n=graph.nodes.find(x=>x.id===selected);if(!n)return;const c=n.config||(n.config={});if(n.type==='voice'){mountVoiceMediaControls(c);mountVoiceAdvancedControls(c)}if(n.type!=='push')return;const fields=inspector.querySelector('.afe-fields'),removeBtn=document.getElementById('removeNode');mountPushLinkControls(c);if(!fields||document.getElementById('afeOpenPushPreview'))return;const extra=document.createElement('div');extra.className='afe-fields';extra.innerHTML='<button class="btn btn-ghost btn-sm" type="button" id="afeOpenPushPreview">Pré-visualizar no Android</button><div id="afePushRisk">'+pushRiskHtml(previewText(c.title||''),previewText(c.body||''))+'</div><div class="afe-copy">Aceita página interna ou URL HTTPS de um domínio autorizado nas configurações. Variáveis gerais: {{nome}}, {{email}}, {{telefone}}, {{turma}}, {{data_live}}, {{hora_live}}, {{codigo_live}} e {{link_live}}. Para abrir a sala da live, use <code>{{link_live}}</code> no campo URL externa.</div><div class="afe-note" style="margin-top:10px"><strong>Magic link:</strong> em URLs externas, use <code>{{nome_url}}</code>, <code>{{email_url}}</code> e <code>{{telefone_url}}</code>. Exemplo:<br><code style="overflow-wrap:anywhere">https://professoremersonleite.applive.com.br/rep_mcqdc/evento?nome={{nome_url}}&amp;email={{email_url}}&amp;telefone={{telefone_url}}</code></div>';if(removeBtn)removeBtn.before(extra);else fields.appendChild(extra);const refreshRisk=()=>{const risk=document.getElementById('afePushRisk');if(risk)risk.innerHTML=pushRiskHtml(previewText(c.title||''),previewText(c.body||''))};document.getElementById('iPushTitle')?.addEventListener('input',refreshRisk);document.getElementById('iPushBody')?.addEventListener('input',refreshRisk);document.getElementById('afeOpenPushPreview')?.addEventListener('click',()=>openPushPreview(c))};
 document.getElementById('afePreviewClose')?.addEventListener('click',()=>document.getElementById('afePushPreview').classList.remove('open'));document.getElementById('afePushPreview')?.addEventListener('click',e=>{if(e.target.id==='afePushPreview')e.currentTarget.classList.remove('open')});document.getElementById('afePreviewExpand')?.addEventListener('click',()=>renderCompactPreview(!document.getElementById('afeNotificationMock').classList.contains('expanded')));
+function prettyJson(value){try{return JSON.stringify(value,null,2)}catch(e){return String(value??'')}}
+function providerLogHtml(name,rows){if(!rows||!rows.length)return '';return `<div class="afe-provider-group"><h4>${esc(name)}</h4>${rows.map(r=>`<div class="afe-provider-log ${String(r.ok)==='1'||r.ok===true?'ok':'fail'}"><div class="afe-test-step-head"><strong>${esc(r.action||r.evento||('log #'+r.id))}</strong><span>HTTP ${esc(r.http_status||'-')} · ${esc(r.created_at||'')}</span></div><pre>${esc(prettyJson({request:r.request_json?safeParse(r.request_json):'',response:r.response_text||'',error:r.error_text||r.error_message||''}))}</pre></div>`).join('')}</div>`}
+function safeParse(value){try{return JSON.parse(value)}catch(e){return value}}
+function renderTestResult(data){const result=document.getElementById('afeTestResult');if(!result)return;const steps=Array.isArray(data.steps)?data.steps:[],logs=data.provider_logs||{};result.innerHTML=`<div class="afe-test-summary"><div><small>Execução</small><strong>#${esc(data.run_id||'-')}</strong></div><div><small>Evento</small><strong>${esc(data.event||'-')}</strong></div><div><small>Aluno</small><strong>${esc((data.user?.nome||'')+' #'+(data.user?.id||''))}</strong></div><div><small>Status</small><strong>${data.ok?'Concluído':'Concluído com falhas'}</strong></div></div>${steps.map((s,i)=>`<div class="afe-test-step ${esc(s.status||'')}"><div class="afe-test-step-head"><strong>${i+1}. ${esc(s.label||s.type||s.node_id)}</strong><span>${esc(s.type||'')} · ${esc(s.status||'')} · ${esc(s.duration_ms||0)} ms</span></div>${s.handle?`<div class="afe-copy">Rota: ${esc(String(s.handle).toUpperCase())}</div>`:''}${s.error?`<pre>${esc(s.error)}</pre>`:`<pre>${esc(prettyJson(s.output||{}))}</pre>`}</div>`).join('')}${providerLogHtml('ManyChat',logs.manychat)}${providerLogHtml('Webhooks',logs.webhooks)}${providerLogHtml('SuperFuncionario',logs.superfuncionario)}`;}
+async function runFlowTest(){const modal=document.getElementById('afeTestModal'),status=document.getElementById('afeTestStatus'),result=document.getElementById('afeTestResult'),user=document.getElementById('afeTestUser'),query=document.getElementById('afeTestUserQuery');if(!user?.value&&!query?.value.trim()){status.className='afe-test-status err';status.textContent='Selecione um aluno ou digite ID/e-mail.';return}status.className='afe-test-status';status.textContent='Executando teste... os blocos reais podem chamar e-mail, push, voz ou integrações configuradas.';result.innerHTML='<div class="afe-test-step"><div class="afe-test-step-head"><strong>Preparando execução</strong><span>aguarde</span></div><pre>Enviando o canvas atual para o simulador...</pre></div>';graph.viewport={...view};const fd=new FormData(afeForm);fd.set('action','simulate_flow');fd.set('graph_json',JSON.stringify(graph));fd.set('test_user_id',user.value);fd.set('test_user_query',query.value.trim());try{const res=await fetch('automacoes.php?id=<?=($flow?(int)$flow['id']:0)?>',{method:'POST',body:fd,credentials:'same-origin'}),text=await res.text();let data;try{data=JSON.parse(text)}catch(e){throw new Error(text.slice(0,500)||'Resposta invalida do servidor.')}if(!res.ok||!data.ok){status.className='afe-test-status err';status.textContent=data.error||'Teste concluiu com falhas.'}else{status.className='afe-test-status ok';status.textContent='Teste concluído. Veja abaixo o caminho percorrido, respostas e logs das integrações.'}renderTestResult(data)}catch(e){status.className='afe-test-status err';status.textContent='Erro ao executar teste: '+e.message;result.innerHTML=''}}
+document.getElementById('afeOpenTest')?.addEventListener('click',()=>{document.getElementById('afeTestModal')?.classList.add('open');document.getElementById('afeTestStatus').className='afe-test-status';document.getElementById('afeTestStatus').textContent='Selecione um aluno e execute o teste.'});
+document.getElementById('afeTestClose')?.addEventListener('click',()=>document.getElementById('afeTestModal')?.classList.remove('open'));
+document.getElementById('afeTestModal')?.addEventListener('click',e=>{if(e.target.id==='afeTestModal')e.currentTarget.classList.remove('open')});
+document.getElementById('afeRunTest')?.addEventListener('click',runFlowTest);
 Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button');b.type='button';b.className='afe-item';b.draggable=canWrite;b.style.setProperty('--c',m.color);b.innerHTML='<span class="afe-dot"></span>'+esc(m.label);b.onclick=()=>add(t,220+graph.nodes.length*22,120+graph.nodes.length*18);b.ondragstart=e=>e.dataTransfer.setData('application/x-af-node',t);afePalette.appendChild(b)});canvas.ondragover=e=>e.preventDefault();canvas.ondrop=e=>{e.preventDefault();const t=e.dataTransfer.getData('application/x-af-node'),r=canvas.getBoundingClientRect();if(t)add(t,(e.clientX-r.left-view.x)/view.zoom,(e.clientY-r.top-view.y)/view.zoom)};canvas.onpointermove=e=>{if(drag){drag.n.x=Math.max(0,drag.ox+(e.clientX-drag.sx)/view.zoom);drag.n.y=Math.max(0,drag.oy+(e.clientY-drag.sy)/view.zoom);render()}else if(pan){view.x=pan.ox+e.clientX-pan.x;view.y=pan.oy+e.clientY-pan.y;apply()}};canvas.onpointerup=()=>{drag=pan=null;canvas.classList.remove('is-panning')};canvas.onpointerdown=e=>{if(e.button!==0)return;const hit=e.target.closest?e.target.closest('.afe-node,.afe-tools,.afe-port,.afe-edge-trash,.afe-edge-hit'):null;if(hit)return;selectedEdge=null;selected=null;inspect();edges();pan={x:e.clientX,y:e.clientY,ox:view.x,oy:view.y};canvas.classList.add('is-panning');canvas.setPointerCapture(e.pointerId)};canvas.onwheel=e=>{e.preventDefault();view.zoom*=e.deltaY<0?1.1:.9;apply()};afeIn.onclick=()=>{view.zoom*=1.15;apply()};afeOut.onclick=()=>{view.zoom*=.85;apply()};afeZoom.onclick=()=>{view.zoom=1;apply()};afeFit.onclick=()=>{view={x:60,y:50,zoom:1};apply()};document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>afeAction.value=b.dataset.action);afeForm.onsubmit=()=>{graph.viewport={...view};afeGraph.value=JSON.stringify(graph)};render();inspect()})();
   </script>
 <?php elseif($view === 'logs'): ?>
