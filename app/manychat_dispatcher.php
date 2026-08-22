@@ -237,6 +237,9 @@ function mc_parse_custom_field_dest(string $dest): array
 function mc_detect_custom_field_format(string $source, string $dest, string $value, string $format): string
 {
     $hint = strtolower($source . ' ' . $dest);
+    if (preg_match('/\b(codigo_turma|turma_codigo|turma|codigo|code|class|course)\b/', $hint)) {
+        return 'text';
+    }
     if ($format === 'date' && preg_match('/(datetime|date_time|hora|time|inicio|fim|start|end|agendad)/', $hint) && preg_match('/(?:\d{1,2}:\d{2}|T\d{2}:\d{2})/', $value)) {
         return 'datetime';
     }
