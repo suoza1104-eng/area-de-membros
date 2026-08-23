@@ -8,6 +8,8 @@ $taskKey = (string)($GLOBALS['cron_manager_task_key'] ?? '');
 $channel = 'general';
 if (strncmp($taskKey, 'automacoes_', 11) === 0) {
     $candidate = substr($taskKey, 11);
+    $channelAliases = ['voz' => 'voice'];
+    $candidate = $channelAliases[$candidate] ?? $candidate;
     if (in_array($candidate, automation_flow_channels(), true)) $channel = $candidate;
 }
 
