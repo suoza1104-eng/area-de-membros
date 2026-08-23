@@ -65,6 +65,12 @@ try {
         $result['companion_whatsapp_grupos'] = cron_manager_execute($pdo, 'whatsapp_grupos', $source, false);
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
         $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
+        $result['companion_automacoes_email'] = cron_manager_execute($pdo, 'automacoes_email', $source, false);
+        $result['companion_automacoes_push'] = cron_manager_execute($pdo, 'automacoes_push', $source, false);
+        $result['companion_automacoes_voz'] = cron_manager_execute($pdo, 'automacoes_voz', $source, false);
+        $result['companion_automacoes_manychat'] = cron_manager_execute($pdo, 'automacoes_manychat', $source, false);
+        $result['companion_automacoes_superfuncionario'] = cron_manager_execute($pdo, 'automacoes_superfuncionario', $source, false);
+        $result['companion_automacoes_webhook'] = cron_manager_execute($pdo, 'automacoes_webhook', $source, false);
         $result['companion_torpedo_voz'] = cron_manager_execute($pdo, 'torpedo_voz', $source, false);
         $result['companion_telegram'] = cron_manager_execute($pdo, 'telegram', $source, false);
         $result['companion_email_marketing'] = cron_manager_execute($pdo, 'email_marketing', $source, false);

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/automation_flows.php';
 require_once __DIR__ . '/../app/automation_diagnostics.php';
+require_once __DIR__ . '/../app/cron_manager.php';
 proteger_admin();
 $pdo = getPDO();
 automation_flows_ensure_schema($pdo);
@@ -310,8 +311,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         if ($action === 'process_now') {
-            $res = automation_flow_process_queue($pdo, 100);
-            header('Location: automacoes.php?view=flows&processed=' . (int)($res['processed'] ?? 0));
+            cron_manager_ensure_tables($pdo);
+            $totalProcessed = 0;
+            foreach (automation_flow_channel_task_keys() as $taskKey) {
+                $taskResult = cron_manager_execute($pdo, $taskKey, 'manual', true);
+                $decoded = json_decode((string)($taskResult['output'] ?? ''), true);
+                $totalProcessed += (int)($decoded['processed'] ?? 0);
+            }
+            header('Location: automacoes.php?view=flows&processed=' . $totalProcessed);
             exit;
         }
         if ($action === 'simulate_flow') {
@@ -332,6 +339,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($userId < 1) throw new RuntimeException('Selecione um usuario de teste.');
             af_json(af_run_flow_test($pdo, $flow, $graph, $userId));
+        }
+        if ($action === 'save_channel_settings') {
+            foreach (['email','push','manychat','superfuncionario','webhook'] as $channelKey) {
+                $prefix = 'ch_' . $channelKey . '_';
+                $pdo->prepare("UPDATE automation_channel_settings SET enabled=:en,min_interval_ms=:mi,batch_size=:bs,max_attempts=:ma,backoff_step_seconds=:bstep,backoff_max_seconds=:bmax WHERE channel=:c")
+                    ->execute([
+                        'en' => isset($_POST[$prefix . 'enabled']) ? 1 : 0,
+                        'mi' => max(0, min(60000, (int)($_POST[$prefix . 'min_interval_ms'] ?? 300))),
+                        'bs' => max(1, min(200, (int)($_POST[$prefix . 'batch_size'] ?? 30))),
+                        'ma' => max(1, min(20, (int)($_POST[$prefix . 'max_attempts'] ?? 5))),
+                        'bstep' => max(1, min(3600, (int)($_POST[$prefix . 'backoff_step_seconds'] ?? 30))),
+                        'bmax' => max(1, min(86400, (int)($_POST[$prefix . 'backoff_max_seconds'] ?? 1800))),
+                        'c' => $channelKey,
+                    ]);
+            }
+            header('Location: automacoes.php?view=canais&saved=1');
+            exit;
         }
         if ($action === 'reprocess_flow') {
             $id = (int)($_POST['id'] ?? 0);
@@ -357,7 +381,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("INSERT INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")
                     ->execute(['r'=>(int)$run['id'], 'n'=>(string)$trigger['id']]);
             }
-            $res = automation_flow_process_queue($pdo, 100);
+            $res = automation_flow_process_flow_now($pdo, $id, 100);
             header('Location: automacoes.php?view=flows&reprocessed=' . count($runRows) . '&dispatched=' . (int)($res['processed'] ?? 0));
             exit;
         }
@@ -418,7 +442,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("INSERT INTO automation_flow_jobs (run_id, node_id, status, available_at, input_json) VALUES (:r, :n, 'queued', NOW(), '{}')")
                 ->execute([':r' => $runId, ':n' => (string)$trigger['id']]);
 
-            $res = automation_flow_process_queue($pdo, 100);
+            $res = automation_flow_process_flow_now($pdo, $id, 100);
             header('Location: automacoes.php?view=flows&tested=1&dispatched=' . (int)($res['processed'] ?? 0));
             exit;
         }
@@ -615,6 +639,19 @@ try {
     $voiceCampaigns = $pdo->query("SELECT id,name,status,created_at FROM voice_campaigns ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
+$channelLabels = ['email' => 'E-mail', 'push' => 'Push', 'manychat' => 'ManyChat', 'superfuncionario' => 'SuperFuncionário', 'webhook' => 'Webhook'];
+$channelAllLabels = ['general' => 'Etapas locais (gatilho/condição/espera/ação/fim)', 'voice' => 'Voz (Torpedo de Voz)'] + $channelLabels;
+$channelRows = [];
+try {
+    $channelStmt = $pdo->query("SELECT * FROM automation_channel_settings ORDER BY channel")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($channelStmt as $row) $channelRows[(string)$row['channel']] = $row;
+    $channelPending = $pdo->query("SELECT channel,COUNT(*) c FROM automation_flow_jobs WHERE status IN ('queued','retry','scheduled') GROUP BY channel")->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+} catch (Throwable $e) { $channelPending = []; }
+$queueOverview = [];
+if ($view === 'canais') {
+    try { $queueOverview = automation_channel_queue_overview($pdo); } catch (Throwable $e) {}
+}
+
 include __DIR__ . '/_header.php';
 ?>
 <style>
@@ -656,6 +693,7 @@ include __DIR__ . '/_header.php';
       <?php endif; ?>
     </a>
     <a class="<?=$view==='logs'?'active':''?>" href="automacoes.php?view=logs">Logs detalhados</a>
+    <a class="<?=$view==='canais'?'active':''?>" href="automacoes.php?view=canais">Canais de disparo</a>
     <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
   </nav>
   <?php if($error): ?><div class="af-error"><?=af_h($error)?></div><?php endif; ?>
@@ -1080,6 +1118,63 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
       </section>
     <?php endforeach; ?>
   </div>
+<?php elseif($view === 'canais'): ?>
+  <section class="af-card">
+    <div class="card-header-title">Diagnóstico da fila, por canal</div>
+    <p class="text-muted text-xs">Fotografia calculada agora mesmo. Recarregue a página para atualizar os números.</p>
+    <div class="af-table" style="margin-top:14px;">
+      <table>
+        <thead><tr><th>Canal</th><th>Status</th><th>Pendentes</th><th>Na fila</th><th>Reagendadas (retry)</th><th>Processando</th><th>Mais antiga espera</th><th>Concluídas (1h)</th><th>Falhas (1h)</th><th>Tempo estimado p/ zerar</th></tr></thead>
+        <tbody>
+          <?php foreach ($channelAllLabels as $channelKey => $channelLabel): $q = $queueOverview[$channelKey] ?? null; if (!$q) continue; ?>
+            <tr>
+              <td><strong><?=af_h($channelLabel)?></strong></td>
+              <td><span class="af-pill" style="<?=$q['enabled']?'':'background:#7c2d12;color:#fed7aa;'?>"><?=$q['enabled']?'ativo':'desativado'?></span></td>
+              <td><strong><?=(int)$q['pending']?></strong></td>
+              <td><?=(int)$q['queued']?></td>
+              <td><?=(int)$q['retry']?></td>
+              <td><?=(int)$q['processing']?></td>
+              <td><?=$q['oldest_pending_minutes'] === null ? '-' : (int)$q['oldest_pending_minutes'] . ' min'?></td>
+              <td style="color:#86efac"><?=(int)$q['completed_last_hour']?></td>
+              <td style="<?=$q['failed_last_hour']>0?'color:#fca5a5;font-weight:700;':''?>"><?=(int)$q['failed_last_hour']?></td>
+              <td><?php if ($q['pending'] === 0): ?>—<?php elseif ($q['eta_minutes'] === null): ?><span style="color:#fca5a5;">sem processamento na última hora</span><?php else: ?><?=(int)$q['eta_minutes']?> min<?php endif; ?></td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted text-xs" style="margin-top:10px;">"Tempo estimado p/ zerar" é calculado dividindo os pendentes pela taxa de conclusão da última hora — é uma projeção, não uma garantia (a taxa pode mudar se novos disparos entrarem na fila).</p>
+  </section>
+
+  <section class="af-card" style="margin-top:14px;">
+    <div class="card-header-title">Configuração dos canais</div>
+    <p class="text-muted text-xs">Cada canal tem sua própria fila e roda em paralelo com os outros pelo cron (a cada 1 minuto). O intervalo mínimo evita sobrecarregar a API receptora; falhas tentam de novo com espera crescente até o número máximo de tentativas.</p>
+    <form method="post">
+      <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+      <input type="hidden" name="action" value="save_channel_settings">
+      <div class="af-table" style="margin-top:14px;">
+        <table>
+          <thead><tr><th>Canal</th><th>Ativo</th><th>Intervalo mín. (ms)</th><th>Lote/execução</th><th>Máx. tentativas</th><th>Backoff inicial (s)</th><th>Backoff máximo (s)</th><th>Fila atual</th></tr></thead>
+          <tbody>
+            <?php foreach ($channelLabels as $channelKey => $channelLabel): $row = $channelRows[$channelKey] ?? ['enabled'=>1,'min_interval_ms'=>300,'batch_size'=>30,'max_attempts'=>5,'backoff_step_seconds'=>30,'backoff_max_seconds'=>1800]; $prefix = 'ch_' . $channelKey . '_'; ?>
+              <tr>
+                <td><strong><?=af_h($channelLabel)?></strong></td>
+                <td><input type="checkbox" name="<?=$prefix?>enabled" <?=((int)$row['enabled']===1)?'checked':''?> <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="0" max="60000" step="50" name="<?=$prefix?>min_interval_ms" value="<?=(int)$row['min_interval_ms']?>" style="width:90px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="200" name="<?=$prefix?>batch_size" value="<?=(int)$row['batch_size']?>" style="width:70px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="20" name="<?=$prefix?>max_attempts" value="<?=(int)$row['max_attempts']?>" style="width:70px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="3600" name="<?=$prefix?>backoff_step_seconds" value="<?=(int)$row['backoff_step_seconds']?>" style="width:80px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="86400" name="<?=$prefix?>backoff_max_seconds" value="<?=(int)$row['backoff_max_seconds']?>" style="width:90px" <?=$canWrite?'':'disabled'?>></td>
+                <td><span class="af-pill"><?=(int)($channelPending[$channelKey] ?? 0)?> pendente(s)</span></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:14px;"><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar configuração dos canais</button></div>
+    </form>
+    <p class="text-muted text-xs" style="margin-top:14px;">O canal de voz usa a configuração própria em Torpedo de Voz. O canal "Automações - etapas locais" (gatilho/condição/espera/ação/fim) não chama API externa e não precisa de espaçamento.</p>
+  </section>
 <?php else: ?>
   <section class="af-grid">
     <div class="af-card af-kpi"><small>Fluxos</small><strong><?=$kpis['flows']?></strong><span class="text-muted text-xs">total criado</span></div>
