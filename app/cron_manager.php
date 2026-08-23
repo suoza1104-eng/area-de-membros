@@ -31,7 +31,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa turmas com horário de disparo atingido.',
             'script' => __DIR__ . '/../cron/processar_lives.php',
             'interval' => 1,
-            'timeout' => 300,
+            'timeout' => 1800,
         ],
         'agendamentos_retorno' => [
             'label' => 'Agendamentos de retorno',
@@ -62,9 +62,51 @@ function cron_manager_base_definitions(): array {
             'timeout' => 120,
         ],
         'automacoes' => [
-            'label' => 'Automacoes centralizadas',
-            'description' => 'Processa etapas vencidas dos fluxos unificados de email, push e integracoes.',
+            'label' => 'Automacoes - etapas locais',
+            'description' => 'Processa etapas locais (gatilho/condicao/espera/acao/fim) dos fluxos unificados.',
             'script' => __DIR__ . '/../cron/processar_automacoes.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_email' => [
+            'label' => 'Automacoes - E-mail',
+            'description' => 'Processa a fila do canal de e-mail dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_push' => [
+            'label' => 'Automacoes - Push',
+            'description' => 'Processa a fila do canal de push dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_voz' => [
+            'label' => 'Automacoes - Voz',
+            'description' => 'Processa a fila do canal de voz dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_manychat' => [
+            'label' => 'Automacoes - ManyChat',
+            'description' => 'Processa a fila do canal ManyChat dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_superfuncionario' => [
+            'label' => 'Automacoes - SuperFuncionario',
+            'description' => 'Processa a fila do canal SuperFuncionario dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_webhook' => [
+            'label' => 'Automacoes - Webhook',
+            'description' => 'Processa a fila do canal de webhook dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
             'interval' => 1,
             'timeout' => 180,
         ],
@@ -255,7 +297,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
                SET enabled = 1,
                    mode = IF(mode = 'disabled', 'redundant', mode),
                    interval_minutes = 1,
-                   timeout_seconds = GREATEST(timeout_seconds, 300),
+                   timeout_seconds = GREATEST(timeout_seconds, 1800),
                    fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
                    next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'lives_turma'
@@ -263,7 +305,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
                     enabled <> 1
                     OR mode = 'disabled'
                     OR interval_minutes <> 1
-                    OR timeout_seconds < 300
+                    OR timeout_seconds < 1800
                     OR next_run_at IS NULL
                )
         ");
@@ -354,6 +396,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     } catch (Throwable $e) {}
 
     cron_manager_recover_expired_runs($pdo);
+    cron_manager_recover_stale_live_run($pdo);
 
     if (cron_manager_token($pdo) === '') {
         cron_manager_rotate_token($pdo);
@@ -515,6 +558,78 @@ function cron_manager_recover_expired_runs(PDO $pdo): int {
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
+    }
+}
+
+function cron_manager_recover_stale_live_run(PDO $pdo): int {
+    $minRunAgeSeconds = 90;
+    $maxIdleSeconds = 90;
+
+    try {
+        $st = $pdo->query("
+            SELECT running_token, last_started_at
+              FROM cron_managed_tasks
+             WHERE task_key = 'lives_turma'
+               AND running_token IS NOT NULL
+               AND last_started_at IS NOT NULL
+               AND last_started_at <= DATE_SUB(NOW(), INTERVAL {$minRunAgeSeconds} SECOND)
+             LIMIT 1
+        ");
+        $task = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: null) : null;
+        if (!$task) return 0;
+
+        $progress = $pdo->query("
+            SELECT MAX(progress_at)
+              FROM (
+                    SELECT MAX(last_heartbeat_at) AS progress_at
+                      FROM live_turma_dispatch_logs
+                     WHERE status IN ('iniciado','processando','queued')
+                    UNION ALL
+                    SELECT MAX(updated_at) AS progress_at
+                      FROM live_turma_dispatch_recipients
+                     WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+              ) p
+        ")->fetchColumn();
+        $progressAt = $progress ? strtotime((string)$progress) : false;
+        if ($progressAt && $progressAt > time() - $maxIdleSeconds) return 0;
+
+        $runToken = (string)($task['running_token'] ?? '');
+        if ($runToken === '') return 0;
+
+        $pdo->beginTransaction();
+        try {
+            $finishRun = $pdo->prepare("
+                UPDATE cron_managed_runs
+                   SET status='recovered',
+                       finished_at=NOW(),
+                       duration_ms=TIMESTAMPDIFF(MICROSECOND, started_at, NOW()) DIV 1000,
+                       error_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.'
+                 WHERE run_token=:run_token
+                   AND status='running'
+            ");
+            $finishRun->execute([':run_token' => $runToken]);
+
+            $releaseTask = $pdo->prepare("
+                UPDATE cron_managed_tasks
+                   SET running_until=NULL,
+                       running_token=NULL,
+                       last_finished_at=NOW(),
+                       last_status='recovered',
+                       last_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.',
+                       next_run_at=NOW()
+                 WHERE task_key='lives_turma'
+                   AND running_token=:run_token
+            ");
+            $releaseTask->execute([':run_token' => $runToken]);
+            $count = $releaseTask->rowCount() === 1 ? 1 : 0;
+            $pdo->commit();
+            return $count;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            return 0;
+        }
+    } catch (Throwable $e) {
+        return 0;
     }
 }
 

@@ -45,6 +45,90 @@ function automation_diagnostics_ensure_schema(PDO $pdo): void
 }
 
 /**
+ * Verifica a saúde das filas por canal (email/push/voz/manychat/superfuncionario/webhook):
+ * canal desativado com pendências acumulando, fila represada além do esperado, ou pico
+ * de falhas definitivas recentes que sugere integração quebrada.
+ */
+function automation_diagnose_channels(PDO $pdo, DateTimeImmutable $now): array
+{
+    $issues = [];
+    $channels = automation_flow_channels();
+    $allChannels = array_merge(['general'], $channels);
+    $placeholders = implode(',', array_fill(0, count($allChannels), '?'));
+
+    $pendingByChannel = [];
+    try {
+        $st = $pdo->prepare("
+            SELECT channel, COUNT(*) pending, MIN(available_at) oldest_available_at
+              FROM automation_flow_jobs
+             WHERE status IN ('queued','retry','scheduled')
+               AND channel IN ($placeholders)
+          GROUP BY channel
+        ");
+        $st->execute($allChannels);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $pendingByChannel[(string)$row['channel']] = $row;
+    } catch (Throwable $e) {
+        return $issues;
+    }
+
+    foreach ($channels as $channel) {
+        $settings = automation_flow_channel_settings($pdo, $channel);
+        $row = $pendingByChannel[$channel] ?? null;
+        $pending = (int)($row['pending'] ?? 0);
+        if ($pending === 0) continue;
+
+        if (!$settings['enabled']) {
+            $issues[] = [
+                'type' => 'channel_disabled_with_backlog',
+                'channel' => $channel,
+                'pending' => $pending,
+                'message' => "O canal '{$channel}' está desativado em Automações > Canais de disparo, mas tem {$pending} etapa(s) esperando na fila.",
+            ];
+            continue;
+        }
+
+        if (empty($row['oldest_available_at'])) continue;
+        $oldest = new DateTimeImmutable((string)$row['oldest_available_at'], $now->getTimezone());
+        $ageMinutes = ($now->getTimestamp() - $oldest->getTimestamp()) / 60;
+        $expectedMaxMinutes = max(10, ($settings['backoff_max_seconds'] / 60) + 5);
+
+        if ($ageMinutes > $expectedMaxMinutes) {
+            $issues[] = [
+                'type' => 'channel_backlog_stalled',
+                'channel' => $channel,
+                'pending' => $pending,
+                'oldest_minutes' => round($ageMinutes),
+                'message' => "O canal '{$channel}' tem {$pending} etapa(s) na fila e a mais antiga espera há " . round($ageMinutes) . " min (acima do esperado, ~" . round($expectedMaxMinutes) . " min). Verifique se a tarefa 'automacoes_{$channel}' do cron está rodando.",
+            ];
+        }
+    }
+
+    try {
+        $stFail = $pdo->prepare("
+            SELECT channel, COUNT(*) c
+              FROM automation_flow_jobs
+             WHERE status = 'failed' AND updated_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+               AND channel IN ($placeholders)
+          GROUP BY channel
+        ");
+        $stFail->execute($allChannels);
+        foreach ($stFail->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $channel = (string)$row['channel'];
+            $count = (int)$row['c'];
+            if ($channel === 'general' || $count < 5) continue;
+            $issues[] = [
+                'type' => 'channel_failure_spike',
+                'channel' => $channel,
+                'count' => $count,
+                'message' => "O canal '{$channel}' teve {$count} falha(s) definitiva(s) (após esgotar as tentativas) nas últimas 2h. Pode indicar integração quebrada: token expirado, URL inválida ou regra desativada.",
+            ];
+        }
+    } catch (Throwable $e) {}
+
+    return $issues;
+}
+
+/**
  * Calcula a duração teórica projetada do fluxo a partir dos nós Wait (em minutos).
  */
 function automation_flow_theoretical_duration(array $graph): array
@@ -155,7 +239,10 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
         // Ignora caso a tabela esteja vazia
     }
 
-    // 3. VARREDURA FLUXO POR FLUXO
+    // 3. CANAIS DE DISPARO (email/push/voz/manychat/superfuncionario/webhook)
+    $infraIssues = array_merge($infraIssues, automation_diagnose_channels($pdo, $now));
+
+    // 4. VARREDURA FLUXO POR FLUXO
     foreach ($activeFlows as $flow) {
         $flowId = (int)$flow['id'];
         $flowName = (string)$flow['name'];
@@ -421,6 +508,75 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
 }
 
 /**
+ * Fotografia do estado atual da fila de um canal: quanto está pendente, há quanto
+ * tempo a etapa mais antiga espera, e quanto foi processado/falhou na última hora
+ * (para estimar tempo restante de esvaziamento).
+ */
+function automation_channel_queue_snapshot(PDO $pdo, string $channel): array
+{
+    $settings = automation_flow_channel_settings($pdo, $channel);
+
+    $statusCounts = ['queued' => 0, 'retry' => 0, 'scheduled' => 0, 'processing' => 0];
+    $st = $pdo->prepare("SELECT status, COUNT(*) c FROM automation_flow_jobs WHERE channel=:c AND status IN ('queued','retry','scheduled','processing') GROUP BY status");
+    $st->execute(['c' => $channel]);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) $statusCounts[(string)$row['status']] = (int)$row['c'];
+    $pending = $statusCounts['queued'] + $statusCounts['retry'] + $statusCounts['scheduled'];
+
+    $oldestMinutes = null;
+    $st = $pdo->prepare("SELECT MIN(available_at) FROM automation_flow_jobs WHERE channel=:c AND status IN ('queued','retry','scheduled')");
+    $st->execute(['c' => $channel]);
+    $oldestStr = $st->fetchColumn();
+    if ($oldestStr) $oldestMinutes = max(0, (int)round((time() - strtotime((string)$oldestStr)) / 60));
+
+    $st = $pdo->prepare("
+        SELECT SUM(s.status='completed') completed, SUM(s.status='failed') failed, SUM(s.status='canceled') canceled
+          FROM automation_flow_steps s
+          JOIN automation_flow_jobs j ON j.id = s.job_id
+         WHERE j.channel = :c AND s.finished_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+    ");
+    $st->execute(['c' => $channel]);
+    $throughput = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    $completedLastHour = (int)($throughput['completed'] ?? 0);
+    $failedLastHour = (int)($throughput['failed'] ?? 0);
+    $canceledLastHour = (int)($throughput['canceled'] ?? 0);
+
+    $ratePerMinute = $completedLastHour / 60;
+    $etaMinutes = ($pending > 0 && $ratePerMinute > 0.0001) ? (int)ceil($pending / $ratePerMinute) : null;
+
+    return [
+        'channel' => $channel,
+        'enabled' => $settings['enabled'],
+        'min_interval_ms' => $settings['min_interval_ms'],
+        'pending' => $pending,
+        'queued' => $statusCounts['queued'],
+        'retry' => $statusCounts['retry'],
+        'scheduled' => $statusCounts['scheduled'],
+        'processing' => $statusCounts['processing'],
+        'oldest_pending_minutes' => $oldestMinutes,
+        'completed_last_hour' => $completedLastHour,
+        'failed_last_hour' => $failedLastHour,
+        'canceled_last_hour' => $canceledLastHour,
+        'eta_minutes' => $etaMinutes,
+    ];
+}
+
+/**
+ * Fotografia da fila de todos os canais (general + os 6 canais de disparo).
+ */
+function automation_channel_queue_overview(PDO $pdo): array
+{
+    $out = [];
+    foreach (array_merge(['general'], automation_flow_channels()) as $channel) {
+        try {
+            $out[$channel] = automation_channel_queue_snapshot($pdo, $channel);
+        } catch (Throwable $e) {
+            $out[$channel] = null;
+        }
+    }
+    return $out;
+}
+
+/**
  * Formata a diferença temporal em formato legível (+35m, +1h 20m, No horário).
  */
 function automation_format_delay(?int $diffSeconds): string
@@ -534,7 +690,15 @@ function automation_analyze_run_steps(PDO $pdo, int $runId, array $graph, DateTi
 
         if (in_array($jStatus, ['queued', 'scheduled', 'retry'], true)) {
             $delayedMinutes = ($now->getTimestamp() - $availAt->getTimestamp()) / 60;
-            if ($delayedMinutes > 30) {
+            $thresholdMinutes = 30;
+            if ($jStatus === 'retry') {
+                // Uma etapa em retry pode legitimamente esperar até o backoff maximo configurado
+                // do canal antes de ser reprocessada — só é "travada" se passar bem desse prazo.
+                $jobChannel = (string)($j['channel'] ?? 'general');
+                $channelSettings = automation_flow_channel_settings($pdo, $jobChannel);
+                $thresholdMinutes = max(10, ($channelSettings['backoff_max_seconds'] / 60) + 5);
+            }
+            if ($delayedMinutes > $thresholdMinutes) {
                 $issues[] = [
                     'type' => 'stuck_step',
                     'node_id' => (string)$j['node_id'],

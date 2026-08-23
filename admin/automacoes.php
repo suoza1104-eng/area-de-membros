@@ -2,9 +2,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/automation_flows.php';
+require_once __DIR__ . '/../app/automation_diagnostics.php';
+require_once __DIR__ . '/../app/cron_manager.php';
 proteger_admin();
 $pdo = getPDO();
 automation_flows_ensure_schema($pdo);
+automation_diagnostics_ensure_schema($pdo);
 email_marketing_ensure_schema($pdo);
 
 if (empty($_SESSION['automation_admin_csrf'])) $_SESSION['automation_admin_csrf'] = bin2hex(random_bytes(24));
@@ -111,6 +114,133 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: automacoes.php?view=flows&deleted=1');
             exit;
         }
+        if ($action === 'process_now') {
+            cron_manager_ensure_tables($pdo);
+            $totalProcessed = 0;
+            foreach (automation_flow_channel_task_keys() as $taskKey) {
+                $taskResult = cron_manager_execute($pdo, $taskKey, 'manual', true);
+                $decoded = json_decode((string)($taskResult['output'] ?? ''), true);
+                $totalProcessed += (int)($decoded['processed'] ?? 0);
+            }
+            header('Location: automacoes.php?view=flows&processed=' . $totalProcessed);
+            exit;
+        }
+        if ($action === 'save_channel_settings') {
+            foreach (['email','push','manychat','superfuncionario','webhook'] as $channelKey) {
+                $prefix = 'ch_' . $channelKey . '_';
+                $pdo->prepare("UPDATE automation_channel_settings SET enabled=:en,min_interval_ms=:mi,batch_size=:bs,max_attempts=:ma,backoff_step_seconds=:bstep,backoff_max_seconds=:bmax WHERE channel=:c")
+                    ->execute([
+                        'en' => isset($_POST[$prefix . 'enabled']) ? 1 : 0,
+                        'mi' => max(0, min(60000, (int)($_POST[$prefix . 'min_interval_ms'] ?? 300))),
+                        'bs' => max(1, min(200, (int)($_POST[$prefix . 'batch_size'] ?? 30))),
+                        'ma' => max(1, min(20, (int)($_POST[$prefix . 'max_attempts'] ?? 5))),
+                        'bstep' => max(1, min(3600, (int)($_POST[$prefix . 'backoff_step_seconds'] ?? 30))),
+                        'bmax' => max(1, min(86400, (int)($_POST[$prefix . 'backoff_max_seconds'] ?? 1800))),
+                        'c' => $channelKey,
+                    ]);
+            }
+            header('Location: automacoes.php?view=canais&saved=1');
+            exit;
+        }
+        if ($action === 'reprocess_flow') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
+            $runs = $pdo->prepare("
+                SELECT r.id, r.user_id, r.version_id, v.graph_json 
+                FROM automation_flow_runs r 
+                JOIN automation_flow_versions v ON v.id=r.version_id 
+                WHERE r.flow_id=:id
+            ");
+            $runs->execute(['id'=>$id]);
+            $runRows = $runs->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($runRows as $run) {
+                $graph = json_decode((string)$run['graph_json'], true) ?: [];
+                $trigger = null;
+                foreach (($graph['nodes'] ?? []) as $node) {
+                    if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
+                }
+                if (!$trigger) continue;
+                $pdo->prepare("UPDATE automation_flow_runs SET status='running', finished_at=NULL, last_error=NULL WHERE id=:id")->execute(['id'=>(int)$run['id']]);
+                $pdo->prepare("DELETE FROM automation_flow_jobs WHERE run_id=:id")->execute(['id'=>(int)$run['id']]);
+                $pdo->prepare("INSERT INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")
+                    ->execute(['r'=>(int)$run['id'], 'n'=>(string)$trigger['id']]);
+            }
+            $res = automation_flow_process_flow_now($pdo, $id, 100);
+            header('Location: automacoes.php?view=flows&reprocessed=' . count($runRows) . '&dispatched=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
+        if ($action === 'test_flow') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
+            $vst = $pdo->prepare("SELECT graph_json FROM automation_flow_versions WHERE id=:v LIMIT 1");
+            $vst->execute([':v' => (int)($flow['current_version_id'] ?? 0)]);
+            $graphJson = (string)($vst->fetchColumn() ?: ($flow['draft_graph_json'] ?? '{}'));
+            $graph = json_decode($graphJson, true) ?: [];
+            $trigger = null;
+            foreach (($graph['nodes'] ?? []) as $node) {
+                if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
+            }
+            if (!$trigger) throw new RuntimeException('O fluxo não possui bloco de gatilho.');
+            $event = (string)($trigger['config']['event'] ?? 'PAGAMENTO_APROVADO');
+            $filterTurma = (string)($trigger['config']['filter'] ?? '');
+
+            // Busca o último aluno com essa turma ou o último cadastrado
+            $testUser = null;
+            if ($filterTurma !== '') {
+                $ust = $pdo->prepare("SELECT * FROM users WHERE codigo_turma=:t OR turma_codigo=:t ORDER BY id DESC LIMIT 1");
+                $ust->execute([':t' => $filterTurma]);
+                $testUser = $ust->fetch(PDO::FETCH_ASSOC);
+            }
+            if (!$testUser) {
+                $testUser = $pdo->query("SELECT * FROM users ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: ['id'=>1,'nome'=>'Aluno Teste','email'=>'teste@exemplo.com','telefone'=>'11999999999'];
+            }
+            $testUserId = (int)$testUser['id'];
+
+            $testExtra = [
+                'gateway' => 'teste_painel',
+                'transacao_id' => 'TESTE-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 8)),
+                'valor_bruto' => 197.00,
+                'valor_liquido' => 180.00,
+                'taxa' => 17.00,
+                'moeda' => 'BRL',
+                'metodo' => 'credit_card',
+                'produto_nome' => 'Curso de Teste (Disparo Manual)',
+                'codigo_turma' => $filterTurma ?: ($testUser['codigo_turma'] ?? 'GERAL'),
+                'utm_source' => 'painel_admin',
+                'utm_campaign' => 'teste_automacao',
+                'is_test' => true,
+            ];
+
+            // Cria o evento e a execução direta para este fluxo específico
+            $payload = json_encode($testExtra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $sourceKey = 'test_manual_' . microtime(true) . '_' . bin2hex(random_bytes(6));
+            $pdo->prepare("INSERT INTO automation_flow_events (event_code, user_id, source_key, payload_json, matched_flows) VALUES (:e, :u, :s, :p, 1)")
+                ->execute([':e' => $event, ':u' => $testUserId, ':s' => $sourceKey, ':p' => $payload]);
+            $eventId = (int)$pdo->lastInsertId();
+
+            $pdo->prepare("INSERT INTO automation_flow_runs (flow_id, version_id, event_id, user_id, status, started_at) VALUES (:f, :v, :e, :u, 'running', NOW())")
+                ->execute([':f' => $id, ':v' => (int)$flow['current_version_id'], ':e' => $eventId, ':u' => $testUserId]);
+            $runId = (int)$pdo->lastInsertId();
+
+            $pdo->prepare("INSERT INTO automation_flow_jobs (run_id, node_id, status, available_at, input_json) VALUES (:r, :n, 'queued', NOW(), '{}')")
+                ->execute([':r' => $runId, ':n' => (string)$trigger['id']]);
+
+            $res = automation_flow_process_flow_now($pdo, $id, 100);
+            header('Location: automacoes.php?view=flows&tested=1&dispatched=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
+        if ($action === 'run_diagnostics') {
+            $diagResult = automation_run_complete_diagnostics($pdo, (string)($_SESSION['equipe_nome'] ?? 'Administrador'));
+            header('Location: automacoes.php?view=flows&diagnosed=1&issues=' . (int)($diagResult['issues_count'] ?? 0));
+            exit;
+        }
+        if ($action === 'acknowledge_diagnostics') {
+            automation_acknowledge_diagnostics($pdo, (string)($_SESSION['equipe_nome'] ?? 'Administrador'));
+            header('Location: automacoes.php?view=flows&acknowledged=1');
+            exit;
+        }
         if (in_array($action, ['save','publish'], true)) {
             $flow = automation_flow_find($pdo, (int)$_POST['id']);
             if (!$flow) throw new RuntimeException('Fluxo nao encontrado.');
@@ -168,6 +298,13 @@ $logs = $pdo->query("SELECT s.*,r.flow_id,r.user_id,f.name flow_name,u.nome,u.em
 $eventsByDay = $pdo->query("SELECT DATE(created_at) d,COUNT(*) c FROM automation_flow_events WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $statusRows = $pdo->query("SELECT status,COUNT(*) c FROM automation_flow_runs GROUP BY status")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+$latestDiag = null;
+$flowDiagMap = [];
+try {
+    $latestDiag = automation_get_latest_diagnostics($pdo);
+    $flowDiagMap = automation_get_flow_diagnostics_map($pdo);
+} catch (Throwable $e) {}
+
 $templates = $pdo->query("SELECT v.id,t.name,v.version_number,v.subject FROM email_templates t JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.status='active' ORDER BY t.name")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $triggers = automation_trigger_options($pdo);
 $triggerGroups = automation_trigger_groups($pdo);
@@ -213,25 +350,93 @@ try {
     $voiceCampaigns = $pdo->query("SELECT id,name,status,created_at FROM voice_campaigns ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
 
+$channelLabels = ['email' => 'E-mail', 'push' => 'Push', 'manychat' => 'ManyChat', 'superfuncionario' => 'SuperFuncionário', 'webhook' => 'Webhook'];
+$channelAllLabels = ['general' => 'Etapas locais (gatilho/condição/espera/ação/fim)', 'voice' => 'Voz (Torpedo de Voz)'] + $channelLabels;
+$channelRows = [];
+try {
+    $channelStmt = $pdo->query("SELECT * FROM automation_channel_settings ORDER BY channel")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($channelStmt as $row) $channelRows[(string)$row['channel']] = $row;
+    $channelPending = $pdo->query("SELECT channel,COUNT(*) c FROM automation_flow_jobs WHERE status IN ('queued','retry','scheduled') GROUP BY channel")->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+} catch (Throwable $e) { $channelPending = []; }
+$queueOverview = [];
+if ($view === 'canais') {
+    try { $queueOverview = automation_channel_queue_overview($pdo); } catch (Throwable $e) {}
+}
+
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.af{display:grid;gap:14px}.af-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.af-head h1{font-size:22px}.af-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.af-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.af-nav a.active,.af-nav a:hover{background:var(--primary-dim);color:var(--primary)}.af-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px}.af-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.af-kpi small{color:var(--muted);font-size:10px;text-transform:uppercase}.af-kpi strong{display:block;font-size:26px}.af-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.af-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.af-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.af-table{overflow:auto}.af-table table{width:100%;border-collapse:collapse}.af-table th,.af-table td{padding:9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.af-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.af-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.af-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.af-form input{min-width:260px;flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text)}.af-flow-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.af-flow-create{display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:8px;min-width:min(520px,100%)}.af-flow-list{display:grid;gap:8px}.af-flow-row{display:grid;grid-template-columns:minmax(220px,1fr) 105px 85px 82px 92px 72px 88px auto;gap:12px;align-items:center;padding:14px 12px;border:1px solid var(--border-light,var(--border));border-radius:9px;background:#071020}.af-flow-row:hover{border-color:#334155}.af-flow-name strong{display:block;font-size:14px}.af-flow-name small,.af-flow-meta small{display:block;color:var(--muted);font-size:10px}.af-flow-stat strong{display:block;font-size:18px}.af-flow-stat small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.af-flow-empty{padding:22px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:10px}@media(max-width:1100px){.af-flow-head{display:grid}.af-flow-create{grid-template-columns:1fr}.af-flow-row{grid-template-columns:1fr 1fr;align-items:start}.af-flow-row .af-actions{grid-column:1/-1}}@media(max-width:640px){.af-flow-row{grid-template-columns:1fr}}
+.af{display:grid;gap:14px}.af-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.af-head h1{font-size:22px}.af-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.af-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.af-nav a.active,.af-nav a:hover{background:var(--primary-dim);color:var(--primary)}.af-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px}.af-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.af-kpi small{color:var(--muted);font-size:10px;text-transform:uppercase}.af-kpi strong{display:block;font-size:26px}.af-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.af-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.af-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.af-table{overflow:auto}.af-table table{width:100%;border-collapse:collapse}.af-table th,.af-table td{padding:9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.af-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.af-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.af-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.af-form input{min-width:260px;flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text)}.af-flow-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.af-flow-create{display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:8px;min-width:min(520px,100%)}.af-flow-list{display:grid;gap:8px}.af-flow-row{display:grid;grid-template-columns:minmax(220px,1fr) 105px 85px 82px 92px 72px 88px auto;gap:12px;align-items:center;padding:14px 12px;border:1px solid var(--border-light,var(--border));border-radius:9px;background:#071020;transition:all .2s ease}.af-flow-row:hover{border-color:#334155}.af-flow-row.has-diag-warning{border-color:#f59e0b;background:rgba(245,158,11,0.04)}.af-flow-row.has-diag-critical{border-color:#ef4444!important;background:rgba(239,68,68,0.06)!important;box-shadow:0 0 15px rgba(239,68,68,0.18);animation:afPulseRed 2.5s infinite}.af-flow-name strong{display:block;font-size:14px}.af-flow-name small,.af-flow-meta small{display:block;color:var(--muted);font-size:10px}.af-flow-stat strong{display:block;font-size:18px}.af-flow-stat small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.af-flow-empty{padding:22px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:10px}@keyframes afPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.35)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}@media(max-width:1100px){.af-flow-head{display:grid}.af-flow-create{grid-template-columns:1fr}.af-flow-row{grid-template-columns:1fr 1fr;align-items:start}.af-flow-row .af-actions{grid-column:1/-1}}@media(max-width:640px){.af-flow-row{grid-template-columns:1fr}}
+.af-diag-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border-radius:12px;background:rgba(239,68,68,0.14);border:1px solid #ef4444;color:#fecaca;box-shadow:0 8px 24px rgba(239,68,68,0.18)}
+.af-diag-modal{position:fixed;inset:0;z-index:14000;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(2,6,15,.85);backdrop-filter:blur(6px)}
+.af-diag-modal.open{display:flex}
+.af-diag-dialog{width:min(780px,100%);max-height:90vh;overflow-y:auto;border:1px solid var(--border);border-radius:18px;padding:22px;background:#0d1526;box-shadow:0 24px 80px rgba(0,0,0,.8);color:var(--text)}
+.af-diag-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.af-diag-card{padding:12px;border:1px solid var(--border);border-radius:10px;background:#081020;font-size:11px}
+.af-diag-card strong{color:#fff;font-size:13px;display:block;margin-bottom:6px}
+.af-diag-timeline{display:grid;gap:6px;margin-top:8px}
+.af-diag-step{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);font-size:10px}
 .afe{display:flex;flex-direction:column;gap:12px}.afe-top{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card)}.afe-id{display:grid;grid-template-columns:minmax(180px,320px) minmax(220px,1fr);gap:8px;flex:1}.afe-id input{width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}.afe-note{padding:9px 12px;border:1px solid #38bdf844;border-radius:9px;background:var(--info-dim);color:#bae6fd;font-size:11px}.afe-editor{height:calc(100vh - 190px);min-height:600px;display:grid;grid-template-columns:190px minmax(440px,1fr) 330px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#070d18}.afe-palette,.afe-inspector{overflow:auto;background:var(--bg-card);padding:14px}.afe-palette{border-right:1px solid var(--border)}.afe-inspector{border-left:1px solid var(--border)}.afe-title{font-size:12px;font-weight:800;margin-bottom:4px}.afe-copy{font-size:10px;color:var(--muted);margin-bottom:12px;line-height:1.45}.afe-list{display:grid;gap:8px}.afe-item{display:flex;gap:8px;align-items:center;width:100%;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;font-weight:700;text-align:left;cursor:grab}.afe-dot{width:9px;height:9px;border-radius:50%;background:var(--c)}.afe-canvas{position:relative;overflow:hidden;touch-action:none;cursor:grab;background-color:#090f1b;background-image:radial-gradient(circle,#94a3b82e 1px,transparent 1px);background-size:22px 22px}.afe-canvas.is-panning{cursor:grabbing}.afe-view{position:absolute;width:3200px;height:2200px;transform-origin:0 0}.afe-edges,.afe-nodes{position:absolute;inset:0;width:3200px;height:2200px}.afe-edges{z-index:1;pointer-events:auto}.afe-nodes{z-index:2;pointer-events:none}.afe-edge{fill:none;stroke:#64748b;stroke-width:2}.afe-edge-hit{fill:none;stroke:transparent;stroke-width:18;cursor:pointer;pointer-events:stroke}.afe-edge-g:hover .afe-edge,.afe-edge-g.selected .afe-edge{stroke:#facc15;stroke-width:3}.afe-edge-trash{cursor:pointer;pointer-events:all}.afe-edge-trash circle{fill:#ef4444;stroke:#fecaca;stroke-width:1}.afe-edge-trash text{fill:#fff;font-size:16px;font-weight:800;text-anchor:middle;dominant-baseline:central}.afe-node{position:absolute;width:210px;min-height:92px;border:1px solid var(--c);border-radius:12px;background:#0d1526;box-shadow:0 10px 28px #0006;user-select:none;pointer-events:auto}.afe-node.selected{box-shadow:0 0 0 3px #facc1544}.afe-node.has-error{border-color:#fb7185;box-shadow:0 0 0 3px #fb718555,0 10px 28px #0006}.afe-node.has-error .afe-node-head{border-bottom-color:#fb718566}.afe-node-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:move}.afe-node-body{padding:10px 12px;color:#94a3b8;font-size:10px}.afe-port{position:absolute;width:14px;height:14px;border:2px solid #e2e8f0;border-radius:50%;background:var(--c);cursor:crosshair;z-index:3}.afe-port.in{left:-8px;top:40px}.afe-port.out{right:-8px;bottom:12px}.afe-port.yes{bottom:34px;background:#22c55e}.afe-port.no{bottom:8px;background:#ef4444}.afe-port.pending{box-shadow:0 0 0 5px #facc1544}.afe-port-label{position:absolute;right:13px;font-size:8px;font-weight:800;color:#94a3b8}.afe-port-label.yes{bottom:35px}.afe-port-label.no{bottom:9px}.afe-tools{position:absolute;right:12px;bottom:12px;z-index:5;display:flex;gap:5px;padding:5px;border:1px solid var(--border);border-radius:10px;background:#080e1ae8}.afe-tools button{min-width:32px;height:30px;border-radius:7px;background:var(--bg-card);color:var(--text)}.afe-fields{display:grid;gap:11px}.afe-field label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase}.afe-field input,.afe-field select,.afe-field textarea{width:100%;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:11px}.afe-event-row{display:grid;grid-template-columns:1fr auto;gap:6px}.afe-event-menu{display:none;max-height:360px;overflow:auto;margin-top:6px;padding:8px;border:1px solid var(--border-light,var(--border));border-radius:10px;background:#081020}.afe-event-menu.open{display:block}.afe-event-group{margin:9px 0 5px;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase}.afe-event-option{display:block;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--text);text-align:left}.afe-event-option:hover,.afe-event-option.active{background:#1f2937}.afe-event-option strong{display:flex;gap:6px;align-items:center}.afe-badge{padding:2px 6px;border-radius:999px;background:#14532d;color:#86efac;font-size:9px}.afe-event-option p{margin:4px 0 0;color:var(--muted);font-size:10px;line-height:1.35}.afe-config-box{display:grid;gap:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#081020}.afe-pair-row{display:grid;grid-template-columns:1fr 1fr 32px;gap:6px}.afe-pair-row button{border:1px solid var(--border);border-radius:8px;background:transparent;color:#94a3b8}.afe-rule{padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg);display:grid;gap:6px}.afe-rule-head{display:flex;justify-content:space-between;gap:5px}.afe-rule-remove{background:transparent;color:#f87171}.afe-check{display:flex;gap:7px;font-size:10px}.afe-check input{width:auto}.afe-empty{padding:30px 5px;text-align:center;color:var(--muted);font-size:11px}@media(max-width:900px){.afe-top{flex-wrap:wrap}.afe-id{order:3;flex-basis:100%;grid-template-columns:1fr}.afe-editor{height:auto;grid-template-columns:1fr}.afe-canvas{height:620px}.afe-list{grid-template-columns:repeat(3,1fr)}}
 .afe-push-preview{position:fixed;inset:0;z-index:13000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,6,15,.82);backdrop-filter:blur(5px)}.afe-push-preview.open{display:flex}.afe-preview-dialog{width:min(420px,100%);border:1px solid var(--border);border-radius:18px;padding:18px;background:#111827;box-shadow:0 24px 80px #000}.afe-preview-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.afe-preview-head strong{font-size:14px}.afe-preview-close{border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#0b1220;color:#fff}.afe-android{border-radius:18px;padding:18px 12px 24px;background:linear-gradient(#263238,#101820);color:#fff}.afe-android-clock{text-align:center;font-size:11px;margin-bottom:16px;color:#d8e0e4}.afe-notification{display:grid;grid-template-columns:42px minmax(0,1fr) 24px;gap:9px;width:min(300px,100%);margin:auto;padding:13px;border-radius:14px;background:#f5f5f5;color:#172027;box-shadow:0 8px 25px rgba(0,0,0,.3)}.afe-notification img{width:42px;height:42px;border-radius:10px;object-fit:cover}.afe-notification>div{min-width:0}.afe-notification-title{width:94px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:800}.afe-notification-body{display:-webkit-box;width:185px;max-width:100%;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin-top:4px;color:#4b5563;font-size:12px;line-height:1.35}.afe-notification.expanded{width:100%}.afe-notification.expanded .afe-notification-title{width:auto;white-space:normal}.afe-notification.expanded .afe-notification-body{display:block;width:auto}.afe-notification-expand{border:0;background:transparent;color:#374151;font-size:18px;align-self:start;cursor:pointer}.afe-preview-note{margin-top:12px;color:#94a3b8;font-size:10px;line-height:1.45}.afe-push-risk{padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);font-size:10px;line-height:1.5;color:var(--muted)}.afe-push-risk strong{color:var(--text)}.afe-push-risk .risk{color:#f87171;font-weight:800}.afe-push-risk.warning{border-color:rgba(248,113,113,.45);background:rgba(127,29,29,.14)}.afe-push-risk-ok{color:#86efac}.afe-preview-risk{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(127,29,29,.18);color:#fca5a5;font-size:10px}.afe-preview-risk:empty{display:none}
 </style>
 <div class="af">
-  <div class="af-head"><div><h1>Automações</h1><p class="text-muted">Central única para fluxos com e-mail, push, tags, webhooks, SuperFuncionário e Manychat.</p></div></div>
+  <div class="af-head">
+    <div>
+      <h1>Automações</h1>
+      <p class="text-muted">Central única para fluxos com e-mail, push, tags, webhooks, SuperFuncionário e Manychat.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <form method="post" style="margin:0;">
+        <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+        <input type="hidden" name="action" value="run_diagnostics">
+        <button class="btn btn-ghost btn-sm" <?=$canWrite?'':'disabled'?> title="Varre todos os fluxos ativos testando 2 amostras temporais e benchmark de SLAs">🔍 Diagnóstico Completo (07h, 15h, 20h)</button>
+      </form>
+    </div>
+  </div>
   <nav class="af-nav">
     <a class="<?=$view==='overview'?'active':''?>" href="automacoes.php">Visão geral</a>
     <a class="<?=$view==='flows'?'active':''?>" href="automacoes.php?view=flows">Fluxos</a>
+    <a class="<?=$view==='diagnostics'?'active':''?>" href="automacoes.php?view=diagnostics">
+      🔬 Raio-X (Diagnóstico)
+      <?php if ($latestDiag && empty($latestDiag['acknowledged']) && ($latestDiag['status'] ?? 'healthy') !== 'healthy'): ?>
+        <span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;margin-left:4px;padding:2px 6px;"><?=(int)($latestDiag['issues_count'] ?? 0)?></span>
+      <?php endif; ?>
+    </a>
     <a class="<?=$view==='logs'?'active':''?>" href="automacoes.php?view=logs">Logs detalhados</a>
+    <a class="<?=$view==='canais'?'active':''?>" href="automacoes.php?view=canais">Canais de disparo</a>
     <?php if($flow): ?><a class="active" href="automacoes.php?id=<?=(int)$flow['id']?>">Editor</a><?php endif; ?>
   </nav>
   <?php if($error): ?><div class="af-error"><?=af_h($error)?></div><?php endif; ?>
-  <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva.</div><?php endif; ?>
+  <?php if(isset($_GET['saved'])): ?><div class="af-msg">Alteração salva com sucesso.</div><?php endif; ?>
   <?php if(isset($_GET['deleted'])): ?><div class="af-msg">Fluxo removido.</div><?php endif; ?>
   <?php if(isset($_GET['cloned'])): ?><div class="af-msg">Fluxo clonado como rascunho.</div><?php endif; ?>
+  <?php if(isset($_GET['processed'])): ?><div class="af-msg">Fila processada: <?=(int)$_GET['processed']?> etapa(s) executada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['reprocessed'])): ?><div class="af-msg">Reprocessamento concluído: <?=(int)$_GET['reprocessed']?> execução(ões) pendente(s)/com falha re-enfileirada(s) e <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) disparada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['tested'])): ?><div class="af-msg">Disparo de teste gerado e enviado com sucesso para a integração! Confira na aba Logs detalhados.</div><?php endif; ?>
+  <?php if(isset($_GET['diagnosed'])): ?><div class="af-msg">Diagnóstico executado com sucesso! Foram analisados todos os fluxos ativos e a infraestrutura.</div><?php endif; ?>
+  <?php if(isset($_GET['acknowledged'])): ?><div class="af-msg">Ciência registrada com sucesso. Alertas arquivados.</div><?php endif; ?>
+
+  <?php if ($latestDiag && empty($latestDiag['acknowledged']) && ($latestDiag['status'] ?? 'healthy') !== 'healthy'): ?>
+    <div class="af-diag-banner">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:26px;">🚨</span>
+        <div>
+          <strong style="color:#fff;font-size:14px;display:block;">Sistema de Diagnóstico: Inconsistência Detectada nos Fluxos de Automação</strong>
+          <span style="font-size:12px;color:#fca5a5;">
+            Varredura realizada em <?=af_h(date('d/m/Y H:i', strtotime((string)$latestDiag['check_time'])))?> identificou <strong><?=(int)($latestDiag['issues_count'] ?? 0)?> inconformidade(s)</strong> nos fluxos ou crons.
+          </span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <a href="automacoes.php?view=diagnostics" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.25);font-weight:700;padding:8px 14px;border-radius:8px;text-decoration:none;display:inline-flex;align-items:center;">🔍 Abrir Aba Raio-X</a>
+        <form method="post" style="margin:0;">
+          <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+          <input type="hidden" name="action" value="acknowledge_diagnostics">
+          <button class="btn btn-sm" style="background:#ef4444;color:#fff;font-weight:700;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;" title="Reconhece o alerta e fecha a notificação">✓ Dar Ciência</button>
+        </form>
+      </div>
+    </div>
+  <?php endif; ?>
 
 <?php if($flow):
     $graph = $postedGraph ?? (json_decode((string)$flow['draft_graph_json'], true) ?: automation_flow_blank_graph());
@@ -319,23 +524,336 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
   <section class="af-card">
     <div class="af-flow-head">
       <div><div class="card-header-title">Fluxos de automação</div><p class="text-muted text-xs">Crie, edite, clone, pause ou exclua fluxos centrais. Fluxos publicados recebem novos eventos pelo cron.</p></div>
-      <form method="post" class="af-form af-flow-create"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar novo fluxo</button></form>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="post" style="margin:0;"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="process_now"><button class="btn btn-ghost btn-sm" <?=$canWrite?'':'disabled'?> title="Executa a fila de pendências imediatamente">⚡ Processar fila agora</button></form>
+        <form method="post" class="af-form af-flow-create" style="margin:0;"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="create"><input name="name" placeholder="Nome do novo fluxo" required <?=$canWrite?'':'disabled'?>><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar novo fluxo</button></form>
+      </div>
     </div>
     <div class="af-flow-list">
-      <?php foreach($flows as $f): ?>
-        <div class="af-flow-row">
-          <div class="af-flow-name"><strong><?=af_h($f['name'])?></strong><small><?=af_h($f['description'] ?: 'Sem descrição')?></small></div>
+      <?php foreach($flows as $f): 
+        $fid = (int)$f['id'];
+        $diag = $flowDiagMap[$fid] ?? null;
+        $hasCritical = $diag && (($diag['status'] ?? '') === 'critical');
+        $hasWarning = $diag && (($diag['status'] ?? '') === 'warning');
+        $rowClass = $hasCritical ? 'has-diag-critical' : ($hasWarning ? 'has-diag-warning' : '');
+      ?>
+        <div class="af-flow-row <?=$rowClass?>">
+          <div class="af-flow-name">
+            <strong><?=af_h($f['name'])?></strong>
+            <small><?=af_h($f['description'] ?: 'Sem descrição')?></small>
+            <?php if($hasCritical || $hasWarning): ?>
+              <div style="margin-top:4px;">
+                <span class="af-pill" style="background:<?=$hasCritical?'#ef4444':'#f59e0b'?>;color:#fff;cursor:pointer;font-weight:700;font-size:9px;" onclick="openDiagModal(<?=$fid?>)" title="Clique para ver o raio-x do diagnóstico">
+                  ⚠️ <?=af_h($diag['issue_title'] ?? 'Inconsistência Detectada')?>
+                </span>
+              </div>
+            <?php endif; ?>
+          </div>
           <div><span class="af-pill"><?=af_h($f['status'])?></span></div>
           <div class="af-flow-meta"><small>Versão</small><?=$f['version_number']?'v'.(int)$f['version_number']:'-'?></div>
           <div class="af-flow-stat"><strong><?=(int)$f['runs']?></strong><small>Inícios</small></div>
           <div class="af-flow-stat"><strong><?=(int)$f['completed']?></strong><small>Finalizações</small></div>
           <div class="af-flow-stat"><strong><?=(int)$f['failed']?></strong><small>Erros</small></div>
           <div class="af-flow-stat"><strong><?=(int)$f['pending']?></strong><small>Pendentes</small></div>
-          <div class="af-actions"><a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form><?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?><form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form></div>
+          <div class="af-actions">
+            <?php if($diag): ?>
+              <button type="button" class="btn btn-ghost btn-xs" style="color:<?=$hasCritical?'#f87171':'#fbbf24'?>;border-color:<?=$hasCritical?'#ef4444':'#f59e0b'?>;" onclick="openDiagModal(<?=$fid?>)" title="Ver raio-x completo do diagnóstico deste fluxo">🔍 Raio-X</button>
+            <?php endif; ?>
+            <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a>
+            <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="test_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Gera 1 disparo de teste e envia na hora para a integração">Testar</button></form>
+            <form method="post" onsubmit="return confirm('Deseja re-enfileirar e disparar as execuções pendentes/com falha deste fluxo?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Reprocessa apenas pendentes ou com falha">Reprocessar Pendentes</button></form>
+            <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form>
+            <?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?>
+            <form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form>
+          </div>
         </div>
       <?php endforeach; ?>
       <?php if(!$flows): ?><div class="af-flow-empty">Nenhum fluxo central criado.</div><?php endif; ?>
     </div>
+  </section>
+<?php elseif($view === 'diagnostics'): ?>
+  <section class="af-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+      <div>
+        <h2 style="font-size:18px;margin:0 0 4px 0;color:#fff;">🔬 Central de Raio-X & Diagnóstico de Fluxos</h2>
+        <p class="text-muted text-xs" style="margin:0;">
+          Auditoria contínua automática (07:00, 15:00 e 20:00) avaliando dupla amostragem temporal, desvio de SLAs, torpedos de voz e saúde de infraestrutura.
+        </p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="post" style="margin:0;">
+          <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+          <input type="hidden" name="action" value="run_diagnostics">
+          <button class="btn btn-primary btn-sm" <?=$canWrite?'':'disabled'?> title="Executa a auditoria completa de todos os fluxos e crons agora">🔍 Executar Varredura Agora</button>
+        </form>
+        <?php if($latestDiag && empty($latestDiag['acknowledged']) && ($latestDiag['status'] ?? 'healthy') !== 'healthy'): ?>
+          <form method="post" style="margin:0;">
+            <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+            <input type="hidden" name="action" value="acknowledge_diagnostics">
+            <button class="btn btn-sm" style="background:#ef4444;color:#fff;font-weight:700;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;">✓ Dar Ciência nos Alertas</button>
+          </form>
+        <?php endif; ?>
+      </div>
+    </div>
+
+    <!-- KPIs do Diagnóstico -->
+    <div class="af-grid" style="margin-bottom:18px;">
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Status Geral</small>
+        <strong style="color:<?=($latestDiag['status'] ?? 'healthy') === 'healthy' ? '#86efac' : '#ef4444'?>;">
+          <?=($latestDiag['status'] ?? 'healthy') === 'healthy' ? '🟢 100% Saudável' : '🚨 ' . (int)($latestDiag['issues_count'] ?? 0) . ' Inconsistência(s)'?>
+        </strong>
+        <span class="text-muted text-xs">integridade geral</span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Última Varredura</small>
+        <strong style="font-size:18px;color:#fff;">
+          <?=$latestDiag ? af_h(date('H:i - d/m', strtotime((string)$latestDiag['check_time']))) : '-'?>
+        </strong>
+        <span class="text-muted text-xs"><?=$latestDiag['triggered_by'] ?? 'cron'?></span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Fluxos Monitorados</small>
+        <strong style="color:#38bdf8;"><?=count($flows)?></strong>
+        <span class="text-muted text-xs">ativos no sistema</span>
+      </div>
+      <div class="af-card af-kpi" style="background:#081020;">
+        <small>Ciência do Alerta</small>
+        <strong style="font-size:16px;color:<?=$latestDiag && !empty($latestDiag['acknowledged']) ? '#86efac' : '#f59e0b'?>;">
+          <?=$latestDiag && !empty($latestDiag['acknowledged']) ? '✓ Reconhecido' : '⚠️ Pendente'?>
+        </strong>
+        <span class="text-muted text-xs"><?=$latestDiag['acknowledged_by'] ?? '-'?></span>
+      </div>
+    </div>
+
+    <?php if (!empty($latestDiag['infra_issues'])): ?>
+      <div style="margin-bottom:18px;padding:12px 14px;border-radius:10px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;">
+        <strong style="color:#fff;font-size:13px;display:block;margin-bottom:6px;">⚙️ Alertas de Infraestrutura & Crons:</strong>
+        <?php foreach ($latestDiag['infra_issues'] as $iss): ?>
+          <div style="font-size:11px;margin-top:3px;">• <b>[<?=af_h($iss['type'])?>]</b> <?=af_h($iss['message'])?></div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </section>
+
+  <!-- LISTA DE TODOS OS FLUXOS COM RAIO-X COMPLETO -->
+  <div style="display:grid;gap:14px;margin-top:14px;">
+    <?php foreach ($flows as $f): 
+      $fid = (int)$f['id'];
+      $diag = $flowDiagMap[$fid] ?? null;
+      $hasCrit = $diag && (($diag['status'] ?? '') === 'critical');
+      $hasWarn = $diag && (($diag['status'] ?? '') === 'warning');
+      $diagIssues = $diag['issues'] ?? [];
+      $sampleA = $diag['sample_early'] ?? null;
+      $sampleB = $diag['sample_late'] ?? null;
+      $benchmark = $diag['benchmark'] ?? null;
+    ?>
+      <section class="af-card <?=$hasCrit ? 'has-diag-critical' : ($hasWarn ? 'has-diag-warning' : '')?>" style="border:1px solid <?=$hasCrit?'#ef4444':($hasWarn?'#f59e0b':'var(--border)')?>;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;flex-wrap:wrap;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="font-size:16px;color:#fff;"><?=af_h($f['name'])?></strong>
+              <span class="af-pill" style="background:<?=$hasCrit?'#ef4444':($hasWarn?'#f59e0b':'#15803d')?>;color:#fff;font-weight:700;">
+                <?=$hasCrit?'🚨 Inconsistência Detectada':($hasWarn?'⚠️ Atenção':'🟢 Saudável')?>
+              </span>
+            </div>
+            <small class="text-muted" style="display:block;margin-top:2px;">
+              <?=af_h($f['description'] ?: 'Sem descrição')?> · Versão: v<?=(int)$f['version_number']?> · Duração teórica projetada: ~<?=(int)($diag['theoretical_duration_minutes'] ?? 0)?> min
+            </small>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=$fid?>">Editar Fluxo</a>
+            <button type="button" class="btn btn-ghost btn-xs" onclick="openDiagModal(<?=$fid?>)">🔍 Abrir em Modal</button>
+          </div>
+        </div>
+
+        <?php if($diagIssues): ?>
+          <div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;font-size:11px;">
+            <strong style="color:#fff;display:block;margin-bottom:4px;">Inconsistências Identificadas neste Fluxo:</strong>
+            <?php foreach($diagIssues as $iss): ?>
+              <div>• <?=af_h($iss['message'] ?? $iss['type'] ?? '')?></div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+
+        <!-- TESTE 1: DUPLA AMOSTRAGEM -->
+        <div style="margin-bottom:14px;">
+          <strong style="font-size:12px;color:#cbd5e1;text-transform:uppercase;display:block;margin-bottom:8px;">
+            🧪 Teste 1: Dupla Amostragem Temporal (Leads Reais)
+          </strong>
+          <div class="af-diag-grid">
+            <!-- AMOSTRA A -->
+            <div class="af-diag-card">
+              <strong style="display:flex;justify-content:space-between;align-items:center;">
+                Amostra A (Entrou Antes / Maduro)
+              </strong>
+              <?php if($sampleA): ?>
+                <div style="color:var(--muted);font-size:11px;margin:8px 0;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span>Aluno: <b style="color:#fff;"><?=af_h($sampleA['user'] ?? 'ID #'.$sampleA['run_id'])?></b></span>
+                    <span class="af-pill"><?=af_h($sampleA['status'])?></span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">
+                    <div>Início: <b style="color:#cbd5e1;"><?=af_h(!empty($sampleA['started_at']) ? substr((string)$sampleA['started_at'], 5, 11) : '-')?></b></div>
+                    <div>Término: <b style="color:#fff;"><?=af_h(!empty($sampleA['finished_at']) ? substr((string)$sampleA['finished_at'], 5, 11) : 'Em andamento')?></b></div>
+                  </div>
+                </div>
+                <?php if(!empty($sampleA['analysis']['steps'])): ?>
+                  <div class="af-diag-timeline">
+                    <?php foreach($sampleA['analysis']['steps'] as $st): 
+                      $diffCol = ($st['delay_severity'] ?? '') === 'critical' ? '#f87171' : (($st['delay_severity'] ?? '') === 'warning' ? '#facc15' : '#86efac');
+                      $stCol = $st['status'] === 'completed' ? '#86efac' : ($st['status'] === 'failed' ? '#f87171' : '#facc15');
+                    ?>
+                      <div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:5px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                          <span style="font-weight:700;color:#e2e8f0;font-size:11px;">[<?=af_h($st['node_type'])?>] <?=af_h($st['node_id'])?></span>
+                          <span class="af-pill" style="font-size:9px;color:<?=$stCol?>;"><?=af_h($st['status'])?></span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">
+                          <div>Planejado: <b style="color:#cbd5e1;"><?=af_h(!empty($st['planned_at']) ? substr((string)$st['planned_at'], 11, 5) : '-')?></b></div>
+                          <div>Real: <b style="color:#fff;"><?=af_h(!empty($st['finished_at']) ? substr((string)$st['finished_at'], 11, 5) : (!empty($st['started_at']) ? substr((string)$st['started_at'], 11, 5) : '-'))?></b></div>
+                          <div>Diferença: <b style="color:<?=$diffCol?>;"><?=af_h($st['delay_formatted'] ?? '-')?></b></div>
+                        </div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php else: ?><div class="text-muted text-xs">Sem etapas executadas.</div><?php endif; ?>
+              <?php else: ?><div class="text-muted text-xs">Nenhum aluno encontrado nesta janela.</div><?php endif; ?>
+            </div>
+
+            <!-- AMOSTRA B -->
+            <div class="af-diag-card">
+              <strong style="display:flex;justify-content:space-between;align-items:center;">
+                Amostra B (Entrou Depois / Recente)
+              </strong>
+              <?php if($sampleB): ?>
+                <div style="color:var(--muted);font-size:11px;margin:8px 0;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span>Aluno: <b style="color:#fff;"><?=af_h($sampleB['user'] ?? 'ID #'.$sampleB['run_id'])?></b></span>
+                    <span class="af-pill"><?=af_h($sampleB['status'])?></span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">
+                    <div>Início: <b style="color:#cbd5e1;"><?=af_h(!empty($sampleB['started_at']) ? substr((string)$sampleB['started_at'], 5, 11) : '-')?></b></div>
+                    <div>Término: <b style="color:#fff;"><?=af_h(!empty($sampleB['finished_at']) ? substr((string)$sampleB['finished_at'], 5, 11) : 'Em andamento')?></b></div>
+                  </div>
+                </div>
+                <?php if(!empty($sampleB['analysis']['steps'])): ?>
+                  <div class="af-diag-timeline">
+                    <?php foreach($sampleB['analysis']['steps'] as $st): 
+                      $diffCol = ($st['delay_severity'] ?? '') === 'critical' ? '#f87171' : (($st['delay_severity'] ?? '') === 'warning' ? '#facc15' : '#86efac');
+                      $stCol = $st['status'] === 'completed' ? '#86efac' : ($st['status'] === 'failed' ? '#f87171' : '#facc15');
+                    ?>
+                      <div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:5px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                          <span style="font-weight:700;color:#e2e8f0;font-size:11px;">[<?=af_h($st['node_type'])?>] <?=af_h($st['node_id'])?></span>
+                          <span class="af-pill" style="font-size:9px;color:<?=$stCol?>;"><?=af_h($st['status'])?></span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">
+                          <div>Planejado: <b style="color:#cbd5e1;"><?=af_h(!empty($st['planned_at']) ? substr((string)$st['planned_at'], 11, 5) : '-')?></b></div>
+                          <div>Real: <b style="color:#fff;"><?=af_h(!empty($st['finished_at']) ? substr((string)$st['finished_at'], 11, 5) : (!empty($st['started_at']) ? substr((string)$st['started_at'], 11, 5) : '-'))?></b></div>
+                          <div>Diferença: <b style="color:<?=$diffCol?>;"><?=af_h($st['delay_formatted'] ?? '-')?></b></div>
+                        </div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php else: ?><div class="text-muted text-xs">Sem etapas executadas.</div><?php endif; ?>
+              <?php else: ?><div class="text-muted text-xs">Nenhum aluno adicional encontrado.</div><?php endif; ?>
+            </div>
+          </div>
+        </div>
+
+        <!-- TESTE 2: BENCHMARK DE SLA -->
+        <?php if(!empty($benchmark['samples'])): ?>
+          <div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:#081020;font-size:11px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+              <strong style="color:#cbd5e1;text-transform:uppercase;font-size:11px;">📊 Teste 2: Benchmark de SLA (Últimos <?=count($benchmark['samples'])?> Concluídos)</strong>
+              <div>
+                <span>Duração Teórica: <b style="color:#38bdf8;">~<?=(int)$benchmark['theoretical_minutes']?>m</b></span> · 
+                <span>Média Real: <b style="color:<?=((float)$benchmark['avg_duration_minutes'] > (int)$benchmark['theoretical_minutes'] * 2 ? '#f87171' : '#86efac')?>;">~<?=(float)$benchmark['avg_duration_minutes']?>m</b></span>
+              </div>
+            </div>
+            <div class="af-table">
+              <table>
+                <thead><tr><th>Aluno</th><th>Início</th><th>Término Real</th><th>Duração Gasta</th><th>Status do SLA</th></tr></thead>
+                <tbody>
+                  <?php foreach($benchmark['samples'] as $s): 
+                    $dur = (int)($s['duration_minutes'] ?? 0);
+                    $theo = (int)($benchmark['theoretical_minutes'] ?? 0);
+                    $diffM = $theo > 0 ? ($dur - $theo) : 0;
+                    $slaBadge = $diffM > 60 ? '<span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;">+'.$diffM.'m atraso</span>' : ($diffM > 10 ? '<span class="af-pill" style="background:#f59e0b;color:#fff;">+'.$diffM.'m</span>' : '<span class="af-pill" style="background:#15803d;color:#fff;">No prazo</span>');
+                  ?>
+                    <tr>
+                      <td><strong><?=af_h($s['nome'] ?? 'Lead #'.$s['run_id'])?></strong></td>
+                      <td><?=af_h(!empty($s['started_at']) ? substr((string)$s['started_at'], 5, 11) : '-')?></td>
+                      <td><?=af_h(!empty($s['finished_at']) ? substr((string)$s['finished_at'], 5, 11) : '-')?></td>
+                      <td><strong><?=$dur?> min</strong></td>
+                      <td><?=$slaBadge?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        <?php endif; ?>
+      </section>
+    <?php endforeach; ?>
+  </div>
+<?php elseif($view === 'canais'): ?>
+  <section class="af-card">
+    <div class="card-header-title">Diagnóstico da fila, por canal</div>
+    <p class="text-muted text-xs">Fotografia calculada agora mesmo. Recarregue a página para atualizar os números.</p>
+    <div class="af-table" style="margin-top:14px;">
+      <table>
+        <thead><tr><th>Canal</th><th>Status</th><th>Pendentes</th><th>Na fila</th><th>Reagendadas (retry)</th><th>Processando</th><th>Mais antiga espera</th><th>Concluídas (1h)</th><th>Falhas (1h)</th><th>Tempo estimado p/ zerar</th></tr></thead>
+        <tbody>
+          <?php foreach ($channelAllLabels as $channelKey => $channelLabel): $q = $queueOverview[$channelKey] ?? null; if (!$q) continue; ?>
+            <tr>
+              <td><strong><?=af_h($channelLabel)?></strong></td>
+              <td><span class="af-pill" style="<?=$q['enabled']?'':'background:#7c2d12;color:#fed7aa;'?>"><?=$q['enabled']?'ativo':'desativado'?></span></td>
+              <td><strong><?=(int)$q['pending']?></strong></td>
+              <td><?=(int)$q['queued']?></td>
+              <td><?=(int)$q['retry']?></td>
+              <td><?=(int)$q['processing']?></td>
+              <td><?=$q['oldest_pending_minutes'] === null ? '-' : (int)$q['oldest_pending_minutes'] . ' min'?></td>
+              <td style="color:#86efac"><?=(int)$q['completed_last_hour']?></td>
+              <td style="<?=$q['failed_last_hour']>0?'color:#fca5a5;font-weight:700;':''?>"><?=(int)$q['failed_last_hour']?></td>
+              <td><?php if ($q['pending'] === 0): ?>—<?php elseif ($q['eta_minutes'] === null): ?><span style="color:#fca5a5;">sem processamento na última hora</span><?php else: ?><?=(int)$q['eta_minutes']?> min<?php endif; ?></td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted text-xs" style="margin-top:10px;">"Tempo estimado p/ zerar" é calculado dividindo os pendentes pela taxa de conclusão da última hora — é uma projeção, não uma garantia (a taxa pode mudar se novos disparos entrarem na fila).</p>
+  </section>
+
+  <section class="af-card" style="margin-top:14px;">
+    <div class="card-header-title">Configuração dos canais</div>
+    <p class="text-muted text-xs">Cada canal tem sua própria fila e roda em paralelo com os outros pelo cron (a cada 1 minuto). O intervalo mínimo evita sobrecarregar a API receptora; falhas tentam de novo com espera crescente até o número máximo de tentativas.</p>
+    <form method="post">
+      <input type="hidden" name="csrf" value="<?=af_h($csrf)?>">
+      <input type="hidden" name="action" value="save_channel_settings">
+      <div class="af-table" style="margin-top:14px;">
+        <table>
+          <thead><tr><th>Canal</th><th>Ativo</th><th>Intervalo mín. (ms)</th><th>Lote/execução</th><th>Máx. tentativas</th><th>Backoff inicial (s)</th><th>Backoff máximo (s)</th><th>Fila atual</th></tr></thead>
+          <tbody>
+            <?php foreach ($channelLabels as $channelKey => $channelLabel): $row = $channelRows[$channelKey] ?? ['enabled'=>1,'min_interval_ms'=>300,'batch_size'=>30,'max_attempts'=>5,'backoff_step_seconds'=>30,'backoff_max_seconds'=>1800]; $prefix = 'ch_' . $channelKey . '_'; ?>
+              <tr>
+                <td><strong><?=af_h($channelLabel)?></strong></td>
+                <td><input type="checkbox" name="<?=$prefix?>enabled" <?=((int)$row['enabled']===1)?'checked':''?> <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="0" max="60000" step="50" name="<?=$prefix?>min_interval_ms" value="<?=(int)$row['min_interval_ms']?>" style="width:90px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="200" name="<?=$prefix?>batch_size" value="<?=(int)$row['batch_size']?>" style="width:70px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="20" name="<?=$prefix?>max_attempts" value="<?=(int)$row['max_attempts']?>" style="width:70px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="3600" name="<?=$prefix?>backoff_step_seconds" value="<?=(int)$row['backoff_step_seconds']?>" style="width:80px" <?=$canWrite?'':'disabled'?>></td>
+                <td><input type="number" min="1" max="86400" name="<?=$prefix?>backoff_max_seconds" value="<?=(int)$row['backoff_max_seconds']?>" style="width:90px" <?=$canWrite?'':'disabled'?>></td>
+                <td><span class="af-pill"><?=(int)($channelPending[$channelKey] ?? 0)?> pendente(s)</span></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:14px;"><button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar configuração dos canais</button></div>
+    </form>
+    <p class="text-muted text-xs" style="margin-top:14px;">O canal de voz usa a configuração própria em Torpedo de Voz. O canal "Automações - etapas locais" (gatilho/condição/espera/ação/fim) não chama API externa e não precisa de espaçamento.</p>
   </section>
 <?php else: ?>
   <section class="af-grid">
@@ -356,4 +874,223 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
   </script>
 <?php endif; ?>
 </div>
+
+<div class="af-diag-modal" id="diagModal">
+  <div class="af-diag-dialog">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:14px;">
+      <div>
+        <strong id="diagModalTitle" style="font-size:16px;color:#fff;display:block;">Raio-X do Diagnóstico</strong>
+        <small id="diagModalSubtitle" style="color:var(--muted);font-size:11px;"></small>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeDiagModal()">✕ Fechar</button>
+    </div>
+    <div id="diagModalContent"></div>
+  </div>
+</div>
+
+<script>
+const diagMap = <?=json_encode($flowDiagMap, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG)?>;
+function openDiagModal(fid) {
+  const d = diagMap[fid];
+  if (!d) return alert('Nenhum diagnóstico registrado para este fluxo ainda.');
+  document.getElementById('diagModalTitle').textContent = 'Raio-X: ' + (d.flow_name || 'Fluxo #' + fid);
+  document.getElementById('diagModalSubtitle').textContent = 'Última varredura: ' + (d.checked_at || '-') + ' · Duração teórica projetada: ~' + (d.theoretical_duration_minutes || 0) + ' min';
+  
+  let html = '';
+  
+  if (d.issues && d.issues.length) {
+    html += '<div style="margin-bottom:14px;padding:10px 14px;border-radius:10px;background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#fecaca;">';
+    html += '<strong style="color:#fff;display:block;margin-bottom:4px;">🚨 Inconsistências Identificadas:</strong>';
+    d.issues.forEach(iss => {
+      html += '<div style="font-size:11px;margin-top:3px;">• ' + (iss.message || iss.type) + '</div>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="margin-bottom:14px;padding:10px 14px;border-radius:10px;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:#86efac;">';
+    html += '<strong>✅ Fluxo 100% Saudável:</strong> Todos os testes temporais e integrações responderam dentro dos padrões esperados.';
+    html += '</div>';
+  }
+
+  html += '<div style="margin-top:14px;"><strong style="font-size:13px;color:#fff;">🧪 Teste 1: Dupla Amostragem Temporal (Leads Reais no Fluxo)</strong></div>';
+  html += '<div class="af-diag-grid">';
+  
+  function formatDelayJs(diffSecs) {
+    if (diffSecs === null || diffSecs === undefined || isNaN(diffSecs)) return '-';
+    if (Math.abs(diffSecs) < 60) return 'No horário (0m)';
+    let sign = diffSecs > 0 ? '+' : '-';
+    let mins = Math.abs(Math.round(diffSecs / 60));
+    let hours = Math.floor(mins / 60);
+    let remMins = mins % 60;
+    if (hours > 0) return sign + hours + 'h ' + remMins + 'm';
+    return sign + remMins + 'm';
+  }
+
+  function renderSampleBox(title, sample) {
+    let sHtml = '<div class="af-diag-card">';
+    sHtml += '<strong style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' + title + '</strong>';
+    if (sample) {
+      sHtml += '<div style="color:var(--muted);font-size:11px;margin-bottom:10px;padding:8px 10px;background:rgba(0,0,0,0.3);border-radius:8px;border:1px solid rgba(255,255,255,0.05);">';
+      sHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">';
+      sHtml += '<span>Aluno: <b style="color:#fff;">' + (sample.user || 'ID #' + sample.run_id) + '</b></span>';
+      sHtml += '<span><span class="af-pill">' + sample.status + '</span></span>';
+      sHtml += '</div>';
+      sHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">';
+      sHtml += '<div>Início: <b style="color:#cbd5e1;">' + (sample.started_at ? sample.started_at.slice(5,16) : '-') + '</b></div>';
+      sHtml += '<div>Término: <b style="color:#fff;">' + (sample.finished_at ? sample.finished_at.slice(5,16) : 'Em andamento') + '</b></div>';
+      sHtml += '</div>';
+      sHtml += '</div>';
+
+      if (sample.analysis && sample.analysis.steps && sample.analysis.steps.length) {
+        sHtml += '<div class="af-diag-timeline">';
+        let currentPlanDate = sample.started_at ? new Date(sample.started_at.replace(/-/g, '/')) : null;
+
+        sample.analysis.steps.forEach(st => {
+          let plannedStr = '';
+          let delayTxt = st.delay_formatted || '';
+          let severity = st.delay_severity || 'ok';
+
+          if (st.planned_at && st.planned_at.length >= 16) {
+            plannedStr = st.planned_at.slice(11, 16);
+            currentPlanDate = new Date(st.planned_at.replace(/-/g, '/'));
+          } else if (currentPlanDate) {
+            let hh = String(currentPlanDate.getHours()).padStart(2, '0');
+            let mm = String(currentPlanDate.getMinutes()).padStart(2, '0');
+            plannedStr = hh + ':' + mm;
+          }
+
+          let actualStr = (st.finished_at && st.finished_at.length >= 16 ? st.finished_at.slice(11, 16) : (st.started_at && st.started_at.length >= 16 ? st.started_at.slice(11, 16) : '-'));
+
+          if (!delayTxt || delayTxt === '-') {
+            let actDateStr = st.finished_at || st.started_at;
+            if (currentPlanDate && actDateStr && actDateStr.length >= 16) {
+              let actDate = new Date(actDateStr.replace(/-/g, '/'));
+              let diffSecs = (actDate.getTime() - currentPlanDate.getTime()) / 1000;
+              delayTxt = formatDelayJs(diffSecs);
+              severity = Math.abs(diffSecs) > 1800 ? 'critical' : (Math.abs(diffSecs) > 300 ? 'warning' : 'ok');
+            }
+          }
+
+          let diffColor = '#86efac';
+          if (severity === 'critical') diffColor = '#f87171';
+          else if (severity === 'warning') diffColor = '#facc15';
+
+          let statusColor = st.status === 'completed' ? '#86efac' : (st.status === 'failed' ? '#f87171' : '#facc15');
+
+          sHtml += '<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:6px;">';
+          sHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+          sHtml += '<span style="font-weight:700;color:#e2e8f0;font-size:11px;">[' + st.node_type + '] ' + st.node_id + '</span>';
+          sHtml += '<span class="af-pill" style="font-size:9px;color:' + statusColor + ';">' + st.status + '</span>';
+          sHtml += '</div>';
+          sHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--muted);">';
+          sHtml += '<div>Planejado: <b style="color:#cbd5e1;">' + (plannedStr || '-') + '</b></div>';
+          sHtml += '<div>Real: <b style="color:#fff;">' + actualStr + '</b></div>';
+          sHtml += '<div>Diferença: <b style="color:' + diffColor + ';">' + (delayTxt || '-') + '</b></div>';
+          sHtml += '</div>';
+          if (st.error) {
+            sHtml += '<div style="color:#f87171;font-size:10px;margin-top:4px;">⚠️ ' + st.error + '</div>';
+          }
+          sHtml += '</div>';
+        });
+        sHtml += '</div>';
+      } else {
+        sHtml += '<div style="color:var(--muted);font-size:10px;padding:8px;">Sem etapas executadas ainda.</div>';
+      }
+    } else {
+      sHtml += '<div style="color:var(--muted);font-size:10px;padding:8px;">Nenhuma execução encontrada nesta janela.</div>';
+    }
+    sHtml += '</div>';
+    return sHtml;
+  }
+
+  html += renderSampleBox('Amostra A (Entrou Antes / Maduro)', d.sample_early);
+  html += renderSampleBox('Amostra B (Entrou Depois / Recente)', d.sample_late);
+  html += '</div>';
+
+  // Benchmark de SLA
+  if (d.benchmark && d.benchmark.samples && d.benchmark.samples.length) {
+    html += '<div style="margin-top:14px;"><strong style="font-size:13px;color:#fff;">📊 Teste 2: Benchmark de SLA (Últimos ' + d.benchmark.samples.length + ' Concluídos)</strong></div>';
+    html += '<div style="padding:12px;border:1px solid var(--border);border-radius:10px;background:#081020;margin-top:6px;font-size:11px;">';
+    html += '<div style="display:flex;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">';
+    html += '<span>Duração Teórica Projetada: <strong style="color:#38bdf8;">~' + d.benchmark.theoretical_minutes + ' min</strong></span>';
+    html += '<span>Média Real dos Concluídos: <strong style="color:' + (d.benchmark.avg_duration_minutes > d.benchmark.theoretical_minutes * 2 ? '#f87171' : '#86efac') + ';">~' + d.benchmark.avg_duration_minutes + ' min</strong></span>';
+    html += '</div>';
+    html += '<div class="af-table"><table><thead><tr><th>Aluno</th><th>Início</th><th>Término Real</th><th>Duração Gasta</th><th>Status do SLA</th></tr></thead><tbody>';
+    d.benchmark.samples.forEach(s => {
+      let dur = +s.duration_minutes || 0;
+      let theo = +d.benchmark.theoretical_minutes || 0;
+      let diffMins = theo > 0 ? (dur - theo) : 0;
+      let slaTag = diffMins > 60 ? '<span class="af-pill" style="background:#ef4444;color:#fff;font-weight:700;">+' + diffMins + 'm atraso</span>' : (diffMins > 10 ? '<span class="af-pill" style="background:#f59e0b;color:#fff;">+' + diffMins + 'm</span>' : '<span class="af-pill" style="background:#15803d;color:#fff;">No prazo</span>');
+      html += '<tr><td><strong>' + (s.nome || s.email || 'Lead #' + s.run_id) + '</strong></td><td>' + (s.started_at ? s.started_at.slice(5,16) : '-') + '</td><td>' + (s.finished_at ? s.finished_at.slice(5,16) : '-') + '</td><td><strong>' + dur + ' min</strong></td><td>' + slaTag + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '</div>';
+  }
+
+  document.getElementById('diagModalContent').innerHTML = html;
+  document.getElementById('diagModal').classList.add('open');
+}
+
+const globalDiag = <?=json_encode($latestDiag, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG)?>;
+function openGlobalDiagModal() {
+  if (!globalDiag) return alert('Nenhum diagnóstico registrado ainda.');
+  document.getElementById('diagModalTitle').textContent = 'Relatório Geral de Inconsistências';
+  document.getElementById('diagModalSubtitle').textContent = 'Varredura de ' + (globalDiag.check_time || '-') + ' · Total de inconformidades: ' + (globalDiag.issues_count || 0);
+
+  let html = '';
+
+  if (globalDiag.infra_issues && globalDiag.infra_issues.length) {
+    html += '<div style="margin-bottom:16px;">';
+    html += '<strong style="color:#f87171;font-size:13px;display:block;margin-bottom:8px;">⚙️ Infraestrutura e Crons</strong>';
+    globalDiag.infra_issues.forEach(iss => {
+      html += '<div style="padding:10px 12px;border-radius:8px;background:rgba(239,68,68,0.12);border:1px solid #ef4444;color:#fecaca;margin-bottom:6px;font-size:11px;">';
+      html += '<strong>[' + (iss.type || 'CRON') + ']</strong> ' + (iss.message || iss.label);
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += '<div style="margin-bottom:16px;">';
+  html += '<strong style="color:#fff;font-size:13px;display:block;margin-bottom:8px;">⚡ Inconsistências por Fluxo</strong>';
+  
+  let hasFlowIssues = false;
+  if (globalDiag.flows && globalDiag.flows.length) {
+    globalDiag.flows.forEach(fl => {
+      if (fl.issues && fl.issues.length) {
+        hasFlowIssues = true;
+        html += '<div style="padding:12px;border-radius:10px;background:#081020;border:1px solid #ef4444;margin-bottom:10px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '<strong style="color:#fff;font-size:13px;">' + fl.flow_name + '</strong>';
+        html += '<button type="button" class="btn btn-ghost btn-xs" style="color:#f87171;border-color:#ef4444;" onclick="openDiagModal(' + fl.flow_id + ')">🔍 Abrir Raio-X</button>';
+        html += '</div>';
+        
+        fl.issues.forEach(iss => {
+          html += '<div style="font-size:11px;color:#fca5a5;margin-top:4px;display:flex;gap:6px;">';
+          html += '<span>•</span><span>' + (iss.message || iss.type) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+    });
+  }
+
+  if (!hasFlowIssues && (!globalDiag.infra_issues || !globalDiag.infra_issues.length)) {
+    html += '<div style="padding:14px;border-radius:10px;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:#86efac;font-size:12px;">';
+    html += '✅ Nenhuma inconsistência encontrada nesta varredura. Todos os fluxos estão saudáveis.';
+    html += '</div>';
+  }
+
+  html += '</div>';
+
+  document.getElementById('diagModalContent').innerHTML = html;
+  document.getElementById('diagModal').classList.add('open');
+}
+
+function closeDiagModal() {
+  document.getElementById('diagModal').classList.remove('open');
+}
+document.getElementById('diagModal')?.addEventListener('click', function(e) {
+  if (e.target.id === 'diagModal') closeDiagModal();
+});
+</script>
+
 <?php include __DIR__ . '/_footer.php'; ?>

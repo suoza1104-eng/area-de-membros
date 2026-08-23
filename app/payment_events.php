@@ -205,8 +205,8 @@ function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode,
             $run->execute(['f'=>$flow['flow_id'],'v'=>$flow['current_version_id'],'e'=>$eventId]);
             if ($run->rowCount() !== 1) continue;
             $runId = (int)$pdo->lastInsertId();
-            $pdo->prepare("INSERT IGNORE INTO automation_flow_jobs(run_id,node_id,status,available_at,input_json) VALUES(:r,:n,'queued',NOW(),'{}')")
-                ->execute(['r'=>$runId,'n'=>(string)$trigger['id']]);
+            $pdo->prepare("INSERT IGNORE INTO automation_flow_jobs(run_id,node_id,channel,status,available_at,input_json) VALUES(:r,:n,:c,'queued',NOW(),'{}')")
+                ->execute(['r'=>$runId,'n'=>(string)$trigger['id'],'c'=>automation_flow_job_channel($trigger)]);
             $matched++;
         }
         $pdo->prepare('UPDATE automation_flow_events SET matched_flows=:m WHERE id=:id')->execute(['m'=>$matched,'id'=>$eventId]);
