@@ -128,13 +128,29 @@ function pagarme_offer_candidates(array $data, array $charge): array
 {
     $candidates = [];
     $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
-    foreach ([$data['code'] ?? '', $charge['code'] ?? '', $metadata['offer_code'] ?? '', $metadata['oferta'] ?? '', $metadata['offer'] ?? '', $metadata['produto'] ?? ''] as $value) {
+    $add = static function ($value) use (&$candidates): void {
         foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+    };
+    $addWithPrefix = static function ($value, string $prefix) use ($add): void {
+        $value = trim((string)$value);
+        if ($value === '') return;
+        $add($value);
+        $add($prefix . ':' . $value);
+    };
+
+    foreach ([$data['code'] ?? '', $charge['code'] ?? '', $metadata['offer_code'] ?? '', $metadata['oferta'] ?? '', $metadata['offer'] ?? '', $metadata['produto'] ?? ''] as $value) {
+        $add($value);
+    }
+    foreach ([$metadata['checkout_id'] ?? '', $metadata['checkout'] ?? ''] as $value) {
+        $addWithPrefix($value, 'checkout');
+    }
+    foreach ([$metadata['product_id'] ?? '', $metadata['product'] ?? ''] as $value) {
+        $addWithPrefix($value, 'product');
     }
     foreach ((is_array($data['items'] ?? null) ? $data['items'] : []) as $item) {
         if (!is_array($item)) continue;
         foreach ([$item['code'] ?? '', $item['id'] ?? '', $item['description'] ?? ''] as $value) {
-            foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+            $add($value);
         }
     }
     return array_values(array_unique(array_filter($candidates, static fn($v) => trim((string)$v) !== '')));
