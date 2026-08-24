@@ -217,6 +217,15 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
     $feeCents = pagarme_fee_cents($data, $charge, $lastTransaction, $amountCents, (string)$paymentMethod);
     $netCents = pagarme_net_cents($data, $charge, $lastTransaction, $amountCents, $feeCents);
     $productName = pagarme_scalar($firstItem, 'description');
+    if ($productName === '') {
+        // Eventos do tipo "charge.*" nao trazem os itens do pedido (isso so
+        // vem em "order.*"). Se um charge.* chegar antes do order.* para a
+        // mesma transacao, usa o nome de produto ja conhecido para nao perder
+        // essa informacao no registro da venda nem no disparo de automacoes.
+        $knownProductStmt = $pdo->prepare("SELECT product_name FROM payment_sales WHERE provider='pagarme' AND external_transaction_id=:t AND product_name IS NOT NULL AND product_name<>'' LIMIT 1");
+        $knownProductStmt->execute([':t' => 'pagarme:' . $transactionId]);
+        $productName = (string)($knownProductStmt->fetchColumn() ?: '');
+    }
     $fingerprint = hash('sha256', $event . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
     $secretConfigured = trim((string)get_setting('pagarme_webhook_secret', '')) !== '';
     $secretValid = $secretConfigured ? pagarme_validate_secret($server, $query) : false;
@@ -248,8 +257,9 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
              gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
              product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),
-             payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),external_product_id=VALUES(external_product_id),
-             product_name=VALUES(product_name),integration_id=VALUES(integration_id),origin_description=VALUES(origin_description),
+             payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),
+             external_product_id=COALESCE(NULLIF(VALUES(external_product_id),''),external_product_id),
+             product_name=COALESCE(NULLIF(VALUES(product_name),''),product_name),integration_id=COALESCE(NULLIF(VALUES(integration_id),''),integration_id),origin_description=VALUES(origin_description),
              buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
              matched_user_id=VALUES(matched_user_id),match_method=VALUES(match_method),raw_payload_json=VALUES(raw_payload_json),
              last_received_at=VALUES(last_received_at)");

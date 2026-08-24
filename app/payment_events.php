@@ -219,7 +219,7 @@ function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode,
     }
 }
 
-function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string $genericEvent, int $grossCents, string $businessIdentity): bool
+function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string $genericEvent, int $grossCents, string $businessIdentity, int $excludeEventId = 0): bool
 {
     if ($userId < 1 || $genericEvent === '' || $businessIdentity === '') return false;
     $since = date('Y-m-d H:i:s', time() - 86400);
@@ -229,6 +229,7 @@ function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string
           AND gross_amount_cents=:gross
           AND triggered_at IS NOT NULL
           AND last_seen_at>=:since
+          AND id<>:exclude_id
         ORDER BY triggered_at DESC
         LIMIT 20");
     $stmt->execute([
@@ -236,6 +237,7 @@ function payment_event_has_recent_business_trigger(PDO $pdo, int $userId, string
         ':event'=>$genericEvent,
         ':gross'=>$grossCents,
         ':since'=>$since,
+        ':exclude_id'=>$excludeEventId,
     ]);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
         $metadata = json_decode((string)($row['metadata_json'] ?? ''), true);
@@ -267,9 +269,11 @@ function payment_event_register(PDO $pdo, array $data): array
     $events = [];
     foreach (payment_event_codes($provider, $status) as $eventCode) {
         $fingerprint = hash('sha256', $provider . '|' . $transactionCode . '|' . $eventCode);
-        $check = $pdo->prepare("SELECT id,triggered_at FROM student_payment_events WHERE event_fingerprint=:fingerprint LIMIT 1");
+        $check = $pdo->prepare("SELECT id,triggered_at,product_name FROM student_payment_events WHERE event_fingerprint=:fingerprint LIMIT 1");
         $check->execute([':fingerprint'=>$fingerprint]);
         $existing = $check->fetch(PDO::FETCH_ASSOC) ?: null;
+        $existingHadNoProduct = $existing !== null && trim((string)($existing['product_name'] ?? '')) === '';
+        $incomingHasProduct = trim((string)($data['product_name'] ?? '')) !== '';
 
         $stmt = $pdo->prepare("INSERT INTO student_payment_events
             (user_id,provider,event_code,generic_event_code,event_fingerprint,transaction_code,provider_transaction_id,provider_status,normalized_status,
@@ -283,8 +287,9 @@ function payment_event_register(PDO $pdo, array $data): array
             ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),provider_transaction_id=VALUES(provider_transaction_id),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),payment_method=VALUES(payment_method),
              currency=VALUES(currency),gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),
-             fee_amount_cents=VALUES(fee_amount_cents),installments=VALUES(installments),product_name=VALUES(product_name),
-             product_code=VALUES(product_code),checkout_id=VALUES(checkout_id),checkout_url=VALUES(checkout_url),
+             fee_amount_cents=VALUES(fee_amount_cents),installments=VALUES(installments),
+             product_name=COALESCE(NULLIF(VALUES(product_name),''),product_name),
+             product_code=COALESCE(NULLIF(VALUES(product_code),''),product_code),checkout_id=VALUES(checkout_id),checkout_url=VALUES(checkout_url),
              pix_qrcode=VALUES(pix_qrcode),pix_qrcode_url=VALUES(pix_qrcode_url),pix_expires_at=VALUES(pix_expires_at),
              boleto_url=VALUES(boleto_url),boleto_line=VALUES(boleto_line),buyer_name=VALUES(buyer_name),
              buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
@@ -335,10 +340,25 @@ function payment_event_register(PDO $pdo, array $data): array
             $userId,
             $genericEvent,
             (int)($data['gross_amount_cents'] ?? 0),
-            $businessIdentity
+            $businessIdentity,
+            $eventId
         );
 
-        if ($isNew && !$alreadyTriggeredBusiness && $eventId > 0) {
+        // Alguns provedores (ex.: Pagar.me) disparam o webhook de aprovação em
+        // mais de um formato de evento (ex.: charge.paid antes de order.paid);
+        // o primeiro a chegar pode nao trazer os itens/nome do produto, entao
+        // o filtro de produto do gatilho nunca casa e nenhum fluxo dispara. Se
+        // o evento ja existia sem produto e agora veio com produto, tratamos
+        // como uma reavaliacao: os fluxos que ja rodaram permanecem intactos
+        // (uk_afr em automation_flow_runs impede duplicidade) e os que so
+        // conseguem casar agora com o produto correto passam a rodar. Restrito
+        // a eventos com usuario ja identificado: no caminho anonimo cada
+        // retentativa gera um automation_flow_events novo (hash inclui o
+        // payload inteiro), entao reavaliar poderia duplicar o disparo de
+        // fluxos sem filtro de produto.
+        $isEnrichment = !$isNew && $existingHadNoProduct && $incomingHasProduct && $userId > 0;
+
+        if (($isNew || $isEnrichment) && !$alreadyTriggeredBusiness && $eventId > 0) {
             $extra = payment_event_trigger_payload($data, $metadata, $eventId, $provider, $status, $eventCode, $transactionCode);
             if ($userId > 0 && function_exists('capturar_fluxos_automacao')) {
                 capturar_fluxos_automacao($eventCode, $userId, $extra);
