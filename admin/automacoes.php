@@ -505,12 +505,35 @@ $flows = $pdo->query("SELECT f.*,v.version_number,
     (SELECT COUNT(*) FROM automation_flow_jobs j JOIN automation_flow_runs r ON r.id=j.run_id WHERE r.flow_id=f.id AND j.status IN ('queued','retry','scheduled')) pending
     FROM automation_flows f LEFT JOIN automation_flow_versions v ON v.id=f.current_version_id
     WHERE f.status<>'deleted' ORDER BY f.updated_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-$logs = $pdo->query("SELECT s.*,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
+$logFlowId = max(0, (int)($_GET['log_flow'] ?? 0));
+$logAluno = trim((string)($_GET['log_aluno'] ?? ''));
+$logBloco = trim((string)($_GET['log_bloco'] ?? ''));
+$logStatus = trim((string)($_GET['log_status'] ?? ''));
+$logDe = trim((string)($_GET['log_de'] ?? ''));
+$logAte = trim((string)($_GET['log_ate'] ?? ''));
+$logLimit = (int)($_GET['log_limit'] ?? 300);
+if (!in_array($logLimit, [100, 300, 500, 1000, 2000], true)) $logLimit = 300;
+
+$logWhere = [];
+$logParams = [];
+if ($logFlowId > 0) { $logWhere[] = 'r.flow_id=:flow_id'; $logParams['flow_id'] = $logFlowId; }
+if ($logAluno !== '') { $logWhere[] = '(u.nome LIKE :aluno OR u.email LIKE :aluno2)'; $logParams['aluno'] = '%' . $logAluno . '%'; $logParams['aluno2'] = '%' . $logAluno . '%'; }
+if ($logBloco !== '') { $logWhere[] = 's.node_type=:bloco'; $logParams['bloco'] = $logBloco; }
+if ($logStatus !== '') { $logWhere[] = 's.status=:status'; $logParams['status'] = $logStatus; }
+if ($logDe !== '') { $logWhere[] = 's.started_at>=:de'; $logParams['de'] = $logDe . ' 00:00:00'; }
+if ($logAte !== '') { $logWhere[] = 's.started_at<=:ate'; $logParams['ate'] = $logAte . ' 23:59:59'; }
+$logWhereSql = $logWhere ? ('WHERE ' . implode(' AND ', $logWhere)) : '';
+$logsStmt = $pdo->prepare("SELECT s.*,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
     FROM automation_flow_steps s
     JOIN automation_flow_runs r ON r.id=s.run_id
     JOIN automation_flows f ON f.id=r.flow_id
     LEFT JOIN users u ON u.id=r.user_id
-    ORDER BY s.id DESC LIMIT 300")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    {$logWhereSql}
+    ORDER BY s.id DESC LIMIT {$logLimit}");
+$logsStmt->execute($logParams);
+$logs = $logsStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$logBlocoOptions = $pdo->query("SELECT DISTINCT node_type FROM automation_flow_steps WHERE node_type IS NOT NULL AND node_type<>'' ORDER BY node_type")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+$logStatusOptions = $pdo->query("SELECT DISTINCT status FROM automation_flow_steps WHERE status IS NOT NULL AND status<>'' ORDER BY status")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 $eventsByDay = $pdo->query("SELECT DATE(created_at) d,COUNT(*) c FROM automation_flow_events WHERE created_at>=DATE_SUB(CURDATE(),INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $statusRows = $pdo->query("SELECT status,COUNT(*) c FROM automation_flow_runs GROUP BY status")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -656,6 +679,7 @@ include __DIR__ . '/_header.php';
 ?>
 <style>
 .af{display:grid;gap:14px}.af-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.af-head h1{font-size:22px}.af-nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px}.af-nav a{padding:7px 10px;border-radius:8px;color:var(--muted);font-size:12px;text-decoration:none}.af-nav a.active,.af-nav a:hover{background:var(--primary-dim);color:var(--primary)}.af-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px}.af-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.af-kpi small{color:var(--muted);font-size:10px;text-transform:uppercase}.af-kpi strong{display:block;font-size:26px}.af-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.af-msg{padding:10px 12px;border-radius:9px;background:var(--success-dim);color:#86efac}.af-error{padding:10px 12px;border-radius:9px;background:var(--danger-dim);color:#fca5a5}.af-table{overflow:auto}.af-table table{width:100%;border-collapse:collapse}.af-table th,.af-table td{padding:9px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}.af-table th{font-size:10px;color:var(--muted);text-transform:uppercase}.af-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--bg-hover);font-size:10px}.af-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.af-form input{min-width:260px;flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text)}.af-flow-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.af-flow-create{display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:8px;min-width:min(520px,100%)}.af-flow-list{display:grid;gap:8px}.af-flow-row{display:grid;grid-template-columns:minmax(220px,1fr) 105px 85px 82px 92px 72px 88px auto;gap:12px;align-items:center;padding:14px 12px;border:1px solid var(--border-light,var(--border));border-radius:9px;background:#071020;transition:all .2s ease}.af-flow-row:hover{border-color:#334155}.af-flow-row.has-diag-warning{border-color:#f59e0b;background:rgba(245,158,11,0.04)}.af-flow-row.has-diag-critical{border-color:#ef4444!important;background:rgba(239,68,68,0.06)!important;box-shadow:0 0 15px rgba(239,68,68,0.18);animation:afPulseRed 2.5s infinite}.af-flow-name strong{display:block;font-size:14px}.af-flow-name small,.af-flow-meta small{display:block;color:var(--muted);font-size:10px}.af-flow-stat strong{display:block;font-size:18px}.af-flow-stat small{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.af-flow-empty{padding:22px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:10px}@keyframes afPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.35)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}@media(max-width:1100px){.af-flow-head{display:grid}.af-flow-create{grid-template-columns:1fr}.af-flow-row{grid-template-columns:1fr 1fr;align-items:start}.af-flow-row .af-actions{grid-column:1/-1}}@media(max-width:640px){.af-flow-row{grid-template-columns:1fr}}
+.af-filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px}.af-filters .field{display:flex;flex-direction:column;gap:4px;min-width:140px}.af-filters .field.wide{min-width:220px}.af-filters label{font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase}.af-filters input,.af-filters select{padding:8px 10px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text)}@media(max-width:800px){.af-filters .field{min-width:100%}}
 .af-diag-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border-radius:12px;background:rgba(239,68,68,0.14);border:1px solid #ef4444;color:#fecaca;box-shadow:0 8px 24px rgba(239,68,68,0.18)}
 .af-diag-modal{position:fixed;inset:0;z-index:14000;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(2,6,15,.85);backdrop-filter:blur(6px)}
 .af-diag-modal.open{display:flex}
@@ -839,7 +863,61 @@ document.getElementById('afeRunTest')?.addEventListener('click',runFlowTest);
 Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button');b.type='button';b.className='afe-item';b.draggable=canWrite;b.style.setProperty('--c',m.color);b.innerHTML='<span class="afe-dot"></span>'+esc(m.label);b.onclick=()=>add(t,220+graph.nodes.length*22,120+graph.nodes.length*18);b.ondragstart=e=>e.dataTransfer.setData('application/x-af-node',t);afePalette.appendChild(b)});canvas.ondragover=e=>e.preventDefault();canvas.ondrop=e=>{e.preventDefault();const t=e.dataTransfer.getData('application/x-af-node'),r=canvas.getBoundingClientRect();if(t)add(t,(e.clientX-r.left-view.x)/view.zoom,(e.clientY-r.top-view.y)/view.zoom)};canvas.onpointermove=e=>{if(drag){drag.n.x=Math.max(0,drag.ox+(e.clientX-drag.sx)/view.zoom);drag.n.y=Math.max(0,drag.oy+(e.clientY-drag.sy)/view.zoom);render()}else if(pan){view.x=pan.ox+e.clientX-pan.x;view.y=pan.oy+e.clientY-pan.y;apply()}};canvas.onpointerup=()=>{drag=pan=null;canvas.classList.remove('is-panning')};canvas.onpointerdown=e=>{if(e.button!==0)return;const hit=e.target.closest?e.target.closest('.afe-node,.afe-tools,.afe-port,.afe-edge-trash,.afe-edge-hit'):null;if(hit)return;selectedEdge=null;selected=null;inspect();edges();pan={x:e.clientX,y:e.clientY,ox:view.x,oy:view.y};canvas.classList.add('is-panning');canvas.setPointerCapture(e.pointerId)};canvas.onwheel=e=>{e.preventDefault();view.zoom*=e.deltaY<0?1.1:.9;apply()};afeIn.onclick=()=>{view.zoom*=1.15;apply()};afeOut.onclick=()=>{view.zoom*=.85;apply()};afeZoom.onclick=()=>{view.zoom=1;apply()};afeFit.onclick=()=>{view={x:60,y:50,zoom:1};apply()};document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>afeAction.value=b.dataset.action);afeForm.onsubmit=()=>{graph.viewport={...view};afeGraph.value=JSON.stringify(graph)};render();inspect()})();
   </script>
 <?php elseif($view === 'logs'): ?>
-  <section class="af-card"><div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="6">Nenhum log registrado.</td></tr><?php endif; ?></tbody></table></div></section>
+  <section class="af-card">
+    <form method="get" class="af-filters">
+      <input type="hidden" name="view" value="logs">
+      <div class="field wide">
+        <label>Fluxo</label>
+        <select name="log_flow">
+          <option value="0">Todos os fluxos</option>
+          <?php foreach($flows as $f): ?>
+            <option value="<?=(int)$f['id']?>" <?=$logFlowId===(int)$f['id']?'selected':''?>><?=af_h($f['name'])?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="field wide">
+        <label>Aluno</label>
+        <input type="text" name="log_aluno" value="<?=af_h($logAluno)?>" placeholder="Nome ou e-mail">
+      </div>
+      <div class="field">
+        <label>Bloco</label>
+        <select name="log_bloco">
+          <option value="">Todos</option>
+          <?php foreach($logBlocoOptions as $opt): ?>
+            <option value="<?=af_h($opt)?>" <?=$logBloco===$opt?'selected':''?>><?=af_h($opt)?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select name="log_status">
+          <option value="">Todos</option>
+          <?php foreach($logStatusOptions as $opt): ?>
+            <option value="<?=af_h($opt)?>" <?=$logStatus===$opt?'selected':''?>><?=af_h($opt)?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="field">
+        <label>De</label>
+        <input type="date" name="log_de" value="<?=af_h($logDe)?>">
+      </div>
+      <div class="field">
+        <label>Até</label>
+        <input type="date" name="log_ate" value="<?=af_h($logAte)?>">
+      </div>
+      <div class="field">
+        <label>Qtd.</label>
+        <select name="log_limit">
+          <?php foreach([100,300,500,1000,2000] as $n): ?>
+            <option value="<?=$n?>" <?=$logLimit===$n?'selected':''?>><?=$n?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+      <a class="reset-link" href="automacoes.php?view=logs">Limpar</a>
+    </form>
+    <div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="6">Nenhum log encontrado para os filtros selecionados.</td></tr><?php endif; ?></tbody></table></div>
+  </section>
 <?php elseif($view === 'flows'): ?>
   <section class="af-card">
     <div class="af-flow-head">
