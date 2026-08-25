@@ -23,6 +23,61 @@ function va_duration($seconds): string {
     $minutes = intdiv($seconds % 3600, 60);
     return $hours > 0 ? $hours . 'h ' . $minutes . 'min' : $minutes . 'min';
 }
+function va_export_sales_csv(PDO $pdo, string $sql, array $params): void {
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="vendas_' . date('Y-m-d_His') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, [
+        'Data/hora', 'Transacao', 'Canal', 'Comprador', 'E-mail', 'Telefone', 'Produto', 'Plano',
+        'Forma de pagamento', 'Parcelas', 'Valor bruto', 'Valor liquido', 'Liquido produtor', 'Status',
+        'Valor reembolsado', 'Turma', 'Data inscricao lead', 'Tempo ate a compra',
+        'UTM source', 'UTM medium', 'UTM campaign', 'UTM term', 'UTM content',
+        'Campanha atribuida', 'Conjunto atribuido', 'Anuncio atribuido', 'Tipo de atribuicao',
+    ], ';');
+
+    while ($sale = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $saleDate = (string)($sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: $sale['imported_at']);
+        fputcsv($out, [
+            $saleDate ? date('d/m/Y H:i', strtotime($saleDate)) : '',
+            (string)$sale['transaction_code'],
+            (string)($sale['sales_channel'] ?: 'hotmart'),
+            (string)($sale['buyer_name'] ?: ''),
+            (string)$sale['buyer_email'],
+            (string)($sale['buyer_phone_raw'] ?: $sale['buyer_phone_norm']),
+            (string)($sale['product_name'] ?: ''),
+            (string)($sale['price_name'] ?: $sale['price_code']),
+            (string)($sale['payment_type'] ?: ''),
+            (int)$sale['installments_number'],
+            number_format((float)$sale['gross_revenue'], 2, ',', ''),
+            number_format((float)$sale['net_revenue'], 2, ',', ''),
+            number_format((float)$sale['producer_net'], 2, ',', ''),
+            (string)($sale['status'] ?: $sale['webhook_event'] ?: ''),
+            number_format((float)$sale['refunded_value'], 2, ',', ''),
+            (string)$sale['turma_atribuida'],
+            !empty($sale['lead_created_at']) ? date('d/m/Y H:i', strtotime((string)$sale['lead_created_at'])) : '',
+            (int)($sale['attribution_seconds_diff'] ?? 0) > 0 ? va_duration($sale['attribution_seconds_diff']) : '',
+            (string)($sale['detail_utm_source'] ?: ''),
+            (string)($sale['detail_utm_medium'] ?: ''),
+            (string)($sale['detail_utm_campaign'] ?: ''),
+            (string)($sale['detail_utm_term'] ?: ''),
+            (string)($sale['detail_utm_content'] ?: ''),
+            (string)($sale['campaign_group'] ?: ''),
+            (string)($sale['campaign_name'] ?: ''),
+            (string)($sale['ad_name'] ?: ''),
+            (string)($sale['match_type'] ?: $sale['match_method'] ?: ''),
+        ], ';');
+    }
+    fclose($out);
+    exit;
+}
 function va_delta(array $current, array $previous, string $key): ?float { return metrics_delta((float)($current[$key] ?? 0), (float)($previous[$key] ?? 0)); }
 function va_delta_html(?float $delta, bool $lowerIsBetter = false): string {
     if ($delta === null) return '<span class="trend neutral">Sem base</span>';
@@ -420,13 +475,7 @@ $salesFromSql = "
     LEFT JOIN attribution_leads al_detail ON al_detail.id = am_detail.lead_id
     LEFT JOIN users u_detail ON u_detail.id = s.matched_user_id
 ";
-$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.id) {$salesFromSql} WHERE {$salesWhereSql}");
-$salesCountStmt->execute($salesParams);
-$salesTotal = (int)$salesCountStmt->fetchColumn();
-$salesPages = max(1, (int)ceil($salesTotal / $salesPerPage));
-$salesPage = min($salesPage, $salesPages);
-$salesOffset = ($salesPage - 1) * $salesPerPage;
-$salesSql = "
+$salesSelectSql = "
     SELECT s.*,
            COALESCE(NULLIF(al_detail.turma_codigo,''), NULLIF(u_detail.codigo_turma,''), 'Sem turma') AS turma_atribuida,
            al_detail.created_at AS lead_created_at,
@@ -443,8 +492,19 @@ $salesSql = "
       {$salesFromSql}
      WHERE {$salesWhereSql}
   ORDER BY s.transaction_date DESC, s.id DESC
-     LIMIT {$salesPerPage} OFFSET {$salesOffset}
 ";
+
+if ((string)($_GET['export'] ?? '') === 'sales_csv') {
+    va_export_sales_csv($pdo, $salesSelectSql, $salesParams);
+}
+
+$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.id) {$salesFromSql} WHERE {$salesWhereSql}");
+$salesCountStmt->execute($salesParams);
+$salesTotal = (int)$salesCountStmt->fetchColumn();
+$salesPages = max(1, (int)ceil($salesTotal / $salesPerPage));
+$salesPage = min($salesPage, $salesPages);
+$salesOffset = ($salesPage - 1) * $salesPerPage;
+$salesSql = $salesSelectSql . " LIMIT {$salesPerPage} OFFSET {$salesOffset}";
 $salesStmt = $pdo->prepare($salesSql);
 $salesStmt->execute($salesParams);
 $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -703,7 +763,8 @@ include __DIR__ . '/_header.php';
   </section>
 
   <section class="section-card" id="lista-vendas">
-    <div class="section-head"><div><h2>Relação detalhada de vendas</h2><p>Todas as transações recebidas no período, com comprador, valores, turma, atribuição e UTMs.</p></div></div>
+    <?php $salesExportQuery = array_merge($_GET, ['export' => 'sales_csv']); unset($salesExportQuery['sales_page']); ?>
+    <div class="section-head"><div><h2>Relação detalhada de vendas</h2><p>Todas as transações recebidas no período, com comprador, valores, turma, atribuição e UTMs.</p></div><a class="btn btn-ghost" href="?<?=va_h(http_build_query($salesExportQuery))?>#lista-vendas">&#8681; Exportar planilha</a></div>
     <form class="sales-tools" method="get" action="#lista-vendas">
       <?php foreach ($_GET as $key => $value): if (in_array((string)$key, ['sales_q','sales_status','sales_page'], true) || !is_scalar($value)) continue; ?>
         <input type="hidden" name="<?=va_h((string)$key)?>" value="<?=va_h((string)$value)?>">
