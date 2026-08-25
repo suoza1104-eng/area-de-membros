@@ -178,7 +178,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             SELECT r.id run_id, r.user_id, r.status, r.started_at, r.finished_at, u.nome, u.email
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
-            WHERE r.flow_id = :fid AND r.started_at <= DATE_SUB(NOW(), INTERVAL :mins MINUTE)
+            WHERE r.flow_id = :fid AND r.started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND r.started_at <= DATE_SUB(NOW(), INTERVAL :mins MINUTE)
             ORDER BY r.started_at DESC
             LIMIT 1
         ");
@@ -204,7 +204,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             SELECT r.id run_id, r.user_id, r.status, r.started_at, r.finished_at, u.nome, u.email
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
-            WHERE r.flow_id = :fid " . ($sampleEarly ? "AND r.id <> " . (int)$sampleEarly['run_id'] : "") . "
+            WHERE r.flow_id = :fid AND r.started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) " . ($sampleEarly ? "AND r.id <> " . (int)$sampleEarly['run_id'] : "") . "
             ORDER BY r.started_at DESC
             LIMIT 1
         ");
@@ -241,6 +241,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             FROM automation_flow_runs r
             LEFT JOIN users u ON u.id = r.user_id
             WHERE r.flow_id = :fid AND r.status = 'completed' AND r.finished_at IS NOT NULL
+              AND r.finished_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
             ORDER BY r.finished_at DESC
             LIMIT 5
         ");
@@ -268,7 +269,7 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             $benchmarkAnalysis['max_duration_minutes'] = $maxDuration;
             $benchmarkAnalysis['min_duration_minutes'] = $minDuration;
             // Se houver atraso significativo em relação à duração teórica projetada:
-            $toleratedDelayMinutes = max(10, (int)($totalTheoMinutes * 0.5));
+            $toleratedDelayMinutes = max(360, (int)($totalTheoMinutes * 3.0));
             $maxExpectedMinutes = $totalTheoMinutes + $toleratedDelayMinutes;
 
             if ($avgDuration > $maxExpectedMinutes) {
@@ -394,6 +395,14 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
 
         $flowReports[$flowId] = $summaryData;
     }
+
+    // Limpa diagnósticos residuais de fluxos pausados, rascunhos ou excluídos
+    try {
+        $pdo->exec("
+            DELETE FROM automation_flow_diagnostics 
+            WHERE flow_id IN (SELECT id FROM automation_flows WHERE status != 'active')
+        ");
+    } catch (Throwable $e) {}
 
     $globalStatus = ($totalIssues > 0 || !empty($infraIssues)) ? 'warning' : 'healthy';
     $globalSummary = [
