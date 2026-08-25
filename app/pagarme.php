@@ -216,6 +216,11 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
     $paymentMethod = pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type') ?: null;
     $feeCents = pagarme_fee_cents($data, $charge, $lastTransaction, $amountCents, (string)$paymentMethod);
     $netCents = pagarme_net_cents($data, $charge, $lastTransaction, $amountCents, $feeCents);
+    // A Pagar.me nao tem sincronizacao por API (so webhook), entao nao ha fonte
+    // autoritativa alternativa para consultar — quando a taxa nao vem explicita
+    // no payload, o fallback percentual fixo (pagarme_fee_cents) e a unica opcao
+    // hoje, e fica marcado como estimado para nao ser confundido com dado real.
+    $feeIsEstimated = !payment_amount_fee_found_in_payload([$charge, $lastTransaction, $data]);
     $productName = pagarme_scalar($firstItem, 'description');
     if ($productName === '') {
         // Eventos do tipo "charge.*" nao trazem os itens do pedido (isso so
@@ -246,21 +251,24 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,fee_is_estimated,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
-             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             buyer_name,buyer_email,buyer_phone,buyer_phone_norm,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
+            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:fee_is_estimated,:product_amount,0,
              :installments,:payment_method,'pagarme',:account,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
-             :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
+             :buyer_name,:buyer_email,:buyer_phone,:phone_norm,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),
+             net_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(net_amount_cents) ELSE net_amount_cents END,
+             fee_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_amount_cents) ELSE fee_amount_cents END,
+             fee_is_estimated=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_is_estimated) ELSE fee_is_estimated END,
              product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),
              payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),
              external_product_id=COALESCE(NULLIF(VALUES(external_product_id),''),external_product_id),
              product_name=COALESCE(NULLIF(VALUES(product_name),''),product_name),integration_id=COALESCE(NULLIF(VALUES(integration_id),''),integration_id),origin_description=VALUES(origin_description),
-             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
+             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_phone_norm=VALUES(buyer_phone_norm),buyer_document=VALUES(buyer_document),
              matched_user_id=VALUES(matched_user_id),match_method=VALUES(match_method),raw_payload_json=VALUES(raw_payload_json),
              last_received_at=VALUES(last_received_at)");
         $sale->execute([
@@ -273,6 +281,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             ':gross'=>$amountCents,
             ':net'=>$netCents,
             ':fee'=>$feeCents,
+            ':fee_is_estimated'=>$feeIsEstimated ? 1 : 0,
             ':product_amount'=>payment_amount_cents($firstItem['amount'] ?? $amountCents),
             ':installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
             ':payment_method'=>$paymentMethod,
@@ -284,6 +293,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             ':buyer_name'=>pagarme_scalar($customer, 'name') ?: null,
             ':buyer_email'=>$email ?: null,
             ':buyer_phone'=>$phoneRaw ?: null,
+            ':phone_norm'=>$phoneNorm ?: null,
             ':buyer_document'=>pagarme_scalar($customer, 'document') ?: null,
             ':user_id'=>$matchedUser['id'] ?? null,
             ':match_method'=>(string)($matched['method'] ?? 'none'),

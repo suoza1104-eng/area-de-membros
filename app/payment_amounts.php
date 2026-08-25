@@ -73,12 +73,22 @@ function payment_amount_setting_percent(string $provider, string $paymentMethod,
     return (float)str_replace(',', '.', (string)$value);
 }
 
-function payment_amount_fee_cents(array $payloads, int $grossCents, string $provider, string $paymentMethod, string $defaultPercent = '0'): int
+function payment_amount_fee_keys(): array
 {
-    $fee = payment_amount_find_by_keys($payloads, [
+    return [
         'fee', 'fees', 'fee_amount', 'gateway_fee', 'processing_fee', 'transaction_fee',
         'tax_amount', 'mdr_amount', 'taxa', 'taxa_gateway',
-    ]);
+    ];
+}
+
+function payment_amount_fee_found_in_payload(array $payloads): bool
+{
+    return payment_amount_find_by_keys($payloads, payment_amount_fee_keys()) > 0;
+}
+
+function payment_amount_fee_cents(array $payloads, int $grossCents, string $provider, string $paymentMethod, string $defaultPercent = '0'): int
+{
+    $fee = payment_amount_find_by_keys($payloads, payment_amount_fee_keys());
     if ($fee > 0) return min($fee, $grossCents);
 
     $percent = payment_amount_setting_percent($provider, $paymentMethod, $defaultPercent);

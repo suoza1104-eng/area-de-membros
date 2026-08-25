@@ -5,6 +5,7 @@ require_once __DIR__ . '/metrics.php';
 require_once __DIR__ . '/course_access.php';
 require_once __DIR__ . '/payment_events.php';
 require_once __DIR__ . '/payment_amounts.php';
+require_once __DIR__ . '/payment_reconciliation.php';
 
 function firepay_ensure_schema(PDO $pdo): void
 {
@@ -77,6 +78,8 @@ function firepay_ensure_schema(PDO $pdo): void
         KEY idx_firepay_status (process_status),
         KEY idx_firepay_received (received_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    payment_reconciliation_ensure_schema($pdo);
 }
 
 function firepay_normalized_status(string $status): string
@@ -212,6 +215,8 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
     $interestCents = payment_amount_cents($payload['interest_fee'] ?? 0);
     $feeCents = payment_amount_fee_cents([$payload], $grossCents, 'firepay', $paymentMethod);
     $netCents = payment_amount_net_cents([$payload], $grossCents, $feeCents);
+    // So visibilidade (Firepay ja fica fora dos KPIs do dashboard) — mesma logica do Pagar.me.
+    $feeIsEstimated = !payment_amount_fee_found_in_payload([$payload]);
 
     $pdo->beginTransaction();
     try {
@@ -228,30 +233,33 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,fee_is_estimated,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
-             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             buyer_name,buyer_email,buyer_phone,buyer_phone_norm,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('firepay',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,:interest,
+            VALUES ('firepay',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:fee_is_estimated,:product_amount,:interest,
              :installments,:payment_method,:gateway,:account,:product_id,:product_name,:product_slug,:integration_id,:delivery_type,:classes,
-             :origin_description,:origin_slug,:buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,:checkout_url,
+             :origin_description,:origin_slug,:buyer_name,:buyer_email,:buyer_phone,:phone_norm,:buyer_document,:user_id,:match_method,:checkout_url,
              :order_bumps,:payload,NOW(),NOW())
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),
+             net_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(net_amount_cents) ELSE net_amount_cents END,
+             fee_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_amount_cents) ELSE fee_amount_cents END,
+             fee_is_estimated=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_is_estimated) ELSE fee_is_estimated END,
              product_amount_cents=VALUES(product_amount_cents),interest_amount_cents=VALUES(interest_amount_cents),
              installments=VALUES(installments),payment_method=VALUES(payment_method),payment_gateway=VALUES(payment_gateway),
              provider_account_id=VALUES(provider_account_id),external_product_id=VALUES(external_product_id),product_name=VALUES(product_name),
              product_slug=VALUES(product_slug),integration_id=VALUES(integration_id),integration_delivery_type=VALUES(integration_delivery_type),
              classes_text=VALUES(classes_text),origin_description=VALUES(origin_description),origin_slug=VALUES(origin_slug),buyer_name=VALUES(buyer_name),
-             buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),matched_user_id=VALUES(matched_user_id),
+             buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_phone_norm=VALUES(buyer_phone_norm),buyer_document=VALUES(buyer_document),matched_user_id=VALUES(matched_user_id),
              match_method=VALUES(match_method),checkout_url=VALUES(checkout_url),order_bumps_json=VALUES(order_bumps_json),
              raw_payload_json=VALUES(raw_payload_json),last_received_at=VALUES(last_received_at)");
         $sale->execute([
             ':transaction'=>$transactionId, ':checkout'=>firepay_scalar($payload, 'checkout_id') ?: null,
             ':type'=>firepay_scalar($payload, 'type') ?: null, ':provider_status'=>$providerStatus, ':normalized_status'=>$normalizedStatus,
             ':currency'=>firepay_scalar($payload, 'price_currency') ?: 'BRL', ':gross'=>$grossCents,
-            ':net'=>$netCents, ':fee'=>$feeCents, ':product_amount'=>$productCents, ':interest'=>$interestCents,
+            ':net'=>$netCents, ':fee'=>$feeCents, ':fee_is_estimated'=>$feeIsEstimated ? 1 : 0, ':product_amount'=>$productCents, ':interest'=>$interestCents,
             ':installments'=>(int)($payload['installments'] ?? 0) ?: null, ':payment_method'=>$paymentMethod ?: null,
             ':gateway'=>firepay_scalar($payload, 'payment_gateway') ?: null, ':account'=>firepay_scalar($payload, 'tenant_id') ?: null,
             ':product_id'=>firepay_scalar($product, 'id') ?: null, ':product_name'=>firepay_scalar($product, 'name') ?: null,
@@ -259,10 +267,12 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
             ':delivery_type'=>firepay_scalar($product, 'integration_delivery_type') ?: null, ':classes'=>firepay_scalar($product, 'turmas') ?: null,
             ':origin_description'=>firepay_scalar($origin, 'description') ?: null, ':origin_slug'=>firepay_scalar($origin, 'slug') ?: null,
             ':buyer_name'=>firepay_scalar($client, 'name') ?: null, ':buyer_email'=>$email ?: null, ':buyer_phone'=>$phoneRaw ?: null,
+            ':phone_norm'=>$phoneNorm ?: null,
             ':buyer_document'=>firepay_scalar($client, 'document') ?: null, ':user_id'=>$matchedUser['id'] ?? null,
             ':match_method'=>(string)($matched['method'] ?? 'none'), ':checkout_url'=>firepay_scalar($payload, 'link') ?: null,
             ':order_bumps'=>json_encode($orderBumps, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ':payload'=>$rawPayload,
         ]);
+        $paymentSaleId = (int)$pdo->lastInsertId();
 
         $lifetimeAttempt = ['granted' => false, 'reason' => 'payment_not_approved'];
         if ($normalizedStatus === 'APPROVED') {
@@ -290,6 +300,23 @@ function firepay_process_webhook(PDO $pdo, array $payload, string $rawPayload, i
         }
 
         if ($pdo->inTransaction()) $pdo->commit();
+
+        // Tenta achar a venda "gemea" ja capturada via DOM/Pagar.me direto, so
+        // para visibilidade/anti-duplicacao futura — nunca deve derrubar o
+        // webhook se falhar (rede, schema, etc).
+        if ($paymentSaleId > 0) {
+            try {
+                payment_reconciliation_link_firepay_twin($pdo, $paymentSaleId);
+            } catch (Throwable $e) {
+                if (function_exists('app_log')) {
+                    app_log('Firepay: falha ao tentar localizar venda gemea DOM/Pagar.me', [
+                        'payment_sale_id' => $paymentSaleId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
         $paymentEvent = payment_event_register($pdo, [
             'provider'=>'firepay',
             'normalized_status'=>$normalizedStatus,

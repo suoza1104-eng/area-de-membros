@@ -54,6 +54,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 5,
             'timeout' => 300,
         ],
+        'firepay_reconciliation' => [
+            'label' => 'Reconciliacao Firepay x Gateway',
+            'description' => 'Vincula vendas Firepay as equivalentes ja capturadas via DOM/Pagar.me, para visibilidade e futura prevencao de dupla contagem.',
+            'script' => __DIR__ . '/../cron/processar_reconciliacao_firepay.php',
+            'interval' => 15,
+            'timeout' => 300,
+        ],
         'fluxos_push' => [
             'label' => 'Fluxos de notificações push',
             'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',

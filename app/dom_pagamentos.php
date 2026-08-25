@@ -68,16 +68,10 @@ function dom_scalar(array $data, string $key): string
     return is_scalar($value) ? trim((string)$value) : '';
 }
 
+/** @deprecated usar payment_amount_cents() (app/payment_amounts.php) — mantido só por segurança. */
 function dom_int_cents($value): int
 {
-    if (is_int($value)) return $value;
-    if (is_float($value)) return (int)round($value * 100);
-    $raw = trim((string)$value);
-    if ($raw === '') return 0;
-    if (preg_match('/^-?\d+$/', $raw)) return (int)$raw;
-    $normalized = str_replace(['.', ','], ['', '.'], $raw);
-    if (substr_count($raw, '.') === 1 && strpos($raw, ',') === false) $normalized = $raw;
-    return (int)round(((float)$normalized) * 100);
+    return payment_amount_cents($value);
 }
 
 function dom_api_normalized_status(string $status): string
@@ -254,8 +248,14 @@ function dom_try_grant_lifetime(PDO $pdo, array $data, string $transactionCode, 
     return ['granted' => false, 'reason' => 'no_dom_offer_candidate_matched', 'candidates' => dom_offer_candidates($data)];
 }
 
-function dom_api_request(string $path, array $query = []): array
+function dom_api_request(string $path, array $query = [], int $timeoutSeconds = 30, int $connectTimeoutSeconds = 10): array
 {
+    // Seam de teste: um script de verificacao pode sobrescrever a chamada real
+    // de rede sem precisar de credenciais/ambiente sandbox. Nunca setado em producao.
+    if (isset($GLOBALS['dom_api_request_override']) && is_callable($GLOBALS['dom_api_request_override'])) {
+        return ($GLOBALS['dom_api_request_override'])($path, $query);
+    }
+
     $apiToken = trim((string)get_setting('dom_pagamentos_api_token', ''));
     if ($apiToken === '') throw new RuntimeException('DOM API: token nao configurado.');
 
@@ -275,8 +275,8 @@ function dom_api_request(string $path, array $query = []): array
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_TIMEOUT => 30,
-            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => $timeoutSeconds,
+            CURLOPT_CONNECTTIMEOUT => $connectTimeoutSeconds,
         ]);
         $body = curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -288,7 +288,7 @@ function dom_api_request(string $path, array $query = []): array
             'http' => [
                 'method' => 'GET',
                 'header' => implode("\r\n", $headers),
-                'timeout' => 30,
+                'timeout' => $timeoutSeconds,
                 'ignore_errors' => true,
             ],
         ]);
@@ -311,11 +311,39 @@ function dom_api_request(string $path, array $query = []): array
     return $decoded;
 }
 
-function dom_api_detail(string $transactionId): array
+function dom_api_detail(string $transactionId, int $timeoutSeconds = 30): array
 {
     $transactionId = trim($transactionId);
     if ($transactionId === '') throw new InvalidArgumentException('DOM API: id ausente.');
-    return dom_api_request('/transactions/' . rawurlencode($transactionId));
+    return dom_api_request('/transactions/' . rawurlencode($transactionId), [], $timeoutSeconds, min(10, $timeoutSeconds));
+}
+
+/**
+ * Busca gross/liquid/fee autoritativos na API da DOM quando o webhook chegou
+ * sem liquid_amount (comum em eventos de status intermediario). Timeout curto
+ * e fallback gracioso: qualquer falha retorna null e quem chamou mantem os
+ * valores que ja tinha do payload do webhook — nunca derruba o processamento.
+ */
+function dom_try_fetch_authoritative_amounts(string $transactionId, int $timeoutSeconds = 8): ?array
+{
+    try {
+        $detail = dom_api_detail($transactionId, $timeoutSeconds);
+    } catch (Throwable $e) {
+        if (function_exists('app_log')) {
+            app_log('DOM: fallback de API para taxa/liquido falhou', [
+                'transaction_id' => $transactionId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+        return null;
+    }
+    $grossCents = payment_amount_cents($detail['amount'] ?? 0);
+    $liquidCents = payment_amount_cents($detail['liquid_amount'] ?? 0);
+    $feeDetails = is_array($detail['fee_details'] ?? null) ? $detail['fee_details'] : [];
+    $feeCents = isset($feeDetails['amount'])
+        ? payment_amount_cents($feeDetails['amount'])
+        : max(0, $grossCents - $liquidCents);
+    return ['gross_cents' => $grossCents, 'liquid_cents' => $liquidCents, 'fee_cents' => $feeCents];
 }
 
 function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = 'api_sync'): array
@@ -340,11 +368,14 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
     $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
     $transactionCode = 'dom:' . $transactionId;
     $receivedAt = dom_transaction_datetime($detail);
-    $grossCents = dom_int_cents($detail['amount'] ?? 0);
-    $liquidCents = dom_int_cents($detail['liquid_amount'] ?? 0);
+    $grossCents = payment_amount_cents($detail['amount'] ?? 0);
+    $liquidCents = payment_amount_cents($detail['liquid_amount'] ?? 0);
     $feeDetails = is_array($detail['fee_details'] ?? null) ? $detail['fee_details'] : [];
-    $feeCents = isset($feeDetails['amount']) ? dom_int_cents($feeDetails['amount']) : max(0, $grossCents - $liquidCents);
-    $productCents = dom_int_cents($firstItem['price'] ?? $grossCents);
+    $feeCents = isset($feeDetails['amount']) ? payment_amount_cents($feeDetails['amount']) : max(0, $grossCents - $liquidCents);
+    // Esta funcao consulta a API diretamente (fonte autoritativa), entao so fica
+    // "estimado" no caso raro de a propria API nao trazer liquid_amount.
+    $feeIsEstimated = $liquidCents <= 0;
+    $productCents = payment_amount_cents($firstItem['price'] ?? $grossCents);
     $productName = dom_scalar($firstItem, 'description') ?: dom_scalar($detail, 'product_first') ?: (string)($metadata['product_name'] ?? $metadata['produto'] ?? '');
     $productRef = dom_scalar($firstItem, 'reference') ?: dom_scalar($firstItem, 'externCode') ?: dom_scalar($firstItem, 'sku');
     $rawPayload = json_encode($detail, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
@@ -354,20 +385,23 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
     try {
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,fee_is_estimated,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
-             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             buyer_name,buyer_email,buyer_phone,buyer_phone_norm,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
+            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:fee_is_estimated,:product_amount,0,
              :installments,:payment_method,'dom',NULL,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
-             :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,:checkout_url,NULL,:payload,:received_at,:received_at)
+             :buyer_name,:buyer_email,:buyer_phone,:phone_norm,:buyer_document,:user_id,:match_method,:checkout_url,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),
+             net_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(net_amount_cents) ELSE net_amount_cents END,
+             fee_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_amount_cents) ELSE fee_amount_cents END,
+             fee_is_estimated=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_is_estimated) ELSE fee_is_estimated END,
              product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),payment_method=VALUES(payment_method),
              external_product_id=VALUES(external_product_id),product_name=VALUES(product_name),integration_id=VALUES(integration_id),
              origin_description=VALUES(origin_description),buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),
-             buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),matched_user_id=VALUES(matched_user_id),
+             buyer_phone=VALUES(buyer_phone),buyer_phone_norm=VALUES(buyer_phone_norm),buyer_document=VALUES(buyer_document),matched_user_id=VALUES(matched_user_id),
              match_method=VALUES(match_method),checkout_url=VALUES(checkout_url),raw_payload_json=VALUES(raw_payload_json),
              last_received_at=VALUES(last_received_at)");
         $sale->execute([
@@ -380,6 +414,7 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
             ':gross' => $grossCents,
             ':net' => $liquidCents,
             ':fee' => $feeCents,
+            ':fee_is_estimated' => $feeIsEstimated ? 1 : 0,
             ':product_amount' => $productCents,
             ':installments' => (int)(dom_scalar($detail, 'installments') ?: 0) ?: null,
             ':payment_method' => dom_scalar($detail, 'payment_method') ?: null,
@@ -390,6 +425,7 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
             ':buyer_name' => dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name') ?: null,
             ':buyer_email' => $email ?: null,
             ':buyer_phone' => $phoneRaw ?: null,
+            ':phone_norm' => $phoneNorm ?: null,
             ':buyer_document' => dom_scalar($customer, 'document') ?: dom_scalar($detail, 'customer_document') ?: null,
             ':user_id' => $matchedUser['id'] ?? null,
             ':match_method' => (string)($matched['method'] ?? 'none'),
@@ -416,7 +452,7 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
                 'gross_revenue' => $grossCents / 100,
                 'net_revenue' => $liquidCents > 0 ? $liquidCents / 100 : $grossCents / 100,
                 'producer_net' => $liquidCents > 0 ? $liquidCents / 100 : $grossCents / 100,
-                'refunded_value' => $normalizedStatus === 'REFUNDED' ? dom_int_cents((is_array($detail['refunds'] ?? null) ? ($detail['refunds']['total_refunds'] ?? 0) : 0)) / 100 : 0,
+                'refunded_value' => $normalizedStatus === 'REFUNDED' ? payment_amount_cents((is_array($detail['refunds'] ?? null) ? ($detail['refunds']['total_refunds'] ?? 0) : 0)) / 100 : 0,
                 'chargeback_value' => $normalizedStatus === 'CHARGEBACK' ? $grossCents / 100 : 0,
                 'buyer_name' => dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name'),
                 'buyer_email' => $email,
@@ -609,6 +645,20 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
     $feeCents = payment_amount_fee_cents([$data], $amountCents, 'dom', $paymentMethod);
     $netCents = $liquidCents > 0 ? min($liquidCents, $amountCents) : payment_amount_net_cents([$data], $amountCents, $feeCents);
     if ($feeCents <= 0 && $netCents > 0 && $amountCents > $netCents) $feeCents = $amountCents - $netCents;
+    $feeIsEstimated = $liquidCents <= 0;
+    // Evento sem liquid_amount (comum antes da liquidacao). So vale buscar na API
+    // para status que vao gravar valor financeiro definitivo — chamada de rede
+    // fica fora da transacao (ainda nao abrimos beginTransaction), com timeout
+    // curto e fallback gracioso: se falhar, seguimos com os valores do payload.
+    if ($feeIsEstimated && in_array($normalizedStatus, ['APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED'], true)) {
+        $authoritative = dom_try_fetch_authoritative_amounts($transactionId);
+        if ($authoritative !== null && $authoritative['liquid_cents'] > 0) {
+            $liquidCents = $authoritative['liquid_cents'];
+            $netCents = min($liquidCents, $amountCents);
+            $feeCents = $authoritative['fee_cents'] > 0 ? $authoritative['fee_cents'] : max(0, $amountCents - $netCents);
+            $feeIsEstimated = false;
+        }
+    }
     $refundedCents = (int)(is_array($data['refunds'] ?? null) ? ($data['refunds']['total_refunds'] ?? 0) : 0);
     $productName = dom_scalar($firstItem, 'description') ?: (string)($metadata['product_name'] ?? $metadata['produto'] ?? '');
     $productRef = dom_scalar($firstItem, 'reference');
@@ -633,20 +683,23 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,fee_is_estimated,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
-             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             buyer_name,buyer_email,buyer_phone,buyer_phone_norm,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
+            VALUES ('dom',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:fee_is_estimated,:product_amount,0,
              :installments,:payment_method,'dom',NULL,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
-             :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
+             :buyer_name,:buyer_email,:buyer_phone,:phone_norm,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),
+             net_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(net_amount_cents) ELSE net_amount_cents END,
+             fee_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_amount_cents) ELSE fee_amount_cents END,
+             fee_is_estimated=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_is_estimated) ELSE fee_is_estimated END,
              product_amount_cents=VALUES(product_amount_cents),
              installments=VALUES(installments),payment_method=VALUES(payment_method),external_product_id=VALUES(external_product_id),
              product_name=VALUES(product_name),integration_id=VALUES(integration_id),origin_description=VALUES(origin_description),
-             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
+             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_phone_norm=VALUES(buyer_phone_norm),buyer_document=VALUES(buyer_document),
              matched_user_id=VALUES(matched_user_id),match_method=VALUES(match_method),raw_payload_json=VALUES(raw_payload_json),
              last_received_at=VALUES(last_received_at)");
         $sale->execute([
@@ -659,6 +712,7 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
             ':gross' => $amountCents,
             ':net' => $netCents,
             ':fee' => $feeCents,
+            ':fee_is_estimated' => $feeIsEstimated ? 1 : 0,
             ':product_amount' => payment_amount_cents($firstItem['price'] ?? $amountCents),
             ':installments' => (int)(dom_scalar($data, 'installments') ?: 0) ?: null,
             ':payment_method' => $paymentMethod ?: null,
@@ -669,6 +723,7 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
             ':buyer_name' => dom_scalar($customer, 'name') ?: null,
             ':buyer_email' => $email ?: null,
             ':buyer_phone' => $phoneRaw ?: null,
+            ':phone_norm' => $phoneNorm ?: null,
             ':buyer_document' => dom_scalar($customer, 'document') ?: null,
             ':user_id' => $matchedUser['id'] ?? null,
             ':match_method' => (string)($matched['method'] ?? 'none'),
