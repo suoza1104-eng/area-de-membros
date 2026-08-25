@@ -64,10 +64,10 @@ function pagarme_normalized_status(string $event, string $status): string
     $event = strtolower(trim($event));
     $status = strtolower(trim($status));
     if (in_array($event, ['order.paid','charge.paid','invoice.paid','checkout.closed'], true) || in_array($status, ['paid','captured'], true)) return 'APPROVED';
-    if (in_array($event, ['charge.pending','charge.processing','order.created','checkout.created','invoice.created'], true) || in_array($status, ['pending','processing'], true)) return 'PENDING';
     if (in_array($event, ['charge.refunded'], true) || $status === 'refunded') return 'REFUNDED';
     if (in_array($event, ['charge.chargedback','chargeback.received'], true) || in_array($status, ['chargedback','chargeback'], true)) return 'CHARGEBACK';
     if (str_contains($event, 'payment_failed') || str_contains($event, 'canceled') || in_array($status, ['failed','canceled','cancelled'], true)) return 'CANCELED';
+    if (in_array($event, ['charge.pending','charge.processing','order.created','checkout.created','invoice.created'], true) || in_array($status, ['pending','processing'], true)) return 'PENDING';
     return 'UNKNOWN';
 }
 

@@ -2,13 +2,13 @@
 
 function hotmart_sale_valid_statuses(): array
 {
-    return array('Aprovado','APPROVED','PURCHASE_APPROVED','Completo','COMPLETE','PURCHASE_COMPLETE');
+    return array('Aprovado','APPROVED','PURCHASE_APPROVED','Completo','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PURCHASE_COMPLETED');
 }
 
 function hotmart_legacy_status_from_live(string $status): string
 {
     $s = strtoupper(trim($status));
-    if (in_array($s, array('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE'), true)) {
+    if (in_array($s, array('APPROVED','PURCHASE_APPROVED','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PURCHASE_COMPLETED'), true)) {
         return 'Aprovado';
     }
     if ($s === 'REFUNDED' || $s === 'PURCHASE_REFUNDED') {
