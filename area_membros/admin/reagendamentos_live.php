@@ -886,13 +886,15 @@ foreach ($frequencias as $fr) {
 }
 
 try {
-    $st = $pdo->prepare("SELECT DATE($impactStartExpr) AS dia, COUNT(*) AS total, SUM($exprCompraCurso) AS vendas
+    $st = $pdo->prepare("SELECT * FROM (
+        SELECT DATE($impactStartExpr) AS dia, COUNT(*) AS total, SUM($exprCompraCurso) AS vendas
         FROM reagendamentos_live r
         LEFT JOIN users u ON u.id = r.user_id
         $whereHistSql
         GROUP BY DATE($impactStartExpr)
-        ORDER BY dia ASC
-        LIMIT 60");
+        ORDER BY dia DESC
+        LIMIT 60
+    ) sub ORDER BY dia ASC");
     $st->execute($paramsHist);
     $reagPorDia = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
