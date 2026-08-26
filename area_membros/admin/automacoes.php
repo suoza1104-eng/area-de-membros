@@ -146,6 +146,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: automacoes.php?view=flows&reprocessed=' . count($runRows) . '&dispatched=' . (int)($res['processed'] ?? 0));
             exit;
         }
+        if ($action === 'clear_flow_queue') {
+            $id = (int)($_POST['id'] ?? 0);
+            $flow = automation_flow_find($pdo, $id);
+            if (!$flow) throw new RuntimeException('Fluxo não encontrado.');
+            $stJobs = $pdo->prepare("
+                UPDATE automation_flow_jobs j
+                JOIN automation_flow_runs r ON r.id = j.run_id
+                SET j.status = 'canceled', j.last_error = 'Fila limpa pelo admin'
+                WHERE r.flow_id = :id AND j.status IN ('queued', 'scheduled', 'retry')
+            ");
+            $stJobs->execute(['id' => $id]);
+            $canceledJobsCount = $stJobs->rowCount();
+            $stRuns = $pdo->prepare("
+                UPDATE automation_flow_runs 
+                SET status = 'canceled', finished_at = NOW(), last_error = 'Fila limpa pelo admin'
+                WHERE flow_id = :id AND status IN ('running', 'queued')
+            ");
+            $stRuns->execute(['id' => $id]);
+            header('Location: automacoes.php?view=flows&cleared=1&jobs_canceled=' . $canceledJobsCount);
+            exit;
+        }
         if ($action === 'test_flow') {
             $id = (int)($_POST['id'] ?? 0);
             $flow = automation_flow_find($pdo, $id);
@@ -524,6 +545,7 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
             <a class="btn btn-ghost btn-xs" href="automacoes.php?id=<?=(int)$f['id']?>">Editar</a>
             <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="test_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Gera 1 disparo de teste e envia na hora para a integração">Testar</button></form>
             <form method="post" onsubmit="return confirm('Deseja re-enfileirar e disparar as execuções pendentes/com falha deste fluxo?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_flow"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?> title="Reprocessa apenas pendentes ou com falha">Reprocessar Pendentes</button></form>
+            <form method="post" onsubmit="return confirm('Deseja CANCELAR e LIMPAR todas as etapas pendentes deste fluxo SEM disparar nada para os alunos?')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clear_flow_queue"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" style="color:#f87171;border-color:#ef4444;" <?=$canWrite?'':'disabled'?> title="Cancela e descarta tarefas pendentes na fila sem disparar mensagens">Limpar Fila</button></form>
             <form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="clone"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>>Clonar</button></form>
             <?php if($f['current_version_id']): ?><form method="post"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-ghost btn-xs" <?=$canWrite?'':'disabled'?>><?=$f['status']==='active'?'Pausar':'Ativar'?></button></form><?php endif; ?>
             <form method="post" onsubmit="return confirm('Excluir este fluxo central? O histórico permanece nos logs, mas ele sai da gestão.')"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?=(int)$f['id']?>"><button class="btn btn-danger btn-xs" <?=$canWrite?'':'disabled'?>>Excluir</button></form>
