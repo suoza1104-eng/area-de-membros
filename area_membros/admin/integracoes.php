@@ -123,6 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'sync_meta_now') {
         try {
             $id = (int)($_POST['meta_id'] ?? 0);
+            require_once __DIR__ . '/../app/metrics.php';
             require_once __DIR__ . '/../app/metrics/meta_api.php';
             
             if ($id > 0) {

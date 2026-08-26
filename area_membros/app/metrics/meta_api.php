@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../metrics.php';
 
 function meta_graph_url($path) {
     $base = rtrim((string) app_config('meta', 'graph_base_url'), '/');
