@@ -43,6 +43,42 @@ function af_test_new_logs(PDO $pdo, string $table, int $afterId): array
         return [];
     }
 }
+function af_reprocess_integration_job(PDO $pdo, int $jobId): array
+{
+    $st = $pdo->prepare("
+        SELECT j.*,r.flow_id,r.status run_status,v.graph_json
+          FROM automation_flow_jobs j
+          JOIN automation_flow_runs r ON r.id=j.run_id
+          JOIN automation_flow_versions v ON v.id=r.version_id
+         WHERE j.id=:id
+         LIMIT 1
+    ");
+    $st->execute(['id' => $jobId]);
+    $job = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$job) throw new RuntimeException('Job de automacao nao encontrado.');
+
+    $graph = json_decode((string)$job['graph_json'], true) ?: [];
+    $node = automation_flow_find_node($graph, (string)$job['node_id']);
+    if (!$node || (string)($node['type'] ?? '') !== 'integration') {
+        throw new RuntimeException('Somente blocos de integracao podem ser reenviados por aqui.');
+    }
+
+    $channel = automation_flow_job_channel($node);
+    if (!in_array($channel, ['webhook', 'manychat', 'superfuncionario'], true)) {
+        throw new RuntimeException('Canal de integracao nao suportado para reenvio.');
+    }
+
+    $pdo->prepare("UPDATE automation_flow_runs SET status='running',finished_at=NULL,last_error=NULL WHERE id=:id")
+        ->execute(['id' => (int)$job['run_id']]);
+    $pdo->prepare("
+        UPDATE automation_flow_jobs
+           SET channel=:channel,status='queued',available_at=NOW(),attempts=0,lease_token=NULL,lease_until=NULL,
+               output_json=NULL,last_error=NULL,input_json=COALESCE(NULLIF(input_json,''),'{}')
+         WHERE id=:id
+    ")->execute(['channel' => $channel, 'id' => $jobId]);
+
+    return automation_flow_process_channel($pdo, $channel, 1, (int)$job['flow_id']);
+}
 function af_flow_test_extra(PDO $pdo, array $trigger, array $user): array
 {
     $filter = trim((string)($trigger['config']['filter'] ?? ''));
@@ -406,6 +442,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: automacoes.php?view=flows&cleared=1&jobs_canceled=' . $canceledJobsCount);
             exit;
         }
+        if ($action === 'reprocess_integration_job') {
+            $jobId = (int)($_POST['job_id'] ?? 0);
+            if ($jobId <= 0) throw new RuntimeException('Job invalido para reenvio.');
+            $res = af_reprocess_integration_job($pdo, $jobId);
+            $return = trim((string)($_POST['return_to'] ?? ''));
+            if ($return === '' || strncmp($return, 'automacoes.php?', 15) !== 0) {
+                $return = 'automacoes.php?view=logs';
+            }
+            $sep = str_contains($return, '?') ? '&' : '?';
+            header('Location: ' . $return . $sep . 'resent=1&dispatched=' . (int)($res['processed'] ?? 0));
+            exit;
+        }
         if ($action === 'test_flow') {
             $id = (int)($_POST['id'] ?? 0);
             $flow = automation_flow_find($pdo, $id);
@@ -544,8 +592,9 @@ if ($logStatus !== '') { $logWhere[] = 's.status=:status'; $logParams['status'] 
 if ($logDe !== '') { $logWhere[] = 's.started_at>=:de'; $logParams['de'] = $logDe . ' 00:00:00'; }
 if ($logAte !== '') { $logWhere[] = 's.started_at<=:ate'; $logParams['ate'] = $logAte . ' 23:59:59'; }
 $logWhereSql = $logWhere ? ('WHERE ' . implode(' AND ', $logWhere)) : '';
-$logsStmt = $pdo->prepare("SELECT s.*,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
+$logsStmt = $pdo->prepare("SELECT s.*,j.id reprocess_job_id,j.channel job_channel,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
     FROM automation_flow_steps s
+    LEFT JOIN automation_flow_jobs j ON j.id=s.job_id
     JOIN automation_flow_runs r ON r.id=s.run_id
     JOIN automation_flows f ON f.id=r.flow_id
     LEFT JOIN users u ON u.id=r.user_id
@@ -747,6 +796,7 @@ include __DIR__ . '/_header.php';
   <?php if(isset($_GET['cloned'])): ?><div class="af-msg">Fluxo clonado como rascunho.</div><?php endif; ?>
   <?php if(isset($_GET['processed'])): ?><div class="af-msg">Fila processada: <?=(int)$_GET['processed']?> etapa(s) executada(s).</div><?php endif; ?>
   <?php if(isset($_GET['reprocessed'])): ?><div class="af-msg">Reprocessamento concluído: <?=(int)$_GET['reprocessed']?> execução(ões) pendente(s)/com falha re-enfileirada(s) e <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) disparada(s).</div><?php endif; ?>
+  <?php if(isset($_GET['resent'])): ?><div class="af-msg">Reenvio solicitado: <?=(int)($_GET['dispatched'] ?? 0)?> etapa(s) de integração processada(s).</div><?php endif; ?>
   <?php if(isset($_GET['tested'])): ?><div class="af-msg">Disparo de teste gerado e enviado com sucesso para a integração! Confira na aba Logs detalhados.</div><?php endif; ?>
   <?php if(isset($_GET['diagnosed'])): ?><div class="af-msg">Diagnóstico executado com sucesso! Foram analisados todos os fluxos ativos e a infraestrutura.</div><?php endif; ?>
   <?php if(isset($_GET['acknowledged'])): ?><div class="af-msg">Ciência registrada com sucesso. Alertas arquivados.</div><?php endif; ?>
@@ -937,7 +987,7 @@ Object.entries(types).forEach(([t,m])=>{const b=document.createElement('button')
       <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
       <a class="reset-link" href="automacoes.php?view=logs">Limpar</a>
     </form>
-    <div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="6">Nenhum log encontrado para os filtros selecionados.</td></tr><?php endif; ?></tbody></table></div>
+    <div class="af-table"><table><thead><tr><th>Data</th><th>Fluxo</th><th>Aluno</th><th>Bloco</th><th>Status</th><th>Erro/Saída</th><th>Ações</th></tr></thead><tbody><?php foreach($logs as $l): ?><tr><td><?=af_h(date('d/m/Y H:i', strtotime((string)$l['started_at'])))?></td><td><a href="automacoes.php?id=<?=(int)$l['flow_id']?>"><?=af_h($l['flow_name'])?></a></td><td><?=af_h(($l['nome'] ?: '-') . ' ' . ($l['email'] ?: ''))?></td><td><?=af_h($l['node_type'])?><div class="text-muted"><?=af_h($l['node_id'])?></div></td><td><span class="af-pill"><?=af_h($l['status'])?></span></td><td class="text-muted"><?=af_h($l['error_message'] ?: mb_substr((string)$l['output_json'],0,220))?></td><td><?php if($canWrite && (string)$l['node_type']==='integration' && (int)($l['reprocess_job_id'] ?? 0)>0): ?><form method="post" onsubmit="return confirm('Reenviar esta integração agora? Isso pode duplicar a ação no destino.')" style="margin:0"><input type="hidden" name="csrf" value="<?=af_h($csrf)?>"><input type="hidden" name="action" value="reprocess_integration_job"><input type="hidden" name="job_id" value="<?=(int)$l['reprocess_job_id']?>"><input type="hidden" name="return_to" value="<?=af_h('automacoes.php?' . http_build_query($_GET))?>"><button class="btn btn-ghost btn-xs" type="submit">Reenviar</button></form><?php endif; ?></td></tr><?php endforeach; ?><?php if(!$logs): ?><tr><td colspan="7">Nenhum log encontrado para os filtros selecionados.</td></tr><?php endif; ?></tbody></table></div>
   </section>
 <?php elseif($view === 'flows'): ?>
   <section class="af-card">

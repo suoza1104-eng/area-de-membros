@@ -112,11 +112,14 @@ function payment_event_codes(string $provider, string $status): array
 function payment_event_compact_payload(array $row): array
 {
     $keys = [
-        'gateway','evento','status','transaction_code','provider_transaction_id','payment_method','currency',
+        'gateway','provider','evento','event_code','status','normalized_status','transaction_code','transacao_id',
+        'provider_transaction_id','payment_method','metodo_pagamento','currency',
         'valor_bruto','valor_liquido','taxa','gross_amount_cents','net_amount_cents','fee_amount_cents',
-        'installments','product_name','product_code','checkout_id','checkout_url','pix_qrcode','pix_qrcode_url',
-        'pix_expires_at','boleto_url','boleto_line','buyer_name','buyer_email','buyer_phone','buyer_document',
-        'payment_event_id','occurred_at','metadata',
+        'installments','parcelas','product_name','produto_nome','product_code','produto_id','checkout_id',
+        'checkout_url','pix_qrcode','pix_qrcode_url','pix_expires_at','boleto_url','boleto_line',
+        'buyer_name','comprador_nome','buyer_email','comprador_email','buyer_phone','comprador_telefone',
+        'buyer_document','comprador_documento',
+        'payment_event_id','occurred_at','aluno_identificado','metadata',
     ];
     $out = [];
     foreach ($keys as $key) {
@@ -258,23 +261,42 @@ function payment_event_register(PDO $pdo, array $data): array
         );
 
         if ($isNew && !$alreadyTriggeredBusiness && $userId > 0 && $eventId > 0 && function_exists('capturar_fluxos_automacao')) {
+            $productName = trim((string)($data['product_name'] ?? ''));
+            $productCode = trim((string)($data['product_code'] ?? ''));
+            $paymentMethod = trim((string)($data['payment_method'] ?? ''));
+            $buyerName = trim((string)($data['buyer_name'] ?? ''));
+            $buyerEmail = trim((string)($data['buyer_email'] ?? ''));
+            $buyerPhone = trim((string)($data['buyer_phone'] ?? ''));
+            $buyerDocument = trim((string)($data['buyer_document'] ?? ''));
+            $grossCents = (int)($data['gross_amount_cents'] ?? 0);
+            $netCents = (int)($data['net_amount_cents'] ?? 0);
+            $feeCents = (int)($data['fee_amount_cents'] ?? 0);
+            $installments = (int)($data['installments'] ?? 0) ?: null;
             $extra = payment_event_compact_payload([
                 'gateway'=>$provider,
+                'provider'=>$provider,
                 'evento'=>$eventCode,
+                'event_code'=>$eventCode,
                 'status'=>$status,
+                'normalized_status'=>$status,
                 'transaction_code'=>$transactionCode,
+                'transacao_id'=>$transactionCode,
                 'provider_transaction_id'=>$data['provider_transaction_id'] ?? '',
-                'payment_method'=>$data['payment_method'] ?? '',
+                'payment_method'=>$paymentMethod,
+                'metodo_pagamento'=>$paymentMethod,
                 'currency'=>$data['currency'] ?? 'BRL',
-                'valor_bruto'=>((int)($data['gross_amount_cents'] ?? 0)) / 100,
-                'valor_liquido'=>((int)($data['net_amount_cents'] ?? 0)) / 100,
-                'taxa'=>((int)($data['fee_amount_cents'] ?? 0)) / 100,
-                'gross_amount_cents'=>(int)($data['gross_amount_cents'] ?? 0),
-                'net_amount_cents'=>(int)($data['net_amount_cents'] ?? 0),
-                'fee_amount_cents'=>(int)($data['fee_amount_cents'] ?? 0),
-                'installments'=>$data['installments'] ?? null,
-                'product_name'=>$data['product_name'] ?? '',
-                'product_code'=>$data['product_code'] ?? '',
+                'valor_bruto'=>$grossCents / 100,
+                'valor_liquido'=>$netCents / 100,
+                'taxa'=>$feeCents / 100,
+                'gross_amount_cents'=>$grossCents,
+                'net_amount_cents'=>$netCents,
+                'fee_amount_cents'=>$feeCents,
+                'installments'=>$installments,
+                'parcelas'=>$installments,
+                'product_name'=>$productName,
+                'produto_nome'=>$productName,
+                'product_code'=>$productCode,
+                'produto_id'=>$productCode,
                 'checkout_id'=>$data['checkout_id'] ?? '',
                 'checkout_url'=>$data['checkout_url'] ?? '',
                 'pix_qrcode'=>$data['pix_qrcode'] ?? '',
@@ -282,12 +304,17 @@ function payment_event_register(PDO $pdo, array $data): array
                 'pix_expires_at'=>$data['pix_expires_at'] ?? '',
                 'boleto_url'=>$data['boleto_url'] ?? '',
                 'boleto_line'=>$data['boleto_line'] ?? '',
-                'buyer_name'=>$data['buyer_name'] ?? '',
-                'buyer_email'=>$data['buyer_email'] ?? '',
-                'buyer_phone'=>$data['buyer_phone'] ?? '',
-                'buyer_document'=>$data['buyer_document'] ?? '',
+                'buyer_name'=>$buyerName,
+                'comprador_nome'=>$buyerName,
+                'buyer_email'=>$buyerEmail,
+                'comprador_email'=>$buyerEmail,
+                'buyer_phone'=>$buyerPhone,
+                'comprador_telefone'=>$buyerPhone,
+                'buyer_document'=>$buyerDocument,
+                'comprador_documento'=>$buyerDocument,
                 'payment_event_id'=>$eventId,
                 'occurred_at'=>$data['occurred_at'] ?? date('Y-m-d H:i:s'),
+                'aluno_identificado'=>$userId > 0 ? 1 : 0,
                 'metadata'=>$metadata,
             ]);
             capturar_fluxos_automacao($eventCode, $userId, $extra);

@@ -14,8 +14,84 @@ declare(strict_types=1);
  *  - extra:     dados extras do contexto completo
  *  - timestamp: data/hora em ISO-8601
  */
+function wh_first_non_empty(array $values)
+{
+    foreach ($values as $value) {
+        if ($value !== null && $value !== '') return $value;
+    }
+    return null;
+}
+
+function wh_normalize_payment_extra(array $extra): array
+{
+    $provider = wh_first_non_empty([$extra['provider'] ?? null, $extra['gateway'] ?? null, $extra['origem'] ?? null]);
+    if ($provider !== null) {
+        $extra['provider'] = $extra['provider'] ?? $provider;
+        $extra['gateway'] = $extra['gateway'] ?? $provider;
+    }
+
+    $eventCode = wh_first_non_empty([$extra['event_code'] ?? null, $extra['evento'] ?? null]);
+    if ($eventCode !== null) {
+        $extra['event_code'] = $extra['event_code'] ?? $eventCode;
+        $extra['evento'] = $extra['evento'] ?? $eventCode;
+    }
+
+    $status = wh_first_non_empty([$extra['normalized_status'] ?? null, $extra['status'] ?? null]);
+    if ($status !== null) {
+        $extra['normalized_status'] = $extra['normalized_status'] ?? $status;
+        $extra['status'] = $extra['status'] ?? $status;
+    }
+
+    $transaction = wh_first_non_empty([$extra['transaction_code'] ?? null, $extra['transacao_id'] ?? null]);
+    if ($transaction !== null) {
+        $extra['transaction_code'] = $extra['transaction_code'] ?? $transaction;
+        $extra['transacao_id'] = $extra['transacao_id'] ?? $transaction;
+    }
+
+    $paymentMethod = wh_first_non_empty([$extra['payment_method'] ?? null, $extra['metodo_pagamento'] ?? null]);
+    if ($paymentMethod !== null) {
+        $extra['payment_method'] = $extra['payment_method'] ?? $paymentMethod;
+        $extra['metodo_pagamento'] = $extra['metodo_pagamento'] ?? $paymentMethod;
+    }
+
+    $installments = wh_first_non_empty([$extra['installments'] ?? null, $extra['parcelas'] ?? null]);
+    if ($installments !== null) {
+        $extra['installments'] = $extra['installments'] ?? $installments;
+        $extra['parcelas'] = $extra['parcelas'] ?? $installments;
+    }
+
+    $productName = wh_first_non_empty([$extra['product_name'] ?? null, $extra['produto_nome'] ?? null]);
+    if ($productName !== null) {
+        $extra['product_name'] = $extra['product_name'] ?? $productName;
+        $extra['produto_nome'] = $extra['produto_nome'] ?? $productName;
+    }
+
+    $productCode = wh_first_non_empty([$extra['product_code'] ?? null, $extra['produto_id'] ?? null]);
+    if ($productCode !== null) {
+        $extra['product_code'] = $extra['product_code'] ?? $productCode;
+        $extra['produto_id'] = $extra['produto_id'] ?? $productCode;
+    }
+
+    $buyerAliases = [
+        ['buyer_name', 'comprador_nome'],
+        ['buyer_email', 'comprador_email'],
+        ['buyer_phone', 'comprador_telefone'],
+        ['buyer_document', 'comprador_documento'],
+    ];
+    foreach ($buyerAliases as $keys) {
+        $value = wh_first_non_empty(array_map(static fn($key) => $extra[$key] ?? null, $keys));
+        if ($value === null) continue;
+        foreach ($keys as $key) {
+            $extra[$key] = $extra[$key] ?? $value;
+        }
+    }
+
+    return $extra;
+}
+
 function build_webhook_payload(string $evento, array $user, array $extra = []): array
 {
+    $extra = wh_normalize_payment_extra($extra);
     $uid = (int)($user['id'] ?? 0);
     $magicLink = '';
     if ($uid > 0 && function_exists('gerar_magic_link')) {
@@ -238,8 +314,66 @@ function wh_get_user_live_at(PDO $pdo, array $user): ?string
     return null;
 }
 
+function wh_enrich_extra_with_payment_product(PDO $pdo, array $extra): array
+{
+    if (!empty($extra['product_name']) || !empty($extra['produto_nome'])) {
+        return $extra;
+    }
+
+    $transaction = trim((string)($extra['transaction_code'] ?? $extra['transacao_id'] ?? ''));
+    $checkoutId = trim((string)($extra['checkout_id'] ?? ''));
+    if ($transaction === '' && $checkoutId === '') {
+        return $extra;
+    }
+
+    $lookups = [];
+    if ($transaction !== '') {
+        $lookups[] = [
+            "SELECT product_name, external_product_id AS product_code FROM payment_sales WHERE external_transaction_id=:value AND product_name IS NOT NULL AND product_name<>'' ORDER BY last_received_at DESC LIMIT 1",
+            $transaction,
+        ];
+        $lookups[] = [
+            "SELECT product_name, product_code FROM student_payment_events WHERE transaction_code=:value AND product_name IS NOT NULL AND product_name<>'' ORDER BY last_seen_at DESC LIMIT 1",
+            $transaction,
+        ];
+    }
+    if ($checkoutId !== '') {
+        $lookups[] = [
+            "SELECT product_name, external_product_id AS product_code FROM payment_sales WHERE external_checkout_id=:value AND product_name IS NOT NULL AND product_name<>'' ORDER BY last_received_at DESC LIMIT 1",
+            $checkoutId,
+        ];
+        $lookups[] = [
+            "SELECT product_name, product_code FROM student_payment_events WHERE checkout_id=:value AND product_name IS NOT NULL AND product_name<>'' ORDER BY last_seen_at DESC LIMIT 1",
+            $checkoutId,
+        ];
+    }
+
+    foreach ($lookups as [$sql, $value]) {
+        try {
+            $st = $pdo->prepare($sql);
+            $st->execute([':value' => $value]);
+            $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+            $productName = trim((string)($row['product_name'] ?? ''));
+            if ($productName === '') continue;
+
+            $extra['product_name'] = $productName;
+            $extra['produto_nome'] = $extra['produto_nome'] ?? $productName;
+            $productCode = trim((string)($row['product_code'] ?? ''));
+            if ($productCode !== '' && empty($extra['product_code'])) {
+                $extra['product_code'] = $productCode;
+            }
+            return $extra;
+        } catch (Throwable $e) {
+            continue;
+        }
+    }
+
+    return $extra;
+}
+
 function wh_enrich_extra_with_codigo_live(PDO $pdo, array $user, array $extra): array
 {
+    $extra = wh_enrich_extra_with_payment_product($pdo, $extra);
     $turmaCodigo = wh_get_turma_codigo_from_context($pdo, $user, $extra);
 
     if (empty($extra['codigo_live'])) {
