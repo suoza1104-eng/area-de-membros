@@ -49,9 +49,9 @@ if (!function_exists('starts_with_value')) {
 if (!function_exists('normalize_account_id')) {
     function normalize_account_id($value): string
     {
-        $value = trim((string)$value);
-        if ($value === '') return '';
-        return starts_with_value($value, 'act_') ? $value : 'act_' . preg_replace('/\D+/', '', $value);
+        $digits = preg_replace('/\D+/', '', (string)$value);
+        if ($digits === '') return '';
+        return 'act_' . $digits;
     }
 }
 
