@@ -534,9 +534,15 @@ function meta_get_usd_brl_rate(): float
 
 function meta_effective_fx_rate(array $integration): float
 {
+    $rates = meta_fx_rates($integration);
+    return $rates['effective'];
+}
+
+function meta_fx_rates(array $integration): array
+{
     $currency = strtoupper(trim((string)($integration['currency'] ?? 'BRL')));
     if ($currency !== 'USD') {
-        return 1.0;
+        return ['base' => 1.0, 'effective' => 1.0];
     }
     $autoFx = !empty($integration['auto_fx']);
     $baseRate = $autoFx ? meta_get_usd_brl_rate() : (float)($integration['fx_rate'] ?? 5.50);
@@ -544,7 +550,10 @@ function meta_effective_fx_rate(array $integration): float
 
     $spreadPct = (float)($integration['fx_spread_pct'] ?? 0.0);
     $effectiveRate = $baseRate * (1.0 + ($spreadPct / 100.0));
-    return round($effectiveRate, 4);
+    return [
+        'base' => round($baseRate, 4),
+        'effective' => round($effectiveRate, 4),
+    ];
 }
 
 function finish_sync_run($pdo, int $syncRunId, string $status, int $rowsUpserted, ?string $message = null) {
@@ -567,14 +576,18 @@ function sync_meta_level($pdo, array $integration, string $level, string $since,
     try {
         $statusMap = $level === 'account' ? [] : meta_fetch_status_map($accessToken, $adAccountId, $level);
         $rows = meta_fetch_insights($accessToken, $adAccountId, $level, $since, $until);
-        $fxRate = meta_effective_fx_rate($integration);
+        $fx = meta_fx_rates($integration);
+        $effectiveFx = $fx['effective'];
+        $baseFx = $fx['base'];
         $count = 0;
 
         foreach ($rows as $row) {
-            if ($fxRate > 0 && abs($fxRate - 1.0) > 0.0001) {
-                if (isset($row['spend'])) $row['spend'] = (float)$row['spend'] * $fxRate;
-                if (isset($row['cpc'])) $row['cpc'] = (float)$row['cpc'] * $fxRate;
-                if (isset($row['cpm'])) $row['cpm'] = (float)$row['cpm'] * $fxRate;
+            if ($effectiveFx > 0 && abs($effectiveFx - 1.0) > 0.0001) {
+                if (isset($row['spend'])) $row['spend'] = (float)$row['spend'] * $effectiveFx;
+            }
+            if ($baseFx > 0 && abs($baseFx - 1.0) > 0.0001) {
+                if (isset($row['cpc'])) $row['cpc'] = (float)$row['cpc'] * $baseFx;
+                if (isset($row['cpm'])) $row['cpm'] = (float)$row['cpm'] * $baseFx;
             }
             switch ($level) {
                 case 'account':
