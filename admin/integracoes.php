@@ -43,7 +43,7 @@ function int_filter_base(string $alias, string $dateCol, array &$params, string 
 }
 
 $tab = (string)($_GET['tab'] ?? 'logs');
-if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','logs'], true)) $tab = 'logs';
+if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','meta','logs'], true)) $tab = 'logs';
 
 $source = (string)($_GET['source'] ?? 'todos');
 $status = (string)($_GET['status'] ?? 'todos');
