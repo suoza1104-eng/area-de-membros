@@ -45,6 +45,119 @@ function int_filter_base(string $alias, string $dateCol, array &$params, string 
 $tab = (string)($_GET['tab'] ?? 'logs');
 if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','meta','logs'], true)) $tab = 'logs';
 
+$msgOk = '';
+$msgError = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = (string)($_POST['action'] ?? '');
+    
+    if ($action === 'save_meta') {
+        try {
+            $id = (int)($_POST['meta_id'] ?? 0);
+            $name = trim((string)($_POST['meta_name'] ?? 'Meta Business Manager'));
+            $adAccountId = trim((string)($_POST['meta_ad_account_id'] ?? ''));
+            $appId = trim((string)($_POST['meta_app_id'] ?? ''));
+            $appSecret = trim((string)($_POST['meta_app_secret'] ?? ''));
+            $accessToken = trim((string)($_POST['meta_access_token'] ?? ''));
+            $syncInterval = max(5, min(1440, (int)($_POST['meta_sync_interval'] ?? 30)));
+            $status = in_array($_POST['meta_status'] ?? '', ['active', 'inactive'], true) ? $_POST['meta_status'] : 'active';
+            
+            if ($adAccountId !== '' && !str_starts_with($adAccountId, 'act_')) {
+                $adAccountId = 'act_' . ltrim($adAccountId, 'act_');
+            }
+            if ($adAccountId === '') throw new RuntimeException('Informe o ID da conta de anúncios (ex: act_123456789).');
+
+            if ($id > 0) {
+                $stmt = $pdo->prepare("
+                    UPDATE meta_integrations SET 
+                        name = :name,
+                        ad_account_id = :ad_account_id,
+                        app_id = :app_id,
+                        app_secret = CASE WHEN :app_secret = '' THEN app_secret ELSE :app_secret END,
+                        access_token = CASE WHEN :access_token = '' THEN access_token ELSE :access_token END,
+                        sync_interval_minutes = :sync_interval,
+                        status = :status,
+                        updated_at = NOW()
+                    WHERE id = :id
+                ");
+                $stmt->execute([
+                    ':name' => $name,
+                    ':ad_account_id' => $adAccountId,
+                    ':app_id' => $appId ?: null,
+                    ':app_secret' => $appSecret,
+                    ':access_token' => $accessToken,
+                    ':sync_interval' => $syncInterval,
+                    ':status' => $status,
+                    ':id' => $id,
+                ]);
+                $msgOk = "Integração Meta '{$name}' atualizada com sucesso!";
+            } else {
+                if ($accessToken === '') throw new RuntimeException('Informe o Meta Access Token para cadastrar uma nova BM/Conta.');
+                $stmt = $pdo->prepare("
+                    INSERT INTO meta_integrations 
+                    (name, app_id, app_secret, access_token, ad_account_id, status, sync_interval_minutes, timezone, created_at, updated_at) 
+                    VALUES (:name, :app_id, :app_secret, :access_token, :ad_account_id, :status, :sync_interval, 'America/Sao_Paulo', NOW(), NOW())
+                ");
+                $stmt->execute([
+                    ':name' => $name,
+                    ':app_id' => $appId ?: null,
+                    ':app_secret' => $appSecret ?: null,
+                    ':access_token' => $accessToken,
+                    ':ad_account_id' => $adAccountId,
+                    ':status' => $status,
+                    ':sync_interval' => $syncInterval,
+                ]);
+                $msgOk = "Nova integração Meta '{$name}' cadastrada com sucesso!";
+            }
+        } catch (Throwable $e) {
+            $msgError = "Erro ao salvar integração Meta: " . $e->getMessage();
+        }
+    } elseif ($action === 'toggle_meta_status') {
+        try {
+            $id = (int)($_POST['meta_id'] ?? 0);
+            $pdo->prepare("UPDATE meta_integrations SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END, updated_at = NOW() WHERE id = :id")->execute([':id' => $id]);
+            $msgOk = "Status da integração alterado com sucesso!";
+        } catch (Throwable $e) {
+            $msgError = "Erro ao alterar status: " . $e->getMessage();
+        }
+    } elseif ($action === 'sync_meta_now') {
+        try {
+            $id = (int)($_POST['meta_id'] ?? 0);
+            require_once __DIR__ . '/../app/metrics/meta_api.php';
+            
+            if ($id > 0) {
+                $stmt = $pdo->prepare("SELECT * FROM meta_integrations WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $id]);
+                $integs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            } else {
+                $integs = $pdo->query("SELECT * FROM meta_integrations WHERE status = 'active'")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+            if (!$integs) throw new RuntimeException('Nenhuma integração ativa encontrada para sincronizar.');
+            
+            $since = date('Y-m-d', strtotime('-3 days'));
+            $until = date('Y-m-d');
+            $totalRows = 0;
+            foreach ($integs as $integ) {
+                foreach (['account', 'campaign', 'adset', 'ad'] as $level) {
+                    $res = sync_meta_level($pdo, $integ, $level, $since, $until);
+                    $totalRows += (int)($res['rows'] ?? 0);
+                }
+            }
+            $msgOk = "Sincronização concluída com sucesso! {$totalRows} registros de campanhas/anúncios atualizados.";
+        } catch (Throwable $e) {
+            $msgError = "Erro ao sincronizar com Meta Graph API: " . $e->getMessage();
+        }
+    } elseif ($action === 'delete_meta') {
+        try {
+            $id = (int)($_POST['meta_id'] ?? 0);
+            $pdo->prepare("DELETE FROM meta_integrations WHERE id = :id")->execute([':id' => $id]);
+            $msgOk = "Integração Meta excluída com sucesso.";
+        } catch (Throwable $e) {
+            $msgError = "Erro ao excluir integração: " . $e->getMessage();
+        }
+    }
+}
+
 $source = (string)($_GET['source'] ?? 'todos');
 $status = (string)($_GET['status'] ?? 'todos');
 $evento = trim((string)($_GET['evento'] ?? ''));
@@ -58,6 +171,7 @@ $stats = [
     'hub' => int_table_exists($pdo, 'integration_events') ? (int)$pdo->query("SELECT COUNT(*) FROM integration_events")->fetchColumn() : 0,
     'sf' => int_table_exists($pdo, 'superfuncionario_rules') ? (int)$pdo->query("SELECT COUNT(*) FROM superfuncionario_rules")->fetchColumn() : 0,
     'manychat' => int_table_exists($pdo, 'manychat_rules') ? (int)$pdo->query("SELECT COUNT(*) FROM manychat_rules")->fetchColumn() : 0,
+    'meta' => int_table_exists($pdo, 'meta_integrations') ? (int)$pdo->query("SELECT COUNT(*) FROM meta_integrations")->fetchColumn() : 0,
     'payment_events' => int_table_exists($pdo, 'student_payment_events') ? (int)$pdo->query("SELECT COUNT(*) FROM student_payment_events")->fetchColumn() : 0,
 ];
 
@@ -343,7 +457,7 @@ include __DIR__ . '/_header.php';
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <?php if ($metaIntegrations): ?>
-            <form method="post" style="margin:0;">
+            <form method="post" action="integracoes.php?tab=meta" style="margin:0;">
               <input type="hidden" name="action" value="sync_meta_now">
               <button class="int-btn primary" type="submit" title="Executa a sincronização via Graph API para todas as BMs ativas">⚡ Sincronizar Todas Agora</button>
             </form>
@@ -355,7 +469,7 @@ include __DIR__ . '/_header.php';
       <!-- FORMULÁRIO DE NOVA / EDIÇÃO DE BM -->
       <div id="metaFormContainer" style="display: <?= $editingMeta || empty($metaIntegrations) ? 'block' : 'none' ?>; background:#081020; border:1px solid var(--border); border-radius:10px; padding:18px; margin-bottom:20px;">
         <h3 style="margin:0 0 14px;font-size:14px;color:#fff;"><?= $editingMeta ? '✏️ Editar BM / Conta Meta: ' . int_h($editingMeta['name']) : '➕ Cadastrar Nova Business Manager (BM) / Conta Meta' ?></h3>
-        <form method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end;">
+        <form method="post" action="integracoes.php?tab=meta" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end;">
           <input type="hidden" name="action" value="save_meta">
           <input type="hidden" name="meta_id" value="<?= (int)($editingMeta['id'] ?? 0) ?>">
           
@@ -426,7 +540,7 @@ include __DIR__ . '/_header.php';
               </div>
 
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                <form method="post" style="margin:0;">
+                <form method="post" action="integracoes.php?tab=meta" style="margin:0;">
                   <input type="hidden" name="action" value="sync_meta_now">
                   <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
                   <button class="int-btn primary" style="padding:6px 10px;font-size:11px;" type="submit" title="Sincronizar esta BM agora com a API Graph">⚡ Sincronizar Agora</button>
@@ -434,13 +548,13 @@ include __DIR__ . '/_header.php';
 
                 <a class="int-btn" style="padding:6px 10px;font-size:11px;" href="integracoes.php?tab=meta&edit_meta=<?= (int)$m['id'] ?>">✏️ Editar</a>
 
-                <form method="post" style="margin:0;">
+                <form method="post" action="integracoes.php?tab=meta" style="margin:0;">
                   <input type="hidden" name="action" value="toggle_meta_status">
                   <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
                   <button class="int-btn" style="padding:6px 10px;font-size:11px;" type="submit"><?= $isActive ? '⏸️ Pausar' : '▶️ Ativar' ?></button>
                 </form>
 
-                <form method="post" style="margin:0;" onsubmit="return confirm('Deseja excluir a integração com a BM \'<?= int_h($m['name']) ?>\'?')">
+                <form method="post" action="integracoes.php?tab=meta" style="margin:0;" onsubmit="return confirm('Deseja excluir a integração com a BM \'<?= int_h($m['name']) ?>\'?')">
                   <input type="hidden" name="action" value="delete_meta">
                   <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
                   <button class="int-btn" style="padding:6px 10px;font-size:11px;color:#f87171;border-color:#ef4444;" type="submit">🗑️ Excluir</button>
