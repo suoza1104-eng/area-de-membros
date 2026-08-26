@@ -460,17 +460,20 @@ function fetch_manual_attribution_rows_attr(PDO $pdo): array
     return $out;
 }
 
-function build_meta_name_lookup(PDO $pdo, int $integrationId): array
+function build_meta_name_lookup(PDO $pdo, int $integrationId = 0): array
 {
     $campaigns = []; $adsets = []; $ads = [];
-    $stmt = $pdo->prepare("SELECT campaign_name FROM meta_campaign_daily WHERE integration_id = :id AND campaign_name <> '' GROUP BY campaign_name ORDER BY campaign_name");
-    $stmt->execute(['id' => $integrationId]);
+    $whereInteg = $integrationId > 0 ? "WHERE integration_id = :id AND" : "WHERE";
+    $params = $integrationId > 0 ? ['id' => $integrationId] : [];
+
+    $stmt = $pdo->prepare("SELECT campaign_name FROM meta_campaign_daily {$whereInteg} campaign_name <> '' GROUP BY campaign_name ORDER BY campaign_name");
+    $stmt->execute($params);
     foreach ($stmt->fetchAll() as $row) {
         $name = trim((string)$row['campaign_name']);
         if ($name !== '') { $campaigns[normalize_match_key($name)] = $name; }
     }
-    $stmt = $pdo->prepare("SELECT campaign_name, adset_name FROM meta_adset_daily WHERE integration_id = :id AND campaign_name <> '' AND adset_name <> '' GROUP BY campaign_name, adset_name ORDER BY campaign_name, adset_name");
-    $stmt->execute(['id' => $integrationId]);
+    $stmt = $pdo->prepare("SELECT campaign_name, adset_name FROM meta_adset_daily {$whereInteg} campaign_name <> '' AND adset_name <> '' GROUP BY campaign_name, adset_name ORDER BY campaign_name, adset_name");
+    $stmt->execute($params);
     foreach ($stmt->fetchAll() as $row) {
         $campaign = trim((string)$row['campaign_name']);
         $adset = trim((string)$row['adset_name']);
@@ -479,8 +482,8 @@ function build_meta_name_lookup(PDO $pdo, int $integrationId): array
         $adsetNorm = normalize_match_key($adset);
         $adsets[$campaignNorm][$adsetNorm] = $adset;
     }
-    $stmt = $pdo->prepare("SELECT campaign_name, adset_name, ad_name FROM meta_ad_daily WHERE integration_id = :id AND campaign_name <> '' AND adset_name <> '' AND ad_name <> '' GROUP BY campaign_name, adset_name, ad_name ORDER BY campaign_name, adset_name, ad_name");
-    $stmt->execute(['id' => $integrationId]);
+    $stmt = $pdo->prepare("SELECT campaign_name, adset_name, ad_name FROM meta_ad_daily {$whereInteg} campaign_name <> '' AND adset_name <> '' AND ad_name <> '' GROUP BY campaign_name, adset_name, ad_name ORDER BY campaign_name, adset_name, ad_name");
+    $stmt->execute($params);
     foreach ($stmt->fetchAll() as $row) {
         $campaign = trim((string)$row['campaign_name']);
         $adset = trim((string)$row['adset_name']);
@@ -682,7 +685,7 @@ function sync_attribution_matches($pdo, int $integrationId) {
     }
 }
 
-function build_meta_lookup($pdo, int $integrationId, string $startDate) {
+function build_meta_lookup($pdo, int $integrationId = 0, string $startDate = '') {
     $lookup = [];
     $configs = [
         ['table' => 'meta_campaign_daily', 'level' => 'campaign'],
@@ -690,8 +693,19 @@ function build_meta_lookup($pdo, int $integrationId, string $startDate) {
         ['table' => 'meta_ad_daily', 'level' => 'campaign_adset_ad'],
     ];
     foreach ($configs as $cfg) {
-        $stmt = $pdo->prepare("SELECT * FROM {$cfg['table']} WHERE integration_id = :integration_id AND report_date >= :start_date");
-        $stmt->execute(['integration_id' => $integrationId, 'start_date' => $startDate]);
+        $where = [];
+        $params = [];
+        if ($integrationId > 0) {
+            $where[] = "integration_id = :integration_id";
+            $params['integration_id'] = $integrationId;
+        }
+        if ($startDate !== '') {
+            $where[] = "report_date >= :start_date";
+            $params['start_date'] = $startDate;
+        }
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+        $stmt = $pdo->prepare("SELECT * FROM {$cfg['table']} {$whereSql}");
+        $stmt->execute($params);
         while ($row = $stmt->fetch()) {
             $date = (string)$row['report_date'];
             $campaignGroupNorm = normalize_match_key($row['campaign_name'] ?? '');
