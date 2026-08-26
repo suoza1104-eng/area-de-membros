@@ -265,18 +265,18 @@ if ($tab === 'logs') {
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.int-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}.int-tabs a{padding:9px 12px;border:1px solid var(--border);border-radius:8px;color:var(--muted);text-decoration:none;background:var(--bg-card);font-size:13px}.int-tabs a.active{color:#fff;border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.12)}.int-grid{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px;margin-bottom:18px}.int-card{border:1px solid var(--border);background:var(--bg-card);border-radius:8px;padding:16px}.int-card small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.int-card strong{display:block;font-size:26px;margin-top:6px}.int-panel{border:1px solid var(--border);background:var(--bg-card);border-radius:8px;padding:18px;margin-bottom:16px}.int-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.int-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:rgba(255,255,255,.05);border-radius:8px;padding:9px 12px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px}.int-btn.primary{background:var(--primary);color:#111;border-color:var(--primary)}.int-filters{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:10px;align-items:end}.int-filters label{display:block;color:var(--muted);font-size:11px;font-weight:700;margin-bottom:4px;text-transform:uppercase}.int-filters input,.int-filters select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:9px}.int-table{width:100%;border-collapse:collapse;table-layout:fixed}.int-table th,.int-table td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left;vertical-align:top;font-size:12px}.int-table th{color:var(--muted);font-size:10px;text-transform:uppercase}.int-badge{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;background:rgba(148,163,184,.12);color:#cbd5e1}.int-badge.ok{background:rgba(34,197,94,.14);color:#86efac}.int-badge.err{background:rgba(239,68,68,.14);color:#fca5a5}.int-muted{color:var(--muted)}.int-summary{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.int-details{margin-top:7px}.int-details pre{white-space:pre-wrap;max-height:280px;overflow:auto;background:#050914;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px}.int-empty{text-align:center;color:var(--muted);padding:34px;border:1px dashed var(--border);border-radius:8px}@media(max-width:1100px){.int-grid{grid-template-columns:repeat(2,1fr)}.int-filters{grid-template-columns:repeat(2,1fr)}.int-table{min-width:980px}.int-scroll{overflow:auto}}@media(max-width:650px){.int-grid,.int-filters{grid-template-columns:1fr}}
+.int-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}.int-tabs a{padding:9px 12px;border:1px solid var(--border);border-radius:8px;color:var(--muted);text-decoration:none;background:var(--bg-card);font-size:13px}.int-tabs a.active{color:#fff;border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.12)}.int-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}.int-card{border:1px solid var(--border);background:var(--bg-card);border-radius:8px;padding:16px}.int-card small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.int-card strong{display:block;font-size:26px;margin-top:6px}.int-panel{border:1px solid var(--border);background:var(--bg-card);border-radius:8px;padding:18px;margin-bottom:16px}.int-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.int-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:rgba(255,255,255,.05);border-radius:8px;padding:9px 12px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer}.int-btn.primary{background:var(--primary);color:#111;border-color:var(--primary)}.int-filters{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:10px;align-items:end}.int-filters label{display:block;color:var(--muted);font-size:11px;font-weight:700;margin-bottom:4px;text-transform:uppercase}.int-filters input,.int-filters select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:9px}.int-table{width:100%;border-collapse:collapse;table-layout:fixed}.int-table th,.int-table td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left;vertical-align:top;font-size:12px}.int-table th{color:var(--muted);font-size:10px;text-transform:uppercase}.int-badge{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;background:rgba(148,163,184,.12);color:#cbd5e1}.int-badge.ok{background:rgba(34,197,94,.14);color:#86efac}.int-badge.err{background:rgba(239,68,68,.14);color:#fca5a5}.int-muted{color:var(--muted)}.int-summary{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.int-details{margin-top:7px}.int-details pre{white-space:pre-wrap;max-height:280px;overflow:auto;background:#050914;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px}.int-empty{text-align:center;color:var(--muted);padding:34px;border:1px dashed var(--border);border-radius:8px}@media(max-width:1100px){.int-grid{grid-template-columns:repeat(2,1fr)}.int-filters{grid-template-columns:repeat(2,1fr)}.int-table{min-width:980px}.int-scroll{overflow:auto}}@media(max-width:650px){.int-grid,.int-filters{grid-template-columns:1fr}}
 </style>
 <div class="main-content">
   <div class="page-header">
     <div>
       <h1 class="page-title">Integrações</h1>
-      <p class="page-subtitle">Webhooks, Hub, SuperFuncionário, ManyChat e logs das integrações.</p>
+      <p class="page-subtitle">Webhooks, Hub, SuperFuncionário, ManyChat, Meta Ads e logs das integrações.</p>
     </div>
   </div>
 
   <nav class="int-tabs">
-    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','logs'=>'Logs'] as $key => $label): ?>
+    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','meta'=>'META (Anúncios)','logs'=>'Logs'] as $key => $label): ?>
       <a class="<?= $tab === $key ? 'active' : '' ?>" href="integracoes.php?tab=<?= int_h($key) ?>"><?= int_h($label) ?></a>
     <?php endforeach; ?>
   </nav>
@@ -287,6 +287,7 @@ include __DIR__ . '/_header.php';
       <div class="int-card"><small>Eventos no Hub</small><strong><?= (int)$stats['hub'] ?></strong></div>
       <div class="int-card"><small>Regras SuperFuncionário</small><strong><?= (int)$stats['sf'] ?></strong></div>
       <div class="int-card"><small>Regras ManyChat</small><strong><?= (int)$stats['manychat'] ?></strong></div>
+      <div class="int-card"><small>Meta BMs Integradas</small><strong><?= (int)$stats['meta'] ?></strong></div>
     </div>
     <div class="int-panel">
       <h2>Seções</h2>
@@ -295,8 +296,160 @@ include __DIR__ . '/_header.php';
         <a class="int-btn" href="integracoes.php?tab=hub">Hub de Integrações</a>
         <a class="int-btn" href="integracoes.php?tab=superfuncionario">SuperFuncionário</a>
         <a class="int-btn" href="integracoes.php?tab=manychat">ManyChat</a>
+        <a class="int-btn" href="integracoes.php?tab=meta">META (Anúncios)</a>
         <a class="int-btn primary" href="integracoes.php?tab=logs">Logs</a>
       </div>
+    </div>
+  <?php elseif ($tab === 'meta'): ?>
+    <?php
+      $metaIntegrations = int_table_exists($pdo, 'meta_integrations')
+        ? $pdo->query("SELECT * FROM meta_integrations ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC) ?: []
+        : [];
+      $editMetaId = (int)($_GET['edit_meta'] ?? 0);
+      $editingMeta = null;
+      if ($editMetaId > 0) {
+          foreach ($metaIntegrations as $m) {
+              if ((int)$m['id'] === $editMetaId) { $editingMeta = $m; break; }
+          }
+      }
+      $totalMetaCamps = int_table_exists($pdo, 'meta_campaign_daily') ? (int)$pdo->query("SELECT COUNT(DISTINCT campaign_id) FROM meta_campaign_daily")->fetchColumn() : 0;
+      $activeMetaBms = count(array_filter($metaIntegrations, fn($m) => ($m['status'] ?? '') === 'active'));
+      $lastSyncMeta = $pdo->query("SELECT MAX(last_sync_at) FROM meta_integrations")->fetchColumn() ?: null;
+    ?>
+
+    <?php if (!empty($msgOk)): ?>
+      <div class="int-panel" style="border-color:#22c55e;color:#86efac;background:rgba(34,197,94,0.1);font-weight:600;padding:12px 16px;margin-bottom:16px;">
+        ✅ <?= int_h($msgOk) ?>
+      </div>
+    <?php endif; ?>
+    <?php if (!empty($msgError)): ?>
+      <div class="int-panel" style="border-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,0.1);font-weight:600;padding:12px 16px;margin-bottom:16px;">
+        ❌ <?= int_h($msgError) ?>
+      </div>
+    <?php endif; ?>
+
+    <div class="int-grid">
+      <div class="int-card"><small>Business Managers (BMs)</small><strong><?= count($metaIntegrations) ?></strong></div>
+      <div class="int-card"><small>Contas / BMs Ativas</small><strong style="color:#86efac;"><?= $activeMetaBms ?></strong></div>
+      <div class="int-card"><small>Campanhas Sincronizadas</small><strong><?= $totalMetaCamps ?></strong></div>
+      <div class="int-card"><small>Último Sincronismo Geral</small><strong style="font-size:16px;"><?= $lastSyncMeta ? int_h(int_dt_br((string)$lastSyncMeta)) : 'Nenhum' ?></strong></div>
+    </div>
+
+    <div class="int-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0;font-size:18px;">Integrações Meta Ads (Graph API)</h2>
+          <p class="int-muted" style="margin:4px 0 0;font-size:12px;">Cadastre e gerencie múltiplas Business Managers (BMs) e Contas de Anúncios da Meta para sincronização contínua de campanhas, conjuntos de anúncios e UTMs.</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <?php if ($metaIntegrations): ?>
+            <form method="post" style="margin:0;">
+              <input type="hidden" name="action" value="sync_meta_now">
+              <button class="int-btn primary" type="submit" title="Executa a sincronização via Graph API para todas as BMs ativas">⚡ Sincronizar Todas Agora</button>
+            </form>
+          <?php endif; ?>
+          <button class="int-btn" type="button" onclick="document.getElementById('metaFormContainer').style.display = document.getElementById('metaFormContainer').style.display === 'none' ? 'block' : 'none'">+ Nova BM / Conta Meta</button>
+        </div>
+      </div>
+
+      <!-- FORMULÁRIO DE NOVA / EDIÇÃO DE BM -->
+      <div id="metaFormContainer" style="display: <?= $editingMeta || empty($metaIntegrations) ? 'block' : 'none' ?>; background:#081020; border:1px solid var(--border); border-radius:10px; padding:18px; margin-bottom:20px;">
+        <h3 style="margin:0 0 14px;font-size:14px;color:#fff;"><?= $editingMeta ? '✏️ Editar BM / Conta Meta: ' . int_h($editingMeta['name']) : '➕ Cadastrar Nova Business Manager (BM) / Conta Meta' ?></h3>
+        <form method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end;">
+          <input type="hidden" name="action" value="save_meta">
+          <input type="hidden" name="meta_id" value="<?= (int)($editingMeta['id'] ?? 0) ?>">
+          
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Nome da BM / Conta</label>
+            <input type="text" name="meta_name" placeholder="Ex: BM 2 - Escala Digital" value="<?= int_h((string)($editingMeta['name'] ?? '')) ?>" required style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">ID da Conta de Anúncios (act_...)</label>
+            <input type="text" name="meta_ad_account_id" placeholder="act_123456789012345" value="<?= int_h((string)($editingMeta['ad_account_id'] ?? '')) ?>" required style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Meta Access Token (Graph API)</label>
+            <input type="password" name="meta_access_token" placeholder="<?= !empty($editingMeta['access_token']) ? 'Manter token atual' : 'EAAB...' ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Meta App ID (Opcional)</label>
+            <input type="text" name="meta_app_id" placeholder="123456789" value="<?= int_h((string)($editingMeta['app_id'] ?? '')) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Meta App Secret (Opcional)</label>
+            <input type="password" name="meta_app_secret" placeholder="<?= !empty($editingMeta['app_secret']) ? 'Manter segredo atual' : 'App Secret' ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Intervalo Sync (Minutos)</label>
+            <input type="number" min="5" max="1440" name="meta_sync_interval" value="<?= (int)($editingMeta['sync_interval_minutes'] ?? 30) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Status da Integração</label>
+            <select name="meta_status" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+              <option value="active" <?= ($editingMeta['status'] ?? 'active') === 'active' ? 'selected' : '' ?>>🟢 Ativa (Sincronizando)</option>
+              <option value="inactive" <?= ($editingMeta['status'] ?? '') === 'inactive' ? 'selected' : '' ?>>⚪ Inativa (Pausada)</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="int-btn primary" type="submit"><?= $editingMeta ? 'Salvar Alterações' : 'Cadastrar BM Meta' ?></button>
+            <?php if ($editingMeta): ?><a class="int-btn" href="integracoes.php?tab=meta">Cancelar</a><?php endif; ?>
+          </div>
+        </form>
+      </div>
+
+      <!-- CARDS DE BMS E CONTAS CADASTRADAS -->
+      <?php if (!$metaIntegrations): ?>
+        <div class="int-empty">Nenhuma Business Manager ou Conta Meta cadastrada ainda. Clique no botão acima para adicionar a primeira BM!</div>
+      <?php else: ?>
+        <div style="display:grid;gap:12px;">
+          <?php foreach ($metaIntegrations as $m): 
+            $isActive = ($m['status'] ?? '') === 'active';
+            $hasErr = !empty($m['last_error_message']);
+          ?>
+            <div style="border:1px solid <?= $hasErr ? '#ef4444' : 'var(--border)' ?>; background:#071020; border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+              <div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <strong style="font-size:15px;color:#fff;"><?= int_h($m['name']) ?></strong>
+                  <span class="int-badge <?= $isActive ? 'ok' : '' ?>"><?= $isActive ? '🟢 Ativa' : '⚪ Inativa' ?></span>
+                  <span class="int-badge" style="font-family:monospace;"><?= int_h($m['ad_account_id']) ?></span>
+                </div>
+                <div style="margin-top:6px;font-size:12px;color:var(--muted);">
+                  <span>Intervalo: a cada <?= (int)($m['sync_interval_minutes'] ?? 30) ?> min</span> | 
+                  <span>Último Sincronismo: <?= !empty($m['last_sync_at']) ? int_h(int_dt_br((string)$m['last_sync_at'])) : 'Pendente' ?></span>
+                  <?php if (!empty($m['app_id'])): ?> | <span>App ID: <?= int_h($m['app_id']) ?></span><?php endif; ?>
+                </div>
+                <?php if ($hasErr): ?>
+                  <div style="margin-top:6px;font-size:11px;color:#fca5a5;background:rgba(239,68,68,0.1);padding:6px 10px;border-radius:6px;">
+                    ⚠️ Último erro de comunicação: <?= int_h(mb_strimwidth((string)$m['last_error_message'], 0, 150, '...')) ?>
+                  </div>
+                <?php endif; ?>
+              </div>
+
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <form method="post" style="margin:0;">
+                  <input type="hidden" name="action" value="sync_meta_now">
+                  <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
+                  <button class="int-btn primary" style="padding:6px 10px;font-size:11px;" type="submit" title="Sincronizar esta BM agora com a API Graph">⚡ Sincronizar Agora</button>
+                </form>
+
+                <a class="int-btn" style="padding:6px 10px;font-size:11px;" href="integracoes.php?tab=meta&edit_meta=<?= (int)$m['id'] ?>">✏️ Editar</a>
+
+                <form method="post" style="margin:0;">
+                  <input type="hidden" name="action" value="toggle_meta_status">
+                  <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
+                  <button class="int-btn" style="padding:6px 10px;font-size:11px;" type="submit"><?= $isActive ? '⏸️ Pausar' : '▶️ Ativar' ?></button>
+                </form>
+
+                <form method="post" style="margin:0;" onsubmit="return confirm('Deseja excluir a integração com a BM \'<?= int_h($m['name']) ?>\'?')">
+                  <input type="hidden" name="action" value="delete_meta">
+                  <input type="hidden" name="meta_id" value="<?= (int)$m['id'] ?>">
+                  <button class="int-btn" style="padding:6px 10px;font-size:11px;color:#f87171;border-color:#ef4444;" type="submit">🗑️ Excluir</button>
+                </form>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
     </div>
   <?php elseif ($tab !== 'logs'): ?>
     <?php

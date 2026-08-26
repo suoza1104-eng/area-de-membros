@@ -256,28 +256,39 @@ function metrics_refresh_hotmart_ledger(PDO $pdo): int
     return $pdo->exec($sql);
 }
 
+function metrics_active_integrations(PDO $pdo): array
+{
+    return $pdo->query("SELECT * FROM meta_integrations WHERE status='active' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 function metrics_active_integration(PDO $pdo): ?array
 {
-    $row = $pdo->query("SELECT * FROM meta_integrations WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-    return $row ?: null;
+    $all = metrics_active_integrations($pdo);
+    return $all ? $all[0] : null;
 }
 
 function metrics_sync_all(PDO $pdo, int $daysBack = 3, bool $syncMeta = true): array
 {
     metrics_ensure_schema($pdo);
     $ledger = metrics_refresh_hotmart_ledger($pdo);
-    $integration = metrics_active_integration($pdo);
+    $integrations = metrics_active_integrations($pdo);
     $meta = [];
-    if ($syncMeta && $integration && !empty($integration['access_token']) && !empty($integration['ad_account_id'])) {
+    $attribution = [];
+    if ($syncMeta && $integrations) {
         $since = date('Y-m-d', strtotime('-' . max(0, $daysBack - 1) . ' days'));
         $until = date('Y-m-d');
-        foreach (['account','campaign','adset','ad'] as $scope) {
-            $meta[] = sync_meta_level($pdo, $integration, $scope, $since, $until);
+        foreach ($integrations as $integration) {
+            if (!empty($integration['access_token']) && !empty($integration['ad_account_id'])) {
+                foreach (['account','campaign','adset','ad'] as $scope) {
+                    try {
+                        $meta[] = sync_meta_level($pdo, $integration, $scope, $since, $until);
+                    } catch (Throwable $e) {
+                        $meta[] = ['ok' => false, 'integration_id' => $integration['id'], 'error' => $e->getMessage()];
+                    }
+                }
+            }
+            $attribution[] = sync_full_attribution($pdo, $pdo, (int)$integration['id'], max(3, $daysBack));
         }
-    }
-    $attribution = null;
-    if ($integration) {
-        $attribution = sync_full_attribution($pdo, $pdo, (int)$integration['id'], max(3, $daysBack));
     }
     return ['ledger_rows' => $ledger, 'meta' => $meta, 'attribution' => $attribution];
 }

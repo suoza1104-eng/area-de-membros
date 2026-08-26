@@ -209,7 +209,14 @@ include __DIR__ . '/_header.php';
     <div class="card" style="margin-top:16px">
         <form method="post" action="" autocomplete="off">
             <input type="hidden" name="form_section" value="metrics">
-            <div class="section-label">Metricas, Meta Ads e vendas</div>
+            <div class="section-label">Métricas, Meta Ads e vendas</div>
+            <div style="background:rgba(59,130,246,0.12);border:1px solid #3b82f6;border-radius:10px;padding:12px 16px;margin:10px 0 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div>
+                    <strong style="color:#93c5fd;font-size:13px;display:block;">⚡ Gestão Centralizada de BMs da Meta Ads (Múltiplas BMs)</strong>
+                    <span style="color:#cbd5e1;font-size:11px;">A configuração da Meta foi movida para a aba Integrações. Agora você pode cadastrar e gerenciar múltiplas Business Managers (BMs) e Contas de Anúncios de forma independente.</span>
+                </div>
+                <a href="integracoes.php?tab=meta" class="btn btn-primary btn-sm" style="white-space:nowrap;">👉 Abrir Integrações META</a>
+            </div>
             <p style="font-size:12px;color:var(--muted);margin:0 0 16px">Credenciais usadas pela sincronizacao do painel de desempenho. Campos secretos em branco preservam o valor atual.</p>
             <div style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px">
                 <div class="form-group"><label class="form-label" for="meta_name">Nome da integracao</label><input type="text" id="meta_name" name="meta_name" value="<?= h((string)($metricsIntegration['name'] ?? 'Meta Principal')) ?>"></div>
