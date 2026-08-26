@@ -61,9 +61,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $accessToken = trim((string)($_POST['meta_access_token'] ?? ''));
             $syncInterval = max(5, min(1440, (int)($_POST['meta_sync_interval'] ?? 30)));
             $status = in_array($_POST['meta_status'] ?? '', ['active', 'inactive'], true) ? $_POST['meta_status'] : 'active';
+            $currency = in_array($_POST['meta_currency'] ?? '', ['BRL', 'USD', 'EUR'], true) ? $_POST['meta_currency'] : 'BRL';
+            $fxRate = max(0.01, (float)($_POST['meta_fx_rate'] ?? 1.0));
+            $fxSpreadPct = max(0.0, (float)($_POST['meta_fx_spread_pct'] ?? 0.0));
+            $autoFx = isset($_POST['meta_auto_fx']) ? 1 : 0;
             
-            if ($adAccountId !== '' && !str_starts_with($adAccountId, 'act_')) {
-                $adAccountId = 'act_' . ltrim($adAccountId, 'act_');
+            if ($adAccountId !== '') {
+                $adAccountId = normalize_account_id($adAccountId);
             }
             if ($adAccountId === '') throw new RuntimeException('Informe o ID da conta de anúncios (ex: act_123456789).');
 
@@ -77,6 +81,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         access_token = CASE WHEN :access_token = '' THEN access_token ELSE :access_token END,
                         sync_interval_minutes = :sync_interval,
                         status = :status,
+                        currency = :currency,
+                        fx_rate = :fx_rate,
+                        fx_spread_pct = :fx_spread_pct,
+                        auto_fx = :auto_fx,
                         updated_at = NOW()
                     WHERE id = :id
                 ");
@@ -88,6 +96,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':access_token' => $accessToken,
                     ':sync_interval' => $syncInterval,
                     ':status' => $status,
+                    ':currency' => $currency,
+                    ':fx_rate' => $fxRate,
+                    ':fx_spread_pct' => $fxSpreadPct,
+                    ':auto_fx' => $autoFx,
                     ':id' => $id,
                 ]);
                 $msgOk = "Integração Meta '{$name}' atualizada com sucesso!";
@@ -95,8 +107,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($accessToken === '') throw new RuntimeException('Informe o Meta Access Token para cadastrar uma nova BM/Conta.');
                 $stmt = $pdo->prepare("
                     INSERT INTO meta_integrations 
-                    (name, app_id, app_secret, access_token, ad_account_id, status, sync_interval_minutes, timezone, created_at, updated_at) 
-                    VALUES (:name, :app_id, :app_secret, :access_token, :ad_account_id, :status, :sync_interval, 'America/Sao_Paulo', NOW(), NOW())
+                    (name, app_id, app_secret, access_token, ad_account_id, status, sync_interval_minutes, currency, fx_rate, fx_spread_pct, auto_fx, timezone, created_at, updated_at) 
+                    VALUES (:name, :app_id, :app_secret, :access_token, :ad_account_id, :status, :sync_interval, :currency, :fx_rate, :fx_spread_pct, :auto_fx, 'America/Sao_Paulo', NOW(), NOW())
                 ");
                 $stmt->execute([
                     ':name' => $name,
@@ -106,6 +118,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':ad_account_id' => $adAccountId,
                     ':status' => $status,
                     ':sync_interval' => $syncInterval,
+                    ':currency' => $currency,
+                    ':fx_rate' => $fxRate,
+                    ':fx_spread_pct' => $fxSpreadPct,
+                    ':auto_fx' => $autoFx,
                 ]);
                 $msgOk = "Nova integração Meta '{$name}' cadastrada com sucesso!";
             }
@@ -495,6 +511,17 @@ include __DIR__ . '/_header.php';
             <input type="password" name="meta_app_secret" placeholder="<?= !empty($editingMeta['app_secret']) ? 'Manter segredo atual' : 'App Secret' ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
           </div>
           <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Moeda da Conta de Anúncios</label>
+            <select name="meta_currency" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+              <option value="BRL" <?= ($editingMeta['currency'] ?? 'BRL') === 'BRL' ? 'selected' : '' ?>>🇧🇷 BRL (Real R$)</option>
+              <option value="USD" <?= ($editingMeta['currency'] ?? '') === 'USD' ? 'selected' : '' ?>>🇺🇸 USD (Dólar - Conta Simple/Internacional)</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Spread da Conta % (Margem Simple/IOF)</label>
+            <input type="number" step="0.01" min="0" max="50" name="meta_fx_spread_pct" placeholder="ex: 3.50" value="<?= int_h((string)($editingMeta['fx_spread_pct'] ?? '3.50')) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+          </div>
+          <div>
             <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Intervalo Sync (Minutos)</label>
             <input type="number" min="5" max="1440" name="meta_sync_interval" value="<?= (int)($editingMeta['sync_interval_minutes'] ?? 30) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
           </div>
@@ -520,6 +547,8 @@ include __DIR__ . '/_header.php';
           <?php foreach ($metaIntegrations as $m): 
             $isActive = ($m['status'] ?? '') === 'active';
             $hasErr = !empty($m['last_error_message']);
+            $isUsd = ($m['currency'] ?? 'BRL') === 'USD';
+            $spreadPct = (float)($m['fx_spread_pct'] ?? 0.0);
           ?>
             <div style="border:1px solid <?= $hasErr ? '#ef4444' : 'var(--border)' ?>; background:#071020; border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
               <div>
@@ -527,6 +556,11 @@ include __DIR__ . '/_header.php';
                   <strong style="font-size:15px;color:#fff;"><?= int_h($m['name']) ?></strong>
                   <span class="int-badge <?= $isActive ? 'ok' : '' ?>"><?= $isActive ? '🟢 Ativa' : '⚪ Inativa' ?></span>
                   <span class="int-badge" style="font-family:monospace;"><?= int_h($m['ad_account_id']) ?></span>
+                  <?php if ($isUsd): ?>
+                    <span class="int-badge" style="background:rgba(59,130,246,0.15);color:#93c5fd;border:1px solid #3b82f6;">🇺🇸 USD (Conversão auto BRL + Spread <?= number_format($spreadPct, 2, ',', '.') ?>%)</span>
+                  <?php else: ?>
+                    <span class="int-badge" style="background:rgba(16,185,129,0.15);color:#6ee7b7;">🇧🇷 BRL</span>
+                  <?php endif; ?>
                 </div>
                 <div style="margin-top:6px;font-size:12px;color:var(--muted);">
                   <span>Intervalo: a cada <?= (int)($m['sync_interval_minutes'] ?? 30) ?> min</span> | 
