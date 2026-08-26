@@ -98,7 +98,7 @@ if (is_array($__supportCache) && (time() - (int)($__supportCache['ts'] ?? 0)) < 
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
-    'hotmart_import'   => 'Conciliar Hotmart',
+    'hotmart_import'   => 'Conciliar Vendas',
     'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
@@ -734,7 +734,7 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="m7 10 5 5 5-5"/>
         <path d="M5 21h14"/>
       </svg>
-      Conciliar Hotmart
+      Conciliar Vendas
     </a>
     <?php endif; ?>
 
