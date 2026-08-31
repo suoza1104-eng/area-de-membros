@@ -23,6 +23,61 @@ function va_duration($seconds): string {
     $minutes = intdiv($seconds % 3600, 60);
     return $hours > 0 ? $hours . 'h ' . $minutes . 'min' : $minutes . 'min';
 }
+function va_export_sales_csv(PDO $pdo, string $sql, array $params): void {
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="vendas_' . date('Y-m-d_His') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, [
+        'Data/hora', 'Transacao', 'Canal', 'Comprador', 'E-mail', 'Telefone', 'Produto', 'Plano',
+        'Forma de pagamento', 'Parcelas', 'Valor bruto', 'Valor liquido', 'Liquido produtor', 'Status',
+        'Valor reembolsado', 'Turma', 'Data inscricao lead', 'Tempo ate a compra',
+        'UTM source', 'UTM medium', 'UTM campaign', 'UTM term', 'UTM content',
+        'Campanha atribuida', 'Conjunto atribuido', 'Anuncio atribuido', 'Tipo de atribuicao',
+    ], ';');
+
+    while ($sale = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $saleDate = (string)($sale['payment_confirmed_at'] ?: $sale['sale_date'] ?: $sale['created_at']);
+        fputcsv($out, [
+            $saleDate ? date('d/m/Y H:i', strtotime($saleDate)) : '',
+            (string)$sale['transaction_code'],
+            (string)($sale['provider'] ?? 'hotmart'),
+            (string)($sale['buyer_name'] ?? ''),
+            (string)($sale['buyer_email'] ?? ''),
+            (string)($sale['buyer_phone'] ?? ''),
+            (string)($sale['product_name'] ?? ''),
+            (string)($sale['product_name'] ?? ''),
+            (string)($sale['payment_method'] ?? ''),
+            (int)($sale['installments'] ?? 1),
+            number_format((float)($sale['gross_revenue'] ?? 0), 2, ',', ''),
+            number_format((float)($sale['net_revenue'] ?? 0), 2, ',', ''),
+            number_format((float)($sale['producer_net'] ?? 0), 2, ',', ''),
+            (string)($sale['status'] ?? ''),
+            number_format((float)($sale['refunded_value'] ?? 0), 2, ',', ''),
+            (string)($sale['turma_atribuida'] ?? ''),
+            !empty($sale['lead_created_at']) ? date('d/m/Y H:i', strtotime((string)$sale['lead_created_at'])) : '',
+            (int)($sale['attribution_seconds_diff'] ?? 0) > 0 ? va_duration($sale['attribution_seconds_diff']) : '',
+            (string)($sale['detail_utm_source'] ?? ''),
+            (string)($sale['detail_utm_medium'] ?? ''),
+            (string)($sale['detail_utm_campaign'] ?? ''),
+            (string)($sale['detail_utm_term'] ?? ''),
+            (string)($sale['detail_utm_content'] ?? ''),
+            (string)($sale['campaign_group'] ?? ''),
+            (string)($sale['campaign_name'] ?? ''),
+            (string)($sale['ad_name'] ?? ''),
+            (string)($sale['match_type'] ?? ''),
+        ], ';');
+    }
+    fclose($out);
+    exit;
+}
 function va_delta(array $current, array $previous, string $key): ?float { return metrics_delta((float)($current[$key] ?? 0), (float)($previous[$key] ?? 0)); }
 function va_delta_html(?float $delta, bool $lowerIsBetter = false): string {
     if ($delta === null) return '<span class="trend neutral">Sem base</span>';
@@ -43,15 +98,15 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
     $basis = md_basis_column((string)($filters['basis'] ?? 'producer_net'));
     $saleParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $saleFilter = md_filter_sql($filters, 'sale', $saleParams);
-    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.matched_user_id) buyers,
+    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.buyer_email) buyers,
               COALESCE(SUM(s.gross_revenue),0) gross_revenue,
               COALESCE(SUM(s.net_revenue),0) net_revenue,
               COALESCE(SUM(s.producer_net),0) producer_net,
               COALESCE(AVG(s.gross_revenue),0) average_ticket,
-              SUM(s.matched_user_id IS NOT NULL) matched_sales
-            FROM hotmart_sales_live s
+              COUNT(*) matched_sales
+            FROM v_sales_master s
             WHERE " . md_approved_sql('s') . "
-              AND s.transaction_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
+              AND s.sale_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
 
     $attrParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59', 'model' => ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch'];
     $attrWhere = [];
@@ -64,24 +119,22 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
               COALESCE(SUM(hs.{$basis}),0) attributed_revenue
             FROM attribution_matches am
             JOIN attribution_sales axs ON axs.id=am.sale_id
-            JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
+            JOIN v_sales_master hs ON hs.transaction_code=axs.transaction_code
             JOIN attribution_leads al ON al.id=am.lead_id
             WHERE am.attribution_model=:model
               AND " . md_approved_sql('hs') . "
-              AND hs.transaction_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
+              AND hs.sale_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
 
     $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
     $refunds = md_row($pdo, "SELECT COUNT(*) refunds,
-              COALESCE(SUM(CASE WHEN s.refunded_value>0 THEN s.refunded_value WHEN s.chargeback_value>0 THEN s.chargeback_value ELSE s.{$basis} END),0) refunded_value
-            FROM hotmart_sales_live s
+              COALESCE(SUM(s.gross_revenue),0) refunded_value
+            FROM v_sales_master s
             WHERE " . md_refund_sql('s') . "
-              AND COALESCE(s.refund_or_chargeback_at,s.transaction_date) BETWEEN :start AND :end{$refundFilter}", $refundParams);
+              AND s.sale_date BETWEEN :start AND :end{$refundFilter}", $refundParams);
 
     $out = array_merge($sales, $attr, $refunds);
     foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
-    // Reembolsadas/chargebacks ja ficam fora da soma de aprovadas pelo status.
-    // Subtrair novamente distorceria a comparacao com o relatorio da Hotmart.
     $out['gross_revenue'] = (float)($out['gross_revenue'] ?? 0);
     $out['net_revenue'] = (float)($out['net_revenue'] ?? 0);
     $out['producer_net'] = (float)($out['producer_net'] ?? 0);
@@ -405,53 +458,57 @@ $salesParams = [
     'detail_model' => $filters['model'],
 ];
 $salesFilter = md_filter_sql($filters, 'sale', $salesParams);
-$salesWhere = ["s.transaction_date BETWEEN :sales_start AND :sales_end"];
+$salesWhere = ["s.sale_date BETWEEN :sales_start AND :sales_end"];
 if ($salesStatus === 'approved') $salesWhere[] = md_approved_sql('s');
 if ($salesStatus === 'refunded') $salesWhere[] = md_refund_sql('s');
 if ($salesQuery !== '') {
-    $salesWhere[] = "(s.transaction_code LIKE :sales_q OR s.buyer_name LIKE :sales_q OR s.buyer_email LIKE :sales_q OR s.buyer_phone_norm LIKE :sales_q OR s.product_name LIKE :sales_q OR s.price_name LIKE :sales_q)";
+    $salesWhere[] = "(s.transaction_code LIKE :sales_q OR s.buyer_name LIKE :sales_q OR s.buyer_email LIKE :sales_q OR s.buyer_phone LIKE :sales_q OR s.product_name LIKE :sales_q)";
     $salesParams['sales_q'] = '%' . $salesQuery . '%';
 }
 $salesWhereSql = implode(' AND ', $salesWhere) . $salesFilter;
 $salesFromSql = "
-    FROM hotmart_sales_live s
-    LEFT JOIN attribution_sales axs_detail ON axs_detail.source_sale_id = s.id
+    FROM v_sales_master s
+    LEFT JOIN attribution_sales axs_detail ON axs_detail.transaction_code = s.transaction_code
     LEFT JOIN attribution_matches am_detail ON am_detail.sale_id = axs_detail.id AND am_detail.attribution_model = :detail_model
     LEFT JOIN attribution_leads al_detail ON al_detail.id = am_detail.lead_id
-    LEFT JOIN users u_detail ON u_detail.id = s.matched_user_id
 ";
-$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.id) {$salesFromSql} WHERE {$salesWhereSql}");
-$salesCountStmt->execute($salesParams);
-$salesTotal = (int)$salesCountStmt->fetchColumn();
-$salesPages = max(1, (int)ceil($salesTotal / $salesPerPage));
-$salesPage = min($salesPage, $salesPages);
-$salesOffset = ($salesPage - 1) * $salesPerPage;
-$salesSql = "
+$salesSelectSql = "
     SELECT s.*,
-           COALESCE(NULLIF(al_detail.turma_codigo,''), NULLIF(u_detail.codigo_turma,''), 'Sem turma') AS turma_atribuida,
+           COALESCE(NULLIF(al_detail.turma_codigo,''), 'Sem turma') AS turma_atribuida,
            al_detail.created_at AS lead_created_at,
            am_detail.match_type,
            am_detail.attribution_seconds_diff,
            am_detail.campaign_group,
            am_detail.campaign_name,
            am_detail.ad_name,
-           COALESCE(NULLIF(s.utm_source,''), NULLIF(al_detail.utm_source,''), NULLIF(u_detail.utm_source,'')) AS detail_utm_source,
-           COALESCE(NULLIF(s.utm_medium,''), NULLIF(u_detail.utm_medium,'')) AS detail_utm_medium,
-           COALESCE(NULLIF(s.utm_campaign,''), NULLIF(al_detail.utm_campaign_group,''), NULLIF(u_detail.utm_campaign,'')) AS detail_utm_campaign,
-           COALESCE(NULLIF(s.utm_term,''), NULLIF(al_detail.utm_term,''), NULLIF(u_detail.utm_term,'')) AS detail_utm_term,
-           COALESCE(NULLIF(s.utm_content,''), NULLIF(u_detail.utm_content,'')) AS detail_utm_content
+           COALESCE(NULLIF(s.utm_source,''), NULLIF(al_detail.utm_source,'')) AS detail_utm_source,
+           COALESCE(NULLIF(s.utm_medium,''), '') AS detail_utm_medium,
+           COALESCE(NULLIF(s.utm_campaign,''), NULLIF(al_detail.utm_campaign_group,'')) AS detail_utm_campaign,
+           COALESCE(NULLIF(s.utm_term,''), NULLIF(al_detail.utm_term,'')) AS detail_utm_term,
+           COALESCE(NULLIF(s.utm_content,''), '') AS detail_utm_content
       {$salesFromSql}
      WHERE {$salesWhereSql}
-  ORDER BY s.transaction_date DESC, s.id DESC
-     LIMIT {$salesPerPage} OFFSET {$salesOffset}
+  ORDER BY s.sale_date DESC, s.id DESC
 ";
+
+if ((string)($_GET['export'] ?? '') === 'sales_csv') {
+    va_export_sales_csv($pdo, $salesSelectSql, $salesParams);
+}
+
+$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.transaction_code) {$salesFromSql} WHERE {$salesWhereSql}");
+$salesCountStmt->execute($salesParams);
+$salesTotal = (int)$salesCountStmt->fetchColumn();
+$salesPages = max(1, (int)ceil($salesTotal / $salesPerPage));
+$salesPage = min($salesPage, $salesPages);
+$salesOffset = ($salesPage - 1) * $salesPerPage;
+$salesSql = $salesSelectSql . " LIMIT {$salesPerPage} OFFSET {$salesOffset}";
 $salesStmt = $pdo->prepare($salesSql);
 $salesStmt->execute($salesParams);
 $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $unattributedParams=['model'=>$filters['model'],'start'=>$period['start'].' 00:00:00','end'=>$period['end'].' 23:59:59'];
 $unattributedProduct='';
 if($filters['product']!==''){$unattributedProduct=' AND s.product_name=:product';$unattributedParams['product']=$filters['product'];}
-$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.transaction_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.transaction_date DESC LIMIT 50",$unattributedParams);
+$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.sale_date DESC LIMIT 50",$unattributedParams);
 $manualReturn=$_GET;unset($manualReturn['manual_ok'],$manualReturn['manual_err']);$manualReturnQuery=http_build_query($manualReturn);
 
 $metricCards = [
@@ -484,7 +541,7 @@ include __DIR__ . '/_header.php';
 
 <style>
 .bi{display:flex;flex-direction:column;gap:16px}.bi *{box-sizing:border-box}.bi-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.bi-title h1{font-size:23px;margin:0;color:var(--text)}.bi-title p{margin:5px 0 0;color:var(--muted);font-size:12px}.sync-pill{display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border);background:var(--bg-card);border-radius:999px;color:var(--muted);font-size:11px;white-space:nowrap}.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-dim)}
-.bi-filter{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}.periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.periods a{padding:6px 10px;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:650;text-decoration:none}.periods a:hover,.periods a.active{background:var(--primary-dim);border-color:rgba(250,204,21,.3);color:var(--primary)}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:9px}.fg label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}.fg select,.fg input{width:100%;height:34px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}.fg-actions{display:flex;align-items:flex-end;gap:7px}.fg-actions .btn{height:34px;display:inline-flex;align-items:center;justify-content:center}
+.bi-filter{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}.periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.periods a{padding:6px 10px;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:650;text-decoration:none}.periods a:hover,.periods a.active{background:var(--primary-dim);border-color:rgba(250,204,21,.3);color:var(--primary)}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:9px}.fg label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}.fg select,.fg input{width:100%;height:34px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}.fg-actions{display:flex;align-items:flex-end;gap:7px;flex-wrap:wrap}.fg-actions .btn{height:34px;display:inline-flex;align-items:center;justify-content:center}
 .bi-note{padding:9px 12px;background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.17);border-radius:9px;color:#93c5fd;font-size:11px}.metric-grid{display:grid;grid-template-columns:repeat(6,minmax(145px,1fr));gap:10px}.metric{background:linear-gradient(145deg,var(--bg-card),rgba(13,21,38,.75));border:1px solid var(--border);border-radius:var(--r-lg);padding:13px;min-height:104px;position:relative;overflow:hidden}.metric:after{content:'';position:absolute;width:55px;height:55px;border-radius:50%;right:-24px;top:-24px;background:var(--primary-dim)}.metric-label{font-size:10px;color:var(--muted);min-height:30px}.metric-value{font-size:19px;font-weight:780;letter-spacing:-.03em;color:var(--text);white-space:nowrap}.metric-foot{display:flex;align-items:center;gap:7px;margin-top:7px}.metric-hint{font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.trend{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;font-size:9px;font-weight:750}.trend.good{color:#86efac;background:var(--success-dim)}.trend.bad{color:#fca5a5;background:var(--danger-dim)}.trend.neutral{color:var(--muted);background:var(--bg-hover)}
 .section-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px;min-width:0}.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:13px}.section-head h2{font-size:15px;margin:0;color:var(--text)}.section-head p{font-size:10px;color:var(--muted);margin:3px 0 0}.context-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.context{padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);min-width:0}.context small{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.context strong{display:block;font-size:17px;margin:4px 0}.context-line{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted)}
 .chart-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:12px}.chart-box{height:330px;position:relative;min-width:0}.chart-box.small{height:270px}.mtd-compare{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:13px;align-items:stretch}.mtd-chart{height:305px;min-width:0}.mtd-trend{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:12px;display:flex;flex-direction:column;justify-content:center;gap:8px}.mtd-trend small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.mtd-trend strong{font-size:19px;color:var(--text)}.mtd-trend span{font-size:10px;color:var(--muted);line-height:1.45}.mtd-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 12px}.mtd-menu{position:relative}.mtd-menu-btn{height:32px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);font-size:11px;cursor:pointer}.mtd-menu-panel{position:absolute;left:0;top:38px;z-index:30;width:245px;max-height:310px;overflow:auto;padding:8px;border:1px solid var(--border);border-radius:10px;background:#0f172a;box-shadow:var(--shadow);display:none}.mtd-menu.open .mtd-menu-panel{display:grid;gap:5px}.mtd-option{display:flex;align-items:center;gap:8px;padding:7px;border-radius:7px;color:var(--muted);font-size:11px;cursor:pointer}.mtd-option:hover{background:var(--bg-hover);color:var(--text)}.mtd-option input{accent-color:var(--primary)}.mtd-full{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);font-size:11px;color:var(--muted);cursor:pointer}.mtd-full input{accent-color:var(--primary)}.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.three-col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.four-col{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px;max-width:100%;min-width:0;-webkit-overflow-scrolling:touch}.bi-table{width:100%;border-collapse:collapse;min-width:760px}.bi-table th{position:sticky;top:0;background:#101a2e;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:9px;border-bottom:1px solid var(--border);white-space:nowrap}.bi-table td{padding:9px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text);vertical-align:top}.bi-table td:first-child{min-width:130px}.bi-table tr:last-child td{border-bottom:0}.bi-table tr:hover td{background:var(--bg-hover)}.subtext{font-size:9px;color:var(--muted);margin-top:2px}.resilient{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--success-dim);color:#86efac;font-size:9px;font-weight:700}.watch{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--warning-dim);color:#fcd34d;font-size:9px;font-weight:700}.bar-list{display:flex;flex-direction:column;gap:10px}.bar-row{display:grid;grid-template-columns:minmax(100px,1fr) 2fr auto;gap:9px;align-items:center;font-size:10px}.bar-track{height:7px;background:var(--bg);border-radius:99px;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),#fb923c);border-radius:99px}.empty{padding:28px;text-align:center;color:var(--muted);font-size:11px}
@@ -518,7 +575,7 @@ include __DIR__ . '/_header.php';
       <div class="fg"><label>Conjunto</label><select name="adset"><option value="">Todos</option><?php foreach($options['adsets'] as $v):?><option<?=va_selected($filters['adset'],$v)?>><?=va_h($v)?></option><?php endforeach;?></select></div>
       <div class="fg"><label>Produto</label><select name="product"><option value="">Todos</option><?php foreach($options['products'] as $v):?><option<?=va_selected($filters['product'],$v)?>><?=va_h($v)?></option><?php endforeach;?></select></div>
       <div class="fg"><label>Turma</label><select name="turma"><option value="">Todas</option><?php foreach($options['turmas'] as $v):?><option<?=va_selected($filters['turma'],$v)?>><?=va_h($v)?></option><?php endforeach;?></select></div>
-      <div class="fg-actions"><button class="btn btn-primary" type="submit">Aplicar</button><a class="btn btn-ghost" href="vendas_analytics.php">Limpar</a></div>
+      <div class="fg-actions"><button class="btn btn-primary" type="submit">Aplicar</button><a class="btn btn-ghost" href="vendas_analytics.php">Limpar</a><a class="btn btn-ghost" href="?<?=va_h(http_build_query(array_merge($_GET, ['export' => 'sales_csv'])))?>">&#8681; Exportar planilha</a></div>
     </div>
   </form>
 
@@ -694,7 +751,7 @@ include __DIR__ . '/_header.php';
     <?php if(!empty($_GET['manual_err'])):?><div class="manual-alert err"><?=va_h((string)$_GET['manual_err'])?></div><?php endif;?>
     <div class="table-wrap"><table class="bi-table unattr-table"><thead><tr><th>Venda</th><th>Comprador</th><th>Produto</th><th>Valor</th><th>Atribuir ao lead</th></tr></thead><tbody>
     <?php foreach($unattributedRows as $sale):?>
-      <tr><td><strong><?=va_h(date('d/m/Y H:i',strtotime((string)$sale['transaction_date'])))?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div></td><td><strong><?=va_h((string)$sale['buyer_name'])?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)$sale['buyer_phone_raw'])?></div></td><td><strong><?=va_h((string)$sale['product_name'])?></strong><div class="subtext"><?=va_h((string)$sale['price_name'])?></div></td><td><strong><?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td><td>
+      <tr><td><strong><?=va_h(date('d/m/Y H:i',strtotime((string)$sale['sale_date'])))?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div></td><td><strong><?=va_h((string)$sale['buyer_name'])?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)$sale['buyer_phone'])?></div></td><td><strong><?=va_h((string)$sale['product_name'])?></strong></td><td><strong><?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td><td>
         <form method="post" class="manual-attribution-form"><input type="hidden" name="acao" value="atribuir_venda_manual"><input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>"><input type="hidden" name="sale_id" value="<?=(int)$sale['id']?>"><input type="hidden" name="lead_id" value=""><input type="hidden" name="attribution_model" value="<?=va_h($filters['model'])?>"><input type="hidden" name="return_query" value="<?=va_h($manualReturnQuery)?>"><div class="lead-picker"><input type="search" class="lead-search" placeholder="Nome, e-mail, telefone ou ID" autocomplete="off"><div class="lead-results"></div><div class="lead-selected">Nenhum lead selecionado</div></div><div class="manual-form-actions"><button class="btn btn-primary" type="submit" disabled>Confirmar atribuição</button></div></form>
       </td></tr>
     <?php endforeach;?>
@@ -717,16 +774,16 @@ include __DIR__ . '/_header.php';
         <thead><tr><th>Data / transação</th><th>Comprador</th><th>Produto / pagamento</th><th>Valores</th><th>Status</th><th>Turma / jornada</th><th>UTMs</th><th>Atribuição</th></tr></thead>
         <tbody>
         <?php foreach ($salesRows as $sale): ?>
-          <?php $saleDate=(string)($sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: $sale['imported_at']); ?>
+          <?php $saleDate=(string)($sale['payment_confirmed_at'] ?: $sale['sale_date'] ?: $sale['created_at']); ?>
           <tr>
-            <td><strong><?=va_h($saleDate ? date('d/m/Y H:i',strtotime($saleDate)) : '-')?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div><div class="subtext"><?=va_h((string)($sale['sales_channel'] ?: 'hotmart'))?></div></td>
-            <td><strong><?=va_h((string)($sale['buyer_name'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)($sale['buyer_phone_raw'] ?: $sale['buyer_phone_norm']))?></div></td>
-            <td><strong><?=va_h((string)($sale['product_name'] ?: 'Sem produto'))?></strong><div class="subtext"><?=va_h((string)($sale['price_name'] ?: $sale['price_code']))?></div><div class="subtext"><?=va_h((string)($sale['payment_type'] ?: 'Pagamento não informado'))?><?= (int)$sale['installments_number'] > 1 ? ' · '.(int)$sale['installments_number'].'x' : '' ?></div></td>
-            <td class="sales-money"><strong>Bruto: <?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Líquido: <?=va_money($sale['net_revenue'])?></div><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td>
-            <td><span class="sales-status"><?=va_h((string)($sale['status'] ?: $sale['webhook_event'] ?: '-'))?></span><?php if((float)$sale['refunded_value']>0):?><div class="subtext">Devolvido: <?=va_money($sale['refunded_value'])?></div><?php endif;?></td>
-            <td><strong><?=va_h((string)$sale['turma_atribuida'])?></strong><?php if(!empty($sale['lead_created_at'])):?><div class="subtext">Inscrição: <?=va_h(date('d/m/Y H:i',strtotime((string)$sale['lead_created_at'])))?></div><?php endif;?><?php if((int)($sale['attribution_seconds_diff']??0)>0):?><div class="subtext">Até a compra: <?=va_h(va_duration($sale['attribution_seconds_diff']))?></div><?php endif;?></td>
+            <td><strong><?=va_h($saleDate ? date('d/m/Y H:i',strtotime($saleDate)) : '-')?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div><div class="subtext"><?=va_h(ucfirst((string)($sale['provider'] ?? 'hotmart')))?></div></td>
+            <td><strong><?=va_h((string)($sale['buyer_name'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['buyer_email'] ?? ''))?></div><div class="subtext"><?=va_h((string)($sale['buyer_phone'] ?? ''))?></div></td>
+            <td><strong><?=va_h((string)($sale['product_name'] ?: 'Sem produto'))?></strong><div class="subtext"><?=va_h((string)($sale['payment_method'] ?: 'Pagamento não informado'))?><?= (int)($sale['installments'] ?? 1) > 1 ? ' · '.(int)$sale['installments'].'x' : '' ?></div></td>
+            <td class="sales-money"><strong>Bruto: <?=va_money($sale['gross_revenue'] ?? 0)?></strong><div class="subtext">Líquido: <?=va_money($sale['net_revenue'] ?? 0)?></div><div class="subtext">Produtor: <?=va_money($sale['producer_net'] ?? 0)?></div></td>
+            <td><span class="sales-status"><?=va_h((string)($sale['status'] ?? '-'))?></span><?php if((float)($sale['refunded_value'] ?? 0)>0):?><div class="subtext">Devolvido: <?=va_money($sale['refunded_value'])?></div><?php endif;?></td>
+            <td><strong><?=va_h((string)($sale['turma_atribuida'] ?? 'Sem turma'))?></strong><?php if(!empty($sale['lead_created_at'])):?><div class="subtext">Inscrição: <?=va_h(date('d/m/Y H:i',strtotime((string)$sale['lead_created_at'])))?></div><?php endif;?><?php if((int)($sale['attribution_seconds_diff']??0)>0):?><div class="subtext">Até a compra: <?=va_h(va_duration($sale['attribution_seconds_diff']))?></div><?php endif;?></td>
             <td class="utm-stack"><strong><?=va_h((string)($sale['detail_utm_source'] ?: 'Orgânico/não informado'))?></strong><div class="subtext">Medium: <?=va_h((string)($sale['detail_utm_medium'] ?: '-'))?></div><div class="subtext">Campaign: <?=va_h((string)($sale['detail_utm_campaign'] ?: '-'))?></div><div class="subtext">Term: <?=va_h((string)($sale['detail_utm_term'] ?: '-'))?></div><div class="subtext">Content: <?=va_h((string)($sale['detail_utm_content'] ?: '-'))?></div></td>
-            <td><strong><?=va_h((string)($sale['campaign_group'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['campaign_name'] ?: '-'))?></div><div class="subtext">Anúncio: <?=va_h((string)($sale['ad_name'] ?: '-'))?></div><div class="subtext">Match: <?=va_h((string)($sale['match_type'] ?: $sale['match_method'] ?: 'não atribuído'))?></div></td>
+            <td><strong><?=va_h((string)($sale['campaign_group'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['campaign_name'] ?: '-'))?></div><div class="subtext">Anúncio: <?=va_h((string)($sale['ad_name'] ?: '-'))?></div><div class="subtext">Match: <?=va_h((string)($sale['match_type'] ?: 'não atribuído'))?></div></td>
           </tr>
         <?php endforeach; ?>
         <?php if (!$salesRows): ?><tr><td colspan="8" class="empty">Nenhuma venda encontrada com estes filtros.</td></tr><?php endif; ?>

@@ -44,35 +44,35 @@ function va_export_sales_csv(PDO $pdo, string $sql, array $params): void {
     ], ';');
 
     while ($sale = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $saleDate = (string)($sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: $sale['imported_at']);
+        $saleDate = (string)($sale['payment_confirmed_at'] ?: $sale['sale_date'] ?: $sale['created_at']);
         fputcsv($out, [
             $saleDate ? date('d/m/Y H:i', strtotime($saleDate)) : '',
             (string)$sale['transaction_code'],
-            (string)($sale['sales_channel'] ?: 'hotmart'),
-            (string)($sale['buyer_name'] ?: ''),
-            (string)$sale['buyer_email'],
-            (string)($sale['buyer_phone_raw'] ?: $sale['buyer_phone_norm']),
-            (string)($sale['product_name'] ?: ''),
-            (string)($sale['price_name'] ?: $sale['price_code']),
-            (string)($sale['payment_type'] ?: ''),
-            (int)$sale['installments_number'],
-            number_format((float)$sale['gross_revenue'], 2, ',', ''),
-            number_format((float)$sale['net_revenue'], 2, ',', ''),
-            number_format((float)$sale['producer_net'], 2, ',', ''),
-            (string)($sale['status'] ?: $sale['webhook_event'] ?: ''),
-            number_format((float)$sale['refunded_value'], 2, ',', ''),
-            (string)$sale['turma_atribuida'],
+            (string)($sale['provider'] ?? 'hotmart'),
+            (string)($sale['buyer_name'] ?? ''),
+            (string)($sale['buyer_email'] ?? ''),
+            (string)($sale['buyer_phone'] ?? ''),
+            (string)($sale['product_name'] ?? ''),
+            (string)($sale['product_name'] ?? ''),
+            (string)($sale['payment_method'] ?? ''),
+            (int)($sale['installments'] ?? 1),
+            number_format((float)($sale['gross_revenue'] ?? 0), 2, ',', ''),
+            number_format((float)($sale['net_revenue'] ?? 0), 2, ',', ''),
+            number_format((float)($sale['producer_net'] ?? 0), 2, ',', ''),
+            (string)($sale['status'] ?? ''),
+            number_format((float)($sale['refunded_value'] ?? 0), 2, ',', ''),
+            (string)($sale['turma_atribuida'] ?? ''),
             !empty($sale['lead_created_at']) ? date('d/m/Y H:i', strtotime((string)$sale['lead_created_at'])) : '',
             (int)($sale['attribution_seconds_diff'] ?? 0) > 0 ? va_duration($sale['attribution_seconds_diff']) : '',
-            (string)($sale['detail_utm_source'] ?: ''),
-            (string)($sale['detail_utm_medium'] ?: ''),
-            (string)($sale['detail_utm_campaign'] ?: ''),
-            (string)($sale['detail_utm_term'] ?: ''),
-            (string)($sale['detail_utm_content'] ?: ''),
-            (string)($sale['campaign_group'] ?: ''),
-            (string)($sale['campaign_name'] ?: ''),
-            (string)($sale['ad_name'] ?: ''),
-            (string)($sale['match_type'] ?: $sale['match_method'] ?: ''),
+            (string)($sale['detail_utm_source'] ?? ''),
+            (string)($sale['detail_utm_medium'] ?? ''),
+            (string)($sale['detail_utm_campaign'] ?? ''),
+            (string)($sale['detail_utm_term'] ?? ''),
+            (string)($sale['detail_utm_content'] ?? ''),
+            (string)($sale['campaign_group'] ?? ''),
+            (string)($sale['campaign_name'] ?? ''),
+            (string)($sale['ad_name'] ?? ''),
+            (string)($sale['match_type'] ?? ''),
         ], ';');
     }
     fclose($out);
@@ -98,15 +98,15 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
     $basis = md_basis_column((string)($filters['basis'] ?? 'producer_net'));
     $saleParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $saleFilter = md_filter_sql($filters, 'sale', $saleParams);
-    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.matched_user_id) buyers,
+    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.buyer_email) buyers,
               COALESCE(SUM(s.gross_revenue),0) gross_revenue,
               COALESCE(SUM(s.net_revenue),0) net_revenue,
               COALESCE(SUM(s.producer_net),0) producer_net,
               COALESCE(AVG(s.gross_revenue),0) average_ticket,
-              SUM(s.matched_user_id IS NOT NULL) matched_sales
-            FROM hotmart_sales_live s
+              COUNT(*) matched_sales
+            FROM v_sales_master s
             WHERE " . md_approved_sql('s') . "
-              AND s.transaction_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
+              AND s.sale_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
 
     $attrParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59', 'model' => ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch'];
     $attrWhere = [];
@@ -119,24 +119,22 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
               COALESCE(SUM(hs.{$basis}),0) attributed_revenue
             FROM attribution_matches am
             JOIN attribution_sales axs ON axs.id=am.sale_id
-            JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
+            JOIN v_sales_master hs ON hs.transaction_code=axs.transaction_code
             JOIN attribution_leads al ON al.id=am.lead_id
             WHERE am.attribution_model=:model
               AND " . md_approved_sql('hs') . "
-              AND hs.transaction_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
+              AND hs.sale_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
 
     $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
     $refunds = md_row($pdo, "SELECT COUNT(*) refunds,
-              COALESCE(SUM(CASE WHEN s.refunded_value>0 THEN s.refunded_value WHEN s.chargeback_value>0 THEN s.chargeback_value ELSE s.{$basis} END),0) refunded_value
-            FROM hotmart_sales_live s
+              COALESCE(SUM(s.gross_revenue),0) refunded_value
+            FROM v_sales_master s
             WHERE " . md_refund_sql('s') . "
-              AND COALESCE(s.refund_or_chargeback_at,s.transaction_date) BETWEEN :start AND :end{$refundFilter}", $refundParams);
+              AND s.sale_date BETWEEN :start AND :end{$refundFilter}", $refundParams);
 
     $out = array_merge($sales, $attr, $refunds);
     foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
-    // Reembolsadas/chargebacks ja ficam fora da soma de aprovadas pelo status.
-    // Subtrair novamente distorceria a comparacao com o relatorio da Hotmart.
     $out['gross_revenue'] = (float)($out['gross_revenue'] ?? 0);
     $out['net_revenue'] = (float)($out['net_revenue'] ?? 0);
     $out['producer_net'] = (float)($out['producer_net'] ?? 0);
@@ -460,45 +458,44 @@ $salesParams = [
     'detail_model' => $filters['model'],
 ];
 $salesFilter = md_filter_sql($filters, 'sale', $salesParams);
-$salesWhere = ["s.transaction_date BETWEEN :sales_start AND :sales_end"];
+$salesWhere = ["s.sale_date BETWEEN :sales_start AND :sales_end"];
 if ($salesStatus === 'approved') $salesWhere[] = md_approved_sql('s');
 if ($salesStatus === 'refunded') $salesWhere[] = md_refund_sql('s');
 if ($salesQuery !== '') {
-    $salesWhere[] = "(s.transaction_code LIKE :sales_q OR s.buyer_name LIKE :sales_q OR s.buyer_email LIKE :sales_q OR s.buyer_phone_norm LIKE :sales_q OR s.product_name LIKE :sales_q OR s.price_name LIKE :sales_q)";
+    $salesWhere[] = "(s.transaction_code LIKE :sales_q OR s.buyer_name LIKE :sales_q OR s.buyer_email LIKE :sales_q OR s.buyer_phone LIKE :sales_q OR s.product_name LIKE :sales_q)";
     $salesParams['sales_q'] = '%' . $salesQuery . '%';
 }
 $salesWhereSql = implode(' AND ', $salesWhere) . $salesFilter;
 $salesFromSql = "
-    FROM hotmart_sales_live s
-    LEFT JOIN attribution_sales axs_detail ON axs_detail.source_sale_id = s.id
+    FROM v_sales_master s
+    LEFT JOIN attribution_sales axs_detail ON axs_detail.transaction_code = s.transaction_code
     LEFT JOIN attribution_matches am_detail ON am_detail.sale_id = axs_detail.id AND am_detail.attribution_model = :detail_model
     LEFT JOIN attribution_leads al_detail ON al_detail.id = am_detail.lead_id
-    LEFT JOIN users u_detail ON u_detail.id = s.matched_user_id
 ";
 $salesSelectSql = "
     SELECT s.*,
-           COALESCE(NULLIF(al_detail.turma_codigo,''), NULLIF(u_detail.codigo_turma,''), 'Sem turma') AS turma_atribuida,
+           COALESCE(NULLIF(al_detail.turma_codigo,''), 'Sem turma') AS turma_atribuida,
            al_detail.created_at AS lead_created_at,
            am_detail.match_type,
            am_detail.attribution_seconds_diff,
            am_detail.campaign_group,
            am_detail.campaign_name,
            am_detail.ad_name,
-           COALESCE(NULLIF(s.utm_source,''), NULLIF(al_detail.utm_source,''), NULLIF(u_detail.utm_source,'')) AS detail_utm_source,
-           COALESCE(NULLIF(s.utm_medium,''), NULLIF(u_detail.utm_medium,'')) AS detail_utm_medium,
-           COALESCE(NULLIF(s.utm_campaign,''), NULLIF(al_detail.utm_campaign_group,''), NULLIF(u_detail.utm_campaign,'')) AS detail_utm_campaign,
-           COALESCE(NULLIF(s.utm_term,''), NULLIF(al_detail.utm_term,''), NULLIF(u_detail.utm_term,'')) AS detail_utm_term,
-           COALESCE(NULLIF(s.utm_content,''), NULLIF(u_detail.utm_content,'')) AS detail_utm_content
+           COALESCE(NULLIF(s.utm_source,''), NULLIF(al_detail.utm_source,'')) AS detail_utm_source,
+           COALESCE(NULLIF(s.utm_medium,''), '') AS detail_utm_medium,
+           COALESCE(NULLIF(s.utm_campaign,''), NULLIF(al_detail.utm_campaign_group,'')) AS detail_utm_campaign,
+           COALESCE(NULLIF(s.utm_term,''), NULLIF(al_detail.utm_term,'')) AS detail_utm_term,
+           COALESCE(NULLIF(s.utm_content,''), '') AS detail_utm_content
       {$salesFromSql}
      WHERE {$salesWhereSql}
-  ORDER BY s.transaction_date DESC, s.id DESC
+  ORDER BY s.sale_date DESC, s.id DESC
 ";
 
 if ((string)($_GET['export'] ?? '') === 'sales_csv') {
     va_export_sales_csv($pdo, $salesSelectSql, $salesParams);
 }
 
-$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.id) {$salesFromSql} WHERE {$salesWhereSql}");
+$salesCountStmt = $pdo->prepare("SELECT COUNT(DISTINCT s.transaction_code) {$salesFromSql} WHERE {$salesWhereSql}");
 $salesCountStmt->execute($salesParams);
 $salesTotal = (int)$salesCountStmt->fetchColumn();
 $salesPages = max(1, (int)ceil($salesTotal / $salesPerPage));
@@ -511,7 +508,7 @@ $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $unattributedParams=['model'=>$filters['model'],'start'=>$period['start'].' 00:00:00','end'=>$period['end'].' 23:59:59'];
 $unattributedProduct='';
 if($filters['product']!==''){$unattributedProduct=' AND s.product_name=:product';$unattributedParams['product']=$filters['product'];}
-$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.transaction_date,s.product_name,s.price_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw FROM hotmart_sales_live s JOIN attribution_sales axs ON axs.source_sale_id=s.id LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.transaction_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.transaction_date DESC LIMIT 50",$unattributedParams);
+$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.sale_date DESC LIMIT 50",$unattributedParams);
 $manualReturn=$_GET;unset($manualReturn['manual_ok'],$manualReturn['manual_err']);$manualReturnQuery=http_build_query($manualReturn);
 
 $metricCards = [
@@ -754,7 +751,7 @@ include __DIR__ . '/_header.php';
     <?php if(!empty($_GET['manual_err'])):?><div class="manual-alert err"><?=va_h((string)$_GET['manual_err'])?></div><?php endif;?>
     <div class="table-wrap"><table class="bi-table unattr-table"><thead><tr><th>Venda</th><th>Comprador</th><th>Produto</th><th>Valor</th><th>Atribuir ao lead</th></tr></thead><tbody>
     <?php foreach($unattributedRows as $sale):?>
-      <tr><td><strong><?=va_h(date('d/m/Y H:i',strtotime((string)$sale['transaction_date'])))?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div></td><td><strong><?=va_h((string)$sale['buyer_name'])?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)$sale['buyer_phone_raw'])?></div></td><td><strong><?=va_h((string)$sale['product_name'])?></strong><div class="subtext"><?=va_h((string)$sale['price_name'])?></div></td><td><strong><?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td><td>
+      <tr><td><strong><?=va_h(date('d/m/Y H:i',strtotime((string)$sale['sale_date'])))?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div></td><td><strong><?=va_h((string)$sale['buyer_name'])?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)$sale['buyer_phone'])?></div></td><td><strong><?=va_h((string)$sale['product_name'])?></strong></td><td><strong><?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td><td>
         <form method="post" class="manual-attribution-form"><input type="hidden" name="acao" value="atribuir_venda_manual"><input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>"><input type="hidden" name="sale_id" value="<?=(int)$sale['id']?>"><input type="hidden" name="lead_id" value=""><input type="hidden" name="attribution_model" value="<?=va_h($filters['model'])?>"><input type="hidden" name="return_query" value="<?=va_h($manualReturnQuery)?>"><div class="lead-picker"><input type="search" class="lead-search" placeholder="Nome, e-mail, telefone ou ID" autocomplete="off"><div class="lead-results"></div><div class="lead-selected">Nenhum lead selecionado</div></div><div class="manual-form-actions"><button class="btn btn-primary" type="submit" disabled>Confirmar atribuição</button></div></form>
       </td></tr>
     <?php endforeach;?>
@@ -777,16 +774,16 @@ include __DIR__ . '/_header.php';
         <thead><tr><th>Data / transação</th><th>Comprador</th><th>Produto / pagamento</th><th>Valores</th><th>Status</th><th>Turma / jornada</th><th>UTMs</th><th>Atribuição</th></tr></thead>
         <tbody>
         <?php foreach ($salesRows as $sale): ?>
-          <?php $saleDate=(string)($sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: $sale['imported_at']); ?>
+          <?php $saleDate=(string)($sale['payment_confirmed_at'] ?: $sale['sale_date'] ?: $sale['created_at']); ?>
           <tr>
-            <td><strong><?=va_h($saleDate ? date('d/m/Y H:i',strtotime($saleDate)) : '-')?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div><div class="subtext"><?=va_h((string)($sale['sales_channel'] ?: 'hotmart'))?></div></td>
-            <td><strong><?=va_h((string)($sale['buyer_name'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)($sale['buyer_phone_raw'] ?: $sale['buyer_phone_norm']))?></div></td>
-            <td><strong><?=va_h((string)($sale['product_name'] ?: 'Sem produto'))?></strong><div class="subtext"><?=va_h((string)($sale['price_name'] ?: $sale['price_code']))?></div><div class="subtext"><?=va_h((string)($sale['payment_type'] ?: 'Pagamento não informado'))?><?= (int)$sale['installments_number'] > 1 ? ' · '.(int)$sale['installments_number'].'x' : '' ?></div></td>
-            <td class="sales-money"><strong>Bruto: <?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Líquido: <?=va_money($sale['net_revenue'])?></div><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td>
-            <td><span class="sales-status"><?=va_h((string)($sale['status'] ?: $sale['webhook_event'] ?: '-'))?></span><?php if((float)$sale['refunded_value']>0):?><div class="subtext">Devolvido: <?=va_money($sale['refunded_value'])?></div><?php endif;?></td>
-            <td><strong><?=va_h((string)$sale['turma_atribuida'])?></strong><?php if(!empty($sale['lead_created_at'])):?><div class="subtext">Inscrição: <?=va_h(date('d/m/Y H:i',strtotime((string)$sale['lead_created_at'])))?></div><?php endif;?><?php if((int)($sale['attribution_seconds_diff']??0)>0):?><div class="subtext">Até a compra: <?=va_h(va_duration($sale['attribution_seconds_diff']))?></div><?php endif;?></td>
+            <td><strong><?=va_h($saleDate ? date('d/m/Y H:i',strtotime($saleDate)) : '-')?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div><div class="subtext"><?=va_h(ucfirst((string)($sale['provider'] ?? 'hotmart')))?></div></td>
+            <td><strong><?=va_h((string)($sale['buyer_name'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['buyer_email'] ?? ''))?></div><div class="subtext"><?=va_h((string)($sale['buyer_phone'] ?? ''))?></div></td>
+            <td><strong><?=va_h((string)($sale['product_name'] ?: 'Sem produto'))?></strong><div class="subtext"><?=va_h((string)($sale['payment_method'] ?: 'Pagamento não informado'))?><?= (int)($sale['installments'] ?? 1) > 1 ? ' · '.(int)$sale['installments'].'x' : '' ?></div></td>
+            <td class="sales-money"><strong>Bruto: <?=va_money($sale['gross_revenue'] ?? 0)?></strong><div class="subtext">Líquido: <?=va_money($sale['net_revenue'] ?? 0)?></div><div class="subtext">Produtor: <?=va_money($sale['producer_net'] ?? 0)?></div></td>
+            <td><span class="sales-status"><?=va_h((string)($sale['status'] ?? '-'))?></span><?php if((float)($sale['refunded_value'] ?? 0)>0):?><div class="subtext">Devolvido: <?=va_money($sale['refunded_value'])?></div><?php endif;?></td>
+            <td><strong><?=va_h((string)($sale['turma_atribuida'] ?? 'Sem turma'))?></strong><?php if(!empty($sale['lead_created_at'])):?><div class="subtext">Inscrição: <?=va_h(date('d/m/Y H:i',strtotime((string)$sale['lead_created_at'])))?></div><?php endif;?><?php if((int)($sale['attribution_seconds_diff']??0)>0):?><div class="subtext">Até a compra: <?=va_h(va_duration($sale['attribution_seconds_diff']))?></div><?php endif;?></td>
             <td class="utm-stack"><strong><?=va_h((string)($sale['detail_utm_source'] ?: 'Orgânico/não informado'))?></strong><div class="subtext">Medium: <?=va_h((string)($sale['detail_utm_medium'] ?: '-'))?></div><div class="subtext">Campaign: <?=va_h((string)($sale['detail_utm_campaign'] ?: '-'))?></div><div class="subtext">Term: <?=va_h((string)($sale['detail_utm_term'] ?: '-'))?></div><div class="subtext">Content: <?=va_h((string)($sale['detail_utm_content'] ?: '-'))?></div></td>
-            <td><strong><?=va_h((string)($sale['campaign_group'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['campaign_name'] ?: '-'))?></div><div class="subtext">Anúncio: <?=va_h((string)($sale['ad_name'] ?: '-'))?></div><div class="subtext">Match: <?=va_h((string)($sale['match_type'] ?: $sale['match_method'] ?: 'não atribuído'))?></div></td>
+            <td><strong><?=va_h((string)($sale['campaign_group'] ?: '-'))?></strong><div class="subtext"><?=va_h((string)($sale['campaign_name'] ?: '-'))?></div><div class="subtext">Anúncio: <?=va_h((string)($sale['ad_name'] ?: '-'))?></div><div class="subtext">Match: <?=va_h((string)($sale['match_type'] ?: 'não atribuído'))?></div></td>
           </tr>
         <?php endforeach; ?>
         <?php if (!$salesRows): ?><tr><td colspan="8" class="empty">Nenhuma venda encontrada com estes filtros.</td></tr><?php endif; ?>
