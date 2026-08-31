@@ -459,22 +459,38 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
             $avgDuration = array_sum($durations) / count($durations);
             $maxDuration = max($durations);
             $minDuration = min($durations);
-            $ratio = $totalTheoMinutes > 0 ? ($avgDuration / $totalTheoMinutes) : 1.0;
 
             $benchmarkAnalysis['avg_duration_minutes'] = round($avgDuration, 1);
             $benchmarkAnalysis['max_duration_minutes'] = $maxDuration;
             $benchmarkAnalysis['min_duration_minutes'] = $minDuration;
-            // Se houver atraso significativo em relação à duração teórica projetada:
-            $toleratedDelayMinutes = max(360, (int)($totalTheoMinutes * 3.0));
-            $maxExpectedMinutes = $totalTheoMinutes + $toleratedDelayMinutes;
 
-            if ($avgDuration > $maxExpectedMinutes) {
-                $diffDelay = round($avgDuration - $totalTheoMinutes);
+            // Medição real de latência de fila (diferença entre a hora agendada available_at e o início real started_at)
+            $stQueueDelay = $pdo->prepare("
+                SELECT AVG(TIMESTAMPDIFF(MINUTE, j.available_at, s.started_at)) AS avg_queue_delay,
+                       COUNT(*) AS sample_count
+                FROM automation_flow_steps s
+                JOIN automation_flow_jobs j ON j.id = s.job_id
+                JOIN automation_flow_runs r ON r.id = s.run_id
+                WHERE r.flow_id = :fid 
+                  AND s.started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                  AND j.available_at IS NOT NULL
+                  AND s.started_at >= j.available_at
+            ");
+            $stQueueDelay->execute([':fid' => $flowId]);
+            $queueDelayInfo = $stQueueDelay->fetch(PDO::FETCH_ASSOC) ?: [];
+            $avgQueueDelay = (float)($queueDelayInfo['avg_queue_delay'] ?? 0);
+            $queueSamples  = (int)($queueDelayInfo['sample_count'] ?? 0);
+
+            $benchmarkAnalysis['avg_queue_delay_minutes'] = round($avgQueueDelay, 1);
+
+            // Alerta crítico apenas se a latência REAL da fila/cron exceder 45 minutos em média
+            if ($queueSamples >= 3 && $avgQueueDelay > 45) {
+                $diffDelay = round($avgQueueDelay);
                 $issues[] = [
                     'source' => 'sla_benchmark',
                     'type' => 'sla_excessive_delay',
-                    'message' => "Desvio Crítico de SLA: Fluxo projetado para ~{$totalTheoMinutes} min, mas os últimos " . count($lastCompleted) . " leads levaram em média " . round($avgDuration) . " min (+{$diffDelay}m de atraso na fila/cron).",
-                    'avg_minutes' => round($avgDuration),
+                    'message' => "Atraso Crítico na Fila: O Cron está levando em média {$diffDelay} min para executar as etapas após o horário agendado.",
+                    'avg_minutes' => round($avgQueueDelay),
                     'theo_minutes' => $totalTheoMinutes,
                     'delay_minutes' => $diffDelay,
                 ];
