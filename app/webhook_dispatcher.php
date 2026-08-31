@@ -152,6 +152,78 @@ function build_webhook_payload(string $evento, array $user, array $extra = []): 
     ];
 }
 
+function wh_is_botconversa_url(string $url): bool
+{
+    $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
+    return $host === 'new-backend.botconversa.com.br' || str_ends_with($host, '.botconversa.com.br');
+}
+
+function wh_digits_only(?string $value): string
+{
+    return preg_replace('/\D+/', '', (string)$value) ?: '';
+}
+
+function wh_botconversa_phone(array $payload): string
+{
+    $candidates = [
+        $payload['extra']['buyer_phone'] ?? null,
+        $payload['extra']['comprador_telefone'] ?? null,
+        $payload['user']['telefone'] ?? null,
+        $payload['telefone'] ?? null,
+    ];
+    foreach ($candidates as $candidate) {
+        $phone = wh_digits_only(is_scalar($candidate) ? (string)$candidate : '');
+        if ($phone === '') continue;
+        if (strlen($phone) === 10 || strlen($phone) === 11) $phone = '55' . $phone;
+        if (strlen($phone) >= 12 && strlen($phone) <= 13) return $phone;
+    }
+    return '';
+}
+
+function wh_payload_for_botconversa(array $payload): array
+{
+    $extra = is_array($payload['extra'] ?? null) ? $payload['extra'] : [];
+    $user = is_array($payload['user'] ?? null) ? $payload['user'] : [];
+    $payment = is_array($payload['pagamento'] ?? null) ? $payload['pagamento'] : [];
+    $phone = wh_botconversa_phone($payload);
+
+    if ($phone !== '') {
+        $user['telefone'] = $phone;
+        $extra['buyer_phone'] = $phone;
+        $extra['comprador_telefone'] = $phone;
+    }
+
+    return [
+        'evento' => $payload['evento'] ?? null,
+        'nome' => $extra['buyer_name'] ?? $extra['comprador_nome'] ?? $user['nome'] ?? null,
+        'email' => $extra['buyer_email'] ?? $extra['comprador_email'] ?? $user['email'] ?? null,
+        'telefone' => $phone !== '' ? $phone : ($user['telefone'] ?? null),
+        'phone' => $phone !== '' ? $phone : ($user['telefone'] ?? null),
+        'whatsapp' => $phone !== '' ? $phone : ($user['telefone'] ?? null),
+        'documento' => $extra['buyer_document'] ?? $extra['comprador_documento'] ?? $user['documento'] ?? null,
+        'user_id' => $user['id'] ?? null,
+        'magic_link' => $user['magic_link'] ?? null,
+        'gateway' => $payload['gateway'] ?? $payment['gateway'] ?? null,
+        'status' => $payment['status'] ?? $extra['status'] ?? $extra['normalized_status'] ?? null,
+        'metodo_pagamento' => $payment['metodo'] ?? $extra['payment_method'] ?? null,
+        'transacao_id' => $payment['transacao_id'] ?? $extra['transaction_code'] ?? null,
+        'valor_bruto' => $payment['valor_bruto'] ?? $extra['valor_bruto'] ?? null,
+        'valor_liquido' => $payment['valor_liquido'] ?? $extra['valor_liquido'] ?? null,
+        'parcelas' => $payment['parcelas'] ?? $extra['installments'] ?? null,
+        'produto_nome' => $payment['produto_nome'] ?? $extra['product_name'] ?? $extra['produto_nome'] ?? null,
+        'produto_id' => $payment['produto_id'] ?? $extra['product_code'] ?? $extra['produto_id'] ?? null,
+        'checkout_id' => $payment['checkout_id'] ?? $extra['checkout_id'] ?? null,
+        'codigo_live' => $extra['codigo_live'] ?? null,
+        'data_live' => $extra['data_live'] ?? null,
+        'data_live_iso' => $extra['data_live_iso'] ?? null,
+        'payment_event_id' => $extra['payment_event_id'] ?? null,
+        'timestamp' => $payload['timestamp'] ?? date('c'),
+        'user' => $user,
+        'pagamento' => $payment,
+        'extra' => $extra,
+    ];
+}
+
 /**
  * Enriquecimento automático do payload: adiciona codigo_live (slug da live) quando for possível
  * identificar a turma do aluno no momento do disparo.
@@ -442,7 +514,11 @@ function enviar_webhook_http(
     ?string $headersJson,
     string $payloadFormat,
     array $payload
-): void {
+): array {
+    if (wh_is_botconversa_url($url)) {
+        $payload = wh_payload_for_botconversa($payload);
+    }
+
     // Normaliza formato
     $payloadFormat = strtolower($payloadFormat ?: 'json');
     if (!in_array($payloadFormat, ['json', 'form'], true)) {
@@ -527,6 +603,13 @@ function enviar_webhook_http(
     } catch (Throwable $e) {
         // Se der erro no log, não interrompe o fluxo
     }
+
+    return [
+        'ok' => $error === '' && $status !== null && $status >= 200 && $status < 300,
+        'status' => $status,
+        'body' => (string)$responseBody,
+        'error' => $error ?: null,
+    ];
 }
 
 /**

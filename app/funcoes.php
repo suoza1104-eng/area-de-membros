@@ -350,13 +350,14 @@ function definir_tag_estado_reagendamento(int $user_id, string $estado, string $
  * $extra   - dados extras específicos do evento
  */
 function capturar_fluxos_automacao(string $evento, ?int $user_id = null, array $extra = []): void {
-    if ($user_id !== null && $user_id > 0) {
-        static $capturados = [];
-        $payloadKey = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
-        $captureKey = hash('sha256', strtoupper($evento) . '|' . $user_id . '|' . (string)$payloadKey);
-        if (isset($capturados[$captureKey])) return;
-        $capturados[$captureKey] = true;
+    $flowUserId = $user_id !== null && $user_id > 0 ? $user_id : 0;
+    static $capturados = [];
+    $payloadKey = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    $captureKey = hash('sha256', strtoupper($evento) . '|' . $flowUserId . '|' . (string)$payloadKey);
+    if (isset($capturados[$captureKey])) return;
+    $capturados[$captureKey] = true;
 
+    if ($user_id !== null && $user_id > 0) {
         try {
             require_once __DIR__ . '/push_flow_engine.php';
             push_flow_capture_event(getPDO(), $evento, $user_id, $extra);
@@ -369,19 +370,22 @@ function capturar_fluxos_automacao(string $evento, ?int $user_id = null, array $
         } catch (Throwable $e) {
             @error_log('email_flow_capture_event: ' . $e->getMessage());
         }
-        try {
-            require_once __DIR__ . '/automation_flows.php';
-            automation_flow_capture_event(getPDO(), $evento, $user_id, $extra);
-        } catch (Throwable $e) {
-            @error_log('automation_flow_capture_event: ' . $e->getMessage());
-        }
+    }
+
+    try {
+        require_once __DIR__ . '/automation_flows.php';
+        automation_flow_capture_event(getPDO(), $evento, $flowUserId, $extra);
+    } catch (Throwable $e) {
+        @error_log('automation_flow_capture_event: ' . $e->getMessage());
     }
 }
 
 function disparar_webhooks(string $evento, ?int $user_id = null, array $extra = []): void {
     // Captura o evento rapidamente para o motor assíncrono. O processamento
     // dos blocos ocorre pelo cron e nunca durante a requisição do aluno.
-    capturar_fluxos_automacao($evento, $user_id, $extra);
+    if (empty($extra['_skip_automation_capture'])) {
+        capturar_fluxos_automacao($evento, $user_id, $extra);
+    }
 
     // Em requisições web, adia o envio para DEPOIS de entregar a resposta ao
     // usuário. Assim o aluno nunca espera a resposta de APIs externas
@@ -436,7 +440,10 @@ function _disparar_webhooks_sync_resultado(string $evento, ?int $user_id = null,
     }
 
     // Monta dados básicos do usuário (se informado)
-    capturar_fluxos_automacao($evento, $user_id, $extra);
+    if (empty($extra['_skip_automation_capture'])) {
+        capturar_fluxos_automacao($evento, $user_id, $extra);
+    }
+    unset($extra['_skip_automation_capture']);
 
     $user = [];
     if ($user_id !== null) {

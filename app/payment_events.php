@@ -212,9 +212,9 @@ function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode,
         if (!$flows) return 0;
 
         $payload = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
-        $source = hash('sha256', 'payment_unmatched|' . strtoupper($eventCode) . '|' . ($extra['transaction_code'] ?? '') . '|' . ($extra['payment_event_id'] ?? '') . '|' . $payload);
+        $source = hash('sha256', 'payment_unmatched|' . strtoupper($eventCode) . '|' . ($extra['transaction_code'] ?? '') . '|' . ($extra['payment_event_id'] ?? ''));
         $pdo->beginTransaction();
-        $pdo->prepare('INSERT IGNORE INTO automation_flow_events(event_code,user_id,source_key,payload_json) VALUES(:e,0,:s,:p)')
+        $pdo->prepare('INSERT INTO automation_flow_events(event_code,user_id,source_key,payload_json) VALUES(:e,0,:s,:p) ON DUPLICATE KEY UPDATE payload_json=VALUES(payload_json)')
             ->execute(['e'=>$eventCode,'s'=>$source,'p'=>$payload]);
         $st = $pdo->prepare('SELECT id FROM automation_flow_events WHERE source_key=:s');
         $st->execute(['s'=>$source]);
@@ -228,7 +228,8 @@ function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode,
             foreach (($graph['nodes'] ?? []) as $node) {
                 if (($node['type'] ?? '') === 'trigger') { $trigger = $node; break; }
             }
-            if (!$trigger || !automation_flow_trigger_matches($trigger, ['id'=>0], $extra, $eventCode, (int)$flow['flow_id'], (int)$flow['current_version_id'])) continue;
+            $anonymousUser = function_exists('automation_flow_user_from_event_payload') ? automation_flow_user_from_event_payload(0, $extra) : ['id'=>0];
+            if (!$trigger || !automation_flow_trigger_matches($trigger, $anonymousUser, $extra, $eventCode, (int)$flow['flow_id'], (int)$flow['current_version_id'])) continue;
             $run = $pdo->prepare("INSERT IGNORE INTO automation_flow_runs(flow_id,version_id,event_id,user_id,status) VALUES(:f,:v,:e,0,'running')");
             $run->execute(['f'=>$flow['flow_id'],'v'=>$flow['current_version_id'],'e'=>$eventId]);
             if ($run->rowCount() !== 1) continue;
@@ -384,16 +385,18 @@ function payment_event_register(PDO $pdo, array $data): array
         // retentativa gera um automation_flow_events novo (hash inclui o
         // payload inteiro), entao reavaliar poderia duplicar o disparo de
         // fluxos sem filtro de produto.
-        $isEnrichment = !$isNew && $existingHadNoProduct && $incomingHasProduct && $userId > 0;
+        $isEnrichment = !$isNew && $existingHadNoProduct && $incomingHasProduct;
 
         if (($isNew || $isEnrichment) && !$alreadyTriggeredBusiness && $eventId > 0) {
             $extra = payment_event_trigger_payload($data, $metadata, $eventId, $provider, $status, $eventCode, $transactionCode);
-            if ($userId > 0 && function_exists('capturar_fluxos_automacao')) {
-                capturar_fluxos_automacao($eventCode, $userId, $extra);
+            if (function_exists('capturar_fluxos_automacao')) {
+                capturar_fluxos_automacao($eventCode, $userId > 0 ? $userId : null, $extra);
             } elseif ($userId <= 0) {
                 payment_event_capture_unmatched_automation($pdo, $eventCode, $extra);
+            }
+            if ($userId <= 0) {
                 if (function_exists('_disparar_webhooks_sync')) {
-                    _disparar_webhooks_sync($eventCode, null, $extra);
+                    _disparar_webhooks_sync($eventCode, null, $extra + ['_skip_automation_capture' => true]);
                 }
             }
             $pdo->prepare("UPDATE student_payment_events SET triggered_at=NOW(),trigger_count=trigger_count+1 WHERE id=:id")

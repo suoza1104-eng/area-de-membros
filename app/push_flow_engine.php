@@ -366,7 +366,7 @@ function push_flow_dispatch_integration(PDO $pdo, array $config, array $user, ar
                 $payload['custom'] = $extra['flow_payload'];
             }
             $userId = isset($user['id']) ? (int)$user['id'] : null;
-            enviar_webhook_http(
+            $result = enviar_webhook_http(
                 $pdo,
                 null,
                 $userId,
@@ -377,6 +377,9 @@ function push_flow_dispatch_integration(PDO $pdo, array $config, array $user, ar
                 'json',
                 $payload
             );
+            if (empty($result['ok'])) {
+                throw new RuntimeException('Webhook recusado: HTTP ' . (string)($result['status'] ?? 0) . ' ' . substr((string)($result['error'] ?? $result['body'] ?? ''), 0, 300));
+            }
         } elseif (ctype_digit($target)) {
             $st = $pdo->prepare('SELECT * FROM webhooks WHERE id=:id AND ativo=1 LIMIT 1'); $st->execute(['id'=>(int)$target]); $row = $st->fetch(PDO::FETCH_ASSOC);
             if (!$row) throw new RuntimeException('Webhook configurado não foi encontrado ou está inativo.');

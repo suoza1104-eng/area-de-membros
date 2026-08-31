@@ -414,18 +414,31 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
     return false;
 }
 
+function automation_flow_user_from_event_payload(int $userId, array $extra): array
+{
+    if ($userId > 0) return buscar_usuario_por_id($userId) ?: ['id'=>$userId];
+    return [
+        'id' => 0,
+        'nome' => $extra['buyer_name'] ?? $extra['comprador_nome'] ?? null,
+        'email' => $extra['buyer_email'] ?? $extra['comprador_email'] ?? null,
+        'telefone' => $extra['buyer_phone'] ?? $extra['comprador_telefone'] ?? null,
+        'documento' => $extra['buyer_document'] ?? $extra['comprador_documento'] ?? null,
+        '_unidentified_buyer' => 1,
+    ];
+}
+
 function automation_flow_capture_event(PDO $pdo, string $event, int $userId, array $extra = []): int
 {
-    if ($userId < 1 || trim($event) === '') return 0;
+    if ($userId < 0 || trim($event) === '') return 0;
     automation_flows_ensure_schema($pdo);
     $flows = $pdo->query("SELECT f.id flow_id,f.current_version_id,v.graph_json FROM automation_flows f JOIN automation_flow_versions v ON v.id=f.current_version_id WHERE f.status='active'")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     if (!$flows) return 0;
-    $user = buscar_usuario_por_id($userId) ?: ['id'=>$userId];
+    $user = automation_flow_user_from_event_payload($userId, $extra);
     $payload = json_encode($extra, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_PARTIAL_OUTPUT_ON_ERROR);
     $source = hash('sha256', 'unified|' . strtoupper($event) . '|' . $userId . '|' . ($extra['event_id'] ?? $extra['transaction_code'] ?? $extra['lesson_id'] ?? $payload));
     $pdo->beginTransaction();
     try {
-        $pdo->prepare('INSERT IGNORE INTO automation_flow_events(event_code,user_id,source_key,payload_json) VALUES(:e,:u,:s,:p)')
+        $pdo->prepare('INSERT INTO automation_flow_events(event_code,user_id,source_key,payload_json) VALUES(:e,:u,:s,:p) ON DUPLICATE KEY UPDATE payload_json=VALUES(payload_json)')
             ->execute(['e'=>$event,'u'=>$userId,'s'=>$source,'p'=>$payload]);
         $st=$pdo->prepare('SELECT id FROM automation_flow_events WHERE source_key=:s');$st->execute(['s'=>$source]);$eventId=(int)$st->fetchColumn();
         if ($eventId <= 0) { $pdo->rollBack(); return 0; }
@@ -865,8 +878,8 @@ function automation_flow_process_job(PDO $pdo, array $job): string
     $node=null; foreach ($graph['nodes'] ?? [] as $n) if (($n['id'] ?? '') === $job['node_id']) { $node=$n; break; }
     if (!$node) throw new RuntimeException('Bloco nao encontrado.');
     $type=(string)$node['type']; $config=is_array($node['config'] ?? null) ? $node['config'] : [];
-    $user=buscar_usuario_por_id((int)$job['user_id']) ?: ['id'=>(int)$job['user_id']];
     $extra=json_decode((string)($job['event_payload'] ?? ''), true) ?: [];
+    $user=automation_flow_user_from_event_payload((int)$job['user_id'], $extra);
     $input=json_decode((string)($job['input_json'] ?? ''), true) ?: [];
     $pdo->prepare("INSERT INTO automation_flow_steps(run_id,job_id,node_id,node_type,status) VALUES(:r,:j,:n,:t,'processing')")
         ->execute(['r'=>$job['run_id'],'j'=>$job['id'],'n'=>$job['node_id'],'t'=>$type]);
