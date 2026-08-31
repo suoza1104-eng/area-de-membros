@@ -184,11 +184,9 @@ function automation_flow_find_node(array $graph, string $nodeId): ?array
 function automation_flow_channel_settings(PDO $pdo, string $channel): array
 {
     $defaults = ['enabled' => true, 'min_interval_ms' => 300, 'batch_size' => 30, 'max_attempts' => 5, 'backoff_step_seconds' => 30, 'backoff_max_seconds' => 1800];
-    if (in_array($channel, ['voice', 'general'], true)) {
-        // A pausa entre disparos do canal de voz já é controlada por automation_flow_voice_pacing_delay()
-        // (reagenda via available_at); e o canal "general" só tem etapas locais (condição/espera/ação/fim),
-        // sem chamada de API externa a espaçar.
-        return ['min_interval_ms' => 0] + $defaults;
+    if (in_array($channel, ['voice', 'general', 'push'], true)) {
+        // Voz, General e Push não usam pausa artificial entre envios de lote.
+        return ['min_interval_ms' => 0, 'batch_size' => 200] + $defaults;
     }
     try {
         $st = $pdo->prepare("SELECT * FROM automation_channel_settings WHERE channel=:c LIMIT 1");
@@ -199,7 +197,7 @@ function automation_flow_channel_settings(PDO $pdo, string $channel): array
         return [
             'enabled' => (int)$row['enabled'] === 1,
             'min_interval_ms' => max(0, min(60000, (int)$row['min_interval_ms'])),
-            'batch_size' => max(1, min(200, (int)$row['batch_size'])),
+            'batch_size' => max(1, min(1000, (int)$row['batch_size'])),
             'max_attempts' => max(1, min(20, (int)$row['max_attempts'])),
             'backoff_step_seconds' => $backoffStep,
             'backoff_max_seconds' => max($backoffStep, min(86400, (int)$row['backoff_max_seconds'])),
