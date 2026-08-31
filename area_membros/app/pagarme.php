@@ -64,10 +64,10 @@ function pagarme_normalized_status(string $event, string $status): string
     $event = strtolower(trim($event));
     $status = strtolower(trim($status));
     if (in_array($event, ['order.paid','charge.paid','invoice.paid','checkout.closed'], true) || in_array($status, ['paid','captured'], true)) return 'APPROVED';
-    if (in_array($event, ['charge.pending','charge.processing','order.created','checkout.created','invoice.created'], true) || in_array($status, ['pending','processing'], true)) return 'PENDING';
     if (in_array($event, ['charge.refunded'], true) || $status === 'refunded') return 'REFUNDED';
     if (in_array($event, ['charge.chargedback','chargeback.received'], true) || in_array($status, ['chargedback','chargeback'], true)) return 'CHARGEBACK';
     if (str_contains($event, 'payment_failed') || str_contains($event, 'canceled') || in_array($status, ['failed','canceled','cancelled'], true)) return 'CANCELED';
+    if (in_array($event, ['charge.pending','charge.processing','order.created','checkout.created','invoice.created'], true) || in_array($status, ['pending','processing'], true)) return 'PENDING';
     return 'UNKNOWN';
 }
 
@@ -128,13 +128,29 @@ function pagarme_offer_candidates(array $data, array $charge): array
 {
     $candidates = [];
     $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
-    foreach ([$data['code'] ?? '', $charge['code'] ?? '', $metadata['offer_code'] ?? '', $metadata['oferta'] ?? '', $metadata['offer'] ?? '', $metadata['produto'] ?? ''] as $value) {
+    $add = static function ($value) use (&$candidates): void {
         foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+    };
+    $addWithPrefix = static function ($value, string $prefix) use ($add): void {
+        $value = trim((string)$value);
+        if ($value === '') return;
+        $add($value);
+        $add($prefix . ':' . $value);
+    };
+
+    foreach ([$data['code'] ?? '', $charge['code'] ?? '', $metadata['offer_code'] ?? '', $metadata['oferta'] ?? '', $metadata['offer'] ?? '', $metadata['produto'] ?? ''] as $value) {
+        $add($value);
+    }
+    foreach ([$metadata['checkout_id'] ?? '', $metadata['checkout'] ?? ''] as $value) {
+        $addWithPrefix($value, 'checkout');
+    }
+    foreach ([$metadata['product_id'] ?? '', $metadata['product'] ?? ''] as $value) {
+        $addWithPrefix($value, 'product');
     }
     foreach ((is_array($data['items'] ?? null) ? $data['items'] : []) as $item) {
         if (!is_array($item)) continue;
         foreach ([$item['code'] ?? '', $item['id'] ?? '', $item['description'] ?? ''] as $value) {
-            foreach (course_access_offer_codes((string)$value) as $code) $candidates[] = $code;
+            $add($value);
         }
     }
     return array_values(array_unique(array_filter($candidates, static fn($v) => trim((string)$v) !== '')));
@@ -200,7 +216,21 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
     $paymentMethod = pagarme_scalar($charge, 'payment_method') ?: pagarme_scalar($lastTransaction, 'transaction_type') ?: null;
     $feeCents = pagarme_fee_cents($data, $charge, $lastTransaction, $amountCents, (string)$paymentMethod);
     $netCents = pagarme_net_cents($data, $charge, $lastTransaction, $amountCents, $feeCents);
+    // A Pagar.me nao tem sincronizacao por API (so webhook), entao nao ha fonte
+    // autoritativa alternativa para consultar — quando a taxa nao vem explicita
+    // no payload, o fallback percentual fixo (pagarme_fee_cents) e a unica opcao
+    // hoje, e fica marcado como estimado para nao ser confundido com dado real.
+    $feeIsEstimated = !payment_amount_fee_found_in_payload([$charge, $lastTransaction, $data]);
     $productName = pagarme_scalar($firstItem, 'description');
+    if ($productName === '') {
+        // Eventos do tipo "charge.*" nao trazem os itens do pedido (isso so
+        // vem em "order.*"). Se um charge.* chegar antes do order.* para a
+        // mesma transacao, usa o nome de produto ja conhecido para nao perder
+        // essa informacao no registro da venda nem no disparo de automacoes.
+        $knownProductStmt = $pdo->prepare("SELECT product_name FROM payment_sales WHERE provider='pagarme' AND external_transaction_id=:t AND product_name IS NOT NULL AND product_name<>'' LIMIT 1");
+        $knownProductStmt->execute([':t' => 'pagarme:' . $transactionId]);
+        $productName = (string)($knownProductStmt->fetchColumn() ?: '');
+    }
     $fingerprint = hash('sha256', $event . '|' . $transactionId . '|' . $providerStatus . '|' . $rawPayload);
     $secretConfigured = trim((string)get_setting('pagarme_webhook_secret', '')) !== '';
     $secretValid = $secretConfigured ? pagarme_validate_secret($server, $query) : false;
@@ -221,20 +251,24 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
 
         $sale = $pdo->prepare("INSERT INTO payment_sales
             (provider,external_transaction_id,external_checkout_id,transaction_type,provider_status,normalized_status,currency,
-             gross_amount_cents,net_amount_cents,fee_amount_cents,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
+             gross_amount_cents,net_amount_cents,fee_amount_cents,fee_is_estimated,product_amount_cents,interest_amount_cents,installments,payment_method,payment_gateway,provider_account_id,
              external_product_id,product_name,product_slug,integration_id,integration_delivery_type,classes_text,origin_description,origin_slug,
-             buyer_name,buyer_email,buyer_phone,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
+             buyer_name,buyer_email,buyer_phone,buyer_phone_norm,buyer_document,matched_user_id,match_method,checkout_url,order_bumps_json,raw_payload_json,
              first_received_at,last_received_at)
-            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:product_amount,0,
+            VALUES ('pagarme',:transaction,:checkout,:type,:provider_status,:normalized_status,:currency,:gross,:net,:fee,:fee_is_estimated,:product_amount,0,
              :installments,:payment_method,'pagarme',:account,:product_id,:product_name,NULL,:integration_id,NULL,NULL,:origin,NULL,
-             :buyer_name,:buyer_email,:buyer_phone,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
+             :buyer_name,:buyer_email,:buyer_phone,:phone_norm,:buyer_document,:user_id,:match_method,NULL,NULL,:payload,:received_at,:received_at)
             ON DUPLICATE KEY UPDATE external_checkout_id=VALUES(external_checkout_id),transaction_type=VALUES(transaction_type),
              provider_status=VALUES(provider_status),normalized_status=VALUES(normalized_status),currency=VALUES(currency),
-             gross_amount_cents=VALUES(gross_amount_cents),net_amount_cents=VALUES(net_amount_cents),fee_amount_cents=VALUES(fee_amount_cents),
+             gross_amount_cents=VALUES(gross_amount_cents),
+             net_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(net_amount_cents) ELSE net_amount_cents END,
+             fee_amount_cents=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_amount_cents) ELSE fee_amount_cents END,
+             fee_is_estimated=CASE WHEN VALUES(fee_is_estimated)=0 OR fee_is_estimated=1 THEN VALUES(fee_is_estimated) ELSE fee_is_estimated END,
              product_amount_cents=VALUES(product_amount_cents),installments=VALUES(installments),
-             payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),external_product_id=VALUES(external_product_id),
-             product_name=VALUES(product_name),integration_id=VALUES(integration_id),origin_description=VALUES(origin_description),
-             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_document=VALUES(buyer_document),
+             payment_method=VALUES(payment_method),provider_account_id=VALUES(provider_account_id),
+             external_product_id=COALESCE(NULLIF(VALUES(external_product_id),''),external_product_id),
+             product_name=COALESCE(NULLIF(VALUES(product_name),''),product_name),integration_id=COALESCE(NULLIF(VALUES(integration_id),''),integration_id),origin_description=VALUES(origin_description),
+             buyer_name=VALUES(buyer_name),buyer_email=VALUES(buyer_email),buyer_phone=VALUES(buyer_phone),buyer_phone_norm=VALUES(buyer_phone_norm),buyer_document=VALUES(buyer_document),
              matched_user_id=VALUES(matched_user_id),match_method=VALUES(match_method),raw_payload_json=VALUES(raw_payload_json),
              last_received_at=VALUES(last_received_at)");
         $sale->execute([
@@ -247,6 +281,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             ':gross'=>$amountCents,
             ':net'=>$netCents,
             ':fee'=>$feeCents,
+            ':fee_is_estimated'=>$feeIsEstimated ? 1 : 0,
             ':product_amount'=>payment_amount_cents($firstItem['amount'] ?? $amountCents),
             ':installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
             ':payment_method'=>$paymentMethod,
@@ -258,6 +293,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             ':buyer_name'=>pagarme_scalar($customer, 'name') ?: null,
             ':buyer_email'=>$email ?: null,
             ':buyer_phone'=>$phoneRaw ?: null,
+            ':phone_norm'=>$phoneNorm ?: null,
             ':buyer_document'=>pagarme_scalar($customer, 'document') ?: null,
             ':user_id'=>$matchedUser['id'] ?? null,
             ':match_method'=>(string)($matched['method'] ?? 'none'),
@@ -294,15 +330,22 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             foreach (['utm_source','utm_medium','utm_campaign','utm_term','utm_content'] as $utm) {
                 if (isset($data['metadata'][$utm])) $legacySale[$utm] = (string)$data['metadata'][$utm];
             }
-            hotmart_upsert_sale_live($pdo, $legacySale);
-            hotmart_upsert_sale_legacy($pdo, $legacySale);
-            $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,sale_origin=:origin,sales_channel='pagarme' WHERE transaction_code=:transaction")
-                ->execute([
-                    ':payment'=>$paymentMethod,
-                    ':installments'=>(int)($lastTransaction['installments'] ?? 0) ?: null,
-                    ':origin'=>(string)($data['metadata']['utm_source'] ?? '') ?: 'pagarme',
-                    ':transaction'=>$transactionCode,
-                ]);
+            pagarme_upsert_sales_master($pdo, [
+                'transaction_code' => $transactionCode,
+                'normalized_status' => $normalizedStatus,
+                'checkout_platform' => (string)($data['metadata']['platform_integration'] ?? 'pagarme'),
+                'product_name' => (string)($data['metadata']['product_name'] ?? ''),
+                'gross_amount_cents' => $amountCents,
+                'net_amount_cents' => $netCents,
+                'buyer_name' => pagarme_scalar($customer, 'name'),
+                'buyer_email' => $email,
+                'buyer_phone' => $phoneNorm ?: $phoneRaw,
+                'buyer_document' => pagarme_scalar($customer, 'document'),
+                'payment_method' => $paymentMethod ?: 'pix',
+                'installments' => (int)($lastTransaction['installments'] ?? 1),
+                'last_seen_at' => date('Y-m-d H:i:s'),
+                'metadata_json' => $rawPayload,
+            ]);
             if ($normalizedStatus === 'APPROVED') {
                 $lifetimeAttempt = pagarme_try_grant_lifetime($pdo, $data, $charge, $transactionCode, $email, $phoneRaw, $matchedUser);
             }
@@ -361,4 +404,72 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
+}
+
+function pagarme_upsert_sales_master(PDO $pdo, array $event): void
+{
+    $tx = (string)($event['transaction_code'] ?? '');
+    if ($tx === '') return;
+
+    $rawStatus = (string)($event['normalized_status'] ?? 'PENDING');
+    $v = strtoupper(trim($rawStatus));
+    if (in_array($v, ['APPROVED', 'APROVADO', 'PAID', 'OK', 'DISPAROU'], true)) $stEnum = 'APPROVED';
+    elseif (in_array($v, ['REFUNDED', 'REEMBOLSADO'], true)) $stEnum = 'REFUNDED';
+    elseif (in_array($v, ['CHARGEBACK'], true)) $stEnum = 'CHARGEBACK';
+    elseif (in_array($v, ['CANCELED', 'CANCELADO', 'FAILED'], true)) $stEnum = 'CANCELED';
+    else $stEnum = 'PENDING';
+
+    $grossCents = (int)($event['gross_amount_cents'] ?? 0);
+    $netCents = (int)($event['net_amount_cents'] ?? $grossCents);
+    $feeCents = max(0, $grossCents - $netCents);
+    $gross = $grossCents / 100;
+    $net = $netCents / 100;
+    $fees = $feeCents / 100;
+
+    $st = $pdo->prepare("
+        INSERT INTO pagarme_sales (
+            transaction_code, status, checkout_platform, product_name,
+            amount_cents, fee_cents, net_cents, gross_revenue, net_revenue, producer_net, fees,
+            buyer_name, buyer_email, buyer_phone, buyer_document, payment_method, installments,
+            sale_date, payment_confirmed_at, raw_payload_json, created_at
+        ) VALUES (
+            :tx, :status, :checkout, :prod_name,
+            :amount_c, :fee_c, :net_c, :gross, :net, :prod, :fees,
+            :b_name, :b_email, :b_phone, :b_doc, :pay_method, :inst,
+            :sale_date, :confirmed_at, :raw, NOW()
+        ) ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            product_name = VALUES(product_name),
+            gross_revenue = VALUES(gross_revenue),
+            net_revenue = VALUES(net_revenue),
+            producer_net = VALUES(producer_net),
+            fees = VALUES(fees),
+            buyer_name = VALUES(buyer_name),
+            buyer_email = VALUES(buyer_email),
+            payment_confirmed_at = VALUES(payment_confirmed_at),
+            updated_at = NOW()
+    ");
+
+    $st->execute([
+        'tx' => $tx,
+        'status' => $stEnum,
+        'checkout' => (string)($event['checkout_platform'] ?? 'pagarme'),
+        'prod_name' => (string)($event['product_name'] ?? ''),
+        'amount_c' => $grossCents,
+        'fee_c' => $feeCents,
+        'net_c' => $netCents,
+        'gross' => $gross,
+        'net' => $net,
+        'prod' => $net,
+        'fees' => $fees,
+        'b_name' => (string)($event['buyer_name'] ?? ''),
+        'b_email' => (string)($event['buyer_email'] ?? ''),
+        'b_phone' => (string)($event['buyer_phone'] ?? ''),
+        'b_doc' => (string)($event['buyer_document'] ?? ''),
+        'pay_method' => (string)($event['payment_method'] ?? 'pix'),
+        'inst' => (int)($event['installments'] ?: 1),
+        'sale_date' => (string)($event['last_seen_at'] ?: date('Y-m-d H:i:s')),
+        'confirmed_at' => $stEnum === 'APPROVED' ? date('Y-m-d H:i:s') : null,
+        'raw' => $event['metadata_json'] ?: null,
+    ]);
 }

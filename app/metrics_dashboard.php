@@ -18,20 +18,17 @@ function md_row(PDO $pdo, string $sql, array $params = []): array
 
 function md_approved_sql(string $alias = 's'): string
 {
-    return "(COALESCE(NULLIF({$alias}.sales_channel,''),'hotmart') IN ('hotmart','dom','pagarme')
-        AND (UPPER(COALESCE({$alias}.webhook_event,'')) IN ('PURCHASE_APPROVED','PURCHASE_COMPLETE')
-        OR UPPER(COALESCE({$alias}.status,'')) IN ('APROVADO','APPROVED','PURCHASE_APPROVED','COMPLETO','COMPLETE','COMPLETED','PURCHASE_COMPLETE','PAID')))";
+    return "({$alias}.status = 'APPROVED')";
 }
 
 function md_refund_sql(string $alias = 's'): string
 {
-    return "(COALESCE(NULLIF({$alias}.sales_channel,''),'hotmart') IN ('hotmart','dom','pagarme')
-        AND UPPER(COALESCE({$alias}.status,'')) IN ('REEMBOLSADO','REFUNDED','PURCHASE_REFUNDED','CHARGEBACK','PURCHASE_CHARGEBACK'))";
+    return "({$alias}.status IN ('REFUNDED', 'CHARGEBACK'))";
 }
 
 function md_sale_revenue_date_sql(string $alias = 's'): string
 {
-    return "COALESCE({$alias}.payment_confirmed_at,{$alias}.transaction_date)";
+    return "COALESCE({$alias}.payment_confirmed_at, {$alias}.sale_date)";
 }
 
 function md_basis_column(string $basis): string
@@ -104,13 +101,13 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
 
     $saleParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $saleFilter = md_filter_sql($filters, 'sale', $saleParams);
-    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.matched_user_id) buyers,
+    $sales = md_row($pdo, "SELECT COUNT(*) sales, COUNT(DISTINCT s.buyer_email) buyers,
               COALESCE(SUM(s.gross_revenue),0) gross_revenue,
               COALESCE(SUM(s.net_revenue),0) net_revenue,
               COALESCE(SUM(s.producer_net),0) producer_net,
               COALESCE(AVG(s.gross_revenue),0) average_ticket,
-              SUM(s.matched_user_id IS NOT NULL) matched_sales
-            FROM hotmart_sales_live s
+              COUNT(*) matched_sales
+            FROM v_sales_master s
             WHERE " . md_approved_sql('s') . "
               AND " . md_sale_revenue_date_sql('s') . " BETWEEN :start AND :end{$saleFilter}", $saleParams);
 
@@ -125,7 +122,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
               COALESCE(SUM(hs.{$basis}),0) attributed_revenue
             FROM attribution_matches am
             JOIN attribution_sales axs ON axs.id=am.sale_id
-            JOIN hotmart_sales_live hs ON hs.transaction_code=axs.transaction_code
+            JOIN v_sales_master hs ON hs.transaction_code=axs.transaction_code
             JOIN attribution_leads al ON al.id=am.lead_id
             WHERE am.attribution_model=:model
               AND " . md_approved_sql('hs') . "
@@ -134,9 +131,9 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
     $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
     $refunds = md_row($pdo, "SELECT COUNT(*) refunds,
-              COALESCE(SUM(CASE WHEN s.refunded_value>0 THEN s.refunded_value ELSE s.gross_revenue END),0) refunded_value
-            FROM hotmart_sales_live s WHERE " . md_refund_sql('s') . "
-              AND COALESCE(s.refund_or_chargeback_at,s.updated_at,s.transaction_date) BETWEEN :start AND :end{$refundFilter}", $refundParams);
+              COALESCE(SUM(s.gross_revenue),0) refunded_value
+            FROM v_sales_master s WHERE " . md_refund_sql('s') . "
+              AND s.sale_date BETWEEN :start AND :end{$refundFilter}", $refundParams);
 
     $out = array_merge([
         'spend'=>0,'impressions'=>0,'reach'=>0,'clicks'=>0,'link_clicks'=>0,'landing_views'=>0,'meta_leads'=>0,
@@ -145,7 +142,7 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
         'attributed_sales'=>0,'attributed_revenue'=>0,'refunds'=>0,'refunded_value'=>0,
     ], $meta, $leads, $sales, $attr, $refunds);
     foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
-    $revenue = (float)$out[$basis];
+    $revenue = (float)($out[$basis] ?? $out['producer_net']);
     $out['revenue'] = $revenue;
     $out['fees'] = max(0.0, (float)$out['gross_revenue'] - (float)$out['producer_net']);
     $out['profit'] = (float)$out['net_revenue'] - (float)$out['spend'];
@@ -175,7 +172,7 @@ function md_daily_series(PDO $pdo, string $start, string $end, array $filters): 
 
     $sParams=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59']; $sf=md_filter_sql($filters,'sale',$sParams);
     $saleDateExpr=md_sale_revenue_date_sql('s');
-    foreach(md_rows($pdo,"SELECT DATE({$saleDateExpr}) d,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf} GROUP BY DATE({$saleDateExpr})",$sParams) as $r) if(isset($days[$r['d']])) { $days[$r['d']]['sales']=(int)$r['qty']; $days[$r['d']]['gross']=(float)$r['gross']; $days[$r['d']]['net']=(float)$r['net']; $days[$r['d']]['producer']=(float)$r['producer']; }
+    foreach(md_rows($pdo,"SELECT DATE({$saleDateExpr}) d,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM v_sales_master s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf} GROUP BY DATE({$saleDateExpr})",$sParams) as $r) if(isset($days[$r['d']])) { $days[$r['d']]['sales']=(int)$r['qty']; $days[$r['d']]['gross']=(float)$r['gross']; $days[$r['d']]['net']=(float)$r['net']; $days[$r['d']]['producer']=(float)$r['producer']; }
     return array_values($days);
 }
 
@@ -185,18 +182,18 @@ function md_monthly_series(PDO $pdo, array $filters): array
     $start=(new DateTimeImmutable('first day of this month'))->modify('-11 months')->format('Y-m-d').' 00:00:00';
     $params=['start'=>$start,'end'=>$end]; $sf=md_filter_sql($filters,'sale',$params);
     $saleDateExpr=md_sale_revenue_date_sql('s');
-    return md_rows($pdo,"SELECT DATE_FORMAT({$saleDateExpr},'%Y-%m') month,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf} GROUP BY month ORDER BY month",$params);
+    return md_rows($pdo,"SELECT DATE_FORMAT({$saleDateExpr},'%Y-%m') month,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM v_sales_master s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf} GROUP BY month ORDER BY month",$params);
 }
 
 function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): array
 {
     $params=['start'=>$start.' 00:00:00','end'=>$end.' 23:59:59']; $sf=md_filter_sql($filters,'sale',$params);
     $saleDateExpr=md_sale_revenue_date_sql('s');
-    $base=" FROM hotmart_sales_live s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf}";
-    $payments=md_rows($pdo,"SELECT COALESCE(NULLIF(s.payment_type,''),'Nao informado') label,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.producer_net) producer{$base} GROUP BY label ORDER BY qty DESC",$params);
-    $installments=md_rows($pdo,"SELECT CASE WHEN s.installments_number IS NULL OR s.installments_number=0 THEN 'Nao informado' WHEN s.installments_number=1 THEN 'A vista' ELSE CONCAT(s.installments_number,'x') END label,COUNT(*) qty,SUM(s.gross_revenue) gross{$base} GROUP BY label ORDER BY qty DESC",$params);
+    $base=" FROM v_sales_master s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf}";
+    $payments=md_rows($pdo,"SELECT COALESCE(NULLIF(s.payment_method,''),'Nao informado') label,COUNT(*) qty,SUM(s.gross_revenue) gross,SUM(s.producer_net) producer{$base} GROUP BY label ORDER BY qty DESC",$params);
+    $installments=md_rows($pdo,"SELECT CASE WHEN s.installments IS NULL OR s.installments=0 THEN 'Nao informado' WHEN s.installments=1 THEN 'A vista' ELSE CONCAT(s.installments,'x') END label,COUNT(*) qty,SUM(s.gross_revenue) gross{$base} GROUP BY label ORDER BY qty DESC",$params);
     $products=md_rows($pdo,"SELECT COALESCE(NULLIF(s.product_name,''),'Sem produto') label,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.producer_net) producer,AVG(s.gross_revenue) ticket{$base} GROUP BY label ORDER BY producer DESC LIMIT 20",$params);
-    $sources=md_rows($pdo,"SELECT COALESCE(NULLIF(s.sales_channel,''),'hotmart') label,COUNT(*) qty,SUM(s.gross_revenue) gross{$base} GROUP BY label ORDER BY qty DESC",$params);
+    $sources=md_rows($pdo,"SELECT COALESCE(NULLIF(s.provider,''),'hotmart') label,COUNT(*) qty,SUM(s.gross_revenue) gross{$base} GROUP BY label ORDER BY qty DESC",$params);
     return ['payments'=>$payments,'installments'=>$installments,'products'=>$products,'sources'=>$sources];
 }
 

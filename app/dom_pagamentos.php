@@ -460,19 +460,22 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
                 'buyer_phone_norm' => $phoneNorm,
                 'raw_payload_json' => $rawPayload,
             ], $matched);
-            foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $utm) {
-                if (isset($query[$utm])) $legacySale[$utm] = (string)$query[$utm];
-            }
-            hotmart_upsert_sale_live($pdo, $legacySale);
-            hotmart_upsert_sale_legacy($pdo, $legacySale);
-            $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,
-                sale_origin=:origin,sales_channel='dom' WHERE transaction_code=:transaction")
-                ->execute([
-                    ':payment' => dom_scalar($detail, 'payment_method') ?: null,
-                    ':installments' => (int)(dom_scalar($detail, 'installments') ?: 0) ?: null,
-                    ':origin' => (string)($query['utm_source'] ?? $metadata['platform_integration'] ?? 'dom_api') ?: null,
-                    ':transaction' => $transactionCode,
-                ]);
+            dom_upsert_sales_master($pdo, [
+                'transaction_code' => $transactionCode,
+                'normalized_status' => $normalizedStatus,
+                'checkout_platform' => (string)($metadata['platform_integration'] ?? 'dom'),
+                'product_name' => dom_scalar($detail, 'product_name'),
+                'gross_amount_cents' => $grossCents,
+                'net_amount_cents' => $liquidCents,
+                'buyer_name' => dom_scalar($customer, 'name') ?: dom_scalar($detail, 'customer_name'),
+                'buyer_email' => $email,
+                'buyer_phone' => $phoneNorm ?: $phoneRaw,
+                'buyer_document' => dom_scalar($customer, 'document'),
+                'payment_method' => dom_scalar($detail, 'payment_method') ?: 'pix',
+                'installments' => (int)(dom_scalar($detail, 'installments') ?: 1),
+                'last_seen_at' => date('Y-m-d H:i:s'),
+                'metadata_json' => $rawPayload,
+            ]);
 
             if ($normalizedStatus === 'APPROVED') {
                 $lifetimeAttempt = dom_try_grant_lifetime($pdo, $detail, $transactionCode, 'paid', $email, $phoneRaw, $matchedUser);
@@ -792,4 +795,72 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
+}
+
+function dom_upsert_sales_master(PDO $pdo, array $event): void
+{
+    $tx = (string)($event['transaction_code'] ?? '');
+    if ($tx === '') return;
+
+    $rawStatus = (string)($event['normalized_status'] ?? 'PENDING');
+    $v = strtoupper(trim($rawStatus));
+    if (in_array($v, ['APPROVED', 'APROVADO', 'PAID', 'OK', 'DISPAROU'], true)) $stEnum = 'APPROVED';
+    elseif (in_array($v, ['REFUNDED', 'REEMBOLSADO'], true)) $stEnum = 'REFUNDED';
+    elseif (in_array($v, ['CHARGEBACK'], true)) $stEnum = 'CHARGEBACK';
+    elseif (in_array($v, ['CANCELED', 'CANCELADO', 'FAILED'], true)) $stEnum = 'CANCELED';
+    else $stEnum = 'PENDING';
+
+    $grossCents = (int)($event['gross_amount_cents'] ?? 0);
+    $netCents = (int)($event['net_amount_cents'] ?? $grossCents);
+    $feeCents = max(0, $grossCents - $netCents);
+    $gross = $grossCents / 100;
+    $net = $netCents / 100;
+    $fees = $feeCents / 100;
+
+    $st = $pdo->prepare("
+        INSERT INTO dom_sales (
+            transaction_code, status, checkout_platform, product_name,
+            amount_cents, fee_cents, net_cents, gross_revenue, net_revenue, producer_net, fees,
+            buyer_name, buyer_email, buyer_phone, buyer_document, payment_method, installments,
+            sale_date, payment_confirmed_at, raw_payload_json, created_at
+        ) VALUES (
+            :tx, :status, :checkout, :prod_name,
+            :amount_c, :fee_c, :net_c, :gross, :net, :prod, :fees,
+            :b_name, :b_email, :b_phone, :b_doc, :pay_method, :inst,
+            :sale_date, :confirmed_at, :raw, NOW()
+        ) ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            product_name = VALUES(product_name),
+            gross_revenue = VALUES(gross_revenue),
+            net_revenue = VALUES(net_revenue),
+            producer_net = VALUES(producer_net),
+            fees = VALUES(fees),
+            buyer_name = VALUES(buyer_name),
+            buyer_email = VALUES(buyer_email),
+            payment_confirmed_at = VALUES(payment_confirmed_at),
+            updated_at = NOW()
+    ");
+
+    $st->execute([
+        'tx' => $tx,
+        'status' => $stEnum,
+        'checkout' => (string)($event['checkout_platform'] ?? 'dom'),
+        'prod_name' => (string)($event['product_name'] ?? ''),
+        'amount_c' => $grossCents,
+        'fee_c' => $feeCents,
+        'net_c' => $netCents,
+        'gross' => $gross,
+        'net' => $net,
+        'prod' => $net,
+        'fees' => $fees,
+        'b_name' => (string)($event['buyer_name'] ?? ''),
+        'b_email' => (string)($event['buyer_email'] ?? ''),
+        'b_phone' => (string)($event['buyer_phone'] ?? ''),
+        'b_doc' => (string)($event['buyer_document'] ?? ''),
+        'pay_method' => (string)($event['payment_method'] ?? 'pix'),
+        'inst' => (int)($event['installments'] ?: 1),
+        'sale_date' => (string)($event['last_seen_at'] ?: date('Y-m-d H:i:s')),
+        'confirmed_at' => $stEnum === 'APPROVED' ? date('Y-m-d H:i:s') : null,
+        'raw' => $event['metadata_json'] ?: null,
+    ]);
 }
