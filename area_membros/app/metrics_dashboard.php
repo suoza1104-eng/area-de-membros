@@ -254,11 +254,11 @@ function md_buyer_profile(PDO $pdo, string $start, string $end, array $filters, 
     $params = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $saleFilter = md_filter_sql($filters, 'sale', $params);
     $saleDateExpr = md_sale_revenue_date_sql('s');
-    $sales = md_rows($pdo, "SELECT s.id,s.transaction_code,s.status,s.webhook_event,{$saleDateExpr} sale_date,
-              s.product_code,s.product_name,s.price_name,s.payment_type,s.installments_number,s.sales_channel,
-              s.gross_revenue,s.net_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone_raw,
-              s.buyer_phone_norm,s.matched_user_id,s.match_method,s.utm_source,s.utm_medium,s.utm_campaign,s.utm_term,s.utm_content
-            FROM hotmart_sales_live s
+    $sales = md_rows($pdo, "SELECT s.id,s.transaction_code,s.status,{$saleDateExpr} sale_date,
+              s.product_name,s.payment_method,s.installments,s.provider,
+              s.gross_revenue,s.net_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone,
+              s.utm_source,s.utm_medium,s.utm_campaign,s.utm_term,s.utm_content
+            FROM v_sales_master s
             WHERE " . md_approved_sql('s') . "
               AND {$saleDateExpr} BETWEEN :start AND :end{$saleFilter}
             ORDER BY {$saleDateExpr} ASC, s.id ASC", $params);
@@ -270,7 +270,7 @@ function md_buyer_profile(PDO $pdo, string $start, string $end, array $filters, 
         $uid = (int)($sale['matched_user_id'] ?? 0);
         if ($uid > 0) $userIds[$uid] = $uid;
         $email = normalize_email_value($sale['buyer_email'] ?? '');
-        $phone = normalize_phone_value($sale['buyer_phone_norm'] ?: ($sale['buyer_phone_raw'] ?? ''));
+        $phone = normalize_phone_value($sale['buyer_phone'] ?? '');
         if ($email !== '') $emails[$email] = $email;
         if ($phone !== '') $phones[$phone] = $phone;
     }
@@ -310,7 +310,7 @@ function md_buyer_profile(PDO $pdo, string $start, string $end, array $filters, 
     $saleDetails = [];
     foreach ($sales as $sale) {
         $email = normalize_email_value($sale['buyer_email'] ?? '');
-        $phone = normalize_phone_value($sale['buyer_phone_norm'] ?: ($sale['buyer_phone_raw'] ?? ''));
+        $phone = normalize_phone_value($sale['buyer_phone'] ?? '');
         $uid = (int)($sale['matched_user_id'] ?? 0);
         if ($uid <= 0 && $email !== '' && !empty($emailToUsers[$email])) $uid = (int)array_key_first($emailToUsers[$email]);
         if ($uid <= 0 && $phone !== '' && !empty($phoneToUsers[$phone])) $uid = (int)array_key_first($phoneToUsers[$phone]);
@@ -323,7 +323,7 @@ function md_buyer_profile(PDO $pdo, string $start, string $end, array $filters, 
                 'user_id' => $uid ?: null,
                 'name' => (string)($u['nome'] ?? $sale['buyer_name'] ?? ''),
                 'email' => (string)($u['email'] ?? $sale['buyer_email'] ?? ''),
-                'phone' => (string)($u['telefone'] ?? $sale['buyer_phone_raw'] ?? $sale['buyer_phone_norm'] ?? ''),
+                'phone' => (string)($u['telefone'] ?? $sale['buyer_phone'] ?? ''),
                 'lead_created_at' => (string)($u['created_at'] ?? ''),
                 'turma' => (string)($u['codigo_turma'] ?? $u['turma_codigo'] ?? ''),
                 'scheduled_live_at' => (string)($u['data_live'] ?? ''),
@@ -618,17 +618,16 @@ function md_cohorts(PDO $pdo, string $start, string $end, array $filters): array
     $saleExtra='';
     if(!empty($filters['product'])){$saleExtra.=' AND s.product_name=:product';$saleParams['product']=$filters['product'];}
     $saleDateExpr=md_sale_revenue_date_sql('s');
-    $sales=md_rows($pdo,"SELECT s.transaction_code,s.gross_revenue,s.producer_net,s.matched_user_id,s.buyer_email,s.buyer_phone_norm,{$saleDateExpr} sale_date,COALESCE(NULLIF(u.codigo_turma,''),NULLIF(u.turma_codigo,'')) matched_turma FROM hotmart_sales_live s LEFT JOIN users u ON u.id=s.matched_user_id WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$saleExtra}",$saleParams);
+    $sales=md_rows($pdo,"SELECT s.transaction_code,s.gross_revenue,s.producer_net,s.buyer_email,s.buyer_phone,{$saleDateExpr} sale_date FROM v_sales_master s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$saleExtra}",$saleParams);
     $userIds=[];$emails=[];$phones=[];
     foreach($sales as $s){
-        $uid=(int)($s['matched_user_id']??0); if($uid>0)$userIds[$uid]=$uid;
-        $email=normalize_email_value($s['buyer_email']??''); if($uid<=0&&$email!=='')$emails[$email]=$email;
-        $phone=normalize_phone_value($s['buyer_phone_norm']??''); if($uid<=0&&$phone!=='')$phones[$phone]=$phone;
+        $email=normalize_email_value($s['buyer_email']??''); if($email!=='')$emails[$email]=$email;
+        $phone=normalize_phone_value($s['buyer_phone']??''); if($phone!=='')$phones[$phone]=$phone;
     }
     $emailToUsers=[];$phoneToUsers=[];
     if($emails){$params=[];$in=[];$i=0;foreach($emails as $email){$k='e'.$i++;$in[]=':'.$k;$params[$k]=$email;}foreach(md_rows($pdo,"SELECT id,LOWER(TRIM(email)) email_norm FROM users WHERE LOWER(TRIM(email)) IN (".implode(',',$in).") ORDER BY id DESC",$params) as $u){$e=(string)$u['email_norm'];if($e!=='')$emailToUsers[$e][(int)$u['id']]=(int)$u['id'];}}
     if($phones){$params=[];$in=[];$i=0;foreach($phones as $phone){$k='p'.$i++;$in[]=':'.$k;$params[$k]=$phone;}foreach(md_rows($pdo,"SELECT id,RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''),' ',''),'-',''),'(',''),')',''),'+',''),11) phone_norm FROM users WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''),' ',''),'-',''),'(',''),')',''),'+',''),11) IN (".implode(',',$in).") ORDER BY id DESC",$params) as $u){$p=(string)$u['phone_norm'];if($p!=='')$phoneToUsers[$p][(int)$u['id']]=(int)$u['id'];}}
-    foreach($sales as $s){$email=normalize_email_value($s['buyer_email']??'');$phone=normalize_phone_value($s['buyer_phone_norm']??'');$ids=[];$uid=(int)($s['matched_user_id']??0);if($uid>0)$ids[$uid]=$uid;foreach(($emailToUsers[$email]??[]) as $id)$ids[$id]=$id;foreach(($phoneToUsers[$phone]??[]) as $id)$ids[$id]=$id;foreach($ids as $id)$userIds[$id]=$id;}
+    foreach($sales as $s){$email=normalize_email_value($s['buyer_email']??'');$phone=normalize_phone_value($s['buyer_phone']??'');$ids=[];foreach(($emailToUsers[$email]??[]) as $id)$ids[$id]=$id;foreach(($phoneToUsers[$phone]??[]) as $id)$ids[$id]=$id;foreach($ids as $id)$userIds[$id]=$id;}
     $logsByUser=[];
     if($userIds){$params=[];$in=[];$i=0;foreach($userIds as $uid){$k='u'.$i++;$in[]=':'.$k;$params[$k]=$uid;}foreach(md_rows($pdo,"SELECT user_id,codigo_turma,created_at FROM inscricao_logs WHERE user_id IN (".implode(',',$in).") AND codigo_turma IS NOT NULL AND codigo_turma<>'' ORDER BY user_id,created_at DESC",$params) as $log)$logsByUser[(int)$log['user_id']][]=$log;}
     $rowsByTurma=[];
