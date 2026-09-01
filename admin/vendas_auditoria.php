@@ -147,16 +147,36 @@ if ($export === 'csv') {
 // Opções para Selects
 $productsList = $pdo->query("SELECT DISTINCT product_name FROM v_sales_master WHERE product_name IS NOT NULL AND product_name <> '' ORDER BY product_name ASC")->fetchAll(PDO::FETCH_COLUMN);
 
-// Totais Agregados
-$totalsSql = "SELECT 
-                COUNT(*) AS total_sales,
-                COALESCE(SUM(s.gross_revenue), 0) AS total_gross,
-                COALESCE(SUM(s.net_revenue), 0) AS total_net,
-                COALESCE(SUM(s.producer_net), 0) AS total_producer_net,
-                COALESCE(SUM(s.fees), 0) AS total_fees,
-                COALESCE(SUM(CASE WHEN s.status IN ('REFUNDED', 'CHARGEBACK') THEN s.gross_revenue ELSE 0 END), 0) AS total_refunded
-              FROM v_sales_master s
-              {$whereSql}";
+// Totais Agregados (obedecendo estritamente aos filtros selecionados)
+$isSpecificStatus = ($status !== '' && $status !== 'all');
+
+if ($isSpecificStatus) {
+    // Quando o usuário escolhe um status específico (ex: Aprovada, Pendente, Reembolsada, Cancelada)
+    $totalsSql = "SELECT 
+                    COUNT(*) AS total_sales,
+                    COALESCE(SUM(s.gross_revenue), 0) AS total_gross,
+                    COALESCE(SUM(s.net_revenue), 0) AS total_net,
+                    COALESCE(SUM(s.producer_net), 0) AS total_producer_net,
+                    COALESCE(SUM(s.fees), 0) AS total_fees,
+                    COALESCE(SUM(CASE WHEN s.status IN ('REFUNDED', 'CHARGEBACK') THEN s.gross_revenue ELSE 0 END), 0) AS total_refunded
+                  FROM v_sales_master s
+                  {$whereSql}";
+} else {
+    // Quando o filtro de status é 'Todos os Status':
+    // Transações Auditadas = Total de registros no filtro
+    // Faturamento Bruto, Líquido Produtor e Taxas = Vendas Aprovadas (APPROVED)
+    // Reembolso / Contestado = Vendas REFUNDED e CHARGEBACK
+    $totalsSql = "SELECT 
+                    COUNT(*) AS total_sales,
+                    COALESCE(SUM(CASE WHEN s.status = 'APPROVED' THEN s.gross_revenue ELSE 0 END), 0) AS total_gross,
+                    COALESCE(SUM(CASE WHEN s.status = 'APPROVED' THEN s.net_revenue ELSE 0 END), 0) AS total_net,
+                    COALESCE(SUM(CASE WHEN s.status = 'APPROVED' THEN s.producer_net ELSE 0 END), 0) AS total_producer_net,
+                    COALESCE(SUM(CASE WHEN s.status = 'APPROVED' THEN s.fees ELSE 0 END), 0) AS total_fees,
+                    COALESCE(SUM(CASE WHEN s.status IN ('REFUNDED', 'CHARGEBACK') THEN s.gross_revenue ELSE 0 END), 0) AS total_refunded
+                  FROM v_sales_master s
+                  {$whereSql}";
+}
+
 $stmtTotals = $pdo->prepare($totalsSql);
 $stmtTotals->execute($params);
 $totals = $stmtTotals->fetch(PDO::FETCH_ASSOC) ?: [
@@ -289,31 +309,7 @@ function va_provider_badge(string $provider): string {
     </a>
   </div>
 
-  <!-- CARDS DE RESUMO DA AUDITORIA -->
-  <div class="aud-cards">
-    <div class="aud-card">
-      <small>Transações Auditadas</small>
-      <strong><?= number_format($totalRecords, 0, ',', '.') ?></strong>
-    </div>
-    <div class="aud-card">
-      <small>Faturamento Bruto</small>
-      <strong>R$ <?= number_format((float)$totals['total_gross'], 2, ',', '.') ?></strong>
-    </div>
-    <div class="aud-card highlight">
-      <small>Líquido Produtor</small>
-      <strong>R$ <?= number_format((float)$totals['total_producer_net'], 2, ',', '.') ?></strong>
-    </div>
-    <div class="aud-card">
-      <small>Taxas de Gateways</small>
-      <strong>R$ <?= number_format((float)$totals['total_fees'], 2, ',', '.') ?></strong>
-    </div>
-    <div class="aud-card refund">
-      <small>Reembolso / Contestado</small>
-      <strong>R$ <?= number_format((float)$totals['total_refunded'], 2, ',', '.') ?></strong>
-    </div>
-  </div>
-
-  <!-- FORMULÁRIO DE FILTROS -->
+  <!-- 1. FORMULÁRIO DE FILTROS (NO TOPO) -->
   <div class="aud-filter-box">
     <div class="aud-presets">
       <?php 
@@ -399,7 +395,31 @@ function va_provider_badge(string $provider): string {
     </form>
   </div>
 
-  <!-- TABELA DE VENDAS -->
+  <!-- 2. CARDS DE RESUMO DA AUDITORIA (ABAIXO DOS FILTROS) -->
+  <div class="aud-cards">
+    <div class="aud-card">
+      <small>Transações Auditadas</small>
+      <strong><?= number_format($totalRecords, 0, ',', '.') ?></strong>
+    </div>
+    <div class="aud-card">
+      <small>Faturamento Bruto</small>
+      <strong>R$ <?= number_format((float)$totals['total_gross'], 2, ',', '.') ?></strong>
+    </div>
+    <div class="aud-card highlight">
+      <small>Líquido Produtor</small>
+      <strong>R$ <?= number_format((float)$totals['total_producer_net'], 2, ',', '.') ?></strong>
+    </div>
+    <div class="aud-card">
+      <small>Taxas de Gateways</small>
+      <strong>R$ <?= number_format((float)$totals['total_fees'], 2, ',', '.') ?></strong>
+    </div>
+    <div class="aud-card refund">
+      <small>Reembolso / Contestado</small>
+      <strong>R$ <?= number_format((float)$totals['total_refunded'], 2, ',', '.') ?></strong>
+    </div>
+  </div>
+
+  <!-- 3. TABELA DE VENDAS -->
   <div class="aud-table-wrap">
     <table class="aud-table">
       <thead>
