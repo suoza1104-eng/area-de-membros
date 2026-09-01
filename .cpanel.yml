@@ -1,8 +1,10 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home1/prof2543/public_html/area_membros/
-    - /usr/bin/rsync -av --delete --no-perms --exclude='.git' --exclude='uploads/' --exclude='vendor/' /home1/prof2543/repositories/area-de-membros/ $DEPLOYPATH
-    - /bin/chmod 755 /home1/prof2543/public_html
+    - export REPOPATH=$(pwd)/
+    - if [ "$USER" = "prof2543" ]; then export DEPLOYPATH=$HOME/public_html/area_membros/; elif [ -d "$HOME/public_html" ]; then export DEPLOYPATH=$HOME/public_html/area_membros/; else export DEPLOYPATH=$HOME/professoremersonleite.site/area_membros_live/; fi
+    - /bin/mkdir -p $DEPLOYPATH
+    - /usr/bin/rsync -av --delete --no-perms --exclude='.git' --exclude='uploads/' --exclude='vendor/' --exclude='app/private/' $REPOPATH $DEPLOYPATH
+    - /bin/chmod 755 $(dirname $DEPLOYPATH)
     - /bin/chmod 755 $DEPLOYPATH
     - /bin/chmod -R u=rwX,go=rX $DEPLOYPATH
