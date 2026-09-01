@@ -62,8 +62,8 @@ function hmri_save_uploaded_file(array $file, string $provider): array
     $provider = hmri_normalize_provider($provider);
     $originalName = (string)($file['name'] ?? 'sales_upload');
     $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-    if (!in_array($ext, ['csv', 'zip'], true)) {
-        throw new RuntimeException('Envie um arquivo .csv ou .zip exportado da plataforma.');
+    if (!in_array($ext, ['csv', 'zip', 'xls', 'xlsx'], true)) {
+        throw new RuntimeException('Envie um arquivo .csv, .xls, .xlsx ou .zip exportado da plataforma.');
     }
 
     hmri_ensure_batch_root();
@@ -89,7 +89,7 @@ function hmri_save_uploaded_file(array $file, string $provider): array
 function hmri_extract_csv_files(string $filePath, string $token): array
 {
     $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-    if ($ext === 'csv') {
+    if (in_array($ext, ['csv', 'xls', 'xlsx'], true)) {
         return [['path' => $filePath, 'name' => basename($filePath)]];
     }
     if ($ext !== 'zip') {
@@ -108,7 +108,7 @@ function hmri_extract_csv_files(string $filePath, string $token): array
         }
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $name = (string)$zip->getNameIndex($i);
-            if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'csv') {
+            if (!in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), ['csv', 'xls', 'xlsx'], true)) {
                 continue;
             }
             $base = basename(str_replace('\\', '/', $name));
@@ -137,7 +137,7 @@ function hmri_extract_csv_files(string $filePath, string $token): array
             $i = 0;
             foreach (new RecursiveIteratorIterator($zip) as $entry) {
                 $name = (string)$entry->getPathName();
-                if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'csv') {
+                if (!in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), ['csv', 'xls', 'xlsx'], true)) {
                     continue;
                 }
                 $base = basename(str_replace('\\', '/', $name));
@@ -160,9 +160,71 @@ function hmri_extract_csv_files(string $filePath, string $token): array
     }
 
     if (!$files) {
-        throw new RuntimeException('Nenhum CSV encontrado dentro do ZIP.');
+        throw new RuntimeException('Nenhum arquivo de vendas encontrado dentro do ZIP.');
     }
     return $files;
+}
+
+function hmri_ensure_reconciliation_schema(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS sales_reconciliation_batches (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        token CHAR(32) NOT NULL,
+        provider VARCHAR(30) NOT NULL,
+        original_name VARCHAR(255) NULL,
+        date_start DATE NULL,
+        date_end DATE NULL,
+        status ENUM('pending','applied','error') NOT NULL DEFAULT 'pending',
+        total_rows INT UNSIGNED NOT NULL DEFAULT 0,
+        inserted_count INT UNSIGNED NOT NULL DEFAULT 0,
+        updated_count INT UNSIGNED NOT NULL DEFAULT 0,
+        same_count INT UNSIGNED NOT NULL DEFAULT 0,
+        missing_in_file_count INT UNSIGNED NOT NULL DEFAULT 0,
+        error_count INT UNSIGNED NOT NULL DEFAULT 0,
+        summary_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        applied_at DATETIME NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_sales_recon_token (token),
+        KEY idx_sales_recon_provider_dates (provider, date_start, date_end),
+        KEY idx_sales_recon_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS sales_reconciliation_rows (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        batch_id BIGINT UNSIGNED NOT NULL,
+        provider VARCHAR(30) NOT NULL,
+        transaction_code VARCHAR(140) NOT NULL,
+        action VARCHAR(40) NOT NULL,
+        match_confidence VARCHAR(30) NOT NULL DEFAULT 'provider_transaction',
+        old_status VARCHAR(50) NULL,
+        new_status VARCHAR(50) NULL,
+        gross_amount_cents BIGINT NOT NULL DEFAULT 0,
+        net_amount_cents BIGINT NOT NULL DEFAULT 0,
+        fee_amount_cents BIGINT NOT NULL DEFAULT 0,
+        changes_json LONGTEXT NULL,
+        raw_row_json LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sales_recon_rows_batch (batch_id),
+        KEY idx_sales_recon_rows_tx (provider, transaction_code),
+        CONSTRAINT fk_sales_recon_rows_batch FOREIGN KEY (batch_id) REFERENCES sales_reconciliation_batches(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    foreach ([
+        "ALTER TABLE hotmart_sales_live ADD COLUMN reconciliation_status VARCHAR(40) NOT NULL DEFAULT 'unconfirmed' AFTER match_method",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN authoritative_import_token CHAR(32) NULL AFTER reconciliation_status",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN confirmed_by_import_at DATETIME NULL AFTER authoritative_import_token",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN excluded_from_financials TINYINT(1) NOT NULL DEFAULT 0 AFTER confirmed_by_import_at",
+        "ALTER TABLE hotmart_sales_live ADD COLUMN excluded_reason VARCHAR(255) NULL AFTER excluded_from_financials",
+        "ALTER TABLE hotmart_sales_live ADD KEY idx_hotmart_reconciliation (reconciliation_status, excluded_from_financials)",
+        "ALTER TABLE payment_sales ADD COLUMN reconciliation_status VARCHAR(40) NOT NULL DEFAULT 'unconfirmed' AFTER match_method",
+        "ALTER TABLE payment_sales ADD COLUMN authoritative_import_token CHAR(32) NULL AFTER reconciliation_status",
+        "ALTER TABLE payment_sales ADD COLUMN confirmed_by_import_at DATETIME NULL AFTER authoritative_import_token",
+        "ALTER TABLE payment_sales ADD COLUMN excluded_from_financials TINYINT(1) NOT NULL DEFAULT 0 AFTER confirmed_by_import_at",
+        "ALTER TABLE payment_sales ADD COLUMN excluded_reason VARCHAR(255) NULL AFTER excluded_from_financials",
+        "ALTER TABLE payment_sales ADD KEY idx_payment_reconciliation (reconciliation_status, excluded_from_financials)",
+    ] as $migration) {
+        try { $pdo->exec($migration); } catch (Throwable $e) {}
+    }
 }
 
 function hmri_sale_from_csv_row(PDO $sourcePdo, array $row, array $map, array $headers, string $fileName, int $lineNo): array
@@ -387,6 +449,185 @@ function hmri_read_assoc_csv(string $filePath, string $fileName): array
     return [$headers, $rows];
 }
 
+function hmri_key(string $value): string
+{
+    $value = trim($value);
+    if (function_exists('iconv')) {
+        $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+        if (is_string($converted)) $value = $converted;
+    }
+    $value = strtolower($value);
+    return preg_replace('/[^a-z0-9]+/', '', $value) ?: '';
+}
+
+function hmri_assoc_row(array $headers, array $row, int $lineNo): array
+{
+    $assoc = array_combine($headers, array_pad($row, count($headers), ''));
+    if (!is_array($assoc)) $assoc = [];
+    foreach ($assoc as $key => $value) {
+        $assoc[hmri_key((string)$key)] = $value;
+    }
+    $assoc['_line'] = $lineNo;
+    return $assoc;
+}
+
+function hmri_row_get(array $row, array $keys, $default = '')
+{
+    foreach ($keys as $key) {
+        if (array_key_exists($key, $row) && trim((string)$row[$key]) !== '') return $row[$key];
+        $norm = hmri_key((string)$key);
+        if ($norm !== '' && array_key_exists($norm, $row) && trim((string)$row[$norm]) !== '') return $row[$norm];
+    }
+    return $default;
+}
+
+function hmri_excel_col_index(string $cellRef): int
+{
+    if (!preg_match('/^[A-Z]+/i', $cellRef, $m)) return 0;
+    $col = 0;
+    foreach (str_split(strtoupper($m[0])) as $ch) {
+        $col = ($col * 26) + (ord($ch) - 64);
+    }
+    return max(0, $col - 1);
+}
+
+function hmri_zip_get(string $filePath, string $entryName): ?string
+{
+    if (class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        if ($zip->open($filePath) !== true) return null;
+        $data = $zip->getFromName($entryName);
+        $zip->close();
+        return is_string($data) ? $data : null;
+    }
+    $blob = (string)file_get_contents($filePath);
+    $eocd = strrpos($blob, "PK\x05\x06");
+    if ($eocd === false || strlen($blob) < $eocd + 22) return null;
+    $centralSize = unpack('V', substr($blob, $eocd + 12, 4))[1] ?? 0;
+    $centralOffset = unpack('V', substr($blob, $eocd + 16, 4))[1] ?? 0;
+    $offset = (int)$centralOffset;
+    $end = $offset + (int)$centralSize;
+    while ($offset + 46 <= $end && substr($blob, $offset, 4) === "PK\x01\x02") {
+        $method = unpack('v', substr($blob, $offset + 10, 2))[1] ?? 0;
+        $compressedSize = unpack('V', substr($blob, $offset + 20, 4))[1] ?? 0;
+        $nameLen = unpack('v', substr($blob, $offset + 28, 2))[1] ?? 0;
+        $extraLen = unpack('v', substr($blob, $offset + 30, 2))[1] ?? 0;
+        $commentLen = unpack('v', substr($blob, $offset + 32, 2))[1] ?? 0;
+        $localOffset = unpack('V', substr($blob, $offset + 42, 4))[1] ?? 0;
+        $name = substr($blob, $offset + 46, (int)$nameLen);
+        if ($name === $entryName && substr($blob, (int)$localOffset, 4) === "PK\x03\x04") {
+            $localNameLen = unpack('v', substr($blob, (int)$localOffset + 26, 2))[1] ?? 0;
+            $localExtraLen = unpack('v', substr($blob, (int)$localOffset + 28, 2))[1] ?? 0;
+            $dataOffset = (int)$localOffset + 30 + (int)$localNameLen + (int)$localExtraLen;
+            $compressed = substr($blob, $dataOffset, (int)$compressedSize);
+            if ((int)$method === 0) return $compressed;
+            if ((int)$method === 8) {
+                $data = @gzuncompress($compressed);
+                if (!is_string($data)) $data = @gzinflate($compressed);
+                return is_string($data) ? $data : null;
+            }
+            return null;
+        }
+        $offset += 46 + (int)$nameLen + (int)$extraLen + (int)$commentLen;
+    }
+    return null;
+}
+
+function hmri_read_xlsx_rows(string $filePath, string $fileName): array
+{
+    $shared = [];
+    $sharedXml = hmri_zip_get($filePath, 'xl/sharedStrings.xml');
+    if (is_string($sharedXml) && $sharedXml !== '') {
+        $xml = simplexml_load_string($sharedXml);
+        if ($xml) {
+            foreach ($xml->si as $si) {
+                $text = '';
+                if (isset($si->t)) {
+                    $text = (string)$si->t;
+                } elseif (isset($si->r)) {
+                    foreach ($si->r as $run) $text .= (string)$run->t;
+                }
+                $shared[] = $text;
+            }
+        }
+    }
+    $workbookRaw = hmri_zip_get($filePath, 'xl/workbook.xml');
+    $relsRaw = hmri_zip_get($filePath, 'xl/_rels/workbook.xml.rels');
+    $workbookXml = $workbookRaw ? simplexml_load_string($workbookRaw) : null;
+    $relsXml = $relsRaw ? simplexml_load_string($relsRaw) : null;
+    $target = 'xl/worksheets/sheet1.xml';
+    if ($workbookXml && $relsXml && isset($workbookXml->sheets->sheet[0])) {
+        $sheet = $workbookXml->sheets->sheet[0];
+        $attrs = $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+        $rid = (string)($attrs['id'] ?? '');
+        foreach ($relsXml->Relationship as $rel) {
+            $rAttrs = $rel->attributes();
+            if ((string)$rAttrs['Id'] === $rid) {
+                $relTarget = (string)$rAttrs['Target'];
+                $target = 'xl/' . (str_starts_with($relTarget, 'worksheets/') ? $relTarget : 'worksheets/' . basename($relTarget));
+                break;
+            }
+        }
+    }
+    $sheetRaw = hmri_zip_get($filePath, $target);
+    $sheetXml = $sheetRaw ? simplexml_load_string($sheetRaw) : null;
+    if (!$sheetXml) throw new RuntimeException('Planilha XLSX sem aba legivel: ' . $fileName);
+
+    $rows = [];
+    foreach ($sheetXml->sheetData->row as $rowNode) {
+        $values = [];
+        foreach ($rowNode->c as $cell) {
+            $attrs = $cell->attributes();
+            $idx = hmri_excel_col_index((string)($attrs['r'] ?? 'A1'));
+            while (count($values) < $idx) $values[] = '';
+            $type = (string)($attrs['t'] ?? '');
+            $value = '';
+            if ($type === 's') {
+                $si = (int)((string)$cell->v);
+                $value = $shared[$si] ?? '';
+            } elseif ($type === 'inlineStr') {
+                $value = (string)($cell->is->t ?? '');
+            } else {
+                $value = (string)($cell->v ?? '');
+            }
+            $values[$idx] = $value;
+        }
+        if (count(array_filter($values, static fn($v): bool => trim((string)$v) !== '')) > 0) $rows[] = $values;
+    }
+    return $rows;
+}
+
+function hmri_read_assoc_table(string $filePath, string $fileName): array
+{
+    $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+    if ($ext === 'csv' || $ext === 'xls') {
+        $raw = (string)file_get_contents($filePath);
+        if (str_starts_with($raw, "\xEF\xBB\xBF")) $raw = substr($raw, 3);
+        $firstLine = strtok($raw, "\r\n") ?: '';
+        $separator = hmri_guess_csv_separator($firstLine);
+        $parsed = [];
+        $fh = fopen('php://temp', 'r+');
+        fwrite($fh, $raw);
+        rewind($fh);
+        while (($row = fgetcsv($fh, 0, $separator, '"', '\\')) !== false) $parsed[] = $row;
+        fclose($fh);
+    } elseif ($ext === 'xlsx') {
+        $parsed = hmri_read_xlsx_rows($filePath, $fileName);
+    } else {
+        throw new RuntimeException('Formato nao suportado: ' . $fileName);
+    }
+    $headers = array_map('strval', array_shift($parsed) ?: []);
+    if (!$headers) throw new RuntimeException('Arquivo sem cabecalho: ' . $fileName);
+    $rows = [];
+    $lineNo = 1;
+    foreach ($parsed as $row) {
+        $lineNo++;
+        if (!$row || count(array_filter($row, static fn($v): bool => trim((string)$v) !== '')) === 0) continue;
+        $rows[] = hmri_assoc_row($headers, $row, $lineNo);
+    }
+    return [$headers, $rows];
+}
+
 function hmri_cents_to_money(int $cents): float
 {
     return round($cents / 100, 2);
@@ -406,6 +647,20 @@ function hmri_decimal_to_cents($value): int
     return (int)round(((float)$raw) * 100);
 }
 
+function hmri_parse_datetime_value($value): ?string
+{
+    $raw = trim((string)$value);
+    if ($raw === '' || strtolower($raw) === 'none') return null;
+    if (is_numeric($raw)) {
+        $serial = (float)$raw;
+        if ($serial > 20000 && $serial < 80000) {
+            $seconds = (int)round(($serial - 25569) * 86400);
+            return gmdate('Y-m-d H:i:s', $seconds);
+        }
+    }
+    return hotmart_parse_datetime_value($raw);
+}
+
 function hmri_pagarme_status(string $status): string
 {
     $s = strtolower(trim($status));
@@ -420,9 +675,9 @@ function hmri_pagarme_status(string $status): string
 function hmri_dom_status(string $status): string
 {
     $s = strtolower(trim($status));
-    if (in_array($s, ['approved', 'paid', 'aprovado'], true)) return 'APPROVED';
+    if (in_array($s, ['approved', 'paid', 'aprovado', 'entrada'], true)) return 'APPROVED';
     if (in_array($s, ['pending', 'capture', 'revision_paid', 'pendente'], true)) return 'PENDING';
-    if (in_array($s, ['refunded', 'pending_refund', 'reembolsado'], true)) return 'REFUNDED';
+    if (in_array($s, ['refunded', 'pending_refund', 'reembolsado', 'saida', 'saída', 'estorno'], true)) return 'REFUNDED';
     if (in_array($s, ['chargeback', 'in_mediation', 'dispute_pending', 'dispute', 'em disputa'], true)) return 'CHARGEBACK';
     if (in_array($s, ['failed', 'not_authorized', 'expired', 'cancelled_capture', 'canceled', 'cancelled', 'cancelado', 'error', 'falha na transacao', 'falha na transa��o'], true)) return 'CANCELED';
     return 'UNKNOWN';
@@ -475,68 +730,80 @@ function hmri_gateway_sale_base(array $data): array
 
 function hmri_sale_from_dom_row(array $row, string $fileName): ?array
 {
-    $txRaw = trim((string)($row['id_transaction'] ?? $row['order_id'] ?? ''));
+    $txRaw = trim((string)hmri_row_get($row, ['id_transaction', 'order_id', 'id', 'id_acquirer'], ''));
     if ($txRaw === '') return null;
-    $gross = hmri_decimal_to_cents($row['total'] ?? 0);
-    $net = hmri_decimal_to_cents($row['total_liquid'] ?? 0);
-    $status = hmri_dom_status((string)($row['status_type'] ?? $row['type_status'] ?? $row['status'] ?? ''));
+    $gross = hmri_decimal_to_cents(hmri_row_get($row, ['total_gross', 'total', 'amount'], 0));
+    $net = hmri_decimal_to_cents(hmri_row_get($row, ['total_liquid', 'liquid_amount', 'net'], 0));
+    $providerStatus = (string)hmri_row_get($row, ['status_type', 'type_status', 'status', 'operation'], '');
+    $status = hmri_dom_status($providerStatus);
+    if ((float)hmri_row_get($row, ['total_refound', 'total_refund', 'refund_amount'], 0) > 0) $status = 'REFUNDED';
     if ($status === 'UNKNOWN' && $gross === 0 && $net === 0) return null;
+    $fee = abs(hmri_decimal_to_cents(hmri_row_get($row, ['tax', 'mdr_value', 'fee_installment_value', 'fee_transaction'], 0)));
     return hmri_gateway_sale_base([
         'provider' => 'dom',
         'transaction_code' => 'dom:' . $txRaw,
-        'external_checkout_id' => $txRaw,
-        'provider_status' => (string)($row['type_status'] ?? $row['status_type'] ?? $row['status'] ?? ''),
+        'external_checkout_id' => (string)hmri_row_get($row, ['id_acquirer', 'order_id', 'id_transaction'], $txRaw),
+        'provider_status' => $providerStatus,
         'normalized_status' => $status,
         'gross_amount_cents' => $gross,
-        'net_amount_cents' => $net,
-        'fee_amount_cents' => hmri_decimal_to_cents($row['mdr_value'] ?? 0) + hmri_decimal_to_cents($row['fee_installment_value'] ?? 0) + hmri_decimal_to_cents($row['fee_transaction'] ?? 0),
-        'product_amount_cents' => hmri_decimal_to_cents($row['item_price'] ?? 0) ?: $gross,
-        'installments' => (int)((float)($row['installments'] ?? 1)),
-        'payment_method' => (string)($row['type_payment'] ?? ''),
-        'product_name' => trim((string)($row['item_name'] ?? $row['product_first'] ?? ''), "\" \t\n\r\0\x0B"),
-        'buyer_name' => trim((string)($row['client_name'] ?? ''), "\" \t\n\r\0\x0B"),
-        'buyer_email' => (string)($row['client_email'] ?? ''),
-        'buyer_phone_raw' => (string)($row['client_phone'] ?? ''),
-        'buyer_document' => (string)($row['client_document'] ?? ''),
-        'transaction_date' => hotmart_parse_datetime_value($row['create_date'] ?? '') ?: date('Y-m-d H:i:s'),
-        'payment_confirmed_at' => hotmart_parse_datetime_value($row['paid_date'] ?? ($row['last_date'] ?? '')),
+        'net_amount_cents' => $net ?: max(0, $gross - $fee),
+        'fee_amount_cents' => $fee,
+        'product_amount_cents' => hmri_decimal_to_cents(hmri_row_get($row, ['item_price'], 0)) ?: $gross,
+        'installments' => (int)((float)hmri_row_get($row, ['installments', 'installment'], 1)),
+        'payment_method' => (string)hmri_row_get($row, ['type_payment', 'payment_method'], ''),
+        'product_name' => trim((string)hmri_row_get($row, ['item_name', 'product_first', 'link_title', 'plan_description'], ''), "\" \t\n\r\0\x0B"),
+        'buyer_name' => trim((string)hmri_row_get($row, ['client_name', 'customer_name'], ''), "\" \t\n\r\0\x0B"),
+        'buyer_email' => (string)hmri_row_get($row, ['client_email', 'customer_email'], ''),
+        'buyer_phone_raw' => (string)hmri_row_get($row, ['client_phone', 'customer_phone'], ''),
+        'buyer_document' => (string)hmri_row_get($row, ['client_document', 'customer_document'], ''),
+        'transaction_date' => hmri_parse_datetime_value(hmri_row_get($row, ['paid_date', 'date', 'create_date'], '')) ?: date('Y-m-d H:i:s'),
+        'payment_confirmed_at' => hmri_parse_datetime_value(hmri_row_get($row, ['paid_date', 'last_date', 'date'], '')),
         'raw_payload_json' => json_encode(['source'=>'dom_csv_reconcile','file_name'=>$fileName,'line'=>$row['_line'] ?? null,'raw'=>$row], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ]);
 }
 
 function hmri_sale_from_pagarme_row(array $row, string $fileName): ?array
 {
-    $charge = trim((string)($row['Charge_ID'] ?? ''));
+    $charge = trim((string)hmri_row_get($row, ['Charge_ID', 'Id da transação', 'Id da transacao', 'transaction_id'], ''));
     if ($charge === '') return null;
-    $gross = (int)round((float)str_replace(',', '.', (string)($row['Amount_In_Cents'] ?? 0)));
-    $status = hmri_pagarme_status((string)($row['Status'] ?? ''));
+    $gross = hmri_decimal_to_cents(hmri_row_get($row, ['Entrada bruta', 'Amount_In_Cents', 'amount'], 0));
+    if (array_key_exists('Amount_In_Cents', $row) || array_key_exists('amountincents', $row)) {
+        $gross = (int)round((float)str_replace(',', '.', (string)hmri_row_get($row, ['Amount_In_Cents'], 0)));
+    }
+    $grossOut = hmri_decimal_to_cents(hmri_row_get($row, ['Saída bruta', 'Saida bruta'], 0));
+    $net = hmri_decimal_to_cents(hmri_row_get($row, ['Entrada líquida', 'Entrada liquida'], 0));
+    $netOut = hmri_decimal_to_cents(hmri_row_get($row, ['Saída líquida', 'Saida liquida'], 0));
+    $fee = abs(hmri_decimal_to_cents(hmri_row_get($row, ['Taxa total da operação', 'Taxa total da operacao', 'Taxa de operação', 'Taxa de operacao'], 0)));
+    $providerStatus = (string)hmri_row_get($row, ['Status', 'Tipo da operação', 'Tipo da operacao', 'Descrição da operação', 'Descricao da operacao'], '');
+    $status = $grossOut > 0 || $netOut > 0 ? 'REFUNDED' : hmri_pagarme_status($providerStatus);
+    if ($status === 'UNKNOWN' && ($gross > 0 || $net > 0)) $status = 'APPROVED';
     return hmri_gateway_sale_base([
         'provider' => 'pagarme',
         'transaction_code' => 'pagarme:' . $charge,
-        'external_checkout_id' => (string)($row['Order_Id'] ?? ''),
-        'provider_status' => (string)($row['Status'] ?? ''),
+        'external_checkout_id' => (string)hmri_row_get($row, ['Order_Id', 'Id da operação', 'Id da operacao'], ''),
+        'provider_status' => $providerStatus,
         'normalized_status' => $status,
-        'gross_amount_cents' => $gross,
-        'net_amount_cents' => $gross,
-        'fee_amount_cents' => 0,
-        'fee_is_estimated' => 1,
-        'product_amount_cents' => $gross,
-        'installments' => 1,
-        'payment_method' => '',
-        'product_name' => '',
-        'buyer_name' => (string)($row['Customer_Name'] ?? ''),
-        'buyer_email' => (string)($row['Customer_Email'] ?? ''),
-        'buyer_phone_raw' => (string)($row['Customer_Cell_phone'] ?? ($row['Customer_Home_phone'] ?? '')),
-        'buyer_document' => (string)($row['Customer_Document'] ?? ''),
-        'transaction_date' => hotmart_parse_datetime_value($row['Created_Date'] ?? '') ?: date('Y-m-d H:i:s'),
-        'payment_confirmed_at' => hotmart_parse_datetime_value($row['Updated_At'] ?? ($row['Created_Date'] ?? '')),
+        'gross_amount_cents' => max(0, $gross - $grossOut),
+        'net_amount_cents' => max(0, $net - $netOut) ?: max(0, $gross - $grossOut - $fee),
+        'fee_amount_cents' => $fee,
+        'fee_is_estimated' => $fee > 0 ? 0 : 1,
+        'product_amount_cents' => max(0, $gross - $grossOut),
+        'installments' => (int)((float)hmri_row_get($row, ['Parcela', 'installments'], 1)) ?: 1,
+        'payment_method' => (string)hmri_row_get($row, ['Método de pagamento', 'Metodo de pagamento', 'payment_method'], ''),
+        'product_name' => (string)hmri_row_get($row, ['Product_Name', 'Produto'], ''),
+        'buyer_name' => (string)hmri_row_get($row, ['Customer_Name', 'Comprador'], ''),
+        'buyer_email' => (string)hmri_row_get($row, ['Customer_Email', 'Email'], ''),
+        'buyer_phone_raw' => (string)hmri_row_get($row, ['Customer_Cell_phone', 'Customer_Home_phone', 'Telefone'], ''),
+        'buyer_document' => (string)hmri_row_get($row, ['Customer_Document', 'Documento'], ''),
+        'transaction_date' => hmri_parse_datetime_value(hmri_row_get($row, ['Data da operação', 'Data da operacao', 'Created_Date'], '')) ?: date('Y-m-d H:i:s'),
+        'payment_confirmed_at' => hmri_parse_datetime_value(hmri_row_get($row, ['Data da operação', 'Data da operacao', 'Updated_At', 'Created_Date'], '')),
         'raw_payload_json' => json_encode(['source'=>'pagarme_csv_reconcile','file_name'=>$fileName,'line'=>$row['_line'] ?? null,'raw'=>$row], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ]);
 }
 
 function hmri_read_gateway_sales(string $provider, string $filePath, string $fileName): array
 {
-    [$headers, $rows] = hmri_read_assoc_csv($filePath, $fileName);
+    [$headers, $rows] = hmri_read_assoc_table($filePath, $fileName);
     $sales = [];
     $errors = [];
     foreach ($rows as $row) {
@@ -545,6 +812,20 @@ function hmri_read_gateway_sales(string $provider, string $filePath, string $fil
             if (!$sale) continue;
             $tx = (string)$sale['transaction_code'];
             if (isset($sales[$tx])) {
+                if ($provider === 'pagarme') {
+                    $sales[$tx]['gross_amount_cents'] += (int)$sale['gross_amount_cents'];
+                    $sales[$tx]['net_amount_cents'] += (int)$sale['net_amount_cents'];
+                    $sales[$tx]['fee_amount_cents'] += (int)$sale['fee_amount_cents'];
+                    $sales[$tx]['product_amount_cents'] += (int)$sale['product_amount_cents'];
+                    $sales[$tx]['gross_revenue'] = hmri_cents_to_money((int)$sales[$tx]['gross_amount_cents']);
+                    $sales[$tx]['net_revenue'] = hmri_cents_to_money((int)$sales[$tx]['net_amount_cents']);
+                    $sales[$tx]['producer_net'] = $sales[$tx]['net_revenue'];
+                    $sales[$tx]['installments'] = max((int)$sales[$tx]['installments'], (int)$sale['installments']);
+                    $raw = json_decode((string)$sales[$tx]['raw_payload_json'], true) ?: [];
+                    $raw['rows'][] = json_decode((string)$sale['raw_payload_json'], true);
+                    $sales[$tx]['raw_payload_json'] = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    continue;
+                }
                 if (($sale['normalized_status'] ?? 'UNKNOWN') === 'UNKNOWN' && (int)($sale['gross_amount_cents'] ?? 0) === 0) continue;
                 if (($sales[$tx]['normalized_status'] ?? 'UNKNOWN') !== 'UNKNOWN' || (int)($sales[$tx]['gross_amount_cents'] ?? 0) > 0) continue;
             }
@@ -707,6 +988,87 @@ function hmri_compare_payment_sale(?array $existing, array $sale): array
     return ['action' => $changes ? 'update' : 'same', 'changes' => $changes];
 }
 
+function hmri_sales_date_range(array $sales): array
+{
+    $min = null;
+    $max = null;
+    foreach ($sales as $sale) {
+        $raw = (string)($sale['payment_confirmed_at'] ?? $sale['transaction_date'] ?? '');
+        if ($raw === '') continue;
+        $ts = strtotime($raw);
+        if (!$ts) continue;
+        $day = date('Y-m-d', $ts);
+        $min = $min === null || $day < $min ? $day : $min;
+        $max = $max === null || $day > $max ? $day : $max;
+    }
+    return [$min, $max];
+}
+
+function hmri_load_missing_in_file(PDO $pdo, string $provider, array $sales): array
+{
+    [$start, $end] = hmri_sales_date_range($sales);
+    if (!$start || !$end) return [];
+    $keys = array_fill_keys(array_keys($sales), true);
+    $missing = [];
+    if ($provider === 'hotmart') {
+        $stmt = $pdo->prepare("SELECT *, transaction_code AS tx_key
+            FROM hotmart_sales_live
+            WHERE DATE(COALESCE(payment_confirmed_at, transaction_date, updated_at)) BETWEEN :start AND :end
+              AND COALESCE(excluded_from_financials,0)=0
+              AND UPPER(COALESCE(status,'')) IN ('APPROVED','APROVADO','REFUNDED','REEMBOLSADO','CHARGEBACK')");
+        $stmt->execute(['start'=>$start, 'end'=>$end]);
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $tx = (string)$row['tx_key'];
+            if ($tx !== '' && !isset($keys[$tx])) $missing[$tx] = $row;
+        }
+        return $missing;
+    }
+    $stmt = $pdo->prepare("SELECT *, external_transaction_id AS tx_key
+        FROM payment_sales
+        WHERE provider=:provider
+          AND DATE(COALESCE(last_received_at, first_received_at, updated_at)) BETWEEN :start AND :end
+          AND COALESCE(excluded_from_financials,0)=0
+          AND normalized_status IN ('APPROVED','REFUNDED','CHARGEBACK')");
+    $stmt->execute(['provider'=>$provider, 'start'=>$start, 'end'=>$end]);
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $tx = (string)$row['tx_key'];
+        if ($tx !== '' && !isset($keys[$tx])) $missing[$tx] = $row;
+    }
+    return $missing;
+}
+
+function hmri_missing_preview_row(array $row, string $provider): array
+{
+    if ($provider === 'hotmart') {
+        return [
+            'transaction_code' => (string)($row['transaction_code'] ?? ''),
+            'action' => 'missing_in_file',
+            'status' => (string)($row['status'] ?? ''),
+            'transaction_date' => (string)($row['transaction_date'] ?? ''),
+            'payment_confirmed_at' => (string)($row['payment_confirmed_at'] ?? ''),
+            'product_name' => (string)($row['product_name'] ?? ''),
+            'buyer_email' => (string)($row['buyer_email'] ?? ''),
+            'gross_revenue' => (float)($row['gross_revenue'] ?? 0),
+            'net_revenue' => (float)($row['net_revenue'] ?? 0),
+            'producer_net' => (float)($row['producer_net'] ?? 0),
+            'changes' => ['authoritative_file' => ['old' => 'presente no banco', 'new' => 'ausente na planilha', 'type' => 'text']],
+        ];
+    }
+    return [
+        'transaction_code' => (string)($row['external_transaction_id'] ?? ''),
+        'action' => 'missing_in_file',
+        'status' => (string)($row['normalized_status'] ?? ''),
+        'transaction_date' => (string)($row['first_received_at'] ?? ''),
+        'payment_confirmed_at' => (string)($row['last_received_at'] ?? ''),
+        'product_name' => (string)($row['product_name'] ?? ''),
+        'buyer_email' => (string)($row['buyer_email'] ?? ''),
+        'gross_revenue' => hmri_cents_to_money((int)($row['gross_amount_cents'] ?? 0)),
+        'net_revenue' => hmri_cents_to_money((int)($row['net_amount_cents'] ?? 0)),
+        'producer_net' => hmri_cents_to_money((int)($row['net_amount_cents'] ?? 0)),
+        'changes' => ['authoritative_file' => ['old' => 'presente no banco', 'new' => 'ausente na planilha', 'type' => 'text']],
+    ];
+}
+
 function hmri_build_preview(PDO $pdo, array $sales, array $errors, string $provider = 'hotmart'): array
 {
     $summary = [
@@ -714,6 +1076,7 @@ function hmri_build_preview(PDO $pdo, array $sales, array $errors, string $provi
         'insert' => 0,
         'update' => 0,
         'same' => 0,
+        'missing_in_file' => 0,
         'errors' => count($errors),
         'net_total' => 0.0,
         'producer_total' => 0.0,
@@ -747,7 +1110,14 @@ function hmri_build_preview(PDO $pdo, array $sales, array $errors, string $provi
             ];
         }
     }
-    return ['summary' => $summary, 'rows' => array_slice($rows, 0, 300), 'errors' => array_slice($errors, 0, 100)];
+    $missing = hmri_load_missing_in_file($pdo, $provider, $sales);
+    $summary['missing_in_file'] = count($missing);
+    foreach ($missing as $row) {
+        if (count($rows) >= 300) break;
+        $rows[] = hmri_missing_preview_row($row, $provider);
+    }
+    [$dateStart, $dateEnd] = hmri_sales_date_range($sales);
+    return ['summary' => $summary, 'rows' => array_slice($rows, 0, 300), 'errors' => array_slice($errors, 0, 100), 'date_start' => $dateStart, 'date_end' => $dateEnd];
 }
 
 function hmri_upsert_payment_sale(PDO $pdo, array $sale): void
@@ -772,9 +1142,15 @@ function hmri_upsert_payment_sale(PDO $pdo, array $sale): void
             fee_amount_cents=IF(VALUES(fee_is_estimated)=1, fee_amount_cents, VALUES(fee_amount_cents)),
             fee_is_estimated=IF(VALUES(fee_is_estimated)=1, fee_is_estimated, VALUES(fee_is_estimated)),
             product_amount_cents=VALUES(product_amount_cents), installments=VALUES(installments),
-            payment_method=VALUES(payment_method), product_name=VALUES(product_name), buyer_name=VALUES(buyer_name),
-            buyer_email=VALUES(buyer_email), buyer_phone=VALUES(buyer_phone), buyer_document=VALUES(buyer_document),
-            raw_payload_json=VALUES(raw_payload_json), last_received_at=VALUES(last_received_at), updated_at=NOW()"
+            payment_method=COALESCE(NULLIF(VALUES(payment_method),''), payment_method),
+            product_name=COALESCE(NULLIF(VALUES(product_name),''), product_name),
+            buyer_name=COALESCE(NULLIF(VALUES(buyer_name),''), buyer_name),
+            buyer_email=COALESCE(NULLIF(VALUES(buyer_email),''), buyer_email),
+            buyer_phone=COALESCE(NULLIF(VALUES(buyer_phone),''), buyer_phone),
+            buyer_document=COALESCE(NULLIF(VALUES(buyer_document),''), buyer_document),
+            raw_payload_json=VALUES(raw_payload_json), last_received_at=VALUES(last_received_at),
+            reconciliation_status='confirmed_by_import', authoritative_import_token=:import_token,
+            confirmed_by_import_at=NOW(), excluded_from_financials=0, excluded_reason=NULL, updated_at=NOW()"
     );
     $stmt->execute([
         'provider'=>$sale['provider'],
@@ -800,7 +1176,89 @@ function hmri_upsert_payment_sale(PDO $pdo, array $sale): void
         'raw'=>$sale['raw_payload_json'],
         'first_received'=>$sale['transaction_date'],
         'last_received'=>$sale['payment_confirmed_at'] ?: $sale['transaction_date'],
+        'import_token'=>$sale['import_token'] ?? null,
     ]);
+}
+
+function hmri_create_or_update_batch(PDO $pdo, string $token, string $provider, array $meta, array $preview, string $status = 'pending'): int
+{
+    [$dateStart, $dateEnd] = [$preview['date_start'] ?? null, $preview['date_end'] ?? null];
+    $summary = $preview['summary'] ?? [];
+    $stmt = $pdo->prepare("INSERT INTO sales_reconciliation_batches
+        (token,provider,original_name,date_start,date_end,status,total_rows,inserted_count,updated_count,same_count,missing_in_file_count,error_count,summary_json)
+        VALUES (:token,:provider,:original,:date_start,:date_end,:status,:total,:inserted,:updated,:same,:missing,:errors,:summary)
+        ON DUPLICATE KEY UPDATE provider=VALUES(provider), original_name=VALUES(original_name), date_start=VALUES(date_start), date_end=VALUES(date_end),
+            status=VALUES(status), total_rows=VALUES(total_rows), inserted_count=VALUES(inserted_count), updated_count=VALUES(updated_count),
+            same_count=VALUES(same_count), missing_in_file_count=VALUES(missing_in_file_count), error_count=VALUES(error_count), summary_json=VALUES(summary_json)");
+    $stmt->execute([
+        'token'=>$token,
+        'provider'=>$provider,
+        'original'=>(string)($meta['original_name'] ?? ''),
+        'date_start'=>$dateStart,
+        'date_end'=>$dateEnd,
+        'status'=>$status,
+        'total'=>(int)($summary['total'] ?? 0),
+        'inserted'=>(int)($summary['insert'] ?? 0),
+        'updated'=>(int)($summary['update'] ?? 0),
+        'same'=>(int)($summary['same'] ?? 0),
+        'missing'=>(int)($summary['missing_in_file'] ?? 0),
+        'errors'=>(int)($summary['errors'] ?? 0),
+        'summary'=>json_encode($preview, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+    return (int)$pdo->query("SELECT id FROM sales_reconciliation_batches WHERE token=" . $pdo->quote($token) . " LIMIT 1")->fetchColumn();
+}
+
+function hmri_log_reconciliation_row(PDO $pdo, int $batchId, string $provider, string $tx, string $action, ?array $existing, array $sale, array $changes): void
+{
+    $stmt = $pdo->prepare("INSERT INTO sales_reconciliation_rows
+        (batch_id,provider,transaction_code,action,old_status,new_status,gross_amount_cents,net_amount_cents,fee_amount_cents,changes_json,raw_row_json)
+        VALUES (:batch,:provider,:tx,:action,:old_status,:new_status,:gross,:net,:fee,:changes,:raw)");
+    $stmt->execute([
+        'batch'=>$batchId,
+        'provider'=>$provider,
+        'tx'=>$tx,
+        'action'=>$action,
+        'old_status'=>$existing['status'] ?? $existing['normalized_status'] ?? null,
+        'new_status'=>$sale['status'] ?? $sale['normalized_status'] ?? null,
+        'gross'=>(int)($sale['gross_amount_cents'] ?? round(((float)($sale['gross_revenue'] ?? 0)) * 100)),
+        'net'=>(int)($sale['net_amount_cents'] ?? round(((float)($sale['net_revenue'] ?? 0)) * 100)),
+        'fee'=>(int)($sale['fee_amount_cents'] ?? 0),
+        'changes'=>json_encode($changes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'raw'=>$sale['raw_payload_json'] ?? null,
+    ]);
+}
+
+function hmri_mark_confirmed(PDO $pdo, string $provider, string $tx, string $token): void
+{
+    if ($provider === 'hotmart') {
+        $pdo->prepare("UPDATE hotmart_sales_live SET reconciliation_status='confirmed_by_import', authoritative_import_token=:token, confirmed_by_import_at=NOW(), excluded_from_financials=0, excluded_reason=NULL, updated_at=NOW() WHERE transaction_code=:tx")
+            ->execute(['token'=>$token, 'tx'=>$tx]);
+        return;
+    }
+    $pdo->prepare("UPDATE payment_sales SET reconciliation_status='confirmed_by_import', authoritative_import_token=:token, confirmed_by_import_at=NOW(), excluded_from_financials=0, excluded_reason=NULL, updated_at=NOW() WHERE provider=:provider AND external_transaction_id=:tx")
+        ->execute(['token'=>$token, 'provider'=>$provider, 'tx'=>$tx]);
+}
+
+function hmri_mark_missing_in_file(PDO $pdo, string $provider, array $missing, string $token): int
+{
+    $count = 0;
+    foreach ($missing as $tx => $row) {
+        if ($provider === 'hotmart') {
+            $pdo->prepare("UPDATE hotmart_sales_live SET reconciliation_status='missing_in_authoritative_import', authoritative_import_token=:token, excluded_from_financials=1, excluded_reason='Ausente na planilha autoritativa do periodo', status='CANCELED', updated_at=NOW() WHERE transaction_code=:tx")
+                ->execute(['token'=>$token, 'tx'=>$tx]);
+            $pdo->prepare("UPDATE hotmart_sales SET status='CANCELED', updated_at=NOW() WHERE transaction_code=:tx")
+                ->execute(['tx'=>$tx]);
+        } else {
+            $pdo->prepare("UPDATE payment_sales SET reconciliation_status='missing_in_authoritative_import', authoritative_import_token=:token, excluded_from_financials=1, excluded_reason='Ausente na planilha autoritativa do periodo', normalized_status='CANCELED', provider_status='missing_in_authoritative_import', updated_at=NOW() WHERE provider=:provider AND external_transaction_id=:tx")
+                ->execute(['token'=>$token, 'provider'=>$provider, 'tx'=>$tx]);
+            $pdo->prepare("UPDATE hotmart_sales_live SET reconciliation_status='missing_in_authoritative_import', authoritative_import_token=:token, excluded_from_financials=1, excluded_reason='Ausente na planilha autoritativa do periodo', status='CANCELED', updated_at=NOW() WHERE transaction_code=:tx AND COALESCE(NULLIF(sales_channel,''), :provider_default)=:provider")
+                ->execute(['token'=>$token, 'tx'=>$tx, 'provider_default'=>$provider, 'provider'=>$provider]);
+            $pdo->prepare("UPDATE hotmart_sales SET status='CANCELED', updated_at=NOW() WHERE transaction_code=:tx")
+                ->execute(['tx'=>$tx]);
+        }
+        $count++;
+    }
+    return $count;
 }
 
 function hmri_sync_gateway_ledger(PDO $pdo, array $sale): void
@@ -838,18 +1296,22 @@ function hmri_sync_gateway_ledger(PDO $pdo, array $sale): void
         ->execute(['status'=>$legacyStatus,'tx'=>$sale['transaction_code']]);
 }
 
-function hmri_apply_sales(PDO $pdo, array $sales, string $provider = 'hotmart'): array
+function hmri_apply_sales(PDO $pdo, array $sales, string $provider = 'hotmart', string $token = '', array $preview = [], array $meta = []): array
 {
-    $stats = ['inserted' => 0, 'updated' => 0, 'same' => 0, 'errors' => 0];
+    $stats = ['inserted' => 0, 'updated' => 0, 'same' => 0, 'missing_in_file' => 0, 'errors' => 0];
     $provider = hmri_normalize_provider($provider);
+    $batchId = $token !== '' ? hmri_create_or_update_batch($pdo, $token, $provider, $meta, $preview, 'pending') : 0;
     $existingMap = $provider === 'hotmart'
         ? hmri_load_existing_sales($pdo, array_keys($sales))
         : hmri_load_existing_payment_sales($pdo, $provider, array_keys($sales));
     foreach ($sales as $tx => $sale) {
         try {
+            if ($token !== '') $sale['import_token'] = $token;
             $existing = $existingMap[$tx] ?? null;
             $cmp = $provider === 'hotmart' ? hmri_compare_sale($existing, $sale) : hmri_compare_payment_sale($existing, $sale);
             if ($cmp['action'] === 'same') {
+                hmri_mark_confirmed($pdo, $provider, $tx, $token);
+                if ($batchId) hmri_log_reconciliation_row($pdo, $batchId, $provider, $tx, 'same', $existing, $sale, []);
                 $stats['same']++;
                 continue;
             }
@@ -861,6 +1323,8 @@ function hmri_apply_sales(PDO $pdo, array $sales, string $provider = 'hotmart'):
                 hmri_upsert_payment_sale($pdo, $sale);
                 hmri_sync_gateway_ledger($pdo, $sale);
             }
+            hmri_mark_confirmed($pdo, $provider, $tx, $token);
+            if ($batchId) hmri_log_reconciliation_row($pdo, $batchId, $provider, $tx, $cmp['action'], $existing, $sale, $cmp['changes']);
             $pdo->commit();
             if ($cmp['action'] === 'insert') {
                 $stats['inserted']++;
@@ -875,11 +1339,36 @@ function hmri_apply_sales(PDO $pdo, array $sales, string $provider = 'hotmart'):
             app_log('Erro ao aplicar conciliacao de vendas', ['transaction_code' => $tx, 'error' => $e->getMessage()]);
         }
     }
+    try {
+        $missing = hmri_load_missing_in_file($pdo, $provider, $sales);
+        $stats['missing_in_file'] = hmri_mark_missing_in_file($pdo, $provider, $missing, $token);
+        if ($batchId) {
+            foreach ($missing as $tx => $row) {
+                hmri_log_reconciliation_row($pdo, $batchId, $provider, (string)$tx, 'missing_in_file', $row, hmri_missing_preview_row($row, $provider), ['authoritative_file'=>['old'=>'presente no banco','new'=>'ausente na planilha']]);
+            }
+            $finalPreview = $preview ?: hmri_build_preview($pdo, $sales, [], $provider);
+            $finalPreview['applied_stats'] = $stats;
+            $pdo->prepare("UPDATE sales_reconciliation_batches SET status='applied', applied_at=NOW(), inserted_count=:inserted, updated_count=:updated, same_count=:same, missing_in_file_count=:missing, error_count=:errors, summary_json=:summary WHERE id=:id")
+                ->execute([
+                    'inserted'=>$stats['inserted'],
+                    'updated'=>$stats['updated'],
+                    'same'=>$stats['same'],
+                    'missing'=>$stats['missing_in_file'],
+                    'errors'=>$stats['errors'],
+                    'summary'=>json_encode($finalPreview, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'id'=>$batchId,
+                ]);
+        }
+    } catch (Throwable $e) {
+        $stats['errors']++;
+        app_log('Erro ao marcar vendas ausentes na planilha', ['provider'=>$provider, 'error'=>$e->getMessage()]);
+    }
     return $stats;
 }
 
 $pdo = getPDO();
 metrics_ensure_schema($pdo);
+hmri_ensure_reconciliation_schema($pdo);
 
 $message = '';
 $error = '';
@@ -897,19 +1386,20 @@ try {
         $loaded = hmri_load_sales_from_batch($pdo, $token);
         $selectedProvider = hmri_normalize_provider((string)($loaded['provider'] ?? $selectedProvider));
         $preview = hmri_build_preview($pdo, $loaded['sales'], $loaded['errors'], $selectedProvider);
+        hmri_create_or_update_batch($pdo, $token, $selectedProvider, $loaded['meta'], $preview, 'pending');
         file_put_contents(hmri_batch_path($token) . '/preview.json', json_encode($preview, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
         $message = 'Arquivo analisado. Revise as divergencias antes de autorizar.';
     } elseif ($requestMethod === 'POST' && $action === 'apply') {
         $loaded = hmri_load_sales_from_batch($pdo, $token);
         $selectedProvider = hmri_normalize_provider((string)($loaded['provider'] ?? $selectedProvider));
-        $stats = hmri_apply_sales($pdo, $loaded['sales'], $selectedProvider);
         $preview = hmri_build_preview($pdo, $loaded['sales'], $loaded['errors'], $selectedProvider);
+        $stats = hmri_apply_sales($pdo, $loaded['sales'], $selectedProvider, $token, $preview, $loaded['meta']);
         file_put_contents(hmri_batch_path($token) . '/applied.json', json_encode([
             'applied_at' => date('Y-m-d H:i:s'),
             'provider' => $selectedProvider,
             'stats' => $stats,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        $message = 'Conciliacao aplicada: ' . hmri_num($stats['inserted']) . ' inseridas, ' . hmri_num($stats['updated']) . ' atualizadas, ' . hmri_num($stats['same']) . ' sem alteracao, ' . hmri_num($stats['errors']) . ' erro(s).';
+        $message = 'Conciliacao aplicada: ' . hmri_num($stats['inserted']) . ' inseridas, ' . hmri_num($stats['updated']) . ' atualizadas, ' . hmri_num($stats['same']) . ' sem alteracao, ' . hmri_num($stats['missing_in_file']) . ' ausentes na planilha removidas da apuracao, ' . hmri_num($stats['errors']) . ' erro(s).';
     } elseif ($token !== '') {
         $metaFile = hmri_batch_path($token) . '/meta.json';
         if (is_file($metaFile)) {
@@ -928,13 +1418,13 @@ try {
 require_once __DIR__ . '/_header.php';
 ?>
 <style>
-.hmri{display:flex;flex-direction:column;gap:16px}.hmri-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px}.hmri-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.hmri-head h1{font-size:22px;margin:0;color:var(--text)}.hmri-head p{font-size:12px;color:var(--muted);margin:4px 0 0}.hmri-actions{display:flex;gap:8px;flex-wrap:wrap}.hmri-upload{display:grid;grid-template-columns:220px 1fr auto;gap:12px;align-items:end}.hmri-upload label{display:block;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}.hmri-upload input,.hmri-upload select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);padding:10px}.hmri-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.hmri-kpi{border:1px solid var(--border);border-radius:var(--r);padding:12px;background:rgba(255,255,255,.02)}.hmri-kpi span{display:block;font-size:11px;color:var(--muted)}.hmri-kpi strong{display:block;font-size:19px;margin-top:4px}.hmri-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:var(--r)}.hmri-table{width:100%;border-collapse:collapse;min-width:1000px}.hmri-table th,.hmri-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:top}.hmri-table th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.03)}.hmri-badge{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;text-transform:uppercase}.hmri-badge.insert{background:var(--success-dim);color:var(--success)}.hmri-badge.update{background:var(--warning-dim);color:var(--warning)}.hmri-badge.same{background:var(--info-dim);color:var(--info)}.hmri-msg{padding:12px 14px;border-radius:var(--r);border:1px solid var(--border);font-size:13px}.hmri-msg.ok{background:var(--success-dim);color:var(--text);border-color:rgba(34,197,94,.22)}.hmri-msg.err{background:var(--danger-dim);color:var(--text);border-color:rgba(239,68,68,.25)}.hmri-sub{font-size:11px;color:var(--muted)}.hmri-change{display:block;white-space:nowrap}.hmri-change b{color:var(--warning)}@media(max-width:900px){.hmri-upload{grid-template-columns:1fr}.hmri-kpis{grid-template-columns:repeat(2,1fr)}.hmri-head{flex-direction:column}}
+.hmri{display:flex;flex-direction:column;gap:16px}.hmri-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px}.hmri-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.hmri-head h1{font-size:22px;margin:0;color:var(--text)}.hmri-head p{font-size:12px;color:var(--muted);margin:4px 0 0}.hmri-actions{display:flex;gap:8px;flex-wrap:wrap}.hmri-upload{display:grid;grid-template-columns:220px 1fr auto;gap:12px;align-items:end}.hmri-upload label{display:block;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}.hmri-upload input,.hmri-upload select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);padding:10px}.hmri-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.hmri-kpi{border:1px solid var(--border);border-radius:var(--r);padding:12px;background:rgba(255,255,255,.02)}.hmri-kpi span{display:block;font-size:11px;color:var(--muted)}.hmri-kpi strong{display:block;font-size:19px;margin-top:4px}.hmri-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:var(--r)}.hmri-table{width:100%;border-collapse:collapse;min-width:1000px}.hmri-table th,.hmri-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:top}.hmri-table th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.03)}.hmri-badge{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;text-transform:uppercase}.hmri-badge.insert{background:var(--success-dim);color:var(--success)}.hmri-badge.update{background:var(--warning-dim);color:var(--warning)}.hmri-badge.same{background:var(--info-dim);color:var(--info)}.hmri-badge.missing_in_file{background:var(--danger-dim);color:var(--danger)}.hmri-msg{padding:12px 14px;border-radius:var(--r);border:1px solid var(--border);font-size:13px}.hmri-msg.ok{background:var(--success-dim);color:var(--text);border-color:rgba(34,197,94,.22)}.hmri-msg.err{background:var(--danger-dim);color:var(--text);border-color:rgba(239,68,68,.25)}.hmri-sub{font-size:11px;color:var(--muted)}.hmri-change{display:block;white-space:nowrap}.hmri-change b{color:var(--warning)}@media(max-width:900px){.hmri-upload{grid-template-columns:1fr}.hmri-kpis{grid-template-columns:repeat(2,1fr)}.hmri-head{flex-direction:column}}
 </style>
 <div class="hmri">
   <div class="hmri-head">
     <div>
       <h1>Conciliar vendas</h1>
-      <p>Envie o CSV ou ZIP exportado da plataforma. O arquivo e a fonte confiavel: quando a transacao existir no banco, ela sera atualizada; quando nao existir, sera criada.</p>
+      <p>Envie o arquivo exportado da plataforma. O arquivo e a fonte confiavel: quando a transacao existir no banco, ela sera atualizada; quando nao existir, sera criada.</p>
     </div>
     <div class="hmri-actions">
       <a class="btn btn-ghost" href="vendas_analytics.php">Voltar para vendas</a>
@@ -956,8 +1446,8 @@ require_once __DIR__ . '/_header.php';
         </select>
       </div>
       <div>
-        <label>Arquivo de vendas (.csv ou .zip)</label>
-        <input type="file" name="sales_file" accept=".csv,.zip" required>
+        <label>Arquivo de vendas (.csv, .xls, .xlsx ou .zip)</label>
+        <input type="file" name="sales_file" accept=".csv,.xls,.xlsx,.zip" required>
       </div>
       <button class="btn btn-primary" type="submit">Analisar arquivo</button>
     </form>
@@ -983,6 +1473,7 @@ require_once __DIR__ . '/_header.php';
       <div class="hmri-kpi"><span>Novas</span><strong><?= hmri_num($s['insert'] ?? 0) ?></strong></div>
       <div class="hmri-kpi"><span>Com divergencia</span><strong><?= hmri_num($s['update'] ?? 0) ?></strong></div>
       <div class="hmri-kpi"><span>Sem alteracao</span><strong><?= hmri_num($s['same'] ?? 0) ?></strong></div>
+      <div class="hmri-kpi"><span>Ausentes na planilha</span><strong><?= hmri_num($s['missing_in_file'] ?? 0) ?></strong></div>
       <div class="hmri-kpi"><span>Faturamento bruto</span><strong><?= hmri_money($s['gross_total'] ?? 0) ?></strong></div>
       <div class="hmri-kpi"><span>Receita liquida</span><strong><?= hmri_money($s['net_total'] ?? 0) ?></strong></div>
       <div class="hmri-kpi"><span>Liquido produtor</span><strong><?= hmri_money($s['producer_total'] ?? 0) ?></strong></div>
