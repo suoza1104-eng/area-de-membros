@@ -534,9 +534,16 @@ function automation_run_complete_diagnostics(PDO $pdo, string $triggeredBy = 'cr
         $triggerEvent = (string)($triggerNode['config']['event'] ?? '');
 
         if ($triggerEvent === 'PAGAMENTO_APROVADO' && $captures24h === 0) {
+            $inscricaoDateCol = 'created_at';
+            try {
+                $stCols = $pdo->query("SHOW COLUMNS FROM inscricao_logs");
+                $inscricaoCols = array_map(static fn($row) => (string)($row['Field'] ?? ''), $stCols ? ($stCols->fetchAll(PDO::FETCH_ASSOC) ?: []) : []);
+                if (in_array('data_criacao', $inscricaoCols, true)) $inscricaoDateCol = 'data_criacao';
+            } catch (Throwable $e) {
+            }
             $recentSales = (int)$pdo->query("
-                SELECT COUNT(*) FROM inscricao_logs 
-                WHERE data_criacao >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                SELECT COUNT(*) FROM inscricao_logs
+                WHERE {$inscricaoDateCol} >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
             ")->fetchColumn();
             if ($recentSales >= 5) {
                 $issues[] = [

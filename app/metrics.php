@@ -227,6 +227,37 @@ function metrics_ensure_schema(PDO $pdo): void
 /** Espelha a tabela operacional no ledger consolidado sem apagar payloads ricos. */
 function metrics_refresh_hotmart_ledger(PDO $pdo): int
 {
+    if (!metrics_table_exists($pdo, 'hotmart_sales')) return 0;
+
+    $saleCols = source_table_columns($pdo, 'hotmart_sales');
+    $select = [
+        column_exists_in($saleCols, 'transaction_code') ? 'transaction_code' : "CONCAT('legacy-', id) AS transaction_code",
+        column_exists_in($saleCols, 'status') ? 'status' : "'' AS status",
+        column_exists_in($saleCols, 'transaction_date') ? 'transaction_date' : (column_exists_in($saleCols, 'sale_date') ? 'sale_date AS transaction_date' : 'created_at AS transaction_date'),
+        column_exists_in($saleCols, 'payment_confirmed_at') ? 'payment_confirmed_at' : 'NULL AS payment_confirmed_at',
+        column_exists_in($saleCols, 'product_code') ? 'product_code' : (column_exists_in($saleCols, 'product_id') ? 'product_id AS product_code' : 'NULL AS product_code'),
+        column_exists_in($saleCols, 'product_name') ? 'product_name' : "'' AS product_name",
+        column_exists_in($saleCols, 'price_code') ? 'price_code' : 'NULL AS price_code',
+        column_exists_in($saleCols, 'price_name') ? 'price_name' : "'' AS price_name",
+        column_exists_in($saleCols, 'currency') ? 'currency' : "'BRL' AS currency",
+        column_exists_in($saleCols, 'gross_revenue') ? 'gross_revenue' : '0 AS gross_revenue',
+        column_exists_in($saleCols, 'net_revenue') ? 'net_revenue' : '0 AS net_revenue',
+        column_exists_in($saleCols, 'producer_net') ? 'producer_net' : '0 AS producer_net',
+        column_exists_in($saleCols, 'buyer_name') ? 'buyer_name' : "'' AS buyer_name",
+        column_exists_in($saleCols, 'buyer_email') ? 'buyer_email' : "'' AS buyer_email",
+        column_exists_in($saleCols, 'buyer_phone_raw') ? 'buyer_phone_raw' : (column_exists_in($saleCols, 'buyer_phone') ? 'buyer_phone AS buyer_phone_raw' : "'' AS buyer_phone_raw"),
+        column_exists_in($saleCols, 'buyer_phone_norm') ? 'buyer_phone_norm' : 'NULL AS buyer_phone_norm',
+        column_exists_in($saleCols, 'matched_user_id') ? 'matched_user_id' : 'NULL AS matched_user_id',
+        column_exists_in($saleCols, 'match_method') ? 'match_method' : "'none' AS match_method",
+        column_exists_in($saleCols, 'utm_source') ? 'utm_source' : "'' AS utm_source",
+        column_exists_in($saleCols, 'utm_medium') ? 'utm_medium' : "'' AS utm_medium",
+        column_exists_in($saleCols, 'utm_campaign') ? 'utm_campaign' : "'' AS utm_campaign",
+        column_exists_in($saleCols, 'utm_term') ? 'utm_term' : "'' AS utm_term",
+        column_exists_in($saleCols, 'utm_content') ? 'utm_content' : "'' AS utm_content",
+        column_exists_in($saleCols, 'created_at') ? 'created_at AS imported_at' : 'NOW() AS imported_at',
+        column_exists_in($saleCols, 'updated_at') ? 'updated_at' : 'NOW() AS updated_at',
+    ];
+
     $sql = "INSERT INTO hotmart_sales_live (
                 transaction_code,status,transaction_date,payment_confirmed_at,
                 product_code,product_name,price_code,price_name,currency,
@@ -234,13 +265,8 @@ function metrics_refresh_hotmart_ledger(PDO $pdo): int
                 buyer_phone_raw,buyer_phone_norm,matched_user_id,match_method,
                 utm_source,utm_medium,utm_campaign,utm_term,utm_content,imported_at,updated_at
             )
-            SELECT transaction_code,status,transaction_date,payment_confirmed_at,
-                product_code,product_name,price_code,price_name,currency,
-                COALESCE(gross_revenue,0),COALESCE(net_revenue,0),COALESCE(producer_net,0),
-                buyer_name,buyer_email,buyer_phone_raw,buyer_phone_norm,matched_user_id,match_method,
-                utm_source,utm_medium,utm_campaign,utm_term,utm_content,
-                COALESCE(imported_at,NOW()),COALESCE(updated_at,NOW())
-            FROM hotmart_sales
+            SELECT " . implode(',', $select) . "
+              FROM hotmart_sales
             ON DUPLICATE KEY UPDATE
                 status=VALUES(status), transaction_date=VALUES(transaction_date),
                 payment_confirmed_at=VALUES(payment_confirmed_at), product_code=VALUES(product_code),

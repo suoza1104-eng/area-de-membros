@@ -882,6 +882,51 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
     $role = (string)$claim['role'];
     @set_time_limit(max(60, (int)$definition['timeout']));
 
+    $finished = false;
+    $baseObLevel = ob_get_level();
+    register_shutdown_function(static function () use (
+        $pdo,
+        $taskKey,
+        $runToken,
+        $runId,
+        $started,
+        $baseObLevel,
+        &$finished
+    ): void {
+        if ($finished) return;
+        $finished = true;
+
+        $error = 'Execucao interrompida antes de finalizar.';
+        $lastError = error_get_last();
+        if (is_array($lastError) && in_array((int)($lastError['type'] ?? 0), [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            $error = trim((string)($lastError['message'] ?? $error));
+            $file = (string)($lastError['file'] ?? '');
+            $line = (int)($lastError['line'] ?? 0);
+            if ($file !== '') $error .= ' em ' . basename($file) . ($line > 0 ? ':' . $line : '');
+        }
+
+        $outputParts = [];
+        while (ob_get_level() > $baseObLevel) {
+            $outputParts[] = trim((string)ob_get_clean());
+        }
+        $output = trim(implode("\n", array_reverse(array_filter($outputParts, static fn($part) => $part !== ''))));
+
+        try {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            cron_manager_finish(
+                $pdo,
+                $taskKey,
+                $runToken,
+                $runId,
+                'error',
+                (int)round((microtime(true) - $started) * 1000),
+                $output,
+                $error
+            );
+        } catch (Throwable $e) {
+        }
+    });
+
     ob_start();
     try {
         $GLOBALS['cron_manager_source'] = $source;
@@ -906,6 +951,7 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
         $output,
         $error
     );
+    $finished = true;
 
     return [
         'ok' => $status === 'success',

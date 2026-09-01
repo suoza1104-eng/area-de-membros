@@ -14,7 +14,9 @@ require_once __DIR__ . '/../app/automation_diagnostics.php';
 $pdo = getPDO();
 $result = automation_run_complete_diagnostics($pdo, 'cron');
 
-header('Content-Type: application/json; charset=utf-8');
+if (PHP_SAPI !== 'cli' && !headers_sent()) {
+    header('Content-Type: application/json; charset=utf-8');
+}
 echo json_encode([
     'ok' => true,
     'status' => $result['status'] ?? 'healthy',
