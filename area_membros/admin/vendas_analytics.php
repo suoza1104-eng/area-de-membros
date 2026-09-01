@@ -557,7 +557,12 @@ include __DIR__ . '/_header.php';
 <div class="bi">
   <div class="bi-head">
     <div class="bi-title"><h1>Painel de desempenho do negocio</h1><p>Trafego, leads, atribuicao e vendas reconciliados na mesma linha do tempo.</p></div>
-    <div class="sync-pill"><span class="sync-dot"></span><?= $lastSync ? 'Meta atualizada em '.va_h(date('d/m/Y H:i',strtotime((string)$lastSync))) : 'Integracao Meta aguardando sincronizacao' ?></div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <a href="vendas_auditoria.php" style="display:inline-flex;align-items:center;gap:6px;padding:9px 14px;background:#3b82f6;border-radius:9px;color:#fff;font-size:12px;font-weight:700;text-decoration:none;">
+        📋 Auditar Vendas (Tabela Completa)
+      </a>
+      <div class="sync-pill"><span class="sync-dot"></span><?= $lastSync ? 'Meta atualizada em '.va_h(date('d/m/Y H:i',strtotime((string)$lastSync))) : 'Integracao Meta aguardando sincronizacao' ?></div>
+    </div>
   </div>
 
   <form class="bi-filter" method="get">
