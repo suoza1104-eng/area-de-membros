@@ -568,8 +568,13 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
                 'confirmed_at' => $stEnum === 'APPROVED' ? $saleDate : null,
             ]);
 
+            if ($stEnum === 'APPROVED') {
+                $matchedUser = pagarme_find_matching_user($pdo, $bEmail, normalize_phone_value($bPhone));
+                pagarme_try_grant_lifetime($pdo, $ord, $firstCharge, $txCode, $bEmail, $bPhone, $matchedUser);
+                $totalApproved++;
+            }
+
             $totalSynced++;
-            if ($stEnum === 'APPROVED') $totalApproved++;
         }
     }
 
