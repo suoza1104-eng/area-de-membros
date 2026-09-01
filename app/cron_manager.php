@@ -54,6 +54,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 5,
             'timeout' => 300,
         ],
+        'pagarme_sync' => [
+            'label' => 'Pagar.me V5 API',
+            'description' => 'Sincroniza vendas do Pagar.me via API para cobrir webhooks perdidos ou instabilidades do gateway.',
+            'script' => __DIR__ . '/../cron/processar_pagarme_sync.php',
+            'interval' => 5,
+            'timeout' => 300,
+        ],
         'firepay_reconciliation' => [
             'label' => 'Reconciliacao Firepay x Gateway',
             'description' => 'Vincula vendas Firepay as equivalentes ja capturadas via DOM/Pagar.me, para visibilidade e futura prevencao de dupla contagem.',

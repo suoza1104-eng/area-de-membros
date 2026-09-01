@@ -31,7 +31,7 @@ function cron_manager_base_definitions(): array {
             'description' => 'Processa turmas com horário de disparo atingido.',
             'script' => __DIR__ . '/../cron/processar_lives.php',
             'interval' => 1,
-            'timeout' => 120,
+            'timeout' => 1800,
         ],
         'agendamentos_retorno' => [
             'label' => 'Agendamentos de retorno',
@@ -54,6 +54,20 @@ function cron_manager_base_definitions(): array {
             'interval' => 5,
             'timeout' => 300,
         ],
+        'pagarme_sync' => [
+            'label' => 'Pagar.me V5 API',
+            'description' => 'Sincroniza vendas do Pagar.me via API para cobrir webhooks perdidos ou instabilidades do gateway.',
+            'script' => __DIR__ . '/../cron/processar_pagarme_sync.php',
+            'interval' => 5,
+            'timeout' => 300,
+        ],
+        'firepay_reconciliation' => [
+            'label' => 'Reconciliacao Firepay x Gateway',
+            'description' => 'Vincula vendas Firepay as equivalentes ja capturadas via DOM/Pagar.me, para visibilidade e futura prevencao de dupla contagem.',
+            'script' => __DIR__ . '/../cron/processar_reconciliacao_firepay.php',
+            'interval' => 15,
+            'timeout' => 300,
+        ],
         'fluxos_push' => [
             'label' => 'Fluxos de notificações push',
             'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',
@@ -62,9 +76,51 @@ function cron_manager_base_definitions(): array {
             'timeout' => 120,
         ],
         'automacoes' => [
-            'label' => 'Automacoes centralizadas',
-            'description' => 'Processa etapas vencidas dos fluxos unificados de email, push e integracoes.',
+            'label' => 'Automacoes - etapas locais',
+            'description' => 'Processa etapas locais (gatilho/condicao/espera/acao/fim) dos fluxos unificados.',
             'script' => __DIR__ . '/../cron/processar_automacoes.php',
+            'interval' => 1,
+            'timeout' => 300,
+        ],
+        'automacoes_email' => [
+            'label' => 'Automacoes - E-mail',
+            'description' => 'Processa a fila do canal de e-mail dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_push' => [
+            'label' => 'Automacoes - Push',
+            'description' => 'Processa a fila do canal de push dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_voz' => [
+            'label' => 'Automacoes - Voz',
+            'description' => 'Processa a fila do canal de voz dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_manychat' => [
+            'label' => 'Automacoes - ManyChat',
+            'description' => 'Processa a fila do canal ManyChat dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_superfuncionario' => [
+            'label' => 'Automacoes - SuperFuncionario',
+            'description' => 'Processa a fila do canal SuperFuncionario dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
+        'automacoes_webhook' => [
+            'label' => 'Automacoes - Webhook',
+            'description' => 'Processa a fila do canal de webhook dos fluxos unificados.',
+            'script' => __DIR__ . '/../cron/processar_automacoes_canal.php',
             'interval' => 1,
             'timeout' => 180,
         ],
@@ -252,9 +308,40 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     try {
         $pdo->exec("
             UPDATE cron_managed_tasks
-               SET timeout_seconds = 120
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 1,
+                   timeout_seconds = GREATEST(timeout_seconds, 1800),
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'lives_turma'
-               AND timeout_seconds > 120
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 1
+                    OR timeout_seconds < 1800
+                    OR next_run_at IS NULL
+               )
+        ");
+    } catch (Throwable $e) {}
+
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
+               SET enabled = 1,
+                   mode = IF(mode = 'disabled', 'redundant', mode),
+                   interval_minutes = 1,
+                   timeout_seconds = GREATEST(timeout_seconds, 300),
+                   fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key = 'whatsapp_grupos'
+               AND (
+                    enabled <> 1
+                    OR mode = 'disabled'
+                    OR interval_minutes <> 1
+                    OR timeout_seconds < 300
+                    OR next_run_at IS NULL
+               )
         ");
     } catch (Throwable $e) {}
 
@@ -323,6 +410,7 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     } catch (Throwable $e) {}
 
     cron_manager_recover_expired_runs($pdo);
+    cron_manager_recover_stale_live_run($pdo);
 
     if (cron_manager_token($pdo) === '') {
         cron_manager_rotate_token($pdo);
@@ -484,6 +572,78 @@ function cron_manager_recover_expired_runs(PDO $pdo): int {
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
+    }
+}
+
+function cron_manager_recover_stale_live_run(PDO $pdo): int {
+    $minRunAgeSeconds = 90;
+    $maxIdleSeconds = 90;
+
+    try {
+        $st = $pdo->query("
+            SELECT running_token, last_started_at
+              FROM cron_managed_tasks
+             WHERE task_key = 'lives_turma'
+               AND running_token IS NOT NULL
+               AND last_started_at IS NOT NULL
+               AND last_started_at <= DATE_SUB(NOW(), INTERVAL {$minRunAgeSeconds} SECOND)
+             LIMIT 1
+        ");
+        $task = $st ? ($st->fetch(PDO::FETCH_ASSOC) ?: null) : null;
+        if (!$task) return 0;
+
+        $progress = $pdo->query("
+            SELECT MAX(progress_at)
+              FROM (
+                    SELECT MAX(last_heartbeat_at) AS progress_at
+                      FROM live_turma_dispatch_logs
+                     WHERE status IN ('iniciado','processando','queued')
+                    UNION ALL
+                    SELECT MAX(updated_at) AS progress_at
+                      FROM live_turma_dispatch_recipients
+                     WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+              ) p
+        ")->fetchColumn();
+        $progressAt = $progress ? strtotime((string)$progress) : false;
+        if ($progressAt && $progressAt > time() - $maxIdleSeconds) return 0;
+
+        $runToken = (string)($task['running_token'] ?? '');
+        if ($runToken === '') return 0;
+
+        $pdo->beginTransaction();
+        try {
+            $finishRun = $pdo->prepare("
+                UPDATE cron_managed_runs
+                   SET status='recovered',
+                       finished_at=NOW(),
+                       duration_ms=TIMESTAMPDIFF(MICROSECOND, started_at, NOW()) DIV 1000,
+                       error_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.'
+                 WHERE run_token=:run_token
+                   AND status='running'
+            ");
+            $finishRun->execute([':run_token' => $runToken]);
+
+            $releaseTask = $pdo->prepare("
+                UPDATE cron_managed_tasks
+                   SET running_until=NULL,
+                       running_token=NULL,
+                       last_finished_at=NOW(),
+                       last_status='recovered',
+                       last_message='Liberado automaticamente: live_turma sem progresso ha mais de 90s.',
+                       next_run_at=NOW()
+                 WHERE task_key='lives_turma'
+                   AND running_token=:run_token
+            ");
+            $releaseTask->execute([':run_token' => $runToken]);
+            $count = $releaseTask->rowCount() === 1 ? 1 : 0;
+            $pdo->commit();
+            return $count;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            return 0;
+        }
+    } catch (Throwable $e) {
+        return 0;
     }
 }
 
@@ -729,6 +889,51 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
     $role = (string)$claim['role'];
     @set_time_limit(max(60, (int)$definition['timeout']));
 
+    $finished = false;
+    $baseObLevel = ob_get_level();
+    register_shutdown_function(static function () use (
+        $pdo,
+        $taskKey,
+        $runToken,
+        $runId,
+        $started,
+        $baseObLevel,
+        &$finished
+    ): void {
+        if ($finished) return;
+        $finished = true;
+
+        $error = 'Execucao interrompida antes de finalizar.';
+        $lastError = error_get_last();
+        if (is_array($lastError) && in_array((int)($lastError['type'] ?? 0), [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            $error = trim((string)($lastError['message'] ?? $error));
+            $file = (string)($lastError['file'] ?? '');
+            $line = (int)($lastError['line'] ?? 0);
+            if ($file !== '') $error .= ' em ' . basename($file) . ($line > 0 ? ':' . $line : '');
+        }
+
+        $outputParts = [];
+        while (ob_get_level() > $baseObLevel) {
+            $outputParts[] = trim((string)ob_get_clean());
+        }
+        $output = trim(implode("\n", array_reverse(array_filter($outputParts, static fn($part) => $part !== ''))));
+
+        try {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            cron_manager_finish(
+                $pdo,
+                $taskKey,
+                $runToken,
+                $runId,
+                'error',
+                (int)round((microtime(true) - $started) * 1000),
+                $output,
+                $error
+            );
+        } catch (Throwable $e) {
+        }
+    });
+
     ob_start();
     try {
         $GLOBALS['cron_manager_source'] = $source;
@@ -753,6 +958,7 @@ function cron_manager_execute(PDO $pdo, string $taskKey, string $source, bool $f
         $output,
         $error
     );
+    $finished = true;
 
     return [
         'ok' => $status === 'success',

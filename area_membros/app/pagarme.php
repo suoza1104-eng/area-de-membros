@@ -473,3 +473,111 @@ function pagarme_upsert_sales_master(PDO $pdo, array $event): void
         'raw' => $event['metadata_json'] ?: null,
     ]);
 }
+
+function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
+{
+    pagarme_ensure_schema($pdo);
+    $apiKey = trim((string)get_setting('pagarme_api_key', ''));
+    if ($apiKey === '') {
+        return ['ok' => false, 'message' => 'API Key Pagar.me não configurada.'];
+    }
+
+    $totalSynced = 0;
+    $totalApproved = 0;
+    $errors = [];
+
+    for ($p = 1; $p <= $pages; $p++) {
+        $url = "https://api.pagar.me/core/v5/orders?page={$p}&size=30";
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ':');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        $res = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200 || !$res) {
+            $errors[] = "Falha na página {$p} (HTTP {$httpCode})";
+            break;
+        }
+
+        $json = json_decode($res, true);
+        $orders = is_array($json['data'] ?? null) ? $json['data'] : [];
+
+        foreach ($orders as $ord) {
+            $txId = trim((string)($ord['id'] ?? ''));
+            if ($txId === '') continue;
+            $txCode = 'pagarme:' . $txId;
+
+            $status = strtolower(trim((string)($ord['status'] ?? 'pending')));
+            $stEnum = ($status === 'paid' || $status === 'approved') ? 'APPROVED' : ($status === 'refunded' ? 'REFUNDED' : ($status === 'canceled' ? 'CANCELED' : 'PENDING'));
+
+            $customer = is_array($ord['customer'] ?? null) ? $ord['customer'] : [];
+            $bName = trim((string)($customer['name'] ?? ''));
+            $bEmail = strtolower(trim((string)($customer['email'] ?? '')));
+            $bPhone = pagarme_phone_from_customer($customer);
+            $bDoc = trim((string)($customer['document'] ?? ''));
+
+            $amountCents = (int)($ord['amount'] ?? 0);
+            $gross = $amountCents / 100;
+            $fees = round($gross * 0.01, 2); // 1% est
+            $net = max(0, $gross - $fees);
+
+            $charges = is_array($ord['charges'] ?? null) ? $ord['charges'] : [];
+            $firstCharge = $charges[0] ?? [];
+            $payMethod = (string)($firstCharge['payment_method'] ?? 'pix');
+            $saleDate = date('Y-m-d H:i:s', strtotime((string)($ord['created_at'] ?? 'now')));
+
+            $st = $pdo->prepare("
+                INSERT INTO pagarme_sales (
+                    transaction_code, status, checkout_platform, product_name,
+                    amount_cents, fee_cents, net_cents, gross_revenue, net_revenue, producer_net, fees,
+                    buyer_name, buyer_email, buyer_phone, buyer_document, payment_method, installments,
+                    sale_date, payment_confirmed_at, created_at, updated_at
+                ) VALUES (
+                    :tx, :status, 'pagarme', 'Curso de Quadros Elétricos',
+                    :amount_c, :fee_c, :net_c, :gross, :net, :prod, :fees,
+                    :b_name, :b_email, :b_phone, :b_doc, :pay_method, 1,
+                    :sdate, :confirmed_at, NOW(), NOW()
+                ) ON DUPLICATE KEY UPDATE
+                    status = VALUES(status),
+                    gross_revenue = VALUES(gross_revenue),
+                    producer_net = VALUES(producer_net),
+                    buyer_name = IF(VALUES(buyer_name) <> '', VALUES(buyer_name), buyer_name),
+                    buyer_email = IF(VALUES(buyer_email) <> '', VALUES(buyer_email), buyer_email),
+                    payment_confirmed_at = IF(VALUES(status) = 'APPROVED' AND payment_confirmed_at IS NULL, VALUES(sale_date), payment_confirmed_at),
+                    updated_at = NOW()
+            ");
+
+            $st->execute([
+                'tx' => $txCode,
+                'status' => $stEnum,
+                'amount_c' => $amountCents,
+                'fee_c' => (int)($fees * 100),
+                'net_c' => (int)($net * 100),
+                'gross' => $gross,
+                'net' => $net,
+                'prod' => $net,
+                'fees' => $fees,
+                'b_name' => $bName,
+                'b_email' => $bEmail,
+                'b_phone' => $bPhone,
+                'b_doc' => $bDoc,
+                'pay_method' => $payMethod,
+                'sdate' => $saleDate,
+                'confirmed_at' => $stEnum === 'APPROVED' ? $saleDate : null,
+            ]);
+
+            $totalSynced++;
+            if ($stEnum === 'APPROVED') $totalApproved++;
+        }
+    }
+
+    return [
+        'ok' => true,
+        'total_synced' => $totalSynced,
+        'total_approved' => $totalApproved,
+        'errors' => $errors
+    ];
+}
+
