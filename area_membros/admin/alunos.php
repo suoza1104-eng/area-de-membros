@@ -838,6 +838,18 @@ require __DIR__ . '/_header.php';
 <div class="alert <?= $msgPostTipo==='ok'?'alert-ok':'alert-error' ?>" style="margin-bottom:14px"><?= h($msgPost) ?></div>
 <?php endif; ?>
 
+<!-- ─── Barra de Ações Rápidas & Auditoria ────────────────────────────── -->
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;background:var(--bg-card);border:1px solid var(--border);padding:12px 16px;border-radius:10px;">
+    <div style="font-weight:700;font-size:15px;color:var(--text);">
+        👥 Gestão de Alunos & Cadastros
+    </div>
+    <div>
+        <a href="logins_nao_encontrados.php" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(249,115,22,0.18);border:1px solid rgba(249,115,22,0.35);border-radius:8px;color:#fb923c;font-size:12px;font-weight:700;text-decoration:none;">
+            🚨 Logins Não Identificados (Usuários Sem Cadastro)
+        </a>
+    </div>
+</div>
+
 <!-- ─── Filtros ──────────────────────────────────────────────────────── -->
 <div class="filter-bar" style="margin-bottom:14px">
     <form method="get" id="fform" style="width:100%">
