@@ -936,6 +936,10 @@ const monthlySeriesData = <?= json_encode($monthly, JSON_UNESCAPED_UNICODE | JSO
 const currentSnapshotData = <?= json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 const previousSnapshotData = <?= json_encode($previous, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 
+function formatMoneyBRL(v) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+}
+
 function abrirModalGraficoMensal(key, label, format, isLowerBetter) {
     const modal = document.getElementById('metricDetailModal');
     if (!modal) return;
@@ -947,7 +951,7 @@ function abrirModalGraficoMensal(key, label, format, isLowerBetter) {
     const valPrev = previousSnapshotData[key] !== undefined ? previousSnapshotData[key] : 0;
 
     let fmtFn = (v) => v;
-    if (format === 'money') fmtFn = (v) => money(v);
+    if (format === 'money') fmtFn = (v) => formatMoneyBRL(v);
     else if (format === 'pct') fmtFn = (v) => Number(v).toFixed(1) + '%';
     else if (format === 'decimal') fmtFn = (v) => Number(v).toFixed(2);
     else fmtFn = (v) => Math.round(v).toLocaleString('pt-BR');
@@ -988,8 +992,8 @@ function abrirModalGraficoMensal(key, label, format, isLowerBetter) {
                 <td><strong>${row.month}</strong></td>
                 <td><strong style="color:#f8fafc">${fmtFn(val)}</strong></td>
                 <td style="color:${rowDeltaColor}; font-weight:700;">${rowDeltaText}</td>
-                <td>${money(row.gross_revenue || row.gross || 0)}</td>
-                <td>${money(row.producer_net || row.producer || 0)}</td>
+                <td>${formatMoneyBRL(row.gross_revenue || row.gross || 0)}</td>
+                <td>${formatMoneyBRL(row.producer_net || row.producer || 0)}</td>
                 <td>${(row.sales || 0).toLocaleString('pt-BR')}</td>
             </tr>
         `;
