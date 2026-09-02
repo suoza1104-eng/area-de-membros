@@ -95,6 +95,46 @@ function iw_clean_json_or_null(string $raw): ?string {
     return is_array($tmp) ? json_encode($tmp, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
 }
 
+function render_manual_sync_box(string $provider, string $title) {
+    $pCap = ucfirst($provider);
+    ?>
+    <div class="iw-dom-card" style="margin-top:20px; background: rgba(30, 41, 59, 0.6); border: 1px solid var(--border); padding: 18px; border-radius: 12px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+        <i class="ph ph-arrows-clockwise" style="color: #60a5fa; font-size: 18px;"></i>
+        Sincronização Manual via API (<?= htmlspecialchars($title) ?>)
+      </h3>
+      <p style="font-size: 12px; color: var(--muted); margin-bottom: 14px;">
+        As vendas entram automaticamente via Webhook. Use o controle abaixo para sincronizar vendas retroativas via API ou cobrir eventuais falhas do gateway.
+      </p>
+
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 600;">Dias Retroativos</label>
+          <select id="sync_days_<?= $provider ?>" style="height: 38px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: #fff; padding: 0 12px; font-size: 13px;">
+            <option value="1">Último 1 Dia (Hoje)</option>
+            <option value="7" selected>Últimos 7 Dias</option>
+            <option value="30">Últimos 30 Dias</option>
+            <option value="90">Últimos 90 Dias</option>
+            <option value="365">Último 1 Ano (365 Dias)</option>
+          </select>
+        </div>
+
+        <button type="button" class="btn btn-primary" id="btnSync<?= $pCap ?>" onclick="executarSincronizacaoManual('<?= $provider ?>')" style="margin-top: 18px; display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 18px;">
+          <i class="ph ph-cloud-arrow-down" style="font-size: 16px;"></i>
+          <span>Sincronizar Agora via API</span>
+        </button>
+      </div>
+
+      <div id="syncProgress<?= $pCap ?>" style="display: none; margin-top: 16px; padding: 12px 14px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; align-items: center; gap: 12px;">
+        <div class="iw-spinner" style="width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.2); border-top-color: #60a5fa; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+        <span style="font-size: 13px; color: #93c5fd; font-weight: 600;">Sincronizando com a API <?= htmlspecialchars($title) ?>... Por favor, aguarde.</span>
+      </div>
+
+      <div id="syncResult<?= $pCap ?>" style="display: none; margin-top: 16px; padding: 14px; border-radius: 8px;"></div>
+    </div>
+    <?php
+}
+
 function iw_sync_direct_rules(PDO $pdo, int $id, array $cfg): void {
     if ($id <= 0) return;
     $nome = trim((string)($cfg['nome'] ?? 'Entrada #' . $id));
@@ -205,6 +245,28 @@ if ($acao !== '') {
         if ($secret !== '') set_setting('pagarme_webhook_secret', $secret);
         set_setting('pagarme_notes', trim((string)($_POST['notes'] ?? '')));
         echo json_encode(['ok'=>true]); exit;
+    }
+
+    if ($acao === 'sync_manual_hotmart') {
+        require_once __DIR__ . '/../app/hotmart_api.php';
+        $days = max(1, min(365, (int)($_POST['days'] ?? 7)));
+        $res = hotmart_sync_sales_api($pdo, $days);
+        echo json_encode($res, JSON_UNESCAPED_UNICODE); exit;
+    }
+
+    if ($acao === 'sync_manual_dom') {
+        require_once __DIR__ . '/../app/dom_pagamentos.php';
+        $days = max(1, min(365, (int)($_POST['days'] ?? 7)));
+        $res = dom_sync_transactions_for_days($pdo, $days, 'manual_ui');
+        echo json_encode($res, JSON_UNESCAPED_UNICODE); exit;
+    }
+
+    if ($acao === 'sync_manual_pagarme') {
+        require_once __DIR__ . '/../app/pagarme.php';
+        $days = max(1, min(365, (int)($_POST['days'] ?? 7)));
+        $pages = max(1, (int)ceil($days * 3));
+        $res = pagarme_sync_orders_api($pdo, $pages);
+        echo json_encode($res, JSON_UNESCAPED_UNICODE); exit;
     }
 
     if ($acao === 'dom_overview') {
@@ -837,6 +899,8 @@ require_once __DIR__ . '/_header.php';
       <button class="btn btn-primary" type="submit">Salvar Configurações Hotmart</button>
       <span id="hotmartSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
     </form>
+
+    <?php render_manual_sync_box('hotmart', 'Hotmart Developers'); ?>
   </div>
 
   <script>
@@ -978,6 +1042,7 @@ require_once __DIR__ . '/_header.php';
         <button class="btn btn-primary" type="submit">Salvar DOM</button>
         <span id="domSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
       </form>
+      <?php render_manual_sync_box('dom', 'DOM Pagamentos'); ?>
     </div>
 
     <div class="iw-dom-card">
@@ -1032,6 +1097,7 @@ require_once __DIR__ . '/_header.php';
           <div class="form-row"><label>Observacoes internas</label><textarea name="notes" placeholder="Ex.: conta Pagar.me principal, produtos liberados, ambiente usado..."><?= htmlspecialchars($pagarmeNotes, ENT_QUOTES, 'UTF-8') ?></textarea></div>
           <button class="btn btn-primary" type="submit">Salvar Pagar.me</button><span id="pagarmeSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
         </form>
+        <?php render_manual_sync_box('pagarme', 'Pagar.me V5'); ?>
       </div>
       <div class="iw-dom-card">
         <h2>Eventos recomendados</h2>
@@ -1322,6 +1388,85 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (IW_VIEW === 'generic' && IW_GENERIC_TAB === 'logs') genericCarregarLogs();
     else if (IW_VIEW === 'generic' && IW_GENERIC_TAB === 'settings') iwCarregar();
 });
+
+async function executarSincronizacaoManual(provider) {
+    const pCap = provider.charAt(0).toUpperCase() + provider.slice(1);
+    const daysSelect = document.getElementById('sync_days_' + provider);
+    const btn = document.getElementById('btnSync' + pCap);
+    const progress = document.getElementById('syncProgress' + pCap);
+    const resultBox = document.getElementById('syncResult' + pCap);
+
+    if (!daysSelect || !btn || !progress || !resultBox) return;
+
+    const days = daysSelect.value;
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    progress.style.display = 'flex';
+    resultBox.style.display = 'none';
+
+    try {
+        const fd = new FormData();
+        fd.append('acao', 'sync_manual_' + provider);
+        fd.append('days', days);
+
+        const res = await fetch('inbound_webhooks.php', { method: 'POST', body: fd });
+        const json = await res.json();
+
+        progress.style.display = 'none';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        resultBox.style.display = 'block';
+
+        if (!json.ok) {
+            resultBox.style.background = 'rgba(239, 68, 68, 0.1)';
+            resultBox.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+            resultBox.innerHTML = `
+                <div style="color: #f87171; font-weight: 700; font-size: 14px; margin-bottom: 4px;">❌ Falha na Sincronização</div>
+                <div style="font-size: 12px; color: #fca5a5;">${json.message || 'Erro ao comunicar com a API.'}</div>
+            `;
+            return;
+        }
+
+        const synced = json.synced_count || json.total_synced || json.listed_count || 0;
+        const newSales = json.new_sales !== undefined ? json.new_sales : '-';
+        const updatedSales = json.updated_sales !== undefined ? json.updated_sales : '-';
+        const errors = json.errors || [];
+
+        resultBox.style.background = 'rgba(34, 197, 94, 0.08)';
+        resultBox.style.border = '1px solid rgba(34, 197, 94, 0.3)';
+        resultBox.innerHTML = `
+            <div style="color: #4ade80; font-weight: 700; font-size: 14px; margin-bottom: 8px;">✅ Sincronização Concluída com Sucesso!</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 10px;">
+                <div style="background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;">
+                    <small style="color: var(--muted); font-size: 10px; text-transform: uppercase;">Total Vendas</small>
+                    <strong style="display: block; color: #f1f5f9; font-size: 16px;">${synced}</strong>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;">
+                    <small style="color: var(--muted); font-size: 10px; text-transform: uppercase;">Vendas Novas</small>
+                    <strong style="display: block; color: #4ade80; font-size: 16px;">${newSales}</strong>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;">
+                    <small style="color: var(--muted); font-size: 10px; text-transform: uppercase;">Vendas Atualizadas</small>
+                    <strong style="display: block; color: #60a5fa; font-size: 16px;">${updatedSales}</strong>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;">
+                    <small style="color: var(--muted); font-size: 10px; text-transform: uppercase;">Falhas/Alertas</small>
+                    <strong style="display: block; color: ${errors.length ? '#f87171' : '#a7f3d0'}; font-size: 16px;">${errors.length}</strong>
+                </div>
+            </div>
+            ${errors.length ? `<div style="font-size: 11px; color: #fca5a5; margin-top: 6px;"><strong>Alertas:</strong> ${errors.join('<br>')}</div>` : ''}
+            <div style="font-size: 12px; color: var(--muted); margin-top: 6px;">${json.message || ''}</div>
+        `;
+    } catch (e) {
+        progress.style.display = 'none';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        resultBox.style.display = 'block';
+        resultBox.style.background = 'rgba(239, 68, 68, 0.1)';
+        resultBox.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+        resultBox.innerHTML = `<div style="color: #f87171; font-size: 13px; font-weight: 600;">Erro na requisição: ${e.message}</div>`;
+    }
+}
 
 async function domSalvar(ev) {
     ev.preventDefault();

@@ -864,3 +864,33 @@ function dom_upsert_sales_master(PDO $pdo, array $event): void
         'raw' => $event['metadata_json'] ?: null,
     ]);
 }
+
+function dom_sync_transactions_for_days(PDO $pdo, int $days = 7, string $triggerSource = 'manual_ui'): array
+{
+    $days = max(1, min(365, $days));
+    $totalListed = 0;
+    $totalSynced = 0;
+    $errors = [];
+
+    for ($i = 0; $i < $days; $i++) {
+        $d = date('Y-m-d', strtotime("-{$i} days"));
+        try {
+            $r = dom_sync_transactions_for_date($pdo, $d, $triggerSource);
+            $totalListed += (int)($r['total_listed'] ?? 0);
+            $totalSynced += (int)($r['total_synced'] ?? 0);
+            if (!empty($r['message']) && str_contains(strtolower($r['message']), 'erro')) {
+                $errors[] = "Dia {$d}: " . $r['message'];
+            }
+        } catch (Throwable $e) {
+            $errors[] = "Dia {$d}: " . $e->getMessage();
+        }
+    }
+
+    return [
+        'ok' => true,
+        'synced_count' => $totalSynced,
+        'listed_count' => $totalListed,
+        'errors' => $errors,
+        'message' => "Sincronização DOM Pagamentos concluída: {$totalSynced} vendas processadas em {$days} dia(s)."
+    ];
+}

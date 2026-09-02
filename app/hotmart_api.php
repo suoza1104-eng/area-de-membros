@@ -76,6 +76,8 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
 
     $synced = 0;
     $approved = 0;
+    $newSales = 0;
+    $updatedSales = 0;
 
     foreach ($items as $item) {
         $purchase = is_array($item['purchase'] ?? null) ? $item['purchase'] : [];
@@ -127,6 +129,10 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
             'sdate' => $saleDate
         ]);
 
+        $rc = $st->rowCount();
+        if ($rc === 1) $newSales++;
+        elseif ($rc === 2) $updatedSales++;
+
         $synced++;
         $approved++;
 
@@ -154,7 +160,9 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
         'ok' => true,
         'synced_count' => $synced,
         'approved_count' => $approved,
-        'message' => "Sincronização Hotmart concluída com sucesso ({$synced} vendas processadas)."
+        'new_sales' => $newSales,
+        'updated_sales' => $updatedSales,
+        'message' => "Sincronização Hotmart concluída ({$synced} vendas processadas: {$newSales} novas, {$updatedSales} atualizadas)."
     ];
 }
 
