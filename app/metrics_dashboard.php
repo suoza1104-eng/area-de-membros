@@ -184,6 +184,9 @@ function md_monthly_series(PDO $pdo, array $filters): array
     $sf = md_filter_sql($filters, 'sale', $params);
     $saleDateExpr = md_sale_revenue_date_sql('s');
 
+    $hasBasePrice = md_pick_column($pdo, 'v_sales_master', ['base_price']) !== '';
+    $baseExpr = $hasBasePrice ? "SUM(COALESCE(s.base_price, s.producer_net, s.gross_revenue))" : "SUM(s.producer_net)";
+
     $saleRows = md_rows($pdo, "
         SELECT 
             DATE_FORMAT({$saleDateExpr}, '%Y-%m') AS month,
@@ -191,7 +194,7 @@ function md_monthly_series(PDO $pdo, array $filters): array
             SUM(s.gross_revenue) AS gross,
             SUM(s.net_revenue) AS net,
             SUM(s.producer_net) AS producer,
-            SUM(COALESCE(s.base_price, s.producer_net, s.gross_revenue)) AS base_price
+            {$baseExpr} AS base_price
         FROM v_sales_master s
         WHERE " . md_approved_sql('s') . " AND {$saleDateExpr} BETWEEN :start AND :end{$sf}
         GROUP BY month
