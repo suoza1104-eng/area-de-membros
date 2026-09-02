@@ -198,7 +198,12 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
 
     $charge = pagarme_first_charge($data);
     $customer = pagarme_customer($data, $charge);
-    $transactionId = pagarme_scalar($charge, 'id') ?: pagarme_scalar($data, 'id');
+    $transactionId = pagarme_scalar($data, 'id');
+    if (str_starts_with($transactionId, 'ch_') || $transactionId === '' || str_starts_with($transactionId, 'order_')) {
+        $orderId = pagarme_scalar($data, 'order_id') ?: (is_array($charge['order'] ?? null) ? ($charge['order']['id'] ?? '') : '') ?: pagarme_scalar($charge, 'order_id');
+        if ($orderId !== '') $transactionId = $orderId;
+    }
+    if ($transactionId === '') $transactionId = pagarme_scalar($charge, 'id') ?: pagarme_scalar($data, 'id');
     if ($transactionId === '') throw new InvalidArgumentException('Pagar.me: id da transacao ausente.');
     $providerStatus = pagarme_scalar($charge, 'status') ?: pagarme_scalar($data, 'status');
     $normalizedStatus = pagarme_normalized_status($event, $providerStatus);
