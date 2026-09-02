@@ -61,6 +61,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 5,
             'timeout' => 300,
         ],
+        'hotmart_sync' => [
+            'label' => 'Hotmart Developers API',
+            'description' => 'Sincroniza vendas da Hotmart via API para cobrir webhooks perdidos ou instabilidades do gateway.',
+            'script' => __DIR__ . '/../cron/processar_hotmart_sync.php',
+            'interval' => 15,
+            'timeout' => 300,
+        ],
         'firepay_reconciliation' => [
             'label' => 'Reconciliacao Firepay x Gateway',
             'description' => 'Vincula vendas Firepay as equivalentes ja capturadas via DOM/Pagar.me, para visibilidade e futura prevencao de dupla contagem.',

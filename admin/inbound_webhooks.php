@@ -184,6 +184,18 @@ if ($acao !== '') {
         echo json_encode(['ok'=>true]); exit;
     }
 
+    if ($acao === 'salvar_hotmart') {
+        set_setting('hotmart_api_enabled', isset($_POST['enabled']) ? '1' : '0');
+        $clientId = trim((string)($_POST['client_id'] ?? ''));
+        if ($clientId !== '') set_setting('hotmart_client_id', $clientId);
+        $clientSecret = trim((string)($_POST['client_secret'] ?? ''));
+        if ($clientSecret !== '') set_setting('hotmart_client_secret', $clientSecret);
+        $hottok = trim((string)($_POST['hottok'] ?? ''));
+        if ($hottok !== '') set_setting('metrics_hotmart_hottok', $hottok);
+        set_setting('hotmart_notes', trim((string)($_POST['notes'] ?? '')));
+        echo json_encode(['ok'=>true]); exit;
+    }
+
     if ($acao === 'salvar_pagarme') {
         set_setting('pagarme_enabled', isset($_POST['enabled']) ? '1' : '0');
         set_setting('pagarme_environment', in_array(($_POST['environment'] ?? ''), ['production','sandbox'], true) ? (string)$_POST['environment'] : 'production');
@@ -612,14 +624,22 @@ $firepayWebhookBaseUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) 
 $firepayMcqdcWebhookUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/')) . '/firepay_mcqdc.php';
 $domWebhookUrl = rtrim(BASE_URL, '/') . '/dom_webhook.php';
 $pagarmeWebhookUrl = rtrim(BASE_URL, '/') . '/pagarme_webhook.php';
+$hotmartWebhookUrl = rtrim(BASE_URL, '/') . '/hotmart_metrics_webhook.php';
 $view = (string)($_GET['view'] ?? 'generic');
-if (!in_array($view, ['generic','dom','pagarme'], true)) $view = 'generic';
+if (!in_array($view, ['generic','hotmart','dom','pagarme'], true)) $view = 'generic';
 $genericTab = (string)($_GET['generic_tab'] ?? 'overview');
 if (!in_array($genericTab, ['overview','settings','logs'], true)) $genericTab = 'overview';
+$hotmartTab = (string)($_GET['hotmart_tab'] ?? 'settings');
+if (!in_array($hotmartTab, ['overview','settings','logs'], true)) $hotmartTab = 'settings';
 $domTab = (string)($_GET['dom_tab'] ?? 'overview');
 if (!in_array($domTab, ['overview','settings','logs'], true)) $domTab = 'overview';
 $pagarmeTab = (string)($_GET['pagarme_tab'] ?? 'overview');
 if (!in_array($pagarmeTab, ['overview','settings','logs'], true)) $pagarmeTab = 'overview';
+$hotmartEnabled = (string)get_setting('hotmart_api_enabled', '1') === '1';
+$hotmartHasClientId = trim((string)get_setting('hotmart_client_id', '')) !== '';
+$hotmartHasClientSecret = trim((string)get_setting('hotmart_client_secret', '')) !== '';
+$hotmartHottok = (string)get_setting('metrics_hotmart_hottok', '');
+$hotmartNotes = (string)get_setting('hotmart_notes', '');
 $domEnabled = (string)get_setting('dom_pagamentos_enabled', '0') === '1';
 $domEnvironment = (string)get_setting('dom_pagamentos_environment', 'production');
 $domRequireSignature = (string)get_setting('dom_pagamentos_require_signature', '1') === '1';
@@ -760,11 +780,86 @@ require_once __DIR__ . '/_header.php';
 
   <nav class="iw-tabs">
     <a href="inbound_webhooks.php?view=generic" class="<?= $view === 'generic' ? 'active' : '' ?>">Entradas gerais</a>
+    <a href="inbound_webhooks.php?view=hotmart" class="<?= $view === 'hotmart' ? 'active' : '' ?>">Hotmart</a>
     <a href="inbound_webhooks.php?view=dom" class="<?= $view === 'dom' ? 'active' : '' ?>">DOM Pagamentos</a>
     <a href="inbound_webhooks.php?view=pagarme" class="<?= $view === 'pagarme' ? 'active' : '' ?>">Pagar.me</a>
   </nav>
 
-<?php if ($view === 'dom'): ?>
+<?php if ($view === 'hotmart'): ?>
+  <div class="iw-dom-card">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+      <div>
+        <h2>Integração Hotmart (API Developers & Webhook)</h2>
+        <p>Configure as credenciais de API Developers para sincronização automática de fundo e o Hottok para Webhook instantâneo.</p>
+      </div>
+      <span class="iw-dom-pill <?= $hotmartEnabled ? 'ok' : 'warn' ?>"><?= $hotmartEnabled ? 'Integração ativa' : 'Integração pausada' ?></span>
+    </div>
+
+    <div class="iw-dom-kpis">
+      <div class="iw-dom-kpi"><small>Status API</small><strong><?= $hotmartEnabled ? 'Ativo' : 'Pausado' ?></strong></div>
+      <div class="iw-dom-kpi"><small>Client ID</small><strong><?= $hotmartHasClientId ? 'OK' : 'Pendente' ?></strong></div>
+      <div class="iw-dom-kpi"><small>Client Secret</small><strong><?= $hotmartHasClientSecret ? 'OK' : 'Pendente' ?></strong></div>
+      <div class="iw-dom-kpi"><small>Hottok Webhook</small><strong><?= $hotmartHottok !== '' ? 'OK' : 'Pendente' ?></strong></div>
+    </div>
+
+    <div class="form-row">
+      <label>URL para cadastrar Webhook na Hotmart</label>
+      <div class="iw-dom-url">
+        <code id="hotmartWebhookUrl"><?= htmlspecialchars($hotmartWebhookUrl, ENT_QUOTES, 'UTF-8') ?></code>
+        <button class="iw-copy-btn" type="button" onclick="iwCopiar(document.getElementById('hotmartWebhookUrl').textContent,this)">Copiar</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Cadastre esta URL em <em>Hotmart &rarr; Ferramentas &rarr; Webhooks</em>.</div>
+    </div>
+
+    <form id="hotmartConfigForm" onsubmit="return hotmartSalvar(event)">
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="enabled" <?= $hotmartEnabled ? 'checked' : '' ?> style="width:auto">
+          <span>Integração Hotmart ativa (API Developers + Webhook)</span>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Hotmart Client ID (API Developers)</label>
+        <input type="text" name="client_id" placeholder="<?= $hotmartHasClientId ? 'Configurado (deixe vazio para manter)' : 'Cole seu Client ID da Hotmart Developers' ?>">
+      </div>
+      <div class="form-row">
+        <label>Hotmart Client Secret (API Developers)</label>
+        <input type="password" name="client_secret" placeholder="<?= $hotmartHasClientSecret ? 'Configurado (deixe vazio para manter)' : 'Cole seu Client Secret da Hotmart Developers' ?>">
+      </div>
+      <div class="form-row">
+        <label>Hotmart Hottok (Token de Segurança do Webhook)</label>
+        <input type="text" name="hottok" value="<?= htmlspecialchars($hotmartHottok, ENT_QUOTES, 'UTF-8') ?>" placeholder="Token Hottok das Notificações Hotmart">
+      </div>
+      <div class="form-row">
+        <label>Observações internas</label>
+        <textarea name="notes" placeholder="Ex.: Conta Hotmart principal produtor..."><?= htmlspecialchars($hotmartNotes, ENT_QUOTES, 'UTF-8') ?></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Salvar Configurações Hotmart</button>
+      <span id="hotmartSaveMsg" style="margin-left:8px;font-size:12px;color:#86efac"></span>
+    </form>
+  </div>
+
+  <script>
+  function hotmartSalvar(e) {
+      e.preventDefault();
+      var form = document.getElementById('hotmartConfigForm');
+      var fd = new FormData(form);
+      fd.append('acao', 'salvar_hotmart');
+      fetch('inbound_webhooks.php', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(d => {
+          if (d.ok) {
+              document.getElementById('hotmartSaveMsg').textContent = 'Salvo com sucesso!';
+              setTimeout(() => location.reload(), 1000);
+          } else {
+              alert(d.message || 'Erro ao salvar.');
+          }
+      });
+      return false;
+  }
+  </script>
+
+<?php elseif ($view === 'dom'): ?>
   <nav class="iw-dom-subtabs">
     <a href="inbound_webhooks.php?view=dom&dom_tab=overview" class="<?= $domTab === 'overview' ? 'active' : '' ?>">Visao geral</a>
     <a href="inbound_webhooks.php?view=dom&dom_tab=settings" class="<?= $domTab === 'settings' ? 'active' : '' ?>">Configuracoes</a>
