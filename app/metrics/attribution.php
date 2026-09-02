@@ -369,9 +369,10 @@ function build_lead_indexes($leads) {
 
 function filter_leads_before_sale($candidates, string $saleDate) {
     $saleTs = strtotime($saleDate);
-    return array_values(array_filter($candidates, static function (array $lead) use ($saleTs): bool {
+    $windowTs = $saleTs - (30 * 86400); // Janela dos últimos 30 dias antes da compra
+    return array_values(array_filter($candidates, static function (array $lead) use ($saleTs, $windowTs): bool {
         $leadTs = strtotime((string)($lead['created_at'] ?? ''));
-        return $leadTs !== false && $leadTs <= $saleTs;
+        return $leadTs !== false && $leadTs <= $saleTs && $leadTs >= $windowTs;
     }));
 }
 
