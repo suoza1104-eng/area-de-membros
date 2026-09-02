@@ -51,7 +51,7 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
     $endDateMs   = (int)(time() * 1000);
     $startDateMs = (int)(strtotime("-{$days} days") * 1000);
 
-    $url = "https://api-sec-vlc.hotmart.com/payments/api/v1/sales/history?start_date={$startDateMs}&end_date={$endDateMs}&transaction_status=APPROVED&max_results=100";
+    $url = "https://developers.hotmart.com/payments/api/v1/sales/history?start_date={$startDateMs}&end_date={$endDateMs}&transaction_status=APPROVED&max_results=100";
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -90,7 +90,7 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
         $bName  = trim((string)($buyer['name'] ?? ''));
         $bEmail = strtolower(trim((string)($buyer['email'] ?? '')));
         $bPhone = trim((string)($buyer['checkout_phone_code'] ?? '') . (string)($buyer['checkout_phone'] ?? ''));
-        $bPhoneNorm = normalize_phone_value($bPhone);
+        $bPhoneNorm = preg_replace('/\D+/', '', $bPhone);
 
         $gross = (float)($purchase['price']['value'] ?? 0.0);
         $prodName = trim((string)($product['name'] ?? 'Curso Hotmart'));
@@ -101,11 +101,11 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
         $st = $pdo->prepare("
             INSERT INTO hotmart_sales (
                 transaction_code, status, product_name, gross_revenue, net_revenue, producer_net, fees,
-                buyer_name, buyer_email, buyer_phone, payment_method, installments,
+                buyer_name, buyer_email, buyer_phone,
                 sale_date, payment_confirmed_at, created_at, updated_at
             ) VALUES (
                 :tx, :status, :pname, :gross, :gross, :gross, 0,
-                :bname, :bemail, :bphone, 'credit_card', 1,
+                :bname, :bemail, :bphone,
                 :sdate, :sdate, NOW(), NOW()
             ) ON DUPLICATE KEY UPDATE
                 status = VALUES(status),
@@ -132,9 +132,12 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
 
         // Liberação de Acesso Vitalício
         if ($bEmail !== '') {
-            $matchedUser = course_access_find_user($pdo, $bEmail, $bPhoneNorm);
+            $stU = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
+            $stU->execute(['email' => $bEmail]);
+            $matchedUid = (int)$stU->fetchColumn();
+
             course_access_try_grant_lifetime_purchase($pdo, [
-                'user_id' => isset($matchedUser['id']) ? (int)$matchedUser['id'] : null,
+                'user_id' => $matchedUid > 0 ? $matchedUid : null,
                 'offer_code' => $prodName,
                 'transaction_code' => $txCode,
                 'status' => 'paid',
@@ -154,3 +157,4 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
         'message' => "Sincronização Hotmart concluída com sucesso ({$synced} vendas processadas)."
     ];
 }
+
