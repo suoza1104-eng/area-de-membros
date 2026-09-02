@@ -105,6 +105,13 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
               COALESCE(SUM(s.gross_revenue),0) gross_revenue,
               COALESCE(SUM(s.net_revenue),0) net_revenue,
               COALESCE(SUM(s.producer_net),0) producer_net,
+              COALESCE(SUM(
+                CASE 
+                    WHEN LOWER(s.product_name) LIKE '%eletricista%' OR LOWER(s.product_name) LIKE '%fera%' OR s.gross_revenue >= 350 THEN 397.00
+                    WHEN LOWER(s.product_name) LIKE '%quadro%' OR LOWER(s.product_name) LIKE '%iniciação%' OR (s.gross_revenue > 0 AND s.gross_revenue <= 50) THEN 24.90
+                    ELSE s.producer_net
+                END
+              ),0) base_price,
               COALESCE(AVG(s.gross_revenue),0) average_ticket,
               COUNT(*) matched_sales
             FROM v_sales_master s
@@ -138,13 +145,14 @@ function md_snapshot(PDO $pdo, string $start, string $end, array $filters): arra
     $out = array_merge([
         'spend'=>0,'impressions'=>0,'reach'=>0,'clicks'=>0,'link_clicks'=>0,'landing_views'=>0,'meta_leads'=>0,
         'cpm'=>0,'cpc'=>0,'ctr'=>0,'frequency'=>0,'leads'=>0,'sales'=>0,'buyers'=>0,
-        'gross_revenue'=>0,'net_revenue'=>0,'producer_net'=>0,'average_ticket'=>0,'matched_sales'=>0,
+        'gross_revenue'=>0,'net_revenue'=>0,'producer_net'=>0,'base_price'=>0,'spread'=>0,'average_ticket'=>0,'matched_sales'=>0,
         'attributed_sales'=>0,'attributed_revenue'=>0,'refunds'=>0,'refunded_value'=>0,
     ], $meta, $leads, $sales, $attr, $refunds);
     foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
     $revenue = (float)($out[$basis] ?? $out['producer_net']);
     $out['revenue'] = $revenue;
     $out['fees'] = max(0.0, (float)$out['gross_revenue'] - (float)$out['producer_net']);
+    $out['spread'] = (float)$out['producer_net'] - (float)$out['base_price'];
     $out['profit'] = (float)$out['net_revenue'] - (float)$out['spend'];
     $out['conversion_rate'] = $out['leads'] > 0 ? $out['sales'] / $out['leads'] * 100 : 0;
     $out['cpl'] = $out['leads'] > 0 ? $out['spend'] / $out['leads'] : 0;
@@ -184,8 +192,13 @@ function md_monthly_series(PDO $pdo, array $filters): array
     $sf = md_filter_sql($filters, 'sale', $params);
     $saleDateExpr = md_sale_revenue_date_sql('s');
 
-    $hasBasePrice = md_pick_column($pdo, 'v_sales_master', ['base_price']) !== '';
-    $baseExpr = $hasBasePrice ? "SUM(COALESCE(s.base_price, s.producer_net, s.gross_revenue))" : "SUM(s.producer_net)";
+    $baseExpr = "SUM(
+        CASE 
+            WHEN LOWER(s.product_name) LIKE '%eletricista%' OR LOWER(s.product_name) LIKE '%fera%' OR s.gross_revenue >= 350 THEN 397.00
+            WHEN LOWER(s.product_name) LIKE '%quadro%' OR LOWER(s.product_name) LIKE '%iniciação%' OR (s.gross_revenue > 0 AND s.gross_revenue <= 50) THEN 24.90
+            ELSE s.producer_net
+        END
+    )";
 
     $saleRows = md_rows($pdo, "
         SELECT 
