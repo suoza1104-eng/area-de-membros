@@ -65,7 +65,7 @@ function cron_manager_base_definitions(): array {
             'label' => 'Hotmart Developers API',
             'description' => 'Sincroniza vendas da Hotmart via API para cobrir webhooks perdidos ou instabilidades do gateway.',
             'script' => __DIR__ . '/../cron/processar_hotmart_sync.php',
-            'interval' => 15,
+            'interval' => 5,
             'timeout' => 300,
         ],
         'firepay_reconciliation' => [
