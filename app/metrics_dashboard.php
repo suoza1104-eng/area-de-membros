@@ -178,11 +178,89 @@ function md_daily_series(PDO $pdo, string $start, string $end, array $filters): 
 
 function md_monthly_series(PDO $pdo, array $filters): array
 {
-    $end=(new DateTimeImmutable('last day of this month'))->format('Y-m-d').' 23:59:59';
-    $start=(new DateTimeImmutable('first day of this month'))->modify('-11 months')->format('Y-m-d').' 00:00:00';
-    $params=['start'=>$start,'end'=>$end]; $sf=md_filter_sql($filters,'sale',$params);
-    $saleDateExpr=md_sale_revenue_date_sql('s');
-    return md_rows($pdo,"SELECT DATE_FORMAT({$saleDateExpr},'%Y-%m') month,COUNT(*) sales,SUM(s.gross_revenue) gross,SUM(s.net_revenue) net,SUM(s.producer_net) producer FROM v_sales_master s WHERE ".md_approved_sql('s')." AND {$saleDateExpr} BETWEEN :start AND :end{$sf} GROUP BY month ORDER BY month",$params);
+    $end = (new DateTimeImmutable('last day of this month'))->format('Y-m-d') . ' 23:59:59';
+    $start = (new DateTimeImmutable('first day of this month'))->modify('-11 months')->format('Y-m-d') . ' 00:00:00';
+    $params = ['start' => $start, 'end' => $end];
+    $sf = md_filter_sql($filters, 'sale', $params);
+    $saleDateExpr = md_sale_revenue_date_sql('s');
+
+    $saleRows = md_rows($pdo, "
+        SELECT 
+            DATE_FORMAT({$saleDateExpr}, '%Y-%m') AS month,
+            COUNT(*) AS sales,
+            SUM(s.gross_revenue) AS gross,
+            SUM(s.net_revenue) AS net,
+            SUM(s.producer_net) AS producer,
+            SUM(COALESCE(s.base_price, s.producer_net, s.gross_revenue)) AS base_price
+        FROM v_sales_master s
+        WHERE " . md_approved_sql('s') . " AND {$saleDateExpr} BETWEEN :start AND :end{$sf}
+        GROUP BY month
+        ORDER BY month
+    ", $params);
+
+    $metaRows = md_rows($pdo, "
+        SELECT DATE_FORMAT(report_date, '%Y-%m') AS month, SUM(spend) AS spend
+        FROM meta_account_daily
+        WHERE report_date BETWEEN :start_d AND :end_d
+        GROUP BY month
+    ", ['start_d' => date('Y-m-d', strtotime($start)), 'end_d' => date('Y-m-d', strtotime($end))]);
+
+    $metaMap = [];
+    foreach ($metaRows as $m) { $metaMap[$m['month']] = (float)$m['spend']; }
+
+    $leadRows = md_rows($pdo, "
+        SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS leads
+        FROM attribution_leads
+        WHERE created_at BETWEEN :start AND :end
+        GROUP BY month
+    ", $params);
+
+    $leadMap = [];
+    foreach ($leadRows as $l) { $leadMap[$l['month']] = (int)$l['leads']; }
+
+    $result = [];
+    foreach ($saleRows as $r) {
+        $m = $r['month'];
+        $gross = (float)$r['gross'];
+        $net = (float)$r['net'];
+        $producer = (float)$r['producer'];
+        $base = (float)($r['base_price'] ?: $producer);
+        $spend = (float)($metaMap[$m] ?? 0.0);
+        $leads = (int)($leadMap[$m] ?? 0);
+        $sales = (int)$r['sales'];
+
+        $fees = max(0.0, $gross - $producer);
+        $spread = $producer - $base;
+        $profit = $net - $spend;
+        $roas = $spend > 0 ? $producer / $spend : 0.0;
+        $cac = $sales > 0 ? $spend / $sales : 0.0;
+        $cpl = $leads > 0 ? $spend / $leads : 0.0;
+        $avgTicket = $sales > 0 ? $gross / $sales : 0.0;
+        $conversionRate = $leads > 0 ? ($sales / $leads) * 100 : 0.0;
+
+        $result[] = [
+            'month' => $m,
+            'sales' => $sales,
+            'gross' => $gross,
+            'net' => $net,
+            'producer' => $producer,
+            'gross_revenue' => $gross,
+            'net_revenue' => $net,
+            'producer_net' => $producer,
+            'base_price' => $base,
+            'spread' => $spread,
+            'fees' => $fees,
+            'spend' => $spend,
+            'leads' => $leads,
+            'profit' => $profit,
+            'roas' => $roas,
+            'cac' => $cac,
+            'cpl' => $cpl,
+            'average_ticket' => $avgTicket,
+            'conversion_rate' => $conversionRate
+        ];
+    }
+    return $result;
 }
 
 function md_breakdowns(PDO $pdo, string $start, string $end, array $filters): array

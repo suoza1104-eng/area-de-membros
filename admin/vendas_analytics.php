@@ -519,6 +519,7 @@ $metricCards = [
     ['net_revenue','Receita liquida','money',false,'Apos taxas da plataforma'],
     ['profit','Lucro','money',false,'Receita liquida menos investimento Meta'],
     ['producer_net','Liquido do produtor','money',false,'Comissoes liquidas recebidas'],
+    ['spread','Spread de financiamento','money',false,'Líquido recebido menos valor de tabela anunciado'],
     ['fees','Taxas e diferencas','money',true,'Bruto menos liquido do produtor'],
     ['conversion_rate','Conversao lead/venda','pct',false,'Vendas aprovadas / leads'],
     ['roas','ROAS','decimal',false,'Receita selecionada / gasto'],
@@ -557,12 +558,7 @@ include __DIR__ . '/_header.php';
 <div class="bi">
   <div class="bi-head">
     <div class="bi-title"><h1>Painel de desempenho do negocio</h1><p>Trafego, leads, atribuicao e vendas reconciliados na mesma linha do tempo.</p></div>
-    <div style="display:flex;align-items:center;gap:10px;">
-      <a href="vendas_auditoria.php" style="display:inline-flex;align-items:center;gap:6px;padding:9px 14px;background:#3b82f6;border-radius:9px;color:#fff;font-size:12px;font-weight:700;text-decoration:none;">
-        📋 Auditar Vendas (Tabela Completa)
-      </a>
-      <div class="sync-pill"><span class="sync-dot"></span><?= $lastSync ? 'Meta atualizada em '.va_h(date('d/m/Y H:i',strtotime((string)$lastSync))) : 'Integracao Meta aguardando sincronizacao' ?></div>
-    </div>
+    <div class="sync-pill"><span class="sync-dot"></span><?= $lastSync ? 'Meta atualizada em '.va_h(date('d/m/Y H:i',strtotime((string)$lastSync))) : 'Integracao Meta aguardando sincronizacao' ?></div>
   </div>
 
   <form class="bi-filter" method="get">
@@ -588,7 +584,11 @@ include __DIR__ . '/_header.php';
 
   <div class="metric-grid">
     <?php foreach($metricCards as [$key,$label,$format,$lower,$hint]): ?>
-      <article class="metric"><div class="metric-label"><?=va_h($label)?></div><div class="metric-value"><?=va_metric_value($current,$key,$format)?></div><div class="metric-foot"><?=va_delta_html(va_delta($current,$previous,$key),$lower)?><span class="metric-hint"><?=va_h($hint)?></span></div></article>
+      <article class="metric" style="cursor:pointer; transition: transform .15s ease, border-color .15s ease;" onclick="abrirModalGraficoMensal('<?= $key ?>', '<?= va_h($label) ?>', '<?= $format ?>', <?= $lower ? 'true' : 'false' ?>)" title="Clique para ver o gráfico mensal deste indicador">
+        <div class="metric-label"><?=va_h($label)?> <span style="float:right; font-size:11px; opacity:0.6;"><i class="ph ph-chart-bar"></i></span></div>
+        <div class="metric-value"><?=va_metric_value($current,$key,$format)?></div>
+        <div class="metric-foot"><?=va_delta_html(va_delta($current,$previous,$key),$lower)?><span class="metric-hint"><?=va_h($hint)?></span></div>
+      </article>
     <?php endforeach; ?>
   </div>
 
@@ -919,6 +919,182 @@ new Chart(document.getElementById('volumeChart'),{data:{labels:daily.map(x=>x.da
 new Chart(document.getElementById('monthlyChart'),{data:{labels:monthly.map(x=>x.month),datasets:[{type:'bar',label:'Bruto',data:monthly.map(x=>x.gross),backgroundColor:'rgba(250,204,21,.28)',borderRadius:3},{type:'bar',label:'Liquido',data:monthly.map(x=>x.net),backgroundColor:'rgba(56,189,248,.28)',borderRadius:3},{type:'line',label:'Liquido produtor',data:monthly.map(x=>x.producer),borderColor:'#22c55e',backgroundColor:'#22c55e',tension:.3},{type:'line',label:'Vendas',data:monthly.map(x=>x.sales),borderColor:'#fb7185',yAxisID:'qty',tension:.3}]},options:{...base,scales:{...base.scales,qty:{position:'right',ticks:{color:'#fb7185'},grid:{drawOnChartArea:false}}}}});
 new Chart(document.getElementById('attributionChart'),{type:'doughnut',data:{labels:['Atribuidas','Nao atribuidas'],datasets:[{data:[<?= (int)$current['attributed_sales']?>,<?=max(0,(int)$current['sales']-(int)$current['attributed_sales'])?>],backgroundColor:['#22c55e','#334155'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'72%',plugins:{legend:{position:'bottom',labels:{color:ticks,boxWidth:10,font:{size:10}}}}}});
 })();
+
+let modalChartInstance = null;
+const monthlySeriesData = <?= json_encode($monthly, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+const currentSnapshotData = <?= json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+const previousSnapshotData = <?= json_encode($previous, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+
+function abrirModalGraficoMensal(key, label, format, isLowerBetter) {
+    const modal = document.getElementById('metricDetailModal');
+    if (!modal) return;
+
+    document.getElementById('modalMetricTitleText').textContent = label;
+    document.getElementById('modalMetricSub').textContent = 'Histórico mês a mês para ' + label + ' (últimos 12 meses)';
+
+    const valCurr = currentSnapshotData[key] !== undefined ? currentSnapshotData[key] : 0;
+    const valPrev = previousSnapshotData[key] !== undefined ? previousSnapshotData[key] : 0;
+
+    let fmtFn = (v) => v;
+    if (format === 'money') fmtFn = (v) => money(v);
+    else if (format === 'pct') fmtFn = (v) => Number(v).toFixed(1) + '%';
+    else if (format === 'decimal') fmtFn = (v) => Number(v).toFixed(2);
+    else fmtFn = (v) => Math.round(v).toLocaleString('pt-BR');
+
+    document.getElementById('modalSummaryCurrent').textContent = fmtFn(valCurr);
+    document.getElementById('modalSummaryPrev').textContent = fmtFn(valPrev);
+
+    let deltaPct = 0;
+    if (valPrev > 0) deltaPct = ((valCurr - valPrev) / valPrev) * 100;
+    const isGood = isLowerBetter ? deltaPct < 0 : deltaPct > 0;
+    const trendEl = document.getElementById('modalSummaryTrend');
+    trendEl.textContent = valPrev > 0 ? (deltaPct >= 0 ? '+' : '') + deltaPct.toFixed(1) + '%' : '-';
+    trendEl.style.color = valPrev > 0 ? (deltaPct === 0 ? '#94a3b8' : (isGood ? '#4ade80' : '#f87171')) : '#94a3b8';
+
+    const labels = monthlySeriesData.map(x => x.month);
+    const dataValues = monthlySeriesData.map(x => x[key] !== undefined ? x[key] : 0);
+
+    const sumVal = dataValues.reduce((a, b) => a + b, 0);
+    const avgVal = dataValues.length > 0 ? sumVal / dataValues.length : 0;
+    document.getElementById('modalSummaryAvg').textContent = fmtFn(avgVal);
+
+    const tbody = document.getElementById('modalMonthlyTableBody');
+    tbody.innerHTML = '';
+
+    for (let i = monthlySeriesData.length - 1; i >= 0; i--) {
+        const row = monthlySeriesData[i];
+        const val = row[key] !== undefined ? row[key] : 0;
+        const prevVal = i > 0 ? (monthlySeriesData[i - 1][key] !== undefined ? monthlySeriesData[i - 1][key] : 0) : 0;
+
+        let rowDelta = 0;
+        if (prevVal > 0) rowDelta = ((val - prevVal) / prevVal) * 100;
+        const rowGood = isLowerBetter ? rowDelta < 0 : rowDelta > 0;
+        const rowDeltaText = prevVal > 0 ? (rowDelta >= 0 ? '+' : '') + rowDelta.toFixed(1) + '%' : '-';
+        const rowDeltaColor = prevVal > 0 ? (rowDelta === 0 ? '#94a3b8' : (rowGood ? '#4ade80' : '#f87171')) : '#94a3b8';
+
+        tbody.innerHTML += `
+            <tr>
+                <td><strong>${row.month}</strong></td>
+                <td><strong style="color:#f8fafc">${fmtFn(val)}</strong></td>
+                <td style="color:${rowDeltaColor}; font-weight:700;">${rowDeltaText}</td>
+                <td>${money(row.gross_revenue || row.gross || 0)}</td>
+                <td>${money(row.producer_net || row.producer || 0)}</td>
+                <td>${(row.sales || 0).toLocaleString('pt-BR')}</td>
+            </tr>
+        `;
+    }
+
+    const ctx = document.getElementById('modalMetricChart').getContext('2d');
+    if (modalChartInstance) modalChartInstance.destroy();
+
+    modalChartInstance = new Chart(ctx, {
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: label,
+                    data: dataValues,
+                    backgroundColor: 'rgba(96, 165, 250, 0.45)',
+                    borderColor: '#60a5fa',
+                    borderWidth: 2,
+                    borderRadius: 6,
+                    hoverBackgroundColor: 'rgba(96, 165, 250, 0.75)'
+                },
+                {
+                    type: 'line',
+                    label: 'Marcador de Tendência',
+                    data: dataValues,
+                    borderColor: '#facc15',
+                    backgroundColor: '#facc15',
+                    borderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    tension: 0.3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: (c) => `${c.dataset.label}: ${fmtFn(c.raw)}`
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                y: { ticks: { color: '#94a3b8', callback: (v) => format === 'money' ? 'R$ ' + v.toLocaleString('pt-BR') : v }, grid: { color: 'rgba(255,255,255,0.05)' } }
+            }
+        }
+    });
+
+    modal.style.display = 'flex';
+}
+
+function fecharModalGraficoMensal() {
+    const modal = document.getElementById('metricDetailModal');
+    if (modal) modal.style.display = 'none';
+}
 </script>
+
+<!-- Modal Popup para Gráfico Mensal do Card Clicado -->
+<div id="metricDetailModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.85); backdrop-filter:blur(6px); z-index:99999; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this) fecharModalGraficoMensal()">
+  <div style="background:#0f172a; border:1px solid var(--border); border-radius:16px; width:100%; max-width:960px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+    <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg-card);">
+      <div>
+        <h2 style="margin:0; font-size:18px; font-weight:800; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+          <i class="ph ph-chart-bar" style="color:#60a5fa;"></i> <span id="modalMetricTitleText">Análise Mensal do Indicador</span>
+        </h2>
+        <p style="margin:4px 0 0; font-size:12px; color:var(--muted);" id="modalMetricSub">Histórico mês a mês com barras e marcadores de tendência.</p>
+      </div>
+      <button type="button" onclick="fecharModalGraficoMensal()" style="background:rgba(255,255,255,0.08); border:1px solid var(--border); color:#94a3b8; width:32px; height:32px; border-radius:8px; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+    </div>
+
+    <div style="padding:20px 24px; overflow-y:auto; display:flex; flex-direction:column; gap:18px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
+        <div style="background:var(--bg); border:1px solid var(--border); padding:10px 14px; border-radius:10px;">
+          <small style="color:var(--muted); font-size:10px; text-transform:uppercase;">Valor Atual</small>
+          <strong id="modalSummaryCurrent" style="display:block; font-size:17px; color:#f1f5f9; margin-top:3px;">-</strong>
+        </div>
+        <div style="background:var(--bg); border:1px solid var(--border); padding:10px 14px; border-radius:10px;">
+          <small style="color:var(--muted); font-size:10px; text-transform:uppercase;">Período Anterior</small>
+          <strong id="modalSummaryPrev" style="display:block; font-size:17px; color:#94a3b8; margin-top:3px;">-</strong>
+        </div>
+        <div style="background:var(--bg); border:1px solid var(--border); padding:10px 14px; border-radius:10px;">
+          <small style="color:var(--muted); font-size:10px; text-transform:uppercase;">Variação (Growth)</small>
+          <strong id="modalSummaryTrend" style="display:block; font-size:17px; margin-top:3px;">-</strong>
+        </div>
+        <div style="background:var(--bg); border:1px solid var(--border); padding:10px 14px; border-radius:10px;">
+          <small style="color:var(--muted); font-size:10px; text-transform:uppercase;">Média Mensal</small>
+          <strong id="modalSummaryAvg" style="display:block; font-size:17px; color:#60a5fa; margin-top:3px;">-</strong>
+        </div>
+      </div>
+
+      <div style="height:310px; position:relative; background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:16px;">
+        <canvas id="modalMetricChart"></canvas>
+      </div>
+
+      <div class="table-wrap">
+        <table class="bi-table">
+          <thead>
+            <tr>
+              <th>Mês</th>
+              <th>Valor do Indicador</th>
+              <th>Variação m/m</th>
+              <th>Faturamento Bruto</th>
+              <th>Líquido Produtor</th>
+              <th>Vendas Aprovadas</th>
+            </tr>
+          </thead>
+          <tbody id="modalMonthlyTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
 <?php include __DIR__ . '/_footer.php'; ?>
