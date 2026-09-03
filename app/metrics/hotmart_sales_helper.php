@@ -194,22 +194,32 @@ function hotmart_find_matching_user(PDO $pdo, string $email, string $phone): ?ar
     $email = normalize_email_value($email);
     $phone = normalize_phone_value($phone);
 
+    $hasUsers = md_table_exists($pdo, 'users');
+    $userTable = $hasUsers ? 'users' : (md_table_exists($pdo, 'usuarios') ? 'usuarios' : '');
+    if (!$userTable) return null;
+
+    $phoneCol = md_pick_column($pdo, $userTable, ['telefone', 'whatsapp', 'phone']);
+
     if ($email !== '') {
-        $stmt = $pdo->prepare('SELECT id, email, whatsapp, nome FROM usuarios WHERE LOWER(TRIM(email)) = :email LIMIT 1');
-        $stmt->execute([':email' => strtolower($email)]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($user) {
-            return ['id' => (int)$user['id'], 'match_method' => 'email', 'user' => $user];
-        }
+        try {
+            $stmt = $pdo->prepare("SELECT id, email, nome FROM {$userTable} WHERE LOWER(TRIM(email)) = :email LIMIT 1");
+            $stmt->execute([':email' => strtolower($email)]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($user) {
+                return ['id' => (int)$user['id'], 'match_method' => 'email', 'user' => $user];
+            }
+        } catch (Throwable $e) {}
     }
 
-    if ($phone !== '') {
-        $stmt = $pdo->prepare('SELECT id, email, whatsapp, nome FROM usuarios WHERE whatsapp IS NOT NULL AND whatsapp <> "" AND (whatsapp = :phone OR RIGHT(whatsapp, 8) = RIGHT(:phone, 8)) LIMIT 1');
-        $stmt->execute([':phone' => $phone]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($user) {
-            return ['id' => (int)$user['id'], 'match_method' => 'phone', 'user' => $user];
-        }
+    if ($phone !== '' && $phoneCol !== '') {
+        try {
+            $stmt = $pdo->prepare("SELECT id, email, nome FROM {$userTable} WHERE {$phoneCol} IS NOT NULL AND {$phoneCol} <> '' AND ({$phoneCol} = :phone OR RIGHT({$phoneCol}, 8) = RIGHT(:phone, 8)) LIMIT 1");
+            $stmt->execute([':phone' => $phone]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($user) {
+                return ['id' => (int)$user['id'], 'match_method' => 'phone', 'user' => $user];
+            }
+        } catch (Throwable $e) {}
     }
 
     return null;
