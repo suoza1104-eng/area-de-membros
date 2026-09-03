@@ -563,7 +563,15 @@ include __DIR__ . '/_header.php';
 
 <div class="bi">
   <div class="bi-head">
-    <div class="bi-title"><h1>Painel de desempenho do negocio</h1><p>Trafego, leads, atribuicao e vendas reconciliados na mesma linha do tempo.</p></div>
+    <div class="bi-title">
+      <h1 style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span>Painel de desempenho do negócio</span>
+        <a href="vendas_auditoria.php" class="btn btn-ghost btn-sm" style="font-size:12px; font-weight:500;">
+          📋 Ver Extrato / Auditoria de Vendas
+        </a>
+      </h1>
+      <p>Trafego, leads, atribuicao e vendas reconciliados na mesma linha do tempo.</p>
+    </div>
     <div class="sync-pill"><span class="sync-dot"></span><?= $lastSync ? 'Meta atualizada em '.va_h(date('d/m/Y H:i',strtotime((string)$lastSync))) : 'Integracao Meta aguardando sincronizacao' ?></div>
   </div>
 

@@ -530,3 +530,4 @@ function va_provider_badge(string $provider): string {
 </div>
 
 <?php require_once __DIR__ . '/_footer.php'; ?>
+

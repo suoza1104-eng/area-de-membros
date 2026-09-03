@@ -78,18 +78,27 @@ $__appVersion = defined('APP_VERSION') ? APP_VERSION : 'V1';
 // ──────────────────────────────────────────────────────────────────────────
 
 $__supportUnread = 0;
-try {
-    $pdoBadge = getPDO();
-    $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
-    if ($stBadge && $stBadge->fetchColumn()) {
-        $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
-    }
-} catch (Throwable $ignored) {}
+$__supportCache = $_SESSION['admin_support_unread_cache'] ?? null;
+if (is_array($__supportCache) && (time() - (int)($__supportCache['ts'] ?? 0)) < 20) {
+    $__supportUnread = (int)($__supportCache['count'] ?? 0);
+} else {
+    try {
+        $pdoBadge = getPDO();
+        $stBadge = $pdoBadge->query("SHOW TABLES LIKE 'support_conversations'");
+        if ($stBadge && $stBadge->fetchColumn()) {
+            $__supportUnread = (int)$pdoBadge->query("SELECT COUNT(*) FROM support_conversations WHERE status='pending' OR unread_admin>0")->fetchColumn();
+        }
+    } catch (Throwable $ignored) {}
+    $_SESSION['admin_support_unread_cache'] = [
+        'ts' => time(),
+        'count' => $__supportUnread,
+    ];
+}
 
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
-    'hotmart_import'   => 'Conciliar Hotmart',
+    'hotmart_import'   => 'Conciliar Vendas',
     'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
@@ -124,6 +133,11 @@ $titleMap = [
 ];
 $pageTitle = $page_title ?? ($titleMap[$currentMenu] ?? 'Admin');
 
+$__cfgCache = $_SESSION['admin_app_config_cache'] ?? null;
+if (is_array($__cfgCache) && (time() - (int)($__cfgCache['ts'] ?? 0)) < 60) {
+    $__courseTitle = (string)($__cfgCache['course_title'] ?? 'Área de Membros');
+    $__logoUrl = (string)($__cfgCache['logo_url'] ?? '');
+} else {
 try {
     $__pdo = getPDO();
     $__cfg = $__pdo->query("SELECT course_title, logo_url FROM app_config WHERE id = 1 LIMIT 1")->fetch();
@@ -132,6 +146,13 @@ try {
 } catch (Throwable $e) {
     $__courseTitle = 'Área de Membros';
     $__logoUrl     = '';
+}
+
+    $_SESSION['admin_app_config_cache'] = [
+        'ts' => time(),
+        'course_title' => $__courseTitle,
+        'logo_url' => $__logoUrl,
+    ];
 }
 
 function __esc(string $v): string {
@@ -145,6 +166,8 @@ function __esc(string $v): string {
 <title><?= __esc($pageTitle) ?> — Admin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-funnel@4"></script>
@@ -694,13 +717,22 @@ button:not([class]):hover { filter: brightness(1.07); }
     <?php endif; ?>
 
     <?php if ($__sbV['vendas_analytics']): ?>
-    <a href="vendas_analytics.php" class="sb-item <?= $currentMenu === 'vendas_analytics' ? 'active' : '' ?>">
+    <a href="vendas_analytics.php" class="sb-item <?= $currentMenu === 'vendas_analytics' && basename($_SERVER['PHP_SELF']) !== 'vendas_auditoria.php' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="12" y1="20" x2="12" y2="10"/>
         <line x1="18" y1="20" x2="18" y2="4"/>
         <line x1="6" y1="20" x2="6" y2="16"/>
       </svg>
-      Vendas
+      Desempenho Vendas
+    </a>
+    <a href="vendas_auditoria.php" class="sb-item <?= basename($_SERVER['PHP_SELF']) === 'vendas_auditoria.php' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+      Auditoria de Vendas
     </a>
     <?php endif; ?>
 
@@ -711,7 +743,7 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="m7 10 5 5 5-5"/>
         <path d="M5 21h14"/>
       </svg>
-      Conciliar Hotmart
+      Conciliar Vendas
     </a>
     <?php endif; ?>
 
