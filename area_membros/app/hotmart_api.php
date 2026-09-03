@@ -74,6 +74,37 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
     $json = json_decode($res, true);
     $items = is_array($json['items'] ?? null) ? $json['items'] : [];
 
+    // Buscar comissões reais do produtor via API de Comissões
+    $commMap = [];
+    $commUrl = "https://developers.hotmart.com/payments/api/v1/sales/commissions?start_date={$startDateMs}&end_date={$endDateMs}&max_results=100";
+    $chC = curl_init($commUrl);
+    curl_setopt($chC, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($chC, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $token
+    ]);
+    $resC = curl_exec($chC);
+    curl_close($chC);
+    if ($resC) {
+        $jsonC = json_decode($resC, true);
+        $itemsC = is_array($jsonC['items'] ?? null) ? $jsonC['items'] : [];
+        foreach ($itemsC as $itC) {
+            $tCode = trim((string)($itC['transaction'] ?? ''));
+            if ($tCode === '') continue;
+            $prodVal = 0.0;
+            $comms = is_array($itC['commissions'] ?? null) ? $itC['commissions'] : [];
+            foreach ($comms as $cm) {
+                $src = strtoupper(trim((string)($cm['source'] ?? '')));
+                if ($src === 'PRODUCER' || strpos($src, 'PRODUCER') !== false) {
+                    $prodVal += (float)($cm['commission']['value'] ?? $cm['value'] ?? 0);
+                }
+            }
+            if ($prodVal > 0) {
+                $commMap[$tCode] = $prodVal;
+            }
+        }
+    }
+
     $synced = 0;
     $approved = 0;
     $newSales = 0;
@@ -97,6 +128,9 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
         $gross = (float)($purchase['price']['value'] ?? 0.0);
         $prodName = trim((string)($product['name'] ?? 'Curso Hotmart'));
 
+        $prodNet = isset($commMap[$transaction]) ? $commMap[$transaction] : $gross;
+        $fees = max(0.0, $gross - $prodNet);
+
         $saleDateMs = $purchase['order_date'] ?? $purchase['approved_date'] ?? time() * 1000;
         $saleDate   = date('Y-m-d H:i:s', (int)floor($saleDateMs / 1000));
 
@@ -106,12 +140,15 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
                 buyer_name, buyer_email, buyer_phone,
                 sale_date, payment_confirmed_at, created_at, updated_at
             ) VALUES (
-                :tx, :status, :pname, :gross, :gross, :gross, 0,
+                :tx, :status, :pname, :gross, :prodNet, :prodNet, :fees,
                 :bname, :bemail, :bphone,
                 :sdate, :sdate, NOW(), NOW()
             ) ON DUPLICATE KEY UPDATE
                 status = VALUES(status),
                 gross_revenue = VALUES(gross_revenue),
+                net_revenue = VALUES(net_revenue),
+                producer_net = VALUES(producer_net),
+                fees = VALUES(fees),
                 buyer_name = IF(VALUES(buyer_name) <> '', VALUES(buyer_name), buyer_name),
                 buyer_email = IF(VALUES(buyer_email) <> '', VALUES(buyer_email), buyer_email),
                 payment_confirmed_at = VALUES(payment_confirmed_at),
@@ -123,6 +160,8 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
             'status' => $status,
             'pname' => $prodName,
             'gross' => $gross,
+            'prodNet' => $prodNet,
+            'fees' => $fees,
             'bname' => $bName,
             'bemail' => $bEmail,
             'bphone' => $bPhone,
