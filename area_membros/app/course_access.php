@@ -49,11 +49,27 @@ function course_access_ensure_schema(PDO $pdo): void
             KEY idx_course_lifetime_turma (turma_codigo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    $accessColumns = [
+        'turma_codigo' => "ALTER TABLE course_lifetime_access ADD COLUMN turma_codigo VARCHAR(100) NULL AFTER user_id",
+        'offer_code' => "ALTER TABLE course_lifetime_access ADD COLUMN offer_code VARCHAR(200) NULL AFTER turma_codigo",
+        'source' => "ALTER TABLE course_lifetime_access ADD COLUMN source VARCHAR(40) NOT NULL DEFAULT 'webhook' AFTER transaction_code",
+    ];
+    foreach ($accessColumns as $column => $sql) {
+        if (!course_access_column_exists($pdo, 'course_lifetime_access', $column)) {
+            try { $pdo->exec($sql); } catch (Throwable $e) {}
+        }
+    }
     if (!course_access_column_exists($pdo, 'course_lifetime_access', 'grant_type')) {
         try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN grant_type VARCHAR(30) NOT NULL DEFAULT 'paid' AFTER source"); } catch (Throwable $e) {}
     }
     if (!course_access_column_exists($pdo, 'course_lifetime_access', 'is_paid')) {
         try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN is_paid TINYINT(1) NOT NULL DEFAULT 1 AFTER grant_type"); } catch (Throwable $e) {}
+    }
+    if (!course_access_column_exists($pdo, 'course_lifetime_access', 'payload_json')) {
+        try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN payload_json LONGTEXT NULL AFTER is_paid"); } catch (Throwable $e) {}
+    }
+    if (!course_access_column_exists($pdo, 'course_lifetime_access', 'granted_at')) {
+        try { $pdo->exec("ALTER TABLE course_lifetime_access ADD COLUMN granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER payload_json"); } catch (Throwable $e) {}
     }
     $done = true;
 }

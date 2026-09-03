@@ -53,6 +53,14 @@ function vv_column_exists(PDO $pdo, string $table, string $column): bool {
     }
 }
 
+function vv_table_has_columns(PDO $pdo, string $table, array $columns): bool {
+    if (!vv_table_exists($pdo, $table)) return false;
+    foreach ($columns as $column) {
+        if (!vv_column_exists($pdo, $table, $column)) return false;
+    }
+    return true;
+}
+
 function vv_turma_student_counts(PDO $pdo, array $turmas): array {
     $turmas = array_values(array_unique(array_filter(array_map(
         static fn($turma): string => trim((string)$turma),
@@ -132,7 +140,13 @@ $daily = [];
 $totalSales = 0;
 $totalGross = 0.0;
 $totalNet = 0.0;
-$hotmartReady = vv_table_exists($pdo, 'hotmart_sales');
+$hotmartReady = vv_table_has_columns($pdo, 'hotmart_sales', [
+    'transaction_code', 'status', 'product_name', 'price_name', 'currency',
+    'gross_revenue', 'net_revenue', 'producer_net', 'transaction_date',
+    'matched_user_id', 'price_code', 'buyer_name', 'buyer_email',
+    'buyer_phone_norm', 'utm_source', 'utm_medium', 'utm_campaign',
+    'utm_term', 'utm_content',
+]);
 
 if ($mode === 'lifetime') {
     $params = [
@@ -194,7 +208,7 @@ if ($mode === 'lifetime') {
         $row['dashboard_net'] = $net;
     }
     unset($row);
-} else {
+} elseif ($hotmartReady) {
     $params = [
         ':ini' => $ini . ' 00:00:00',
         ':fim' => $fim . ' 23:59:59',
@@ -361,6 +375,11 @@ require_once __DIR__ . '/_header.php';
   <div class="vv-alert">
     Nenhum desbloqueio vitalicio foi encontrado em <strong><?= vv_h(date('d/m/Y', strtotime($ini))) ?></strong> ate <strong><?= vv_h(date('d/m/Y', strtotime($fim))) ?></strong>.
     Se a venda entrou apenas na Hotmart, altere a fonte para <strong>Hotmart por produto/preco</strong> e use a busca.
+  </div>
+<?php endif; ?>
+<?php if ($mode === 'hotmart' && !$hotmartReady): ?>
+  <div class="vv-alert">
+    A tabela de vendas Hotmart ainda nao tem todas as colunas necessarias para este relatorio. Rode a importacao/sincronizacao de vendas antes de usar esta fonte.
   </div>
 <?php endif; ?>
 
