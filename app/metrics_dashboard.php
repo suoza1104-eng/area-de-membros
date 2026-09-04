@@ -229,7 +229,7 @@ function md_monthly_series(PDO $pdo, array $filters): array
         FROM attribution_leads
         WHERE created_at BETWEEN :start AND :end
         GROUP BY month
-    ", $params);
+    ", ['start' => $start, 'end' => $end]);
 
     $leadMap = [];
     foreach ($leadRows as $l) { $leadMap[$l['month']] = (int)$l['leads']; }
