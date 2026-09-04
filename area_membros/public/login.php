@@ -775,14 +775,15 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     -webkit-backdrop-filter: blur(8px);
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: 24px 20px;
 }
 .rec-modal-overlay.open {
     display: flex;
 }
 .rec-modal-card {
     position: relative;
-    width: min(520px, 100%);
+    width: min(520px, calc(100vw - 40px));
+    max-width: 100%;
     background: #0d1b33;
     border: 1px solid rgba(250, 204, 21, 0.4);
     border-radius: 22px;
@@ -791,6 +792,22 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     color: #e2e8f0;
     font-family: 'Inter', -apple-system, sans-serif;
     animation: recModalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (max-width: 600px) {
+    .rec-modal-overlay {
+        padding: 20px 16px;
+    }
+    .rec-modal-card {
+        padding: 24px 18px;
+        border-radius: 18px;
+        width: min(520px, calc(100vw - 32px));
+    }
+    .rec-modal-header h3 {
+        font-size: 20px;
+    }
+    .rec-typed-email-value {
+        font-size: 19px;
+    }
 }
 @keyframes recModalPop {
     from { opacity: 0; transform: scale(0.94) translateY(10px); }
