@@ -17,6 +17,13 @@ function hotmart_upsert_sales_master(PDO $pdo, array $saleData): void
 {
     $tx = (string)($saleData['transaction_code'] ?? '');
     if ($tx === '') return;
+    // hotmart_sales e a tabela dedicada SO da Hotmart. Vendas DOM/Pagar.me
+    // passam por aqui com o mesmo $legacySale usado para alimentar o ledger
+    // unificado (hotmart_sales_live) — sem este guard elas seriam gravadas
+    // aqui tambem, poluindo hotmart_sales/v_sales_master com transacoes de
+    // outro canal sob o rotulo 'hotmart' (guard fica na funcao para proteger
+    // qualquer chamador, nao so hotmart_upsert_sale_live()).
+    if (strpos($tx, 'dom:') === 0 || strpos($tx, 'pagarme:') === 0) return;
 
     $rawStatus = (string)($saleData['status'] ?? 'PENDING');
     $v = strtoupper(trim($rawStatus));

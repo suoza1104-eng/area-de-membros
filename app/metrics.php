@@ -224,12 +224,23 @@ function metrics_ensure_schema(PDO $pdo): void
     $ready = true;
 }
 
-/** Espelha a tabela operacional no ledger consolidado sem apagar payloads ricos. */
-function metrics_refresh_hotmart_ledger(PDO $pdo): int
+/**
+ * Espelha uma tabela operacional dedicada (hotmart_sales, dom_sales,
+ * pagarme_sales) no ledger consolidado hotmart_sales_live, sem apagar
+ * payloads ricos. O motor de atribuicao (attribution.php) le vendas
+ * exclusivamente de hotmart_sales_live — qualquer canal que pare de ser
+ * espelhado aqui fica invisivel para o cruzamento vendas->lead->UTM mesmo
+ * que a venda esteja correta em v_sales_master. Isso funciona como rede de
+ * seguranca: mesmo que um webhook/sync esqueça de chamar
+ * hotmart_upsert_sale_live() diretamente, este mirror roda a cada ciclo do
+ * cron e recupera a venda.
+ */
+function metrics_refresh_sales_ledger_from(PDO $pdo, string $sourceTable, string $channel): int
 {
-    if (!metrics_table_exists($pdo, 'hotmart_sales')) return 0;
+    if (!metrics_table_exists($pdo, $sourceTable)) return 0;
 
-    $saleCols = source_table_columns($pdo, 'hotmart_sales');
+    $saleCols = source_table_columns($pdo, $sourceTable);
+    $channelLiteral = $pdo->quote($channel);
     $select = [
         column_exists_in($saleCols, 'transaction_code') ? 'transaction_code' : "CONCAT('legacy-', id) AS transaction_code",
         column_exists_in($saleCols, 'status') ? 'status' : "'' AS status",
@@ -254,6 +265,7 @@ function metrics_refresh_hotmart_ledger(PDO $pdo): int
         column_exists_in($saleCols, 'utm_campaign') ? 'utm_campaign' : "'' AS utm_campaign",
         column_exists_in($saleCols, 'utm_term') ? 'utm_term' : "'' AS utm_term",
         column_exists_in($saleCols, 'utm_content') ? 'utm_content' : "'' AS utm_content",
+        $channelLiteral . ' AS sales_channel',
         column_exists_in($saleCols, 'created_at') ? 'created_at AS imported_at' : 'NOW() AS imported_at',
         column_exists_in($saleCols, 'updated_at') ? 'updated_at' : 'NOW() AS updated_at',
     ];
@@ -263,10 +275,11 @@ function metrics_refresh_hotmart_ledger(PDO $pdo): int
                 product_code,product_name,price_code,price_name,currency,
                 gross_revenue,net_revenue,producer_net,buyer_name,buyer_email,
                 buyer_phone_raw,buyer_phone_norm,matched_user_id,match_method,
-                utm_source,utm_medium,utm_campaign,utm_term,utm_content,imported_at,updated_at
+                utm_source,utm_medium,utm_campaign,utm_term,utm_content,sales_channel,
+                imported_at,updated_at
             )
             SELECT " . implode(',', $select) . "
-              FROM hotmart_sales
+              FROM {$sourceTable}
             ON DUPLICATE KEY UPDATE
                 status=VALUES(status), transaction_date=VALUES(transaction_date),
                 payment_confirmed_at=VALUES(payment_confirmed_at), product_code=VALUES(product_code),
@@ -275,11 +288,23 @@ function metrics_refresh_hotmart_ledger(PDO $pdo): int
                 net_revenue=VALUES(net_revenue), producer_net=VALUES(producer_net),
                 buyer_name=VALUES(buyer_name), buyer_email=VALUES(buyer_email),
                 buyer_phone_raw=VALUES(buyer_phone_raw), buyer_phone_norm=VALUES(buyer_phone_norm),
-                matched_user_id=VALUES(matched_user_id), match_method=VALUES(match_method),
+                matched_user_id=COALESCE(VALUES(matched_user_id), matched_user_id),
+                match_method=IF(VALUES(match_method)<>'none', VALUES(match_method), match_method),
                 utm_source=VALUES(utm_source), utm_medium=VALUES(utm_medium),
                 utm_campaign=VALUES(utm_campaign), utm_term=VALUES(utm_term),
                 utm_content=VALUES(utm_content), updated_at=VALUES(updated_at)";
     return $pdo->exec($sql);
+}
+
+/**
+ * Espelha as 3 tabelas de vendas dedicadas (hotmart_sales, dom_sales,
+ * pagarme_sales) no ledger hotmart_sales_live. Ver metrics_refresh_sales_ledger_from().
+ */
+function metrics_refresh_hotmart_ledger(PDO $pdo): int
+{
+    return metrics_refresh_sales_ledger_from($pdo, 'hotmart_sales', 'hotmart')
+        + metrics_refresh_sales_ledger_from($pdo, 'dom_sales', 'dom')
+        + metrics_refresh_sales_ledger_from($pdo, 'pagarme_sales', 'pagarme');
 }
 
 function metrics_active_integrations(PDO $pdo): array
@@ -299,7 +324,6 @@ function metrics_sync_all(PDO $pdo, int $daysBack = 3, bool $syncMeta = true): a
     $ledger = metrics_refresh_hotmart_ledger($pdo);
     $integrations = metrics_active_integrations($pdo);
     $meta = [];
-    $attribution = [];
     if ($syncMeta && $integrations) {
         $since = date('Y-m-d', strtotime('-' . max(0, $daysBack - 1) . ' days'));
         $until = date('Y-m-d');
@@ -313,9 +337,20 @@ function metrics_sync_all(PDO $pdo, int $daysBack = 3, bool $syncMeta = true): a
                     }
                 }
             }
-            $attribution[] = sync_full_attribution($pdo, $pdo, (int)$integration['id'], max(3, $daysBack));
         }
     }
+    // Atribuicao roda 1x por ciclo, combinando TODAS as integracoes Meta
+    // ativas (integrationId=0 = sem filtro, ver build_meta_name_lookup).
+    // Antes rodava 1x POR integracao dentro do loop acima, e
+    // sync_attribution_matches() da TRUNCATE em attribution_matches a cada
+    // chamada. Com 2+ integracoes ativas isso fazia cada ciclo do cron
+    // sobrescrever o cruzamento correto da 1a integracao (milhares de
+    // vendas casadas) pelo resultado pobre da ultima (so a integracao
+    // "BM - DOLAR", com poucas campanhas, sobrava no fim do loop) — por
+    // isso attribution_matches ficava com ~10 linhas em vez de milhares.
+    // attribution_matches/attribution_campaign_daily nao tem coluna
+    // integration_id: o cruzamento e sempre global, nunca por conta.
+    $attribution = sync_full_attribution($pdo, $pdo, 0, max(3, $daysBack));
     return ['ledger_rows' => $ledger, 'meta' => $meta, 'attribution' => $attribution];
 }
 

@@ -336,6 +336,14 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
             foreach (['utm_source','utm_medium','utm_campaign','utm_term','utm_content'] as $utm) {
                 if (isset($data['metadata'][$utm])) $legacySale[$utm] = (string)$data['metadata'][$utm];
             }
+            // Alimenta o ledger consolidado que o motor de atribuicao le
+            // (hotmart_sales_live) — sem isso a venda fica invisivel no
+            // cruzamento vendas->lead->UTM mesmo estando correta em
+            // pagarme_sales/v_sales_master.
+            hotmart_upsert_sale_live($pdo, $legacySale);
+            hotmart_upsert_sale_legacy($pdo, $legacySale);
+            $pdo->prepare("UPDATE hotmart_sales_live SET sales_channel='pagarme' WHERE transaction_code=:transaction")
+                ->execute([':transaction' => $transactionCode]);
             pagarme_upsert_sales_master($pdo, [
                 'transaction_code' => $transactionCode,
                 'normalized_status' => $normalizedStatus,
@@ -651,8 +659,49 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
                 'confirmed_at' => $stEnum === 'APPROVED' ? $saleDate : null,
             ]);
 
+            $matchedUser = null;
+            if (in_array($stEnum, ['APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED'], true)) {
+                $phoneNorm = normalize_phone_value($bPhone);
+                $matched = pagarme_find_matching_user($pdo, $bEmail, $phoneNorm);
+                $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
+                // Alimenta o ledger consolidado que o motor de atribuicao le
+                // (hotmart_sales_live) — este sync por API (catalogo/reconciliacao)
+                // gravava so em pagarme_sales, entao essas vendas nunca entravam
+                // no cruzamento vendas->lead->UTM.
+                $legacySale = hotmart_build_sale_data_from_array([
+                    'webhook_event' => 'PAGARME_SYNC_' . $stEnum,
+                    'webhook_event_id' => 'sync:' . $txCode,
+                    'transaction_code' => $txCode,
+                    'status' => $stEnum,
+                    'transaction_date' => $saleDate,
+                    'payment_confirmed_at' => $stEnum === 'APPROVED' ? $saleDate : null,
+                    'refund_or_chargeback_at' => in_array($stEnum, ['REFUNDED', 'CHARGEBACK'], true) ? $saleDate : null,
+                    'product_code' => null,
+                    'product_name' => 'Curso de Quadros Elétricos',
+                    'price_code' => $chargeId,
+                    'price_name' => '',
+                    'currency' => 'BRL',
+                    'gross_revenue' => $gross,
+                    'net_revenue' => $net,
+                    'producer_net' => $net,
+                    'refunded_value' => $stEnum === 'REFUNDED' ? $gross : 0,
+                    'chargeback_value' => $stEnum === 'CHARGEBACK' ? $gross : 0,
+                    'buyer_name' => $bName,
+                    'buyer_email' => $bEmail,
+                    'buyer_phone_raw' => $bPhone,
+                    'buyer_phone_norm' => $phoneNorm,
+                    'raw_payload_json' => json_encode($ord, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '',
+                ], $matched);
+                foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $utm) {
+                    if (isset($ord['metadata'][$utm])) $legacySale[$utm] = (string)$ord['metadata'][$utm];
+                }
+                hotmart_upsert_sale_live($pdo, $legacySale);
+                hotmart_upsert_sale_legacy($pdo, $legacySale);
+                $pdo->prepare("UPDATE hotmart_sales_live SET sales_channel='pagarme' WHERE transaction_code=:transaction")
+                    ->execute([':transaction' => $txCode]);
+            }
+
             if ($stEnum === 'APPROVED') {
-                $matchedUser = pagarme_find_matching_user($pdo, $bEmail, normalize_phone_value($bPhone));
                 pagarme_try_grant_lifetime($pdo, $ord, $firstCharge, $txCode, $bEmail, $bPhone, $matchedUser);
                 $totalApproved++;
             }

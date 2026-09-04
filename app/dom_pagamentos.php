@@ -460,6 +460,20 @@ function dom_sync_transaction(PDO $pdo, array $detail, string $triggerSource = '
                 'buyer_phone_norm' => $phoneNorm,
                 'raw_payload_json' => $rawPayload,
             ], $matched);
+            foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $utm) {
+                if (isset($query[$utm])) $legacySale[$utm] = (string)$query[$utm];
+                elseif (isset($metadata[$utm])) $legacySale[$utm] = (string)$metadata[$utm];
+            }
+            // Alimenta o ledger consolidado que o motor de atribuicao le
+            // (hotmart_sales_live) — este sync por API (reconciliacao/backfill)
+            // gravava so em dom_sales, entao essas vendas nunca entravam no
+            // cruzamento vendas->lead->UTM (ao contrario do webhook, que ja
+            // fazia essa chamada). UTMs de query_param/metadata raramente vem
+            // no detalhe da API, mas o merge acima aproveita quando existirem.
+            hotmart_upsert_sale_live($pdo, $legacySale);
+            hotmart_upsert_sale_legacy($pdo, $legacySale);
+            $pdo->prepare("UPDATE hotmart_sales_live SET sales_channel='dom' WHERE transaction_code=:transaction")
+                ->execute([':transaction' => $transactionCode]);
             dom_upsert_sales_master($pdo, [
                 'transaction_code' => $transactionCode,
                 'normalized_status' => $normalizedStatus,
@@ -773,6 +787,26 @@ function dom_process_webhook(PDO $pdo, array $payload, string $rawPayload): arra
                     ':origin' => (string)($query['utm_source'] ?? '') ?: 'dom',
                     ':transaction' => $transactionCode,
                 ]);
+            // O webhook so gravava no ledger legado acima, nunca em dom_sales
+            // (a tabela dedicada que alimenta v_sales_master/o dashboard). Se o
+            // webhook em tempo real chegasse a funcionar, a venda ficaria
+            // visivel na atribuicao mas sumida do dashboard de faturamento.
+            dom_upsert_sales_master($pdo, [
+                'transaction_code' => $transactionCode,
+                'normalized_status' => $normalizedStatus,
+                'checkout_platform' => 'dom',
+                'product_name' => $productName,
+                'gross_amount_cents' => $amountCents,
+                'net_amount_cents' => $netCents,
+                'buyer_name' => dom_scalar($customer, 'name'),
+                'buyer_email' => $email,
+                'buyer_phone' => $phoneNorm ?: $phoneRaw,
+                'buyer_document' => dom_scalar($customer, 'document'),
+                'payment_method' => $paymentMethod ?: 'pix',
+                'installments' => (int)(dom_scalar($data, 'installments') ?: 1),
+                'last_seen_at' => $receivedAt,
+                'metadata_json' => $rawPayload,
+            ]);
 
             if ($normalizedStatus === 'APPROVED') {
                 $lifetimeAttempt = dom_try_grant_lifetime($pdo, $data, $transactionCode, 'paid', $email, $phoneRaw, $matchedUser);
