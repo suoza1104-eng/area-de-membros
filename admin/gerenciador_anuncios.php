@@ -37,12 +37,90 @@ function am_compare_cell(float $a, float $b, bool $lowerBetter = false, string $
     return '<div>' . $fmt($a) . ' <span class="ads-sep">/</span> ' . $fmt($b) . '</div><span class="trend ' . $class . '">' . ($delta === null ? 'Sem base' : (($delta > 0 ? '+' : '') . number_format($delta, 1, ',', '.') . '%')) . '</span>';
 }
 
-$endDate = trim((string)($_GET['end'] ?? '')) ?: date('Y-m-d');
-if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) $endDate = date('Y-m-d');
+function am_collect_ads(array $tree): array {
+    $ads = [];
+    foreach ($tree as $campaign) {
+        foreach ($campaign['adsets'] as $adset) {
+            foreach ($adset['ads'] as $ad) {
+                $ads[] = ['campaign' => $campaign['name'], 'adset' => $adset['name'], 'ad' => $ad['name'], 'metrics' => $ad['metrics']['x'] ?? []];
+            }
+        }
+    }
+    return $ads;
+}
+// Ranqueia por uma pontuacao composta (ROAS pesa a favor, CPC e CPL pesam
+// contra), cada metrica normalizada 0-1 dentro do proprio conjunto de
+// anuncios com investimento no periodo — assim nenhuma das 3 metricas
+// domina sozinha so por causa de escala (ex.: ROAS 5 vs CPC R$0,50).
+function am_rank_top_ads(array $ads, string $source, int $limit = 10): array {
+    $rows = [];
+    foreach ($ads as $ad) {
+        $view = md_ads_metric_view($ad['metrics'], $source);
+        if ($view['spend'] <= 0) continue;
+        $ad['view'] = $view;
+        $rows[] = $ad;
+    }
+    if (!$rows) return [];
+    $maxRoas = max(array_map(static fn($r) => $r['view']['roas'], $rows)) ?: 1.0;
+    $maxCpc = max(array_map(static fn($r) => $r['view']['cpc'], $rows)) ?: 1.0;
+    $maxCpl = max(array_map(static fn($r) => $r['view']['cpl'], $rows)) ?: 1.0;
+    foreach ($rows as &$r) {
+        $roasScore = $maxRoas > 0 ? $r['view']['roas'] / $maxRoas : 0.0;
+        $cpcScore = $maxCpc > 0 ? 1.0 - ($r['view']['cpc'] / $maxCpc) : 1.0;
+        $cplScore = $maxCpl > 0 ? 1.0 - ($r['view']['cpl'] / $maxCpl) : 1.0;
+        $r['score'] = ($roasScore + $cpcScore + $cplScore) / 3;
+    }
+    unset($r);
+    usort($rows, static fn($a, $b) => $b['score'] <=> $a['score']);
+    return array_slice($rows, 0, $limit);
+}
+function am_resolve_ad_ids(PDO $pdo, array $topAds, string $start, string $end): array {
+    foreach ($topAds as &$row) {
+        $found = md_row($pdo, "SELECT ad_id, integration_id FROM meta_ad_daily
+            WHERE campaign_name = :c AND adset_name = :a AND ad_name = :d AND report_date BETWEEN :start AND :end
+            ORDER BY report_date DESC LIMIT 1",
+            ['c' => $row['campaign'], 'a' => $row['adset'], 'd' => $row['ad'], 'start' => $start, 'end' => $end]);
+        $row['ad_id'] = $found['ad_id'] ?? null;
+        $row['integration_id'] = isset($found['integration_id']) ? (int)$found['integration_id'] : null;
+    }
+    unset($row);
+    return $topAds;
+}
+// Busca a miniatura do criativo direto na Graph API (nao fica salva em
+// nenhuma tabela nossa), uma chamada por anuncio do Top 10 — no maximo 10
+// chamadas. Testado com o endpoint em lote (?ids=a,b,c) primeiro, mas a
+// Meta retornou "The ids query parameter is deprecated in v26.0+" para uma
+// das contas ativas; buscar direto em /{ad_id} evita essa dependencia.
+// Qualquer falha (token vencido, anuncio apagado, sem permissao) e
+// ignorada silenciosamente: o card cai no placeholder "Sem previa".
+function am_fetch_ad_creatives(array $adIdsByIntegration, array $integrationsById): array {
+    $images = [];
+    foreach ($adIdsByIntegration as $integrationId => $adIds) {
+        $integration = $integrationsById[$integrationId] ?? null;
+        if (!$integration || empty($integration['access_token'])) continue;
+        foreach (array_unique($adIds) as $adId) {
+            try {
+                $resp = meta_api_get('/' . $adId, [
+                    'fields' => 'creative{thumbnail_url,image_url}',
+                    'access_token' => $integration['access_token'],
+                ]);
+                $creative = $resp['creative'] ?? [];
+                $url = $creative['thumbnail_url'] ?? ($creative['image_url'] ?? null);
+                if ($url) $images[(string)$adId] = (string)$url;
+            } catch (Throwable $e) { /* segue sem imagem para este anuncio */ }
+        }
+    }
+    return $images;
+}
+
+$preset = (string)($_GET['period'] ?? '7');
+if (!in_array($preset, ['today', '7', '15', '30', '60', '90', '365', 'month', 'year', 'custom'], true)) $preset = '7';
+$period = metrics_period($preset, $_GET['from'] ?? null, $_GET['to'] ?? null);
+$endDate = $period['end'];
 $compareDays = [
-    'x' => max(1, min(365, (int)($_GET['compare_x'] ?? 7))),
-    'y' => max(1, min(365, (int)($_GET['compare_y'] ?? 30))),
-    'z' => max(1, min(365, (int)($_GET['compare_z'] ?? 90))),
+    'x' => max(1, min(400, (int)$period['days'])),
+    'y' => max(1, min(400, (int)($_GET['compare_y'] ?? 30))),
+    'z' => max(1, min(400, (int)($_GET['compare_z'] ?? 90))),
 ];
 $model = ($_GET['model'] ?? '') === 'first_touch' ? 'first_touch' : 'last_touch';
 $adsMetricSource = (string)($_GET['ads_metric_source'] ?? '') === 'meta' ? 'meta' : 'cross';
@@ -51,31 +129,53 @@ $windowLegend = $compareDays['x'] . 'd / ' . $compareDays['y'] . 'd / ' . $compa
 $adsHierarchy = md_ads_hierarchy($pdo, $endDate, $model, $compareDays);
 $accounts = md_ads_group_by_account($pdo, $adsHierarchy['tree'], $adsHierarchy['windows'], $endDate);
 $globalView = md_ads_metric_view($adsHierarchy['totals']['x'] ?? [], $adsMetricSource);
+$crossView = md_ads_metric_view($adsHierarchy['totals']['x'] ?? [], 'cross');
 $tv = [];
 foreach (['x', 'y', 'z'] as $w) { $tv[$w] = md_ads_metric_view($adsHierarchy['totals'][$w] ?? [], $adsMetricSource); }
 
 $integrations = metrics_active_integrations($pdo);
+$integrationsById = [];
+foreach ($integrations as $i) { $integrationsById[(int)$i['id']] = $i; }
 
+$periodStartDt = $adsHierarchy['windows']['x'] . ' 00:00:00';
+$periodEndDt = $endDate . ' 23:59:59';
+
+// Total geral de vendas no periodo, independente de ter lead/campanha
+// casada — complementa o bloco "atribuido" (que so conta o que o
+// cruzamento por UTM conseguiu ligar a uma campanha).
+$totalSalesRow = md_row($pdo, "SELECT COUNT(*) sales, COALESCE(SUM(s.net_revenue),0) net, COALESCE(SUM(s.producer_net),0) producer
+    FROM v_sales_master s WHERE " . md_approved_sql('s') . " AND " . md_sale_revenue_date_sql('s') . " BETWEEN :start AND :end",
+    ['start' => $periodStartDt, 'end' => $periodEndDt]);
+$totalSales = (int)($totalSalesRow['sales'] ?? 0);
+$totalRevenue = (float)($totalSalesRow['producer'] ?? 0);
+$totalSpend = (float)($adsHierarchy['totals']['x']['spend'] ?? 0);
+$totalLeads = (int)$crossView['leads'];
+$totalRoas = $totalSpend > 0 ? $totalRevenue / $totalSpend : 0.0;
+$totalCac = $totalSales > 0 ? $totalSpend / $totalSales : 0.0;
+$totalCpl = $totalLeads > 0 ? $totalSpend / $totalLeads : 0.0;
+$attributedSalesCount = (int)$crossView['sales'];
+$attributionRate = $totalSales > 0 ? ($attributedSalesCount / $totalSales) * 100 : 0.0;
+// Contagem direta (nao por subtracao) para nao arriscar descasamento entre a
+// data de referencia de v_sales_master (total) e attribution_matches (cruzado).
 $unattributedRow = md_row($pdo, "SELECT COUNT(*) c FROM v_sales_master s
     JOIN attribution_sales axs ON axs.transaction_code = s.transaction_code
     LEFT JOIN attribution_matches am ON am.sale_id = axs.id AND am.attribution_model = :model
     WHERE " . md_approved_sql('s') . " AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL",
-    ['model' => $model, 'start' => $adsHierarchy['windows']['x'] . ' 00:00:00', 'end' => $endDate . ' 23:59:59']);
+    ['model' => $model, 'start' => $periodStartDt, 'end' => $periodEndDt]);
 $unattributed = (int)($unattributedRow['c'] ?? 0);
 
 $palette = ['#facc15', '#38bdf8', '#22c55e', '#f472b6', '#a78bfa', '#f59e0b'];
-$accountChart = ['labels' => [], 'spend' => [], 'leads' => [], 'sales' => [], 'colors' => []];
+$accountChart = ['labels' => [], 'spend' => [], 'revenue' => [], 'colors' => []];
 foreach ($accounts as $i => $acc) {
-    $view = md_ads_metric_view($acc['metrics']['x'] ?? [], $adsMetricSource);
+    $view = md_ads_metric_view($acc['metrics']['x'] ?? [], 'cross');
     $accountChart['labels'][] = $acc['name'];
     $accountChart['spend'][] = round((float)($acc['metrics']['x']['spend'] ?? 0), 2);
-    $accountChart['leads'][] = (int)$view['leads'];
-    $accountChart['sales'][] = (int)$view['sales'];
+    $accountChart['revenue'][] = round((float)$view['revenue'], 2);
     $accountChart['colors'][] = $palette[$i % count($palette)];
 }
 
 $metricCards = [
-    ['spend', 'Investimento (janela ' . $compareDays['x'] . 'd)', 'money'],
+    ['spend', 'Investimento (' . $compareDays['x'] . 'd)', 'money'],
     ['leads', 'Leads reais', 'num'],
     ['sales', 'Vendas atribuídas', 'num'],
     ['revenue', 'Receita atribuída', 'money'],
@@ -84,9 +184,16 @@ $metricCards = [
     ['cpl', 'CPL', 'money'],
     ['cpm', 'CPM (sempre Meta)', 'money'],
 ];
+$topAdsRaw = am_rank_top_ads(am_collect_ads($adsHierarchy['tree']), $adsMetricSource, 10);
+$topAdsRaw = am_resolve_ad_ids($pdo, $topAdsRaw, $adsHierarchy['windows']['x'], $endDate);
+$adIdsByIntegration = [];
+foreach ($topAdsRaw as $row) {
+    if (!empty($row['ad_id']) && !empty($row['integration_id'])) { $adIdsByIntegration[$row['integration_id']][] = $row['ad_id']; }
+}
+$adCreatives = $adIdsByIntegration ? am_fetch_ad_creatives($adIdsByIntegration, $integrationsById) : [];
 
 $queryParamsBase = $_GET;
-unset($queryParamsBase['end'], $queryParamsBase['compare_x'], $queryParamsBase['compare_y'], $queryParamsBase['compare_z'], $queryParamsBase['model'], $queryParamsBase['ads_metric_source']);
+unset($queryParamsBase['period'], $queryParamsBase['from'], $queryParamsBase['to'], $queryParamsBase['compare_y'], $queryParamsBase['compare_z'], $queryParamsBase['model'], $queryParamsBase['ads_metric_source']);
 
 include __DIR__ . '/_header.php';
 ?>
@@ -99,7 +206,11 @@ include __DIR__ . '/_header.php';
 .am-syncpill .dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-dim);flex-shrink:0}
 .am-syncpill.stale .dot{background:var(--warning);box-shadow:0 0 0 4px var(--warning-dim)}
 .am-filter{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}
-.am-filter form{display:grid;grid-template-columns:repeat(7,minmax(90px,1fr));gap:9px;align-items:end}
+.am-periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.am-periods a{padding:6px 10px;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:650;text-decoration:none}
+.am-periods a:hover,.am-periods a.active{background:var(--primary-dim);border-color:rgba(250,204,21,.3);color:var(--primary)}
+.am-filter form{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:9px;align-items:end}
+.am-block-title{font-size:12px;color:var(--muted);margin:0 0 8px;font-weight:650;text-transform:uppercase;letter-spacing:.05em}
 .am-filter label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
 .am-filter select,.am-filter input{width:100%;height:34px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 9px;font-size:11px}
 .am-filter .actions{display:flex;gap:7px}
@@ -107,8 +218,8 @@ include __DIR__ . '/_header.php';
 .metric{background:linear-gradient(145deg,var(--bg-card),rgba(13,21,38,.75));border:1px solid var(--border);border-radius:var(--r-lg);padding:13px;min-height:78px}
 .metric span{display:block;font-size:10px;color:var(--muted);margin-bottom:6px}
 .metric strong{font-size:19px;font-weight:780;letter-spacing:-.03em;color:var(--text)}
-.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.chart-box{height:260px;position:relative;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.chart-box{height:280px;position:relative;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px}
 .section-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px}
 .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:13px}
 .section-head h2{font-size:15px;margin:0;color:var(--text)}.section-head p{font-size:10px;color:var(--muted);margin:3px 0 0}
@@ -158,6 +269,19 @@ include __DIR__ . '/_header.php';
 .dot-sale.has-sale{background:var(--success);box-shadow:0 0 0 3px var(--success-dim)}
 .dot-sale.no-sale{background:var(--dim)}
 .empty{padding:28px;text-align:center;color:var(--muted);font-size:11px}
+.am-top-ads{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.am-ad-card{position:relative;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column}
+.am-ad-rank{position:absolute;top:8px;left:8px;background:var(--primary);color:#111827;font-weight:800;font-size:11px;padding:2px 8px;border-radius:999px;z-index:2}
+.am-ad-thumb{width:100%;aspect-ratio:1/1;background:#0a1120;display:flex;align-items:center;justify-content:center}
+.am-ad-thumb img{width:100%;height:100%;object-fit:cover}
+.am-ad-noimg{color:var(--dim);font-size:10px;text-align:center;padding:10px}
+.am-ad-info{padding:10px;display:flex;flex-direction:column;gap:4px}
+.am-ad-info strong{font-size:11px;color:var(--text);line-height:1.35;overflow-wrap:anywhere}
+.am-ad-ctx{font-size:9px;color:var(--muted);overflow-wrap:anywhere}
+.am-ad-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
+.am-ad-metrics div{background:var(--bg-card);border-radius:7px;padding:5px 6px}
+.am-ad-metrics small{display:block;font-size:7.5px;color:var(--muted);text-transform:uppercase}
+.am-ad-metrics strong{font-size:10.5px;color:var(--text)}
 @media(max-width:1100px){.metric-grid{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.am-filter form{grid-template-columns:repeat(3,1fr)}.am-chips{grid-template-columns:repeat(3,1fr)}}
 </style>
 
@@ -180,34 +304,55 @@ include __DIR__ . '/_header.php';
   </div>
 
   <div class="am-filter">
+    <div class="am-periods">
+      <?php foreach (['7' => '7 dias', '15' => '15 dias', '30' => '30 dias', '60' => '60 dias', '90' => '90 dias', '365' => '365 dias', 'month' => 'Mês atual', 'year' => 'Ano atual', 'custom' => 'Personalizado'] as $k => $label): ?>
+      <a class="<?= $preset === $k ? 'active' : '' ?>" href="?<?= am_h(http_build_query(array_merge($_GET, ['period' => $k]))) ?>"><?= am_h($label) ?></a>
+      <?php endforeach; ?>
+    </div>
     <form method="get">
+      <input type="hidden" name="period" value="<?= am_h($preset) ?>">
       <?php foreach ($queryParamsBase as $k => $v): if (!is_scalar($v)) continue; ?><input type="hidden" name="<?= am_h((string)$k) ?>" value="<?= am_h((string)$v) ?>"><?php endforeach; ?>
-      <div><label>Data final</label><input type="date" name="end" value="<?= am_h($endDate) ?>"></div>
-      <div><label>Janela X (dias)</label><input type="number" min="1" max="365" name="compare_x" value="<?= $compareDays['x'] ?>"></div>
-      <div><label>Janela Y (dias)</label><input type="number" min="1" max="365" name="compare_y" value="<?= $compareDays['y'] ?>"></div>
-      <div><label>Janela Z (dias)</label><input type="number" min="1" max="365" name="compare_z" value="<?= $compareDays['z'] ?>"></div>
+      <?php if ($preset === 'custom'): ?>
+      <div><label>Data início</label><input type="date" name="from" value="<?= am_h($period['start']) ?>"></div>
+      <div><label>Data fim</label><input type="date" name="to" value="<?= am_h($period['end']) ?>"></div>
+      <?php endif; ?>
       <div><label>Modelo de atribuição</label><select name="model"><option value="last_touch" <?= $model === 'last_touch' ? 'selected' : '' ?>>Último toque</option><option value="first_touch" <?= $model === 'first_touch' ? 'selected' : '' ?>>Primeiro toque</option></select></div>
       <div><label>Fonte de leads/vendas</label><select name="ads_metric_source"><option value="cross" <?= $adsMetricSource === 'cross' ? 'selected' : '' ?>>Cruzamento real</option><option value="meta" <?= $adsMetricSource === 'meta' ? 'selected' : '' ?>>Reportado pela Meta</option></select></div>
       <div class="actions"><button class="btn btn-primary" type="submit">Aplicar</button></div>
     </form>
+    <p style="margin:8px 0 0;font-size:10px;color:var(--muted)">Período selecionado: <strong><?= am_h(date('d/m/Y', strtotime($period['start']))) ?></strong> a <strong><?= am_h(date('d/m/Y', strtotime($period['end']))) ?></strong> (<?= $compareDays['x'] ?> dia(s)).</p>
   </div>
 
   <?php if ($unattributed > 0): ?>
   <div class="am-alert">
-    <span><strong><?= am_num($unattributed) ?></strong> venda(s) aprovada(s) na janela de <?= $compareDays['x'] ?> dias ainda sem lead/campanha casada.</span>
+    <span><strong><?= am_num($unattributed) ?></strong> venda(s) aprovada(s) no período ainda sem lead/campanha casada (<?= am_num(100 - $attributionRate, 1) ?>% do total).</span>
     <a href="vendas_analytics.php?model=<?= am_h($model) ?>#nao-atribuidas">Atribuir manualmente →</a>
   </div>
   <?php endif; ?>
 
+  <p class="am-block-title">Atribuído ao cruzamento (venda ↔ lead ↔ campanha)</p>
   <div class="metric-grid">
     <?php foreach ($metricCards as [$key, $label, $fmt]): $val = $globalView[$key] ?? 0; ?>
     <article class="metric"><span><?= am_h($label) ?></span><strong><?= $fmt === 'money' ? am_money($val) : ($fmt === 'decimal' ? am_num($val, 2) : am_num($val)) ?></strong></article>
     <?php endforeach; ?>
   </div>
 
+  <p class="am-block-title">Total geral do período (atribuído + não atribuído)</p>
+  <div class="metric-grid">
+    <article class="metric"><span>Investimento total</span><strong><?= am_money($totalSpend) ?></strong></article>
+    <article class="metric"><span>Leads totais</span><strong><?= am_num($totalLeads) ?></strong></article>
+    <article class="metric"><span>Vendas totais</span><strong><?= am_num($totalSales) ?></strong></article>
+    <article class="metric"><span>Faturamento líquido total</span><strong><?= am_money($totalRevenue) ?></strong></article>
+    <article class="metric"><span>ROAS total</span><strong><?= am_num($totalRoas, 2) ?></strong></article>
+    <article class="metric"><span>CAC total</span><strong><?= am_money($totalCac) ?></strong></article>
+    <article class="metric"><span>CPL total</span><strong><?= am_money($totalCpl) ?></strong></article>
+    <article class="metric"><span>Taxa de atribuição</span><strong><?= am_num($attributionRate, 1) ?>%</strong></article>
+  </div>
+
   <div class="chart-grid">
     <div class="chart-box"><canvas id="amSpendChart"></canvas></div>
-    <div class="chart-box"><canvas id="amLeadsSalesChart"></canvas></div>
+    <div class="chart-box"><canvas id="amRevenueChart"></canvas></div>
+    <div class="chart-box"><canvas id="amAttrChart"></canvas></div>
   </div>
 
   <section class="section-card">
@@ -224,6 +369,34 @@ include __DIR__ . '/_header.php';
       </tr>
       <?php endforeach; ?>
     </tbody></table></div>
+  </section>
+
+  <section class="section-card">
+    <div class="section-head"><div><h2>Top 10 anúncios</h2><p>Ranqueados por uma combinação de ROAS, CPC e CPL no período (só anúncios com investimento; prévia buscada ao vivo na Meta).</p></div></div>
+    <?php if (!$topAdsRaw): ?>
+    <div class="empty">Sem anúncios com investimento no período selecionado.</div>
+    <?php else: ?>
+    <div class="am-top-ads">
+      <?php foreach ($topAdsRaw as $rank => $topAd): $tView = $topAd['view']; $img = !empty($topAd['ad_id']) ? ($adCreatives[(string)$topAd['ad_id']] ?? '') : ''; ?>
+      <article class="am-ad-card">
+        <div class="am-ad-rank">#<?= $rank + 1 ?></div>
+        <div class="am-ad-thumb"><?php if ($img): ?><img src="<?= am_h($img) ?>" alt="" loading="lazy"><?php else: ?><div class="am-ad-noimg">Sem prévia</div><?php endif; ?></div>
+        <div class="am-ad-info">
+          <strong><?= am_h($topAd['ad']) ?></strong>
+          <span class="am-ad-ctx"><?= am_h($topAd['campaign']) ?> · <?= am_h($topAd['adset']) ?></span>
+          <div class="am-ad-metrics">
+            <div><small>ROAS</small><strong><?= am_num($tView['roas'], 2) ?></strong></div>
+            <div><small>CPC</small><strong><?= am_money($tView['cpc']) ?></strong></div>
+            <div><small>CPL</small><strong><?= am_money($tView['cpl']) ?></strong></div>
+            <div><small>Gasto</small><strong><?= am_money($tView['spend']) ?></strong></div>
+            <div><small>Vendas</small><strong><?= am_num($tView['sales']) ?></strong></div>
+            <div><small>Leads</small><strong><?= am_num($tView['leads']) ?></strong></div>
+          </div>
+        </div>
+      </article>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
   </section>
 
   <?php foreach ($accounts as $accIndex => $account):
@@ -342,6 +515,7 @@ include __DIR__ . '/_header.php';
   <?php endif; ?>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
 <script>
 document.querySelectorAll('.ads-toggle').forEach(btn=>btn.addEventListener('click',()=>{
   const id=btn.dataset.target,opening=btn.getAttribute('aria-expanded')!=='true';btn.setAttribute('aria-expanded',opening?'true':'false');btn.textContent=opening?'▼':'▶';
@@ -404,11 +578,21 @@ document.querySelectorAll('.ads-table th[data-sort-key]').forEach(th=>{
   });
 });
 
+function amMoneyLabel(v){if(!v)return '';return 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});}
+function amDoughnutOptions(title,formatter){
+  return {responsive:true,maintainAspectRatio:false,cutout:'58%',plugins:{
+    legend:{position:'bottom',labels:{color:'#94a3b8',boxWidth:10,font:{size:10}}},
+    title:{display:true,text:title,color:'#e2e8f0',font:{size:11}},
+    datalabels:{color:'#0b1220',backgroundColor:'rgba(255,255,255,.85)',borderRadius:4,padding:{top:2,bottom:2,left:5,right:5},font:{size:9,weight:'700'},formatter:formatter}
+  }};
+}
 <?php if ($accounts): ?>
 const amColors=<?= json_encode($accountChart['colors'], JSON_UNESCAPED_UNICODE) ?>;
-new Chart(document.getElementById('amSpendChart'),{type:'doughnut',data:{labels:<?= json_encode($accountChart['labels'], JSON_UNESCAPED_UNICODE) ?>,datasets:[{data:<?= json_encode($accountChart['spend']) ?>,backgroundColor:amColors,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',boxWidth:10,font:{size:10}}},title:{display:true,text:'Investimento por conta',color:'#e2e8f0',font:{size:11}}}}});
-new Chart(document.getElementById('amLeadsSalesChart'),{type:'bar',data:{labels:<?= json_encode($accountChart['labels'], JSON_UNESCAPED_UNICODE) ?>,datasets:[{label:'Leads reais',data:<?= json_encode($accountChart['leads']) ?>,backgroundColor:'rgba(56,189,248,.55)',borderRadius:4},{label:'Vendas atribuídas',data:<?= json_encode($accountChart['sales']) ?>,backgroundColor:'rgba(250,204,21,.7)',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#94a3b8',font:{size:9}},grid:{display:false}},y:{ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'#1a2540'}}},plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',boxWidth:10,font:{size:10}}},title:{display:true,text:'Leads e vendas reais por conta',color:'#e2e8f0',font:{size:11}}}}});
+const amLabels=<?= json_encode($accountChart['labels'], JSON_UNESCAPED_UNICODE) ?>;
+new Chart(document.getElementById('amSpendChart'),{type:'doughnut',plugins:[ChartDataLabels],data:{labels:amLabels,datasets:[{data:<?= json_encode($accountChart['spend']) ?>,backgroundColor:amColors,borderWidth:0}]},options:amDoughnutOptions('Investimento por conta',amMoneyLabel)});
+new Chart(document.getElementById('amRevenueChart'),{type:'doughnut',plugins:[ChartDataLabels],data:{labels:amLabels,datasets:[{data:<?= json_encode($accountChart['revenue']) ?>,backgroundColor:amColors,borderWidth:0}]},options:amDoughnutOptions('Faturamento líquido por conta',amMoneyLabel)});
 <?php endif; ?>
+new Chart(document.getElementById('amAttrChart'),{type:'doughnut',plugins:[ChartDataLabels],data:{labels:['Atribuídas','Não atribuídas'],datasets:[{data:[<?= (int)$attributedSalesCount ?>,<?= (int)$unattributed ?>],backgroundColor:['#22c55e','#334155'],borderWidth:0}]},options:amDoughnutOptions('Vendas atribuídas x não atribuídas',(v)=>v>0?v:'')});
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>

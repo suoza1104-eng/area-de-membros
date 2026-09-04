@@ -381,7 +381,7 @@ function metrics_period(string $preset, ?string $from = null, ?string $to = null
     } elseif ($preset === 'year') {
         $start = $today->setDate((int)$today->format('Y'), 1, 1); $end = $today;
     } else {
-        $days = in_array((int)$preset, [7,30,90,365], true) ? (int)$preset : 30;
+        $days = in_array((int)$preset, [7,15,30,60,90,365], true) ? (int)$preset : 30;
         $start = $today->modify('-' . ($days - 1) . ' days'); $end = $today;
     }
     if ($end < $start) [$start, $end] = [$end, $start];
