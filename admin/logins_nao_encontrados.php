@@ -1,9 +1,31 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/../app/funcoes.php';
+proteger_admin();
+
 $menu = 'alunos';
-require_once __DIR__ . '/_header.php';
+$page_title = 'Erros de Login';
 
 $pdo = getPDO();
+
+if (!function_exists('table_ok')) {
+    function table_ok(PDO $pdo, string $t): bool {
+        try { $pdo->query("SELECT 1 FROM `$t` LIMIT 0"); return true; } catch (Throwable $e) { return false; }
+    }
+}
+if (!function_exists('col_ok')) {
+    function col_ok(PDO $pdo, string $t, string $c): bool {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM `$t` LIKE :c");
+            $st->execute([':c' => $c]); return (bool)$st->fetch();
+        } catch (Throwable $e) { return false; }
+    }
+}
+
+// Garantir schema da tabela login_events (auto-migração)
+if (function_exists('am_ensure_login_events_schema')) {
+    am_ensure_login_events_schema($pdo);
+}
 
 // --- FILTROS E PARÂMETROS ---
 $q           = trim($_GET['q'] ?? '');
@@ -57,27 +79,33 @@ switch ($preset) {
 }
 
 // 1. Carregar conjunto de leads (attribution_leads) em memória para cruzamento ultra-rápido
-$leadRows = $pdo->query("SELECT LOWER(TRIM(lead_email)) AS email, turma_codigo, created_at FROM attribution_leads WHERE lead_email IS NOT NULL AND lead_email <> ''")->fetchAll(PDO::FETCH_ASSOC);
 $leadMap = [];
-foreach ($leadRows as $lr) {
-    $e = strtolower(trim((string)$lr['email']));
-    if ($e !== '' && !isset($leadMap[$e])) {
-        $leadMap[$e] = [
-            'turma' => $lr['turma_codigo'] ?: 'Sem Turma',
-            'created_at' => $lr['created_at']
-        ];
+try {
+    if (table_ok($pdo, 'attribution_leads')) {
+        $leadRows = $pdo->query("SELECT LOWER(TRIM(lead_email)) AS email, turma_codigo, created_at FROM attribution_leads WHERE lead_email IS NOT NULL AND lead_email <> ''")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($leadRows as $lr) {
+            $e = strtolower(trim((string)$lr['email']));
+            if ($e !== '' && !isset($leadMap[$e])) {
+                $leadMap[$e] = [
+                    'turma' => $lr['turma_codigo'] ?: 'Sem Turma',
+                    'created_at' => $lr['created_at']
+                ];
+            }
+        }
     }
-}
+} catch (Throwable $e) {}
 
 // 2. Carregar conjunto de vendas (v_sales_master) em memória
-$salesRows = $pdo->query("SELECT DISTINCT LOWER(TRIM(buyer_email)) AS email, provider FROM v_sales_master WHERE buyer_email IS NOT NULL AND buyer_email <> ''")->fetchAll(PDO::FETCH_ASSOC);
 $salesMap = [];
-foreach ($salesRows as $sr) {
-    $e = strtolower(trim((string)$sr['email']));
-    if ($e !== '') {
-        $salesMap[$e] = $sr['provider'] ?: 'hotmart';
+try {
+    $salesRows = $pdo->query("SELECT DISTINCT LOWER(TRIM(buyer_email)) AS email, provider FROM v_sales_master WHERE buyer_email IS NOT NULL AND buyer_email <> ''")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($salesRows as $sr) {
+        $e = strtolower(trim((string)$sr['email']));
+        if ($e !== '') {
+            $salesMap[$e] = $sr['provider'] ?: 'hotmart';
+        }
     }
-}
+} catch (Throwable $e) {}
 
 // 3. Montar Cláusulas SQL de login_events
 $whereClauses = ["(le.success = 0 OR le.user_id IS NULL OR le.user_id = 0)"];
@@ -94,22 +122,31 @@ if ($reason !== '' && $reason !== 'all') {
     $params['reason'] = $reason;
 }
 
+$hasPasswordCol = col_ok($pdo, 'login_events', 'password_typed');
+$selPassword = $hasPasswordCol ? "le.password_typed" : "NULL AS password_typed";
+
 if ($q !== '') {
-    $whereClauses[] = "(le.email LIKE :q OR le.ip LIKE :q OR le.failure_reason LIKE :q OR le.user_agent LIKE :q OR le.password_typed LIKE :q)";
+    if ($hasPasswordCol) {
+        $whereClauses[] = "(le.email LIKE :q OR le.ip LIKE :q OR le.failure_reason LIKE :q OR le.user_agent LIKE :q OR le.password_typed LIKE :q)";
+    } else {
+        $whereClauses[] = "(le.email LIKE :q OR le.ip LIKE :q OR le.failure_reason LIKE :q OR le.user_agent LIKE :q)";
+    }
     $params['q'] = '%' . $q . '%';
 }
 
 $whereSql = 'WHERE ' . implode(' AND ', $whereClauses);
 
-// Buscar todos os registros do período para cruzamento e aplicação de filtros em memória (lead_filter, sales_filter)
-$allSql = "SELECT le.id, le.user_id, le.logged_at, le.ip, le.user_agent, le.method, le.success, le.failure_reason, le.password_typed, LOWER(TRIM(le.email)) AS email
-           FROM login_events le
-           {$whereSql}
-           ORDER BY le.logged_at DESC, le.id DESC";
+$rawEvents = [];
+try {
+    $allSql = "SELECT le.id, le.user_id, le.logged_at, le.ip, le.user_agent, le.method, le.success, le.failure_reason, $selPassword, LOWER(TRIM(le.email)) AS email
+               FROM login_events le
+               {$whereSql}
+               ORDER BY le.logged_at DESC, le.id DESC";
 
-$stmtAll = $pdo->prepare($allSql);
-$stmtAll->execute($params);
-$rawEvents = $stmtAll->fetchAll(PDO::FETCH_ASSOC);
+    $stmtAll = $pdo->prepare($allSql);
+    $stmtAll->execute($params);
+    $rawEvents = $stmtAll->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
 
 // Cruzamento e Filtragem
 $filteredEvents = [];
@@ -204,60 +241,64 @@ $failedLoginDataSets = [
     'mes' => ['labels' => [], 'unicos' => [], 'tentativas' => []],
 ];
 
-// Por Dia (últimos 30 dias)
-$sqlDia = "
-    SELECT 
-        DATE_FORMAT(logged_at, '%d/%m') AS display_label,
-        COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
-        COUNT(*) AS total_tentativas
-    FROM login_events
-    WHERE success = 0
-      AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-    GROUP BY DATE(logged_at), DATE_FORMAT(logged_at, '%d/%m')
-    ORDER BY DATE(logged_at) ASC
-";
-foreach ($pdo->query($sqlDia)->fetchAll(PDO::FETCH_ASSOC) as $r) {
-    $failedLoginDataSets['dia']['labels'][] = $r['display_label'];
-    $failedLoginDataSets['dia']['unicos'][] = (int)$r['alunos_unicos'];
-    $failedLoginDataSets['dia']['tentativas'][] = (int)$r['total_tentativas'];
+if (table_ok($pdo, 'login_events')) {
+    try {
+        $sqlDia = "
+            SELECT 
+                DATE_FORMAT(logged_at, '%d/%m') AS display_label,
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+                COUNT(*) AS total_tentativas
+            FROM login_events
+            WHERE success = 0
+              AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY DATE(logged_at), DATE_FORMAT(logged_at, '%d/%m')
+            ORDER BY DATE(logged_at) ASC
+        ";
+        foreach ($pdo->query($sqlDia)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $failedLoginDataSets['dia']['labels'][] = $r['display_label'];
+            $failedLoginDataSets['dia']['unicos'][] = (int)$r['alunos_unicos'];
+            $failedLoginDataSets['dia']['tentativas'][] = (int)$r['total_tentativas'];
+        }
+
+        $sqlSemana = "
+            SELECT 
+                CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y')) AS display_label,
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+                COUNT(*) AS total_tentativas
+            FROM login_events
+            WHERE success = 0
+              AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)
+            GROUP BY DATE_FORMAT(logged_at, '%x-W%v'), CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y'))
+            ORDER BY DATE_FORMAT(logged_at, '%x-W%v') ASC
+        ";
+        foreach ($pdo->query($sqlSemana)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $failedLoginDataSets['semana']['labels'][] = $r['display_label'];
+            $failedLoginDataSets['semana']['unicos'][] = (int)$r['alunos_unicos'];
+            $failedLoginDataSets['semana']['tentativas'][] = (int)$r['total_tentativas'];
+        }
+
+        $sqlMes = "
+            SELECT 
+                DATE_FORMAT(logged_at, '%m/%Y') AS display_label,
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+                COUNT(*) AS total_tentativas
+            FROM login_events
+            WHERE success = 0
+              AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(logged_at, '%Y-%m'), DATE_FORMAT(logged_at, '%m/%Y')
+            ORDER BY DATE_FORMAT(logged_at, '%Y-%m') ASC
+        ";
+        foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $failedLoginDataSets['mes']['labels'][] = $r['display_label'];
+            $failedLoginDataSets['mes']['unicos'][] = (int)$r['alunos_unicos'];
+            $failedLoginDataSets['mes']['tentativas'][] = (int)$r['total_tentativas'];
+        }
+    } catch (Throwable $e) {}
 }
 
-// Por Semana (últimas 12 semanas)
-$sqlSemana = "
-    SELECT 
-        CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y')) AS display_label,
-        COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
-        COUNT(*) AS total_tentativas
-    FROM login_events
-    WHERE success = 0
-      AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)
-    GROUP BY DATE_FORMAT(logged_at, '%x-W%v'), CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y'))
-    ORDER BY DATE_FORMAT(logged_at, '%x-W%v') ASC
-";
-foreach ($pdo->query($sqlSemana)->fetchAll(PDO::FETCH_ASSOC) as $r) {
-    $failedLoginDataSets['semana']['labels'][] = $r['display_label'];
-    $failedLoginDataSets['semana']['unicos'][] = (int)$r['alunos_unicos'];
-    $failedLoginDataSets['semana']['tentativas'][] = (int)$r['total_tentativas'];
-}
-
-// Por Mês (últimos 12 meses)
-$sqlMes = "
-    SELECT 
-        DATE_FORMAT(logged_at, '%m/%Y') AS display_label,
-        COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
-        COUNT(*) AS total_tentativas
-    FROM login_events
-    WHERE success = 0
-      AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-    GROUP BY DATE_FORMAT(logged_at, '%Y-%m'), DATE_FORMAT(logged_at, '%m/%Y')
-    ORDER BY DATE_FORMAT(logged_at, '%Y-%m') ASC
-";
-foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
-    $failedLoginDataSets['mes']['labels'][] = $r['display_label'];
-    $failedLoginDataSets['mes']['unicos'][] = (int)$r['alunos_unicos'];
-    $failedLoginDataSets['mes']['tentativas'][] = (int)$r['total_tentativas'];
-}
+require_once __DIR__ . '/_header.php';
 ?>
+<script src="https://unpkg.com/@phosphor-icons/web"></script>
 
 <style>
 .lni-container { display: flex; flex-direction: column; gap: 18px; font-family: system-ui, -apple-system, sans-serif; color: var(--text); }
