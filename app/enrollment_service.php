@@ -179,7 +179,13 @@ function enrollment_register(PDO $pdo, array $input): array
                 $params[':senha_hash'] = password_hash(preg_replace('/\D+/', '', $telefone) ?: bin2hex(random_bytes(6)), PASSWORD_DEFAULT);
             }
             if (enrollment_column_exists($pdo, 'users', 'created_at')) {
-                $columns[] = '`created_at`'; $holders[] = 'NOW()';
+                $columns[] = '`created_at`';
+                if (!empty($values['created_at'])) {
+                    $holders[] = ':v_created_at_override';
+                    $params[':v_created_at_override'] = (string)$values['created_at'];
+                } else {
+                    $holders[] = 'NOW()';
+                }
             }
             $pdo->prepare('INSERT INTO users ('.implode(',', $columns).') VALUES ('.implode(',', $holders).')')->execute($params);
             $userId = (int)$pdo->lastInsertId();
