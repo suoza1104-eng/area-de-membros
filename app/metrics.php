@@ -189,7 +189,7 @@ function metrics_ensure_schema(PDO $pdo): void
 {
     static $ready = false;
     if ($ready) return;
-    $schemaVersion = '5';
+    $schemaVersion = '6';
     try {
         if ((string)get_setting('metrics_schema_version', '') === $schemaVersion) {
             $ready = true;
@@ -207,6 +207,16 @@ function metrics_ensure_schema(PDO $pdo): void
         "ALTER TABLE hotmart_sales_live ADD COLUMN sale_origin VARCHAR(100) NULL AFTER installments_number",
         "ALTER TABLE hotmart_sales_live ADD COLUMN sales_channel VARCHAR(40) NOT NULL DEFAULT 'hotmart' AFTER sale_origin",
         "ALTER TABLE hotmart_sales_live ADD KEY idx_hotmart_live_payment (payment_type)",
+        // Qual conta de anuncio (integracao Meta) e dona da campanha
+        // atribuida a cada venda/linha diaria — resolvido via nome da
+        // campanha em meta_campaign_daily (ver build_meta_name_lookup()).
+        "ALTER TABLE attribution_matches ADD COLUMN integration_id BIGINT UNSIGNED NULL AFTER ad_name_norm",
+        "ALTER TABLE attribution_matches ADD COLUMN ad_account_name VARCHAR(150) NULL AFTER integration_id",
+        "ALTER TABLE attribution_matches ADD KEY idx_attribution_matches_integration (integration_id)",
+        "ALTER TABLE attribution_matches ADD CONSTRAINT fk_attribution_matches_integration FOREIGN KEY (integration_id) REFERENCES meta_integrations(id) ON DELETE SET NULL",
+        "ALTER TABLE attribution_campaign_daily ADD COLUMN integration_id BIGINT UNSIGNED NULL AFTER ad_name_norm",
+        "ALTER TABLE attribution_campaign_daily ADD COLUMN ad_account_name VARCHAR(150) NULL AFTER integration_id",
+        "ALTER TABLE attribution_campaign_daily ADD KEY idx_attribution_daily_integration (integration_id)",
     ] as $migration) {
         try { $pdo->exec($migration); } catch (Throwable $e) { /* idempotente */ }
     }

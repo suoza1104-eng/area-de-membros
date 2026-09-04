@@ -391,11 +391,13 @@ function upsert_attribution_match($pdo, array $row) {
             sale_id, lead_id, attribution_model, match_type, attribution_seconds_diff,
             lead_created_at, sale_date, campaign_group, campaign_group_norm,
             campaign_name, campaign_name_norm, ad_name, ad_name_norm,
+            integration_id, ad_account_name,
             revenue_value, product_name, created_at, updated_at
         ) VALUES (
             :sale_id, :lead_id, :attribution_model, :match_type, :attribution_seconds_diff,
             :lead_created_at, :sale_date, :campaign_group, :campaign_group_norm,
             :campaign_name, :campaign_name_norm, :ad_name, :ad_name_norm,
+            :integration_id, :ad_account_name,
             :revenue_value, :product_name, NOW(), NOW()
         ) ON DUPLICATE KEY UPDATE
             lead_id = VALUES(lead_id),
@@ -409,11 +411,15 @@ function upsert_attribution_match($pdo, array $row) {
             campaign_name_norm = VALUES(campaign_name_norm),
             ad_name = VALUES(ad_name),
             ad_name_norm = VALUES(ad_name_norm),
+            integration_id = VALUES(integration_id),
+            ad_account_name = VALUES(ad_account_name),
             revenue_value = VALUES(revenue_value),
             product_name = VALUES(product_name),
             updated_at = NOW()";
         $stmt = $pdo->prepare($sql);
     }
+    if (!array_key_exists('integration_id', $row)) { $row['integration_id'] = null; }
+    if (!array_key_exists('ad_account_name', $row)) { $row['ad_account_name'] = ''; }
     $stmt->execute($row);
 }
 
@@ -463,15 +469,25 @@ function fetch_manual_attribution_rows_attr(PDO $pdo): array
 
 function build_meta_name_lookup(PDO $pdo, int $integrationId = 0): array
 {
-    $campaigns = []; $adsets = []; $ads = [];
+    $campaigns = []; $campaignAccounts = []; $adsets = []; $ads = [];
     $whereInteg = $integrationId > 0 ? "WHERE integration_id = :id AND" : "WHERE";
     $params = $integrationId > 0 ? ['id' => $integrationId] : [];
 
-    $stmt = $pdo->prepare("SELECT campaign_name FROM meta_campaign_daily {$whereInteg} campaign_name <> '' GROUP BY campaign_name ORDER BY campaign_name");
+    // Nome da conta por integration_id, para rotular de qual conta de anuncio
+    // cada campanha veio (uma campanha pertence sempre a uma unica conta).
+    $accountNames = [];
+    foreach ($pdo->query('SELECT id, name FROM meta_integrations')->fetchAll() as $row) {
+        $accountNames[(int)$row['id']] = (string)$row['name'];
+    }
+
+    $stmt = $pdo->prepare("SELECT campaign_name, MIN(integration_id) AS integration_id FROM meta_campaign_daily {$whereInteg} campaign_name <> '' GROUP BY campaign_name ORDER BY campaign_name");
     $stmt->execute($params);
     foreach ($stmt->fetchAll() as $row) {
         $name = trim((string)$row['campaign_name']);
-        if ($name !== '') { $campaigns[normalize_match_key($name)] = $name; }
+        if ($name === '') continue;
+        $norm = normalize_match_key($name);
+        $campaigns[$norm] = $name;
+        $campaignAccounts[$norm] = (int)$row['integration_id'];
     }
     $stmt = $pdo->prepare("SELECT campaign_name, adset_name FROM meta_adset_daily {$whereInteg} campaign_name <> '' AND adset_name <> '' GROUP BY campaign_name, adset_name ORDER BY campaign_name, adset_name");
     $stmt->execute($params);
@@ -495,7 +511,7 @@ function build_meta_name_lookup(PDO $pdo, int $integrationId = 0): array
         $adNorm = normalize_match_key($ad);
         $ads[$campaignNorm][$adsetNorm][$adNorm] = $ad;
     }
-    return ['campaigns' => $campaigns, 'adsets' => $adsets, 'ads' => $ads];
+    return ['campaigns' => $campaigns, 'campaign_accounts' => $campaignAccounts, 'account_names' => $accountNames, 'adsets' => $adsets, 'ads' => $ads];
 }
 
 function resolve_meta_names_from_lead(array $metaLookup, array $lead): array
@@ -506,18 +522,23 @@ function resolve_meta_names_from_lead(array $metaLookup, array $lead): array
 
     $campaignNorm = normalize_match_key($leadCampaign);
     if ($campaignNorm === '') {
-        return ['matched' => false, 'failure_reason' => 'campanha_vazia'];
+        return ['matched' => false, 'failure_reason' => 'campanha_vazia', 'integration_id' => null, 'ad_account_name' => ''];
     }
 
     $campaignKey = isset($metaLookup['campaigns'][$campaignNorm])
         ? $campaignNorm
         : best_fuzzy_key_match($campaignNorm, $metaLookup['campaigns'], 92.0);
     if ($campaignKey === '') {
-        return ['matched' => false, 'failure_reason' => 'campanha_nao_encontrada'];
+        return ['matched' => false, 'failure_reason' => 'campanha_nao_encontrada', 'integration_id' => null, 'ad_account_name' => ''];
     }
 
     $campaignName = $metaLookup['campaigns'][$campaignKey] ?? $leadCampaign;
     $campaignNameNorm = normalize_match_key($campaignName);
+    // A campanha resolvida acima pertence sempre a uma unica conta de anuncio
+    // (integration_id vem de meta_campaign_daily) — usa isso para saber de
+    // qual conta a venda veio, sem precisar de um campo extra no lead/venda.
+    $integrationId = (int)($metaLookup['campaign_accounts'][$campaignKey] ?? 0);
+    $adAccountName = $integrationId > 0 ? (string)($metaLookup['account_names'][$integrationId] ?? '') : '';
 
     $result = [
         'matched' => true,
@@ -529,6 +550,8 @@ function resolve_meta_names_from_lead(array $metaLookup, array $lead): array
         'campaign_name_norm' => '',
         'ad_name' => '',
         'ad_name_norm' => '',
+        'integration_id' => $integrationId > 0 ? $integrationId : null,
+        'ad_account_name' => $adAccountName,
     ];
 
     $adsetNorm = normalize_match_key($leadAdset);
@@ -604,6 +627,9 @@ function sync_attribution_matches($pdo, int $integrationId) {
                         }
                     }
                     if ($leadId <= 0) { continue; }
+                    $manualCampaignNorm = (string)($manual['campaign_group_norm'] ?? normalize_match_key($manual['campaign_group'] ?? ''));
+                    $manualIntegrationId = $metaNameLookup['campaign_accounts'][$manualCampaignNorm] ?? null;
+                    $manualAccountName = $manualIntegrationId ? (string)($metaNameLookup['account_names'][$manualIntegrationId] ?? '') : '';
                     upsert_attribution_match($pdo, [
                         'sale_id' => (int)$sale['id'],
                         'lead_id' => $leadId,
@@ -613,11 +639,13 @@ function sync_attribution_matches($pdo, int $integrationId) {
                         'lead_created_at' => $lead ? (string)$lead['created_at'] : $saleDate,
                         'sale_date' => $saleDate,
                         'campaign_group' => (string)($manual['campaign_group'] ?? ''),
-                        'campaign_group_norm' => (string)($manual['campaign_group_norm'] ?? normalize_match_key($manual['campaign_group'] ?? '')),
+                        'campaign_group_norm' => $manualCampaignNorm,
                         'campaign_name' => (string)($manual['campaign_name'] ?? ''),
                         'campaign_name_norm' => (string)($manual['campaign_name_norm'] ?? normalize_match_key($manual['campaign_name'] ?? '')),
                         'ad_name' => (string)($manual['ad_name'] ?? ''),
                         'ad_name_norm' => (string)($manual['ad_name_norm'] ?? normalize_match_key($manual['ad_name'] ?? '')),
+                        'integration_id' => $manualIntegrationId ? (int)$manualIntegrationId : null,
+                        'ad_account_name' => $manualAccountName,
                         'revenue_value' => value_to_float($sale['producer_net'] ?? $sale['net_revenue'] ?? 0),
                         'product_name' => (string)($sale['product_name'] ?? ''),
                     ]);
@@ -670,6 +698,8 @@ function sync_attribution_matches($pdo, int $integrationId) {
                     'campaign_name_norm' => (string)$resolved['campaign_name_norm'],
                     'ad_name' => (string)$resolved['ad_name'],
                     'ad_name_norm' => (string)$resolved['ad_name_norm'],
+                    'integration_id' => $resolved['integration_id'] ?? null,
+                    'ad_account_name' => (string)($resolved['ad_account_name'] ?? ''),
                     'revenue_value' => value_to_float($sale['producer_net'] ?? $sale['net_revenue'] ?? 0),
                     'product_name' => (string)($sale['product_name'] ?? ''),
                 ]);
@@ -770,16 +800,20 @@ function upsert_attribution_daily($pdo, array $row) {
         $sql = "INSERT INTO attribution_campaign_daily (
             report_date, attribution_model, campaign_group, campaign_group_norm,
             campaign_name, campaign_name_norm, ad_name, ad_name_norm,
+            integration_id, ad_account_name,
             meta_spend, impressions, reach, clicks, frequency, cpm, cpc, ctr,
             leads, attributed_sales, attributed_revenue, cpl, cac, roas,
             created_at, updated_at
         ) VALUES (
             :report_date, :attribution_model, :campaign_group, :campaign_group_norm,
             :campaign_name, :campaign_name_norm, :ad_name, :ad_name_norm,
+            :integration_id, :ad_account_name,
             :meta_spend, :impressions, :reach, :clicks, :frequency, :cpm, :cpc, :ctr,
             :leads, :attributed_sales, :attributed_revenue, :cpl, :cac, :roas,
             NOW(), NOW()
         ) ON DUPLICATE KEY UPDATE
+            integration_id = VALUES(integration_id),
+            ad_account_name = VALUES(ad_account_name),
             meta_spend = VALUES(meta_spend),
             impressions = VALUES(impressions),
             reach = VALUES(reach),
@@ -797,6 +831,8 @@ function upsert_attribution_daily($pdo, array $row) {
             updated_at = NOW()";
         $stmt = $pdo->prepare($sql);
     }
+    if (!array_key_exists('integration_id', $row)) { $row['integration_id'] = null; }
+    if (!array_key_exists('ad_account_name', $row)) { $row['ad_account_name'] = ''; }
     $stmt->execute($row);
 }
 
@@ -808,6 +844,10 @@ function sync_attribution_daily($pdo, $integrationId, $daysBack = null) {
         $startDate = date('Y-m-d', strtotime('-' . $daysBack . ' days'));
         $pdo->prepare('DELETE FROM attribution_campaign_daily WHERE report_date >= :start_date')->execute(['start_date' => $startDate]);
         $metaLookup = build_meta_lookup($pdo, $integrationId, $startDate);
+        // Mesmo lookup nome->conta usado no matching (sync_attribution_matches),
+        // para rotular cada linha do consolidado diario com a conta de anuncio
+        // dona da campanha (campaign_group_norm mapeia sempre para uma unica conta).
+        $metaNameLookup = build_meta_name_lookup($pdo, $integrationId);
         $leadStmt = $pdo->prepare('SELECT DATE(created_at) AS report_date, utm_campaign_group, utm_campaign_group_norm, utm_campaign_name, utm_campaign_name_norm, utm_ad_name, utm_ad_name_norm, COUNT(*) AS leads FROM attribution_leads WHERE created_at >= :start_date GROUP BY DATE(created_at), utm_campaign_group_norm, utm_campaign_name_norm, utm_ad_name_norm, utm_campaign_group, utm_campaign_name, utm_ad_name');
         $leadStmt->execute(['start_date' => $startDate . ' 00:00:00']);
         $leadRows = $leadStmt->fetchAll();
@@ -848,11 +888,14 @@ function sync_attribution_daily($pdo, $integrationId, $daysBack = null) {
         foreach ($bucket as $row) {
             $meta = meta_metrics_from_lookup($metaLookup, (string)$row['report_date'], (string)$row['campaign_group_norm'], (string)$row['campaign_name_norm'], (string)$row['ad_name_norm']);
             $spend = value_to_float($meta['spend']); $leads = (int)$row['leads']; $sales = (int)$row['attributed_sales']; $revenue = value_to_float($row['attributed_revenue']);
+            $rowIntegrationId = $metaNameLookup['campaign_accounts'][(string)$row['campaign_group_norm']] ?? null;
+            $rowAccountName = $rowIntegrationId ? (string)($metaNameLookup['account_names'][$rowIntegrationId] ?? '') : '';
             upsert_attribution_daily($pdo, [
                 'report_date' => (string)$row['report_date'], 'attribution_model' => (string)$row['attribution_model'],
                 'campaign_group' => (string)$row['campaign_group'], 'campaign_group_norm' => (string)$row['campaign_group_norm'],
                 'campaign_name' => (string)$row['campaign_name'], 'campaign_name_norm' => (string)$row['campaign_name_norm'],
                 'ad_name' => (string)$row['ad_name'], 'ad_name_norm' => (string)$row['ad_name_norm'],
+                'integration_id' => $rowIntegrationId ? (int)$rowIntegrationId : null, 'ad_account_name' => $rowAccountName,
                 'meta_spend' => $spend, 'impressions' => value_to_int($meta['impressions']), 'reach' => value_to_int($meta['reach']), 'clicks' => value_to_int($meta['clicks']),
                 'frequency' => value_to_float($meta['frequency']), 'cpm' => value_to_float($meta['cpm']), 'cpc' => value_to_float($meta['cpc']), 'ctr' => value_to_float($meta['ctr']),
                 'leads' => $leads, 'attributed_sales' => $sales, 'attributed_revenue' => $revenue,
