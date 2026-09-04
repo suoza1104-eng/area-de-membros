@@ -858,7 +858,20 @@ function md_ads_hierarchy(PDO $pdo,string $endDate,string $model,array $windowDa
     $leads=md_rows($pdo,"SELECT DATE(created_at) report_date,utm_campaign_group campaign,utm_campaign_name adset,utm_ad_name ad,COUNT(*) qty FROM attribution_leads WHERE created_at BETWEEN :start AND :end GROUP BY DATE(created_at),utm_campaign_group_norm,utm_campaign_name_norm,utm_ad_name_norm,utm_campaign_group,utm_campaign_name,utm_ad_name",['start'=>$start.' 00:00:00','end'=>$endDate.' 23:59:59']);
     foreach($leads as $r){$key=$ensure((string)$r['campaign'],(string)$r['adset'],(string)$r['ad']);foreach($windowKeys((string)$r['report_date']) as $w)$leaves[$key]['metrics'][$w]['cross_leads']+=(int)$r['qty'];}
 
-    $sales=md_rows($pdo,"SELECT DATE(sale_date) report_date,campaign_group campaign,campaign_name adset,ad_name ad,COUNT(*) qty,SUM(revenue_value) revenue FROM attribution_matches WHERE attribution_model=:model AND sale_date BETWEEN :start AND :end GROUP BY DATE(sale_date),campaign_group_norm,campaign_name_norm,ad_name_norm,campaign_group,campaign_name,ad_name",['model'=>$model,'start'=>$start.' 00:00:00','end'=>$endDate.' 23:59:59']);
+    // JOIN com v_sales_master (fonte unica de verdade das vendas, alimentada
+    // pelas tabelas dedicadas) e status='APPROVED' obrigatorio: sem isso,
+    // codigos de transacao orfaos em attribution_matches (ex.: um transaction_code
+    // antigo que a Pagar.me trocou de formato, ou uma venda que nunca chegou
+    // na tabela dedicada) inflavam "vendas atribuidas" acima de "vendas
+    // totais" — o mesmo cuidado que md_snapshot() ja tinha (JOIN v_sales_master
+    // hs ON hs.transaction_code=axs.transaction_code), so que esta consulta
+    // da arvore nao tinha.
+    $sales=md_rows($pdo,"SELECT DATE(m.sale_date) report_date,m.campaign_group campaign,m.campaign_name adset,m.ad_name ad,COUNT(*) qty,SUM(m.revenue_value) revenue
+        FROM attribution_matches m
+        JOIN attribution_sales axs ON axs.id=m.sale_id
+        JOIN v_sales_master vsm ON vsm.transaction_code=axs.transaction_code AND vsm.status='APPROVED'
+        WHERE m.attribution_model=:model AND m.sale_date BETWEEN :start AND :end
+        GROUP BY DATE(m.sale_date),m.campaign_group_norm,m.campaign_name_norm,m.ad_name_norm,m.campaign_group,m.campaign_name,m.ad_name",['model'=>$model,'start'=>$start.' 00:00:00','end'=>$endDate.' 23:59:59']);
     foreach($sales as $r){$key=$ensure((string)$r['campaign'],(string)$r['adset'],(string)$r['ad']);foreach($windowKeys((string)$r['report_date']) as $w){$leaves[$key]['metrics'][$w]['cross_sales']+=(int)$r['qty'];$leaves[$key]['metrics'][$w]['cross_revenue']+=(float)$r['revenue'];}}
 
     $tree=[];
@@ -969,5 +982,5 @@ function md_ads_metric_view(array $metrics,string $source): array
 {
     $spend=(float)($metrics['spend']??0);$impressions=(int)($metrics['impressions']??0);$reach=(int)($metrics['reach']??0);$clicks=(int)($metrics['clicks']??0);$meta=$source==='meta';
     $leads=(int)($metrics[$meta?'meta_leads':'cross_leads']??0);$sales=(int)($metrics[$meta?'meta_sales':'cross_sales']??0);$revenue=(float)($metrics[$meta?'meta_roas_revenue':'cross_revenue']??0);
-    return ['spend'=>$spend,'leads'=>$leads,'sales'=>$sales,'revenue'=>$revenue,'cpl'=>$leads>0?$spend/$leads:0,'cac'=>$sales>0?$spend/$sales:0,'roas'=>$spend>0?$revenue/$spend:0,'cpc'=>$clicks>0?$spend/$clicks:0,'cpm'=>$impressions>0?$spend/$impressions*1000:0,'frequency'=>$reach>0?$impressions/$reach:0];
+    return ['spend'=>$spend,'leads'=>$leads,'sales'=>$sales,'revenue'=>$revenue,'cpl'=>$leads>0?$spend/$leads:0,'cac'=>$sales>0?$spend/$sales:0,'roas'=>$spend>0?$revenue/$spend:0,'cpc'=>$clicks>0?$spend/$clicks:0,'cpm'=>$impressions>0?$spend/$impressions*1000:0,'ctr'=>$impressions>0?$clicks/$impressions*100:0,'frequency'=>$reach>0?$impressions/$reach:0];
 }

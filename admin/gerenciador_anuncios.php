@@ -48,10 +48,21 @@ function am_collect_ads(array $tree): array {
     }
     return $ads;
 }
-// Ranqueia por uma pontuacao composta (ROAS pesa a favor, CPC e CPL pesam
-// contra), cada metrica normalizada 0-1 dentro do proprio conjunto de
-// anuncios com investimento no periodo — assim nenhuma das 3 metricas
-// domina sozinha so por causa de escala (ex.: ROAS 5 vs CPC R$0,50).
+// Normalizacao min-max classica: devolve 0..1 de acordo com a posicao do
+// valor entre o pior e o melhor do proprio grupo. $lowerIsBetter inverte a
+// escala (CPC baixo e melhor; ROAS e CTR altos sao melhores).
+function am_normalize_minmax(float $value, float $min, float $max, bool $lowerIsBetter): float {
+    if ($max <= $min) return 1.0;
+    $ratio = max(0.0, min(1.0, ($value - $min) / ($max - $min)));
+    return $lowerIsBetter ? 1.0 - $ratio : $ratio;
+}
+// Ranqueia por uma pontuacao composta de ROAS (quanto maior, melhor), CPC
+// (quanto menor, melhor) e CTR (quanto maior, melhor) — os 3 criterios que
+// definem um anuncio eficiente. Cada metrica e normalizada min-max dentro do
+// proprio conjunto de anuncios com investimento no periodo (nao contra um
+// valor fixo), entao a pontuacao reflete a posicao relativa real do anuncio
+// naquele periodo, nao um numero absoluto que muda de escala conforme o
+// produto/campanha. A pontuacao 0..1 vira uma nota de 1 a 10 para exibicao.
 function am_rank_top_ads(array $ads, string $source, int $limit = 10): array {
     $rows = [];
     foreach ($ads as $ad) {
@@ -61,14 +72,18 @@ function am_rank_top_ads(array $ads, string $source, int $limit = 10): array {
         $rows[] = $ad;
     }
     if (!$rows) return [];
-    $maxRoas = max(array_map(static fn($r) => $r['view']['roas'], $rows)) ?: 1.0;
-    $maxCpc = max(array_map(static fn($r) => $r['view']['cpc'], $rows)) ?: 1.0;
-    $maxCpl = max(array_map(static fn($r) => $r['view']['cpl'], $rows)) ?: 1.0;
+    $roasVals = array_map(static fn($r) => $r['view']['roas'], $rows);
+    $cpcVals = array_map(static fn($r) => $r['view']['cpc'], $rows);
+    $ctrVals = array_map(static fn($r) => $r['view']['ctr'], $rows);
+    $roasMin = min($roasVals); $roasMax = max($roasVals);
+    $cpcMin = min($cpcVals); $cpcMax = max($cpcVals);
+    $ctrMin = min($ctrVals); $ctrMax = max($ctrVals);
     foreach ($rows as &$r) {
-        $roasScore = $maxRoas > 0 ? $r['view']['roas'] / $maxRoas : 0.0;
-        $cpcScore = $maxCpc > 0 ? 1.0 - ($r['view']['cpc'] / $maxCpc) : 1.0;
-        $cplScore = $maxCpl > 0 ? 1.0 - ($r['view']['cpl'] / $maxCpl) : 1.0;
-        $r['score'] = ($roasScore + $cpcScore + $cplScore) / 3;
+        $roasScore = am_normalize_minmax($r['view']['roas'], $roasMin, $roasMax, false);
+        $cpcScore = am_normalize_minmax($r['view']['cpc'], $cpcMin, $cpcMax, true);
+        $ctrScore = am_normalize_minmax($r['view']['ctr'], $ctrMin, $ctrMax, false);
+        $r['score'] = ($roasScore + $cpcScore + $ctrScore) / 3;
+        $r['nota'] = max(1, min(10, (int)round(1 + $r['score'] * 9)));
     }
     unset($r);
     usort($rows, static fn($a, $b) => $b['score'] <=> $a['score']);
@@ -272,6 +287,11 @@ include __DIR__ . '/_header.php';
 .am-top-ads{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .am-ad-card{position:relative;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column}
 .am-ad-rank{position:absolute;top:8px;left:8px;background:var(--primary);color:#111827;font-weight:800;font-size:11px;padding:2px 8px;border-radius:999px;z-index:2}
+.am-ad-nota{position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:baseline;gap:1px;font-weight:800;font-size:13px;padding:3px 8px;border-radius:999px;color:#fff}
+.am-ad-nota small{font-weight:650;font-size:8px;opacity:.85}
+.am-ad-nota.is-high{background:rgba(34,197,94,.9)}
+.am-ad-nota.is-mid{background:rgba(245,158,11,.9)}
+.am-ad-nota.is-low{background:rgba(239,68,68,.9)}
 .am-ad-thumb{width:100%;aspect-ratio:1/1;background:#0a1120;display:flex;align-items:center;justify-content:center}
 .am-ad-thumb img{width:100%;height:100%;object-fit:cover}
 .am-ad-noimg{color:var(--dim);font-size:10px;text-align:center;padding:10px}
@@ -372,14 +392,15 @@ include __DIR__ . '/_header.php';
   </section>
 
   <section class="section-card">
-    <div class="section-head"><div><h2>Top 10 anúncios</h2><p>Ranqueados por uma combinação de ROAS, CPC e CPL no período (só anúncios com investimento; prévia buscada ao vivo na Meta).</p></div></div>
+    <div class="section-head"><div><h2>Top 10 anúncios</h2><p>Nota de 1 a 10 combinando ROAS (maior melhor), CPC (menor melhor) e CTR (maior melhor) no período — cada métrica comparada contra o próprio grupo de anúncios com investimento. Prévia buscada ao vivo na Meta.</p></div></div>
     <?php if (!$topAdsRaw): ?>
     <div class="empty">Sem anúncios com investimento no período selecionado.</div>
     <?php else: ?>
     <div class="am-top-ads">
-      <?php foreach ($topAdsRaw as $rank => $topAd): $tView = $topAd['view']; $img = !empty($topAd['ad_id']) ? ($adCreatives[(string)$topAd['ad_id']] ?? '') : ''; ?>
+      <?php foreach ($topAdsRaw as $rank => $topAd): $tView = $topAd['view']; $img = !empty($topAd['ad_id']) ? ($adCreatives[(string)$topAd['ad_id']] ?? '') : ''; $notaClass = $topAd['nota'] >= 8 ? 'is-high' : ($topAd['nota'] >= 5 ? 'is-mid' : 'is-low'); ?>
       <article class="am-ad-card">
         <div class="am-ad-rank">#<?= $rank + 1 ?></div>
+        <div class="am-ad-nota <?= $notaClass ?>" title="Nota de eficiência (ROAS + CPC + CTR)"><?= $topAd['nota'] ?><small>/10</small></div>
         <div class="am-ad-thumb"><?php if ($img): ?><img src="<?= am_h($img) ?>" alt="" loading="lazy"><?php else: ?><div class="am-ad-noimg">Sem prévia</div><?php endif; ?></div>
         <div class="am-ad-info">
           <strong><?= am_h($topAd['ad']) ?></strong>
@@ -387,7 +408,7 @@ include __DIR__ . '/_header.php';
           <div class="am-ad-metrics">
             <div><small>ROAS</small><strong><?= am_num($tView['roas'], 2) ?></strong></div>
             <div><small>CPC</small><strong><?= am_money($tView['cpc']) ?></strong></div>
-            <div><small>CPL</small><strong><?= am_money($tView['cpl']) ?></strong></div>
+            <div><small>CTR</small><strong><?= am_num($tView['ctr'], 2) ?>%</strong></div>
             <div><small>Gasto</small><strong><?= am_money($tView['spend']) ?></strong></div>
             <div><small>Vendas</small><strong><?= am_num($tView['sales']) ?></strong></div>
             <div><small>Leads</small><strong><?= am_num($tView['leads']) ?></strong></div>
