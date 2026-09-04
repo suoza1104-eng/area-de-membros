@@ -821,10 +821,33 @@ function md_ads_hierarchy(PDO $pdo,string $endDate,string $model,array $windowDa
     $windows=[];$end=new DateTimeImmutable($endDate);
     foreach($windowDays as $key=>$days){$days=max(1,min(365,(int)$days));$windows[$key]=$end->modify('-'.($days-1).' days')->format('Y-m-d');}
     $start=min($windows);$leaves=[];
-    $ensure=function(string $campaign,string $adset,string $ad)use(&$leaves,$windows):string{
-        $campaign=trim($campaign)?:'Sem campanha';$adset=trim($adset)?:'Sem conjunto';$ad=trim($ad)?:'Sem anúncio';
-        $key=normalize_match_key($campaign).'|'.normalize_match_key($adset).'|'.normalize_match_key($ad);
-        if(!isset($leaves[$key]))$leaves[$key]=['campaign'=>$campaign,'adset'=>$adset,'ad'=>$ad,'metrics'=>md_ads_empty_metrics($windows)];
+    // Nomes oficiais da Meta (mesmo lookup usado no motor de atribuicao) para
+    // resolver o nome de EXIBICAO de campanha/conjunto/anuncio antes de
+    // agrupar. Sem isso, a mesma campanha vira varias linhas na arvore
+    // sempre que a UTM chega com uma variacao de encoding (ex.: "+" no lugar
+    // de espaco, maiuscula/minuscula) — normalize_match_key ja deduplicava a
+    // METRICA de cada folha corretamente, mas o agrupamento por campanha/
+    // conjunto logo abaixo reagrupava pelo texto CRU de novo, fragmentando a
+    // mesma campanha em varias entradas com o mesmo total de gasto repetido.
+    $metaNameLookup=build_meta_name_lookup($pdo,0);
+    $campaignDisplay=[];$adsetDisplay=[];$adDisplay=[];
+    $ensure=function(string $campaign,string $adset,string $ad)use(&$leaves,$windows,$metaNameLookup,&$campaignDisplay,&$adsetDisplay,&$adDisplay):string{
+        $campaignRaw=trim($campaign)?:'Sem campanha';$adsetRaw=trim($adset)?:'Sem conjunto';$adRaw=trim($ad)?:'Sem anúncio';
+        $cNorm=normalize_match_key($campaignRaw);$aNorm=normalize_match_key($adsetRaw);$dNorm=normalize_match_key($adRaw);
+
+        if(isset($metaNameLookup['campaigns'][$cNorm])){$campaignName=$metaNameLookup['campaigns'][$cNorm];}
+        else{if(!isset($campaignDisplay[$cNorm]))$campaignDisplay[$cNorm]=$campaignRaw;$campaignName=$campaignDisplay[$cNorm];}
+
+        $adsetCacheKey=$cNorm.'|'.$aNorm;
+        if(isset($metaNameLookup['adsets'][$cNorm][$aNorm])){$adsetName=$metaNameLookup['adsets'][$cNorm][$aNorm];}
+        else{if(!isset($adsetDisplay[$adsetCacheKey]))$adsetDisplay[$adsetCacheKey]=$adsetRaw;$adsetName=$adsetDisplay[$adsetCacheKey];}
+
+        $adCacheKey=$cNorm.'|'.$aNorm.'|'.$dNorm;
+        if(isset($metaNameLookup['ads'][$cNorm][$aNorm][$dNorm])){$adName=$metaNameLookup['ads'][$cNorm][$aNorm][$dNorm];}
+        else{if(!isset($adDisplay[$adCacheKey]))$adDisplay[$adCacheKey]=$adRaw;$adName=$adDisplay[$adCacheKey];}
+
+        $key=$cNorm.'|'.$aNorm.'|'.$dNorm;
+        if(!isset($leaves[$key]))$leaves[$key]=['campaign'=>$campaignName,'adset'=>$adsetName,'ad'=>$adName,'metrics'=>md_ads_empty_metrics($windows)];
         return $key;
     };
     $windowKeys=function(string $date)use($windows):array{$out=[];foreach($windows as $key=>$from)if($date>=$from)$out[]=$key;return $out;};
@@ -842,8 +865,8 @@ function md_ads_hierarchy(PDO $pdo,string $endDate,string $model,array $windowDa
     foreach($leaves as $leaf){$c=$leaf['campaign'];$a=$leaf['adset'];if(!isset($tree[$c]))$tree[$c]=['name'=>$c,'account'=>'','metrics'=>md_ads_empty_metrics($windows),'adsets'=>[]];if(!isset($tree[$c]['adsets'][$a]))$tree[$c]['adsets'][$a]=['name'=>$a,'metrics'=>md_ads_empty_metrics($windows),'ads'=>[]];$tree[$c]['adsets'][$a]['ads'][]=['name'=>$leaf['ad'],'metrics'=>$leaf['metrics']];md_ads_merge_metrics($tree[$c]['adsets'][$a]['metrics'],$leaf['metrics']);md_ads_merge_metrics($tree[$c]['metrics'],$leaf['metrics']);}
     // Rotula cada campanha com a conta de anuncio dona dela (resolvido via
     // meta_campaign_daily, igual ao motor de atribuicao) para diferenciar
-    // campanhas de contas diferentes na mesma tabela.
-    $metaNameLookup=build_meta_name_lookup($pdo,0);
+    // campanhas de contas diferentes na mesma tabela. Reaproveita o mesmo
+    // $metaNameLookup ja calculado acima para resolver os nomes de exibicao.
     foreach($tree as $cName=>&$cNode){$cNorm=normalize_match_key((string)$cName);$accId=$metaNameLookup['campaign_accounts'][$cNorm]??null;$cNode['account']=$accId?(string)($metaNameLookup['account_names'][$accId]??''):'';}
     unset($cNode);
     $metaFields=['spend','impressions','reach','clicks','meta_leads','meta_sales','meta_revenue','meta_roas_revenue'];
