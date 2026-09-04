@@ -70,6 +70,9 @@ try {
         $result['companion_meta_form_utms'] = cron_manager_execute($pdo, 'meta_form_utms', $source, false);
         $result['companion_metricas_negocio'] = cron_manager_execute($pdo, 'metricas_negocio', $source, false);
         $result['companion_dom_pagamentos'] = cron_manager_execute($pdo, 'dom_pagamentos', $source, false);
+        $result['companion_pagarme_sync'] = cron_manager_execute($pdo, 'pagarme_sync', $source, false);
+        $result['companion_hotmart_sync'] = cron_manager_execute($pdo, 'hotmart_sync', $source, false);
+        $result['companion_firepay_reconciliation'] = cron_manager_execute($pdo, 'firepay_reconciliation', $source, false);
         $result['companion_diagnostico_fluxos'] = cron_manager_execute($pdo, 'diagnostico_fluxos', $source, false);
     }
     cron_manager_heartbeat($pdo, $source, $taskKey, (string)($result['reason'] ?? $result['status'] ?? 'ok'), false);

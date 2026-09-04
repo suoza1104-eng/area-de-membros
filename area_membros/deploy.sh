@@ -35,6 +35,10 @@ cd "$REPO_DIR" || exit 1
 
 run_php_cron "$DEPLOY_DIR/cron/processar_reagendamentos_live.php" "reagendamentos_live"
 run_php_cron "$DEPLOY_DIR/cron/processar_metricas_negocio.php" "metricas_negocio"
+run_php_cron "$DEPLOY_DIR/cron/processar_dom_pagamentos.php" "dom_pagamentos"
+run_php_cron "$DEPLOY_DIR/cron/processar_pagarme_sync.php" "pagarme_sync"
+run_php_cron "$DEPLOY_DIR/cron/processar_hotmart_sync.php" "hotmart_sync"
+run_php_cron "$DEPLOY_DIR/cron/processar_reconciliacao_firepay.php" "firepay_reconciliation"
 run_php_cron "$DEPLOY_DIR/cron/processar_fluxos_push.php" "fluxos_push"
 run_php_cron "$DEPLOY_DIR/cron/processar_automacoes.php" "automacoes"
 run_php_cron "$DEPLOY_DIR/cron/processar_diagnostico_fluxos.php" "diagnostico_fluxos"

@@ -1,0 +1,40 @@
+{
+  "zip_path": "C:\\Users\\Emerson\\Downloads\\a83f4373-a537-42d5-9d59-2e6cd82a8fbb.zip",
+  "db_table": "payment_sales",
+  "db_provider": "pagarme",
+  "match_key": "report Charge_ID -> payment_sales.external_transaction_id = pagarme:<Charge_ID>",
+  "report_total_rows": 45,
+  "db_total_rows": 193,
+  "report_status_counts": {
+    "APPROVED": 38,
+    "PENDING": 1,
+    "CANCELED": 6
+  },
+  "db_status_counts": {
+    "UNKNOWN": 145,
+    "APPROVED": 38,
+    "CANCELED": 9,
+    "PENDING": 1
+  },
+  "report_gross_total": 7036.73,
+  "db_gross_total": 13336.13,
+  "db_net_total": 12821.94,
+  "report_approved_count": 38,
+  "db_approved_count": 38,
+  "report_approved_gross": 4590.33,
+  "db_approved_gross": 4590.33,
+  "db_approved_net": 4545.46,
+  "missing_in_db_count": 0,
+  "extra_in_db_count": 148,
+  "field_divergence_count": 0,
+  "duplicates_in_report": [],
+  "db_webhook_transactions": 190,
+  "outputs": {
+    "all_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\pagarme_auditoria\\divergencias_pagarme.csv",
+    "missing_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\pagarme_auditoria\\faltando_no_banco.csv",
+    "extra_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\pagarme_auditoria\\sobrando_no_banco.csv",
+    "field_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\pagarme_auditoria\\campos_divergentes.csv"
+  },
+  "approved_count_diff_report_minus_db": 0,
+  "approved_gross_diff_report_minus_db": 0.0
+}

@@ -1,0 +1,364 @@
+﻿tipo;transacao;detalhe;csv_status;db_status;csv_data;db_data;csv_produto;db_produto;csv_bruto;db_bruto;csv_liquido;db_liquido;csv_produtor;db_produtor;csv_email;db_email;db_user_id;db_match;db_webhook_event
+sobrando_no_banco;HP2383062995;;;Pendente;;2026-08-01 04:01:54;;Formação Eletricista Residencial de Alto Nível;;74.28;;68.88;;62.44;;5h3l7on@gmail.com;44183;phone;
+sobrando_no_banco;HP3112162161;;;Pendente;;2026-08-01 04:04:57;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;clecioaulas@gmail.com;22016;phone;
+sobrando_no_banco;HP0228838579;;;Pendente;;2026-08-01 04:05:44;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;mariofariasicm@gmail.com;2472;phone;
+sobrando_no_banco;HP3972075952;;;Pendente;;2026-08-01 04:08:42;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;devaocorgofc.26@gmail.com;13115;phone;
+sobrando_no_banco;HP1338301165;;;Cancelado;;2026-08-01 07:28:51;;Formação Eletricista Residencial de Alto Nível;;38.97;;33.50;;33.50;;julicard0075@yahoo.com;53853;email;CSV_RECONCILE
+sobrando_no_banco;HP1820992469;;;Reembolsado;;2026-08-01 13:38:35;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;lyonkrakatoa@hotmail.com;50743;phone;CSV_RECONCILE
+sobrando_no_banco;HP1797584083;;;Pendente;;2026-08-01 19:23:26;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;wellalessadavii@gmail.com;53351;phone;
+sobrando_no_banco;HP3017096889;;;Pendente;;2026-08-02 04:01:54;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;josehenriquedasilvadasilva@gmail.com;40695;phone;
+sobrando_no_banco;HP2908597700;;;Pendente;;2026-08-02 04:03:09;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;osmirsimionato1970@gmail.com;24969;phone;
+sobrando_no_banco;HP4120556735;;;Pendente;;2026-08-02 04:04:47;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;Mauriliosamuel6@gmail.com;33282;email;
+sobrando_no_banco;HP3713308509;;;Pendente;;2026-08-02 13:27:18;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;kj91210@gmail.com;54395;email;
+sobrando_no_banco;HP0624837142;;;Pendente;;2026-08-02 20:20:54;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;edisantos43@gmail.com;53642;phone;
+sobrando_no_banco;HP0484403794;;;Cancelado;;2026-08-02 20:23:48;;Formação Eletricista Residencial de Alto Nível;;38.97;;33.50;;33.50;;saviohenriqueb@hotmail.com;54567;email;CSV_RECONCILE
+sobrando_no_banco;HP0273176648;;;Cancelado;;2026-08-02 20:26:21;;Formação Eletricista Residencial de Alto Nível;;38.97;;33.50;;33.50;;saviohenriqueb@hotmail.com;54567;email;CSV_RECONCILE
+sobrando_no_banco;HP3569690423;;;Pendente;;2026-08-02 20:28:28;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;arnaldor762@gmail.com;;none;
+sobrando_no_banco;HP3261506554;;;Cancelado;;2026-08-02 20:29:57;;Formação Eletricista Residencial de Alto Nível;;38.97;;33.50;;33.50;;saviohenriqueb@hotmail.com;54567;email;CSV_RECONCILE
+sobrando_no_banco;HP4097950663;;;Pendente;;2026-08-02 20:41:45;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;alanribeyrro@gmail.com;53494;phone;
+sobrando_no_banco;HP0125018196;;;Reembolsado;;2026-08-02 20:57:57;;Formação Eletricista Residencial de Alto Nível;;397.00;;363.25;;363.25;;gotasdeinverno19@gmail.com;53776;email;CSV_RECONCILE
+sobrando_no_banco;HP0918770501;;;Reembolsado;;2026-08-02 21:11:00;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;miguel1967viana@gmail.com;54849;phone;CSV_RECONCILE
+sobrando_no_banco;HP0999952519;;;Cancelado;;2026-08-02 21:12:27;;Formação Eletricista Residencial de Alto Nível;;397.02;;363.27;;363.27;;rafaelrigonatto@gmail.com;53807;phone;CSV_RECONCILE
+sobrando_no_banco;HP2817152223;;;Cancelado;;2026-08-02 22:40:22;;Formação Eletricista Residencial de Alto Nível;;397.03;;363.27;;363.27;;jccrewg12@hotmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP4132608712;;;Cancelado;;2026-08-02 22:41:23;;Formação Eletricista Residencial de Alto Nível;;397.03;;363.27;;363.27;;jccrewg12@hotmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP4004517977;;;Pendente;;2026-08-03 04:01:13;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;markos.souza007@gmail.com;13427;phone;
+sobrando_no_banco;HP3672479676;;;Pendente;;2026-08-03 04:01:47;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;rcostad30@gmail.com;13533;phone;
+sobrando_no_banco;HP2687537816;;;Pendente;;2026-08-03 04:04:05;;Segredos da Elétrica Lucrativa;;16.58;;14.43;;12.29;;michellspa3@gmail.com;38780;phone;
+sobrando_no_banco;HP2572882644;;;Pendente;;2026-08-03 04:05:27;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;marceloquintanilha1420@gmail.com;13558;phone;
+sobrando_no_banco;HP1658966089C2;;;Pendente;;2026-08-03 08:46:11;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;driccka.so@gmail.com;19595;email;
+sobrando_no_banco;HP1658966089C1;;;Pendente;;2026-08-03 08:46:11;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;driccka.so@gmail.com;19595;email;
+sobrando_no_banco;HP1658966089C3;;;Pendente;;2026-08-03 08:46:11;;"Viver de Perfil &amp; Led";;147.00;;147.00;;67.05;;driccka.so@gmail.com;19595;email;
+sobrando_no_banco;HP3304537134;;;Pendente;;2026-08-03 09:02:06;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;driccka.so@gmail.com;19595;email;
+sobrando_no_banco;HP3438460400;;;Pendente;;2026-08-03 09:39:14;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;guilhermesbarra@hotmail.com;29036;phone;
+sobrando_no_banco;HP4244771501;;;Pendente;;2026-08-03 10:18:56;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;andersonteccont@gmail.com;16626;phone;
+sobrando_no_banco;HP0988641560;;;Pendente;;2026-08-03 10:32:08;;Combo Black Friday - Profissional Perfil e Ar;;41.06;;41.06;;18.41;;henglerjh@gmail.com;;none;
+sobrando_no_banco;HP1739332636;;;Reembolsado;;2026-08-03 11:18:06;;Segredos da Elétrica Lucrativa;;14.43;;11.70;;11.70;;lucas.silva222022@gmail.com;29658;phone;CSV_RECONCILE
+sobrando_no_banco;HP2606418739;;;Pendente;;2026-08-03 12:49:03;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;seusonhocontruido@gmail.com;8514;phone;
+sobrando_no_banco;HP2347482730;;;Pendente;;2026-08-03 12:49:51;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;ricardoafiliado903@gmail.com;26458;phone;
+sobrando_no_banco;HP2647632844;;;Pendente;;2026-08-03 14:14:39;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;ytalosousa642@gmail.com;9299;phone;
+sobrando_no_banco;HP0108487673;;;Pendente;;2026-08-03 15:32:49;;"Viver de Perfil &amp; Led";;30.72;;30.72;;13.64;;betofer2016@gmail.com;;none;
+sobrando_no_banco;HP2800236951;;;Pendente;;2026-08-03 17:21:59;;"Viver de Perfil &amp; Led";;30.72;;30.72;;13.64;;betofer2016@gmail.com;;none;
+sobrando_no_banco;HP2925881275;;;Pendente;;2026-08-03 18:01:17;;Iniciação em Montagem de Quadros Elétricos;;24.90;;24.90;;21.93;;robertosantanasantos27@gmail.com;46979;phone;
+sobrando_no_banco;HP2566556451;;;Pendente;;2026-08-03 18:55:27;;"Viver de Perfil &amp; Led";;30.72;;30.72;;13.64;;betofer2016@gmail.com;;none;
+sobrando_no_banco;HP3548835717;;;Pendente;;2026-08-03 20:30:26;;"Viver de Perfil &amp; Led";;30.72;;30.72;;13.64;;betofer2016@gmail.com;;none;
+sobrando_no_banco;HP3203993433;;;Cancelado;;2026-08-03 23:14:13;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;freelancerinfortec@gmail.com;52979;phone;CSV_RECONCILE
+sobrando_no_banco;HP3254780288;;;Cancelado;;2026-08-03 23:15:13;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;freelancerinfortec@gmail.com;52979;phone;CSV_RECONCILE
+sobrando_no_banco;HP0568832893;;;Pendente;;2026-08-03 23:35:51;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;freelancerinfortec@gmail.com;52979;phone;
+sobrando_no_banco;HP0093668001;;;Cancelado;;2026-08-03 23:48:57;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;freelancerinfortec@gmail.com;52979;phone;CSV_RECONCILE
+sobrando_no_banco;HP0135605631;;;Cancelado;;2026-08-03 23:49:56;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;freelancerinfortec@gmail.com;52979;phone;CSV_RECONCILE
+sobrando_no_banco;HP1118685043;;;Pendente;;2026-08-04 04:03:57;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;raimundojosewilton@gmail.com;;none;
+sobrando_no_banco;HP2599583560;;;Pendente;;2026-08-04 04:05:14;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;menezesalex754@gmail.com;17207;phone;
+sobrando_no_banco;HP1361693106;;;Reembolsado;;2026-08-04 08:28:08;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;amaral.dag@gmail.com;51615;phone;CSV_RECONCILE
+sobrando_no_banco;HP2141579127;;;Pendente;;2026-08-04 08:38:41;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;amaral.dag@gmail.com;51615;phone;
+sobrando_no_banco;HP2907644835;;;Pendente;;2026-08-04 09:10:31;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;cleber.souza.tna@gmail.com;56602;phone;
+sobrando_no_banco;HP0582050628;;;Pendente;;2026-08-04 10:28:41;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;georgeazevedo18@gmail.com;53418;phone;
+sobrando_no_banco;HP1532395736;;;Pendente;;2026-08-04 10:44:55;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;edielsondepaula13@gmail.com;;none;
+sobrando_no_banco;HP1457800422;;;Pendente;;2026-08-04 12:18:19;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;edielsondepaula13@gmail.com;;none;
+sobrando_no_banco;HP1111926485;;;Pendente;;2026-08-04 13:54:23;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;edielsondepaula13@gmail.com;;none;
+sobrando_no_banco;HP0974186378;;;Cancelado;;2026-08-04 13:57:06;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP0649073558;;;Cancelado;;2026-08-04 13:57:33;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP0619832641;;;Cancelado;;2026-08-04 13:57:46;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP0510179205;;;Cancelado;;2026-08-04 14:00:26;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP1065618699;;;Pendente;;2026-08-04 15:30:25;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;edielsondepaula13@gmail.com;;none;
+sobrando_no_banco;HP0027581491;;;Pendente;;2026-08-04 17:06:47;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;21.86;;edielsondepaula13@gmail.com;;none;
+sobrando_no_banco;HP2656216624;;;Pendente;;2026-08-04 18:29:33;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;silvawelison764@gmail.com;53448;email;
+sobrando_no_banco;HP1172379679;;;Pendente;;2026-08-05 04:02:25;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;djailton.ribeiro@gmail.com;20088;phone;
+sobrando_no_banco;HP0975003493;;;Pendente;;2026-08-05 04:03:16;;"Viver de Perfil &amp; Led";;33.49;;24.75;;10.89;;biell.rott12@gmail.com;42773;phone;
+sobrando_no_banco;HP1026559846;;;Pendente;;2026-08-05 04:03:49;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;walternicaciofilho@gmail.com;;none;
+sobrando_no_banco;HP0772240823;;;Pendente;;2026-08-05 04:04:03;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;fthompson100@hotmail.com;;none;
+sobrando_no_banco;HP4203462162;;;Pendente;;2026-08-05 04:05:56;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;clantoammoises@hotmail.com;;none;
+sobrando_no_banco;HP0487157212;;;Pendente;;2026-08-05 04:18:38;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;marcos.pereira2010@hotmail.com;43238;phone;
+sobrando_no_banco;HP2346907513;;;Pendente;;2026-08-05 10:12:05;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;mateuscandido968@gmail.com;;none;
+sobrando_no_banco;HP1657992443;;;Pendente;;2026-08-05 16:51:41;;Formação Eletricista Residencial de Alto Nível;;51.39;;45.68;;39.68;;joaorenatojdajo@gmail.com;55131;phone;
+sobrando_no_banco;HP1139412222;;;Pendente;;2026-08-05 20:58:26;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;walteralvesdemelo@live.com;59663;phone;
+sobrando_no_banco;HP2335473959;;;Pendente;;2026-08-05 22:36:10;;Formação Eletricista Residencial de Alto Nível;;199.00;;199.00;;180.89;;echagas.icaro@gmail.com;52728;phone;
+sobrando_no_banco;HP1845349833;;;Pendente;;2026-08-06 04:04:36;;Segredos da Elétrica Lucrativa;;16.58;;14.43;;12.29;;jbmarcos.ja@gmail.com;46306;phone;
+sobrando_no_banco;HP3181967512;;;Pendente;;2026-08-06 04:05:09;;"Viver de Perfil &amp; Led";;33.49;;24.75;;10.89;;lohan-xavier@hotmail.com;;none;
+sobrando_no_banco;HP0442934635;;;Cancelado;;2026-08-06 08:22:56;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP1528311282;;;Pendente;;2026-08-06 08:27:11;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;cleber.souza.tna@gmail.com;56602;phone;
+sobrando_no_banco;HP2090429425;;;Cancelado;;2026-08-06 08:45:35;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP2071191980;;;Cancelado;;2026-08-06 08:46:08;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP1740692675;;;Cancelado;;2026-08-06 08:46:36;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP1719146737;;;Cancelado;;2026-08-06 08:46:45;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP1774165829;;;Cancelado;;2026-08-06 08:47:32;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;faculdadedepregadores@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1844574878;;;Cancelado;;2026-08-06 08:47:40;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;faculdadedepregadores@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1883049768;;;Cancelado;;2026-08-06 08:48:31;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;alexandretrovao197@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP1032000525;;;Cancelado;;2026-08-06 08:52:52;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;teologiaecapelania94@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP1009300340;;;Cancelado;;2026-08-06 08:53:14;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;teologiaecapelania94@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP2730174901;;;Cancelado;;2026-08-06 10:05:50;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP3620483856;;;Cancelado;;2026-08-06 10:15:00;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP3577776728;;;Cancelado;;2026-08-06 10:15:11;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP3779785225;;;Cancelado;;2026-08-06 10:19:36;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP3434280713;;;Cancelado;;2026-08-06 10:21:43;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP2781392477;;;Cancelado;;2026-08-06 11:06:04;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP2423960749;;;Cancelado;;2026-08-06 11:06:22;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP0173164359;;;Cancelado;;2026-08-06 11:12:24;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP0226644457;;;Cancelado;;2026-08-06 11:12:35;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;marcosespecialistaemeletrica@gmail.com;18733;phone;CSV_RECONCILE
+sobrando_no_banco;HP0277046562;;;Pendente;;2026-08-06 11:12:45;;Formação Eletricista Residencial de Alto Nível;;59.23;;53.77;;31.54;;sidneycarv90@gmail.com;;none;
+sobrando_no_banco;HP0522901110;;;Cancelado;;2026-08-06 11:18:09;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP0506741656;;;Cancelado;;2026-08-06 11:18:14;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP2003814950;;;Cancelado;;2026-08-06 11:35:52;;Segredos da Elétrica Lucrativa;;147.00;;133.80;;133.80;;marcosespecialistaemeletrica@gmail.com;18733;email;CSV_RECONCILE
+sobrando_no_banco;HP2824731186;;;Cancelado;;2026-08-06 13:02:45;;Segredos da Elétrica Lucrativa;;73.50;;66.10;;66.10;;matteusnevves99@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1154459589C1;;;Pendente;;2026-08-06 19:59:44;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;everaldocirqueiraviana@gmail.com;;none;
+sobrando_no_banco;HP1154459589C2;;;Pendente;;2026-08-06 19:59:44;;"Viver de Perfil &amp; Led";;147.00;;147.00;;67.05;;everaldocirqueiraviana@gmail.com;;none;
+sobrando_no_banco;HP1154459589C3;;;Pendente;;2026-08-06 19:59:44;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;everaldocirqueiraviana@gmail.com;;none;
+sobrando_no_banco;HP0599282251;;;Pendente;;2026-08-06 20:17:40;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;josemscouto@icloud.com;56258;phone;
+sobrando_no_banco;HP1250292714;;;Pendente;;2026-08-06 21:01:49;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;jubimoliveira5@gmail.com;56388;phone;
+sobrando_no_banco;HP4048571464;;;Reembolsado;;2026-08-06 21:15:58;;Formação Eletricista Residencial de Alto Nível;;38.97;;33.50;;33.50;;luizfelipedossantos0918@gmail.com;55556;email;CSV_RECONCILE
+sobrando_no_banco;HP3690370238;;;Cancelado;;2026-08-06 21:16:39;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jubimoliveira5@gmail.com;56388;phone;CSV_RECONCILE
+sobrando_no_banco;HP3839268063;;;Cancelado;;2026-08-06 21:18:24;;Formação Eletricista Residencial de Alto Nível;;396.97;;363.22;;363.22;;jubimoliveira5@gmail.com;56388;phone;CSV_RECONCILE
+sobrando_no_banco;HP3499919533;;;Cancelado;;2026-08-06 21:18:58;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;josewllian21@gmail.com;57296;email;CSV_RECONCILE
+sobrando_no_banco;HP0633170802;;;Cancelado;;2026-08-06 21:54:41;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;edsonsantana751@gmail.com;56430;phone;CSV_RECONCILE
+sobrando_no_banco;HP2159869762;;;Cancelado;;2026-08-06 22:52:32;;Formação Eletricista Residencial de Alto Nível;;397.00;;363.25;;363.25;;hardilipe@gmail.com;55887;email;CSV_RECONCILE
+sobrando_no_banco;HP3876832248;;;Pendente;;2026-08-07 04:05:11;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;joelsongrm123@gmail.com;36343;email;
+sobrando_no_banco;HP2995958126;;;Pendente;;2026-08-07 12:31:58;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;ricardoaborges76@gmail.com;56959;phone;
+sobrando_no_banco;HP0347346697;;;Cancelado;;2026-08-07 13:08:10;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;antoniopiomoreira@gmail.com;59047;email;CSV_RECONCILE
+sobrando_no_banco;HP4269892382;;;Pendente;;2026-08-07 15:08:41;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;thiagocouto19@gmail.com;60394;phone;
+sobrando_no_banco;HP1850868778;;;Pendente;;2026-08-07 20:41:29;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;deia.wandinho@gmail.com;53821;phone;
+sobrando_no_banco;HP1937437281;;;Pendente;;2026-08-07 20:43:22;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;claudineyrn@hotmail.com;;none;
+sobrando_no_banco;HP2637326178;;;Pendente;;2026-08-07 21:34:40;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;salvadormiranda807@gmail.com;54533;phone;
+sobrando_no_banco;HP3896994077;;;Pendente;;2026-08-07 21:35:00;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;salvadormiranda807@gmail.com;54533;phone;
+sobrando_no_banco;HP2859908612;;;Pendente;;2026-08-08 04:02:48;;Formação Eletricista Residencial de Alto Nível;;84.02;;78.75;;71.53;;silvabiabraga@gmail.com;41623;phone;
+sobrando_no_banco;HP2859523863;;;Pendente;;2026-08-08 04:02:48;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;edilson199595@gmail.com;23403;phone;
+sobrando_no_banco;HP3654415091;;;Pendente;;2026-08-08 04:06:25;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;jonhnatancl10@gmail.com;29232;phone;
+sobrando_no_banco;HP4119115142;;;Pendente;;2026-08-08 10:11:45;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;washingtonsantos16@gmail.com;;none;
+sobrando_no_banco;HP1956441574;;;Pendente;;2026-08-08 10:29:19;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;andersonteccont@gmail.com;16626;phone;
+sobrando_no_banco;HP2222611192;;;Pendente;;2026-08-08 14:57:57;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;mailoncrispim2@gmail.com;54089;email;
+sobrando_no_banco;HP1976664700;;;Pendente;;2026-08-08 22:17:31;;Formação Eletricista Residencial de Alto Nível;;134.31;;99.26;;90.42;;matheus8252@gmail.com;;none;
+sobrando_no_banco;HP2705394441;;;Pendente;;2026-08-08 23:01:18;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;236.11;;carlossilva@gmail.com;;none;
+sobrando_no_banco;HP4291896402;;;Pendente;;2026-08-09 04:01:18;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;maurydacosta@gmail.com;;none;
+sobrando_no_banco;HP3107654611;;;Pendente;;2026-08-09 04:04:47;;Formação Eletricista Residencial de Alto Nível;;61.40;;55.74;;50.34;;emerson_egr@hotmail.com;47396;email;
+sobrando_no_banco;HP1810989521;;;Reembolsado;;2026-08-09 10:38:15;;Combo Black Friday - Profissional Perfil e Ar;;38.97;;14.95;;14.95;;lucas.silva222022@gmail.com;29658;phone;CSV_RECONCILE
+sobrando_no_banco;HP3878123292;;;Pendente;;2026-08-10 09:05:20;;Formação Eletricista Residencial de Alto Nível;;199.00;;199.00;;180.89;;alexnaldo2011@gmail.com;53699;email;
+sobrando_no_banco;HP0526699861;;;Pendente;;2026-08-10 11:28:36;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;ricardobuff08@gmail.com;41042;phone;
+sobrando_no_banco;HP2758674203;;;Pendente;;2026-08-10 12:29:33;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;vpinheiro009@gmail.com;37465;phone;
+sobrando_no_banco;HP3560506235;;;Pendente;;2026-08-10 13:00:26;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;ricardobuff08@gmail.com;41042;phone;
+sobrando_no_banco;HP3345446924;;;Pendente;;2026-08-10 14:36:29;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;ricardobuff08@gmail.com;41042;phone;
+sobrando_no_banco;HP1847158086;;;Pendente;;2026-08-10 20:23:28;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;evellyn_rj@hotmail.com;57645;phone;
+sobrando_no_banco;HP2684371693;;;Cancelado;;2026-08-10 20:34:06;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;evellyn_rj@hotmail.com;57645;phone;CSV_RECONCILE
+sobrando_no_banco;HP2555262984;;;Pendente;;2026-08-10 21:05:47;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;gustavolara1001@gmail.com;;none;
+sobrando_no_banco;HP2993876730;;;Pendente;;2026-08-10 21:14:29;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;crisuzunb@gmail.com;60242;phone;
+sobrando_no_banco;HP4274321069;;;Reembolsado;;2026-08-10 21:15:25;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;limacharles831@gmail.com;59310;phone;CSV_RECONCILE
+sobrando_no_banco;HP0022060901;;;Pendente;;2026-08-10 21:16:03;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;j-carlos-nascimento2010@bol.com.br;57803;phone;
+sobrando_no_banco;HP3059299367;;;Cancelado;;2026-08-10 21:21:27;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;nivaldogomesmeireles@gmail.com;59234;email;CSV_RECONCILE
+sobrando_no_banco;HP0496856368;;;Reembolsado;;2026-08-10 21:37:46;;Planilha de Dimensionamento Automático;;97.01;;88.06;;88.06;;andresantana.as.2012@gmail.com;8041;phone;CSV_RECONCILE
+sobrando_no_banco;HP4187783215;;;Cancelado;;2026-08-10 21:55:55;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP4252421030;;;Cancelado;;2026-08-10 21:56:29;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP3694150376;;;Cancelado;;2026-08-10 22:04:59;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;coutoclaudio03@gmail.com;58082;phone;CSV_RECONCILE
+sobrando_no_banco;HP3761866183;;;Cancelado;;2026-08-10 22:05:39;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP1754615847;;;Cancelado;;2026-08-10 22:36:49;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP1835028367;;;Cancelado;;2026-08-10 22:36:57;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP1075164613;;;Cancelado;;2026-08-10 22:38:58;;Formação Eletricista Residencial de Alto Nível;;397.00;;363.25;;363.25;;jonathandiassantos886@gmail.com;58343;email;CSV_RECONCILE
+sobrando_no_banco;HP0530006070;;;Pendente;;2026-08-11 04:04:46;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;asleyalves50@gmail.com;23413;phone;
+sobrando_no_banco;HP1248779957;;;Pendente;;2026-08-11 13:46:18;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;oswaldo.345.zr@gmail.com;41846;phone;
+sobrando_no_banco;HP3951271555;;;Pendente;;2026-08-11 14:49:41;;"Viver de Perfil &amp; Led";;33.49;;29.15;;12.78;;ds.ouglas.ilva@gmail.com;63890;email;
+sobrando_no_banco;HP2529483163;;;Pendente;;2026-08-11 20:28:38;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;welbertmirabel@gmail.com;;none;
+sobrando_no_banco;HP2745604775;;;Pendente;;2026-08-12 04:05:31;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;rodrigordfaustino2013@gmail.com;25096;phone;
+sobrando_no_banco;HP2412796977;;;Pendente;;2026-08-12 04:05:40;;"Viver de Perfil &amp; Led";;33.49;;29.15;;12.92;;ao891749@gmail.com;;none;
+sobrando_no_banco;HP3291517492;;;Pendente;;2026-08-12 10:13:56;;Combo Black Friday Vitalícia;;72.09;;72.09;;45.03;;galegao74@hotmail.com;;none;
+sobrando_no_banco;HP0821798978;;;Pendente;;2026-08-12 10:27:47;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;josiasn46@gmail.com;63810;email;
+sobrando_no_banco;HP2696942524;;;Pendente;;2026-08-12 11:18:05;;Formação Eletricista Residencial de Alto Nível;;107.99;;102.30;;93.22;;daniel.araujo84dani@gmail.com;41243;phone;
+sobrando_no_banco;HP1084010549;;;Pendente;;2026-08-12 20:51:29;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;cristianoneves_kiko@hotmail.com;59851;phone;
+sobrando_no_banco;HP0868043822;;;Pendente;;2026-08-13 04:02:51;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;anderson.rt84@gmail.com;;none;
+sobrando_no_banco;HP0935374880;;;Pendente;;2026-08-13 04:03:02;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;fabricioedp@hotmail.com;;none;
+sobrando_no_banco;HP0387877195;;;Pendente;;2026-08-13 04:03:58;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;contatopinturasprediais@gmail.com;32920;phone;
+sobrando_no_banco;HP0474445698;;;Pendente;;2026-08-13 04:04:29;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;joaowanzeler252@gmail.com;16788;email;
+sobrando_no_banco;HP4214235655;;;Pendente;;2026-08-13 04:05:24;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;alexfernandodasilva0244@gmail.com;;none;
+sobrando_no_banco;HP3872193883;;;Pendente;;2026-08-13 04:05:37;;Formação Eletricista Residencial de Alto Nível;;199.00;;199.00;;182.28;;silvioroberto5756@gmail.com;44095;phone;
+sobrando_no_banco;HP4034942668;;;Pendente;;2026-08-13 04:06:12;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;genivaldoa920@gmail.com;14271;phone;
+sobrando_no_banco;HP3676741442;;;Pendente;;2026-08-13 04:06:28;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;aldreyroma@gmail.com;;none;
+sobrando_no_banco;HP1553528445;;;Pendente;;2026-08-13 07:48:53;;"Viver de Perfil &amp; Led";;297.00;;297.00;;136.12;;desimewilner@gmail.com;;none;
+sobrando_no_banco;HP0993364695;;;Pendente;;2026-08-13 09:15:44;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;guilhermesbarra@hotmail.com;29036;phone;
+sobrando_no_banco;HP3478411868;;;Pendente;;2026-08-13 11:33:28;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;juliocbs40@gmail.com;56449;phone;
+sobrando_no_banco;HP3402656850;;;Pendente;;2026-08-13 13:32:42;;Combo Black Friday - Profissional Perfil e Ar;;41.06;;41.06;;18.41;;henglerjh@gmail.com;;none;
+sobrando_no_banco;HP1641291710;;;Pendente;;2026-08-13 14:18:35;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;seusonhocontruido@gmail.com;8514;phone;
+sobrando_no_banco;HP2550453360;;;Pendente;;2026-08-13 14:21:44;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;ricardoafiliado903@gmail.com;26458;phone;
+sobrando_no_banco;HP3741113289;;;Pendente;;2026-08-13 15:32:00;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;mateuscandido968@gmail.com;;none;
+sobrando_no_banco;HP0761217733;;;Reembolsado;;2026-08-13 15:32:53;;Combo Black Friday - Profissional Perfil e Ar;;397.01;;180.93;;180.93;;alafloufarescastro@gmail.com;47781;phone;CSV_RECONCILE
+sobrando_no_banco;HP3622995376;;;Pendente;;2026-08-13 16:12:09;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;qslreformas@gmail.com;;none;
+sobrando_no_banco;HP1869325214;;;Pendente;;2026-08-13 16:19:44;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;andersonteccont@gmail.com;16626;phone;
+sobrando_no_banco;HP0289869682;;;Pendente;;2026-08-13 22:10:30;;Formação Eletricista Residencial de Alto Nível;;51.39;;45.68;;39.68;;cristianoneves_kiko@hotmail.com;59851;phone;
+sobrando_no_banco;HP0798369811;;;Pendente;;2026-08-14 04:01:57;;Formação Eletricista Residencial de Alto Nível;;38.00;;33.08;;29.47;;vokemidia@gmail.com;25753;phone;
+sobrando_no_banco;HP0400154699;;;Pendente;;2026-08-14 04:03:40;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;joserobertosodre3@gmail.com;33684;phone;
+sobrando_no_banco;HP1610959488;;;Pendente;;2026-08-14 04:04:46;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;luisdiey@gmail.com;35965;phone;
+sobrando_no_banco;HP0256117404;;;Pendente;;2026-08-14 10:04:31;;Segredos da Elétrica Lucrativa;;73.50;;73.50;;66.10;;sauldavi7@gmail.com;56657;email;
+sobrando_no_banco;HP1565264669;;;Cancelado;;2026-08-14 20:52:32;;Formação Eletricista Residencial de Alto Nível;;397.03;;363.27;;363.27;;andrasportugal.26@gmail.com;61305;phone;CSV_RECONCILE
+sobrando_no_banco;HP1434834792;;;Cancelado;;2026-08-14 20:56:14;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;andrasportugal.26@gmail.com;61305;phone;CSV_RECONCILE
+sobrando_no_banco;HP1516401559;;;Cancelado;;2026-08-14 20:58:13;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;william.s.conceicao@hotmail.com;61029;phone;CSV_RECONCILE
+sobrando_no_banco;HP1339417065;;;Cancelado;;2026-08-14 21:00:54;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;maquison.gabriel.franco.teixeira@gmail.com;60960;email;CSV_RECONCILE
+sobrando_no_banco;HP1019690729;;;Cancelado;;2026-08-14 21:01:37;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;maquison.gabriel.franco.teixeira@gmail.com;60960;email;CSV_RECONCILE
+sobrando_no_banco;HP2260121183;;;Cancelado;;2026-08-14 21:04:34;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;maquison.gabriel.franco.teixeira@gmail.com;60960;email;CSV_RECONCILE
+sobrando_no_banco;HP3296249971;;;Cancelado;;2026-08-14 21:06:43;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;wmf.marido.aluguel@gmail.com;60206;phone;CSV_RECONCILE
+sobrando_no_banco;HP3115033239;;;Cancelado;;2026-08-14 21:09:38;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;maquison.gabriel.franco.teixeira@gmail.com;60960;email;CSV_RECONCILE
+sobrando_no_banco;HP2020822691;;;Cancelado;;2026-08-14 21:19:14;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jeisonogueira@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP2763250151;;;Pendente;;2026-08-15 04:03:00;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;acsb.30@gmail.com;37232;phone;
+sobrando_no_banco;HP2582418167;;;Pendente;;2026-08-15 04:03:45;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;brunowwe3@gmail.com;50951;email;
+sobrando_no_banco;HP2649749225;;;Pendente;;2026-08-15 04:03:55;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;juniorsilvinha2020@gmail.com;46551;email;
+sobrando_no_banco;HP3564682109;;;Pendente;;2026-08-15 04:06:10;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;eltonlima06111992@gmail.com;;none;
+sobrando_no_banco;HP0949033204;;;Pendente;;2026-08-15 10:19:45;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;deivsonfcastro@gmail.com;6432;phone;
+sobrando_no_banco;HP2630047121;;;Pendente;;2026-08-15 10:58:45;;Formação Eletricista Residencial de Alto Nível;;104.25;;95.75;;87.19;;mariadesousariosjessica@gmail.com;35365;phone;
+sobrando_no_banco;HP2284404691;;;Pendente;;2026-08-15 12:50:14;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;r39755327@gmail.com;62611;email;
+sobrando_no_banco;HP3308236839;;;Pendente;;2026-08-15 13:11:24;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;jessesouza1105@gmail.com;61998;phone;
+sobrando_no_banco;HP0113651397;;;Pendente;;2026-08-15 13:31:46;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;mas070365@gmail.com;65362;phone;
+sobrando_no_banco;HP3109122443;;;Pendente;;2026-08-16 04:02:09;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;ptrindade010@gmail.com;12153;phone;
+sobrando_no_banco;HP3057566090;;;Pendente;;2026-08-16 04:03:32;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;wellisson.souza@yahoo.com.br;11449;phone;
+sobrando_no_banco;HP2762848433;;;Pendente;;2026-08-16 04:03:53;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;ruanbr38@gmail.com;23404;phone;
+sobrando_no_banco;HP4214121284;;;Pendente;;2026-08-16 04:04:30;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;alessandrolippert916@gmail.com;39913;email;
+sobrando_no_banco;HP1311206157;;;Pendente;;2026-08-16 07:48:41;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;pedroduartediacono27@gmail.com;57900;email;
+sobrando_no_banco;HP0213006914;;;Pendente;;2026-08-16 11:10:33;;Formação Instalador de Ar-Condicionado;;44.77;;33.09;;14.74;;aeltonnpereira@gmail.com;;none;
+sobrando_no_banco;HP3340954175;;;Pendente;;2026-08-16 16:12:35;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;sandroaporfirio@hotmail.com;59228;phone;
+sobrando_no_banco;HP0435962062;;;Cancelado;;2026-08-16 20:20:04;;Segredos da Elétrica Lucrativa;;147.01;;133.81;;133.81;;sandroaporfirio@hotmail.com;59228;phone;CSV_RECONCILE
+sobrando_no_banco;HP2431162588;;;Pendente;;2026-08-17 04:01:47;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;diegodasilvamonte@gmail.com;33397;phone;
+sobrando_no_banco;HP2332282121;;;Pendente;;2026-08-17 04:05:28;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;renaldobs@hotmail.com;42422;email;
+sobrando_no_banco;HP3109090150;;;Pendente;;2026-08-17 04:11:25;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;leonanda2525@gmail.com;;none;
+sobrando_no_banco;HP0150649112;;;Pendente;;2026-08-17 19:13:03;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;josegueiros122@gmail.com;66608;email;
+sobrando_no_banco;HP0459864634;;;Pendente;;2026-08-17 22:09:06;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;josecarlosfagundes97@gmail.com;65846;phone;
+sobrando_no_banco;HP0255947717;;;Pendente;;2026-08-17 22:10:32;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;neemfantastico@gmail.com;60195;email;
+sobrando_no_banco;HP0381775931;;;Pendente;;2026-08-17 22:49:07;;Formação Eletricista Residencial de Alto Nível;;61.40;;55.74;;31.82;;neemfantastico@gmail.com;60195;email;
+sobrando_no_banco;HP2824546698;;;Pendente;;2026-08-17 23:29:46;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;eberval09@gmail.com;66549;email;
+sobrando_no_banco;HP4124274455;;;Pendente;;2026-08-18 04:01:05;;Formação Eletricista Residencial de Alto Nível;;44.77;;33.09;;29.48;;matheus8252@gmail.com;;none;
+sobrando_no_banco;HP4112347239;;;Pendente;;2026-08-18 04:01:08;;Segredos da Elétrica Lucrativa;;33.94;;31.81;;28.30;;fabianobezerradasilva42@gmail.com;37444;phone;
+sobrando_no_banco;HP4096957283;;;Pendente;;2026-08-18 04:01:13;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;androdrigsilva20017@gmail.com;;none;
+sobrando_no_banco;HP0833117040;;;Pendente;;2026-08-18 04:03:40;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;andre.vendasaju@gmail.com;38464;phone;
+sobrando_no_banco;HP0961623172;;;Pendente;;2026-08-18 04:04:20;;Formação Eletricista Residencial de Alto Nível;;49.58;;44.07;;39.59;;luciano110206@gmail.com;36740;phone;
+sobrando_no_banco;HP0467990333;;;Pendente;;2026-08-18 04:05:49;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;jcmarquinhos90@gmail.com;42964;phone;
+sobrando_no_banco;HP0210436788;;;Pendente;;2026-08-18 09:46:08;;Formação Eletricista Residencial de Alto Nível;;107.99;;102.30;;93.22;;daniel.araujo84dani@gmail.com;41243;phone;
+sobrando_no_banco;HP1115012101;;;Pendente;;2026-08-18 10:10:36;;Combo Black Friday - Profissional Perfil e Ar;;41.06;;41.06;;18.41;;henglerjh@gmail.com;;none;
+sobrando_no_banco;HP2425851604;;;Pendente;;2026-08-18 10:11:30;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;antoniuseraquel@gmail.com;;none;
+sobrando_no_banco;HP2475868961;;;Pendente;;2026-08-18 10:11:45;;Combo Black Friday - Profissional Perfil e Ar;;51.39;;39.70;;17.78;;albertoalmeidasamuel86@gmail.com;;none;
+sobrando_no_banco;HP2104586272;;;Pendente;;2026-08-18 10:13:19;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;marcoscristino.68@gmail.com;;none;
+sobrando_no_banco;HP2275661615;;;Pendente;;2026-08-18 11:04:06;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;djailton.ribeiro@gmail.com;20088;phone;
+sobrando_no_banco;HP2389577938;;;Pendente;;2026-08-18 11:25:01;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;seusonhocontruido@gmail.com;8514;phone;
+sobrando_no_banco;HP4257918597;;;Pendente;;2026-08-18 11:31:28;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;ricardoafiliado903@gmail.com;26458;phone;
+sobrando_no_banco;HP1809238679;;;Pendente;;2026-08-18 12:46:00;;Formação Eletricista Residencial de Alto Nível;;104.25;;95.75;;87.19;;mariadesousariosjessica@gmail.com;35365;phone;
+sobrando_no_banco;HP0680385406;;;Pendente;;2026-08-18 13:14:51;;Formação Instalador de Ar-Condicionado;;44.77;;33.09;;14.74;;aeltonnpereira@gmail.com;;none;
+sobrando_no_banco;HP3251185611;;;Pendente;;2026-08-18 16:02:00;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;glimavando718@gmail.com;65770;phone;
+sobrando_no_banco;HP2922225302;;;Pendente;;2026-08-18 16:06:36;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;mateuscandido968@gmail.com;;none;
+sobrando_no_banco;HP3335845694;;;Pendente;;2026-08-18 16:21:19;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;34.27;;andersonteccont@gmail.com;16626;phone;
+sobrando_no_banco;HP1160136636;;;Pendente;;2026-08-18 18:37:20;;Formação Eletricista Residencial de Alto Nível;;107.99;;102.30;;93.22;;daniel.araujo84dani@gmail.com;41243;phone;
+sobrando_no_banco;HP3720838136;;;Pendente;;2026-08-18 20:12:39;;Formação Eletricista Residencial de Alto Nível;;107.99;;102.30;;93.22;;daniel.araujo84dani@gmail.com;41243;phone;
+sobrando_no_banco;HP0784449855;;;Pendente;;2026-08-18 21:07:48;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;danillosanttos9719@gmail.com;62991;email;
+sobrando_no_banco;HP0648248744;;;Cancelado;;2026-08-18 21:10:11;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jm8716563@gmail.com;63500;email;CSV_RECONCILE
+sobrando_no_banco;HP1855206044;;;Cancelado;;2026-08-18 21:15:23;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ochaskos@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1304245619;;;Reclamado;;2026-08-18 21:18:33;;Formação Eletricista Residencial de Alto Nível;;397.02;;363.27;;363.27;;jeffi_jf@hotmail.com;62849;email;CSV_RECONCILE
+sobrando_no_banco;HP3586237318;;;Cancelado;;2026-08-18 22:49:46;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;paulinho.souza1997@icloud.com;67417;email;CSV_RECONCILE
+sobrando_no_banco;HP1536911434;;;Pendente;;2026-08-19 04:04:57;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;an.marcel@hotmail.com;11468;phone;
+sobrando_no_banco;HP2251390141;;;Pendente;;2026-08-19 04:07:32;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;b.o.n.e.r.xf316@gmail.com;17961;phone;
+sobrando_no_banco;HP1451435881;;;Pendente;;2026-08-19 10:31:51;;Combo Black Friday - Profissional Perfil e Ar;;51.39;;39.70;;17.78;;albertoalmeidasamuel86@gmail.com;;none;
+sobrando_no_banco;HP0398255548;;;Cancelado;;2026-08-19 12:30:37;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;donizetecarniel@gmail.com;66653;email;CSV_RECONCILE
+sobrando_no_banco;HP0437115187;;;Pendente;;2026-08-19 12:31:22;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;donizetecarniel@gmail.com;66653;email;
+sobrando_no_banco;HP2022939595;;;Pendente;;2026-08-19 19:55:09;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;roberto.10.03.2024@gmail.com;64284;phone;
+sobrando_no_banco;HP2218422685;;;Pendente;;2026-08-19 21:55:07;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;josecarlosfagundes97@gmail.com;65846;phone;
+sobrando_no_banco;HP3241085261;;;Pendente;;2026-08-19 21:58:42;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;josecarlosfagundes97@gmail.com;65846;phone;
+sobrando_no_banco;HP2446594107;;;Pendente;;2026-08-19 22:24:17;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;josecarlosfagundes97@gmail.com;65846;phone;
+sobrando_no_banco;HP2724999069;;;Pendente;;2026-08-20 00:03:36;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;lourencomoraes2025@gmail.com;66537;phone;
+sobrando_no_banco;HP1019422519;;;Pendente;;2026-08-20 04:03:32;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;kj91210@gmail.com;54395;email;
+sobrando_no_banco;HP0823200580;;;Pendente;;2026-08-20 04:04:27;;Combo Black Friday - Profissional Perfil e Ar;;44.77;;33.09;;14.74;;joseniltonsantoslopes@gmail.com;;none;
+sobrando_no_banco;HP0613127680;;;Pendente;;2026-08-20 04:05:21;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;santosgjjj@hotmail.com;54038;phone;
+sobrando_no_banco;HP0674687504;;;Pendente;;2026-08-20 04:05:31;;Formação Eletricista Residencial de Alto Nível;;44.77;;33.09;;29.48;;mauriciodd30@gmail.com;29800;phone;
+sobrando_no_banco;HP2005149201;;;Pendente;;2026-08-20 04:06:12;;Formação Instalador de Ar-Condicionado;;33.49;;24.75;;10.89;;cbsinstalaseguranca@gmail.com;;none;
+sobrando_no_banco;HP1834213420;;;Pendente;;2026-08-20 10:00:10;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;reisornelajhonleno@gmail.com;66982;phone;
+sobrando_no_banco;HP1100512592;;;Pendente;;2026-08-20 10:08:31;;Combo Black Friday Vitalícia;;78.59;;58.08;;36.15;;ricardoafiliado903@gmail.com;26458;phone;
+sobrando_no_banco;HP2353270335;;;Pendente;;2026-08-20 10:27:05;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;seusonhocontruido@gmail.com;8514;phone;
+sobrando_no_banco;HP3423641775;;;Pendente;;2026-08-20 10:28:43;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;ytalosousa642@gmail.com;9299;phone;
+sobrando_no_banco;HP2705330902;;;Pendente;;2026-08-20 10:37:27;;Combo Black Friday - Profissional Perfil e Ar;;51.39;;39.70;;17.78;;albertoalmeidasamuel86@gmail.com;;none;
+sobrando_no_banco;HP2160819264;;;Pendente;;2026-08-20 14:56:03;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;foc543179@gmail.com;66116;phone;
+sobrando_no_banco;HP3481210735;;;Pendente;;2026-08-21 04:01:50;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;josec.2016@bom.com.br;;none;
+sobrando_no_banco;HP2715575748;;;Pendente;;2026-08-21 04:03:38;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;18.46;;moura.iurd@gmail.com;27314;phone;
+sobrando_no_banco;HP2511658831;;;Pendente;;2026-08-21 04:04:27;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;sidneysssilva02@gmail.com;20252;phone;
+sobrando_no_banco;HP2553981210;;;Pendente;;2026-08-21 04:04:44;;Formação Eletricista Residencial de Alto Nível;;49.58;;38.30;;22.28;;hyararocha1@gmail.com;;none;
+sobrando_no_banco;HP2077154729;;;Pendente;;2026-08-21 09:50:22;;Combo Black Friday Vitalícia;;72.09;;72.09;;45.03;;outsporcelanataria@gmail.com;;none;
+sobrando_no_banco;HP0469335048;;;Pendente;;2026-08-21 10:44:35;;Combo Black Friday - Profissional Perfil e Ar;;51.39;;39.70;;17.78;;albertoalmeidasamuel86@gmail.com;;none;
+sobrando_no_banco;HP2777074275;;;Pendente;;2026-08-21 11:04:55;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;fagnerluancavalheirotoebe@gmail.com;48485;email;
+sobrando_no_banco;HP2027876222;;;Pendente;;2026-08-21 17:21:53;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;marcelolsousa2007@hotmail.com;67012;phone;
+sobrando_no_banco;HP1922329141;;;Pendente;;2026-08-22 04:01:25;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;jjuniorjiujitsu069@gmail.com;9980;phone;
+sobrando_no_banco;HP1900398453;;;Pendente;;2026-08-22 04:01:33;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;darksonchaves@gmail.com;1398;phone;
+sobrando_no_banco;HP3061955383;;;Pendente;;2026-08-22 04:02:50;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;christophermonteiro67@gmail.com;989;phone;
+sobrando_no_banco;HP3552894979;;;Pendente;;2026-08-22 04:18:22;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;kleberupinha50@gmail.com;54698;email;
+sobrando_no_banco;HP0355386433;;;Pendente;;2026-08-22 10:49:27;;Combo Black Friday - Profissional Perfil e Ar;;51.39;;39.70;;17.78;;albertoalmeidasamuel86@gmail.com;;none;
+sobrando_no_banco;HP3187953808;;;Pendente;;2026-08-22 12:10:50;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;josenovaisdasilva08@gmail.com;67437;phone;
+sobrando_no_banco;HP3211054066;;;Cancelado;;2026-08-22 12:52:25;;Formação Instalador de Ar-Condicionado;;397.00;;181.62;;181.62;;ecatozi@hotmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0247702713;;;Reclamado;;2026-08-22 12:54:31;;Formação Instalador de Ar-Condicionado;;397.00;;181.62;;181.62;;ecatozi@hotmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP3948617707;;;Pendente;;2026-08-22 13:03:06;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;deuseliocosta@gmail.com;63825;email;
+sobrando_no_banco;HP1128639777;;;Pendente;;2026-08-22 15:31:47;;Segredos da Elétrica Lucrativa;;73.50;;73.50;;66.10;;motakleber500@gmail.com;;none;
+sobrando_no_banco;HP0422625545;;;Pendente;;2026-08-22 17:18:50;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;wilsonclaudino63@gmail.com;20496;phone;
+sobrando_no_banco;HP3035901371;;;Pendente;;2026-08-22 20:39:19;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;roberto.10.03.2024@gmail.com;64284;email;
+sobrando_no_banco;HP3828868854;;;Pendente;;2026-08-22 20:56:06;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;manoeljaco93@gmail.com;66417;email;
+sobrando_no_banco;HP0235683552;;;Pendente;;2026-08-22 21:04:11;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;wilsonclaudino63@gmail.com;20496;phone;
+sobrando_no_banco;HP1066356427;;;Pendente;;2026-08-22 21:09:30;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;nathansouza6453@gmail.com;63711;email;
+sobrando_no_banco;HP1102907573;;;Reembolsado;;2026-08-22 21:10:49;;Iniciação em Comandos Elétricos;;147.01;;133.01;;133.01;;jorgejosedossantos2017@gmail.com;64459;phone;CSV_RECONCILE
+sobrando_no_banco;HP0788952471;;;Reembolsado;;2026-08-22 21:10:55;;Smart Ar;;147.01;;134.11;;134.11;;jorgejosedossantos2017@gmail.com;64459;phone;CSV_RECONCILE
+sobrando_no_banco;HP0850127546;;;Cancelado;;2026-08-22 21:13:43;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0897451660;;;Cancelado;;2026-08-22 21:14:46;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0574262584;;;Pendente;;2026-08-22 21:15:49;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;victorciceromelo@gmail.com;22943;phone;
+sobrando_no_banco;HP0691226250;;;Reclamado;;2026-08-22 21:17:09;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ruthcarris@gmail.com;67063;phone;CSV_RECONCILE
+sobrando_no_banco;HP0668141316;;;Cancelado;;2026-08-22 21:17:55;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0700075475;;;Cancelado;;2026-08-22 21:19:01;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0019085246;;;Cancelado;;2026-08-22 21:20:26;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;sildovasques86@gmail.com;66563;email;CSV_RECONCILE
+sobrando_no_banco;HP4081664206;;;Pendente;;2026-08-22 21:21:23;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;rogeriodopingim@gmail.com;66492;email;
+sobrando_no_banco;HP3994710954;;;Pendente;;2026-08-22 21:25:13;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;evandrovalentimdesouza45@gmail.com;66336;phone;
+sobrando_no_banco;HP3978551501;;;Pendente;;2026-08-22 21:25:55;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;eberval09@gmail.com;66549;email;
+sobrando_no_banco;HP3711920513;;;Cancelado;;2026-08-22 21:27:19;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP3689220328;;;Cancelado;;2026-08-22 21:27:54;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP3683449094;;;Cancelado;;2026-08-22 21:28:21;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jairo.pereira.3762@gmail.com;66456;phone;CSV_RECONCILE
+sobrando_no_banco;HP0744721671;;;Pendente;;2026-08-22 21:30:59;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;claudomirdj@gmail.com;63811;phone;
+sobrando_no_banco;HP0740104684;;;Cancelado;;2026-08-22 21:31:07;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;jairo.pereira.3762@gmail.com;66456;phone;CSV_RECONCILE
+sobrando_no_banco;HP0538111512;;;Pendente;;2026-08-22 21:35:42;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;wilsonclaudino63@gmail.com;20496;phone;
+sobrando_no_banco;HP0545806490;;;Cancelado;;2026-08-22 21:35:47;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0525799547;;;Cancelado;;2026-08-22 21:35:57;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;joaofilhoeli@gmail.com;62211;phone;CSV_RECONCILE
+sobrando_no_banco;HP0605827318;;;Cancelado;;2026-08-22 21:36:35;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;joaofilhoeli@gmail.com;62211;phone;CSV_RECONCILE
+sobrando_no_banco;HP0575432155;;;Pendente;;2026-08-22 21:37:02;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;dinhonegavelha@gmail.com;65301;email;
+sobrando_no_banco;HP0691241574;;;Cancelado;;2026-08-22 21:39:16;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;joaofilhoeli@gmail.com;62211;phone;CSV_RECONCILE
+sobrando_no_banco;HP0355740533;;;Pendente;;2026-08-22 21:39:53;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;wilsonclaudino63@gmail.com;20496;phone;
+sobrando_no_banco;HP0373054234;;;Cancelado;;2026-08-22 21:42:13;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP0278406004;;;Cancelado;;2026-08-22 21:48:12;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1368784387;;;Cancelado;;2026-08-22 21:55:34;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;levysilva2020.ls@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP1472666590;;;Cancelado;;2026-08-22 21:57:30;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ess.40sales@gmail.com;;none;CSV_RECONCILE
+sobrando_no_banco;HP2470705237C3;;;Pendente;;2026-08-22 22:11:25;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;mas070365@gmail.com;65362;phone;
+sobrando_no_banco;HP2470705237C1;;;Pendente;;2026-08-22 22:11:25;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;mas070365@gmail.com;65362;phone;
+sobrando_no_banco;HP2470705237C2;;;Pendente;;2026-08-22 22:11:25;;"Viver de Perfil &amp; Led";;147.00;;147.00;;67.05;;mas070365@gmail.com;65362;phone;
+sobrando_no_banco;HP0329744529;;;Cancelado;;2026-08-22 23:03:12;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1783710623;;;Cancelado;;2026-08-22 23:11:39;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1506306666;;;Cancelado;;2026-08-22 23:13:35;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1602493891;;;Cancelado;;2026-08-22 23:16:42;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1434743370;;;Cancelado;;2026-08-22 23:24:08;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1200046541;;;Cancelado;;2026-08-22 23:27:45;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP1277765819;;;Cancelado;;2026-08-22 23:28:57;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP2474334899;;;Cancelado;;2026-08-22 23:31:10;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP2590529066;;;Cancelado;;2026-08-22 23:33:06;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP2308508123;;;Cancelado;;2026-08-22 23:35:48;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP2297735153;;;Pendente;;2026-08-22 23:36:05;;Formação Eletricista Residencial de Alto Nível;;135.00;;135.00;;121.94;;giovanileal@outlook.com;67019;email;
+sobrando_no_banco;HP0667569388;;;Cancelado;;2026-08-23 00:13:11;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;ramonmaciel1509@gmail.com;63567;phone;CSV_RECONCILE
+sobrando_no_banco;HP3715950248;;;Pendente;;2026-08-23 04:01:46;;Formação Eletricista Residencial de Alto Nível;;199.00;;199.00;;182.28;;freelancerinfortec@gmail.com;52979;phone;
+sobrando_no_banco;HP3383911947;;;Pendente;;2026-08-23 04:01:52;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;jdilsinho881@gmail.com;983;phone;
+sobrando_no_banco;HP3392376423;;;Pendente;;2026-08-23 04:01:54;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;18.46;;lelinho43@gmail.com;;none;
+sobrando_no_banco;HP3446241269;;;Pendente;;2026-08-23 04:01:59;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;josedossantosthiago72@gmail.com;25608;phone;
+sobrando_no_banco;HP3530116529;;;Pendente;;2026-08-23 04:02:22;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;everaldocirqueiraviana@gmail.com;;none;
+sobrando_no_banco;HP0615628286;;;Pendente;;2026-08-23 04:03:11;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;fgferreiragomes123456@gmail.com;12989;phone;
+sobrando_no_banco;HP0613319793;;;Pendente;;2026-08-23 04:03:15;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;ronilsonrichardson@gmail.com;33086;email;
+sobrando_no_banco;HP0343610814;;;Pendente;;2026-08-23 04:03:31;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;ricardodiasdelima9@gmail.com;26567;phone;
+sobrando_no_banco;HP0333607343;;;Pendente;;2026-08-23 04:03:34;;Formação Eletricista Residencial de Alto Nível;;43.19;;31.92;;28.40;;dasilvajoaocarlos37@gmail.com;12737;phone;
+sobrando_no_banco;HP0405940136;;;Pendente;;2026-08-23 04:04:04;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;sid.iarek78@gmail.com;33613;phone;
+sobrando_no_banco;HP4230359527;;;Pendente;;2026-08-23 04:05:21;;Segredos da Elétrica Lucrativa;;16.58;;14.43;;12.29;;yardochui2023@hotmail.com;42408;phone;
+sobrando_no_banco;HP3334679412;;;Pendente;;2026-08-23 04:06:49;;Segredos da Elétrica Lucrativa;;16.58;;14.43;;12.29;;adison_damascena@yahoo.com.br;36886;phone;
+sobrando_no_banco;HP3114218292;;;Pendente;;2026-08-23 04:18:37;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;cristiano.r.souza1987@gmail.com;;none;
+sobrando_no_banco;HP0615643611;;;Pendente;;2026-08-23 05:30:11;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;fabiodireitounip16@gmail.com;66596;phone;
+sobrando_no_banco;HP2020392493;;;Pendente;;2026-08-23 08:19:23;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;33.50;;marcelolsousa2007@hotmail.com;67012;phone;
+sobrando_no_banco;HP4231222614;;;Pendente;;2026-08-23 18:43:10;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;rodrigo1519rodrigo@gmail.com;;none;
+sobrando_no_banco;HP2170522830;;;Pendente;;2026-08-23 20:28:27;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;helloaamordopai86@gmail.com;69320;phone;
+sobrando_no_banco;HP2999672033;;;Pendente;;2026-08-23 21:14:36;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;matheuspereiradla2020@gmail.com;69203;phone;
+sobrando_no_banco;HP3816509273;;;Cancelado;;2026-08-23 21:32:38;;Formação Instalador de Ar-condicionado + Climatiza5K;;394.02;;359.11;;359.11;;daniel.araujo84dani@gmail.com;41243;email;CSV_RECONCILE
+sobrando_no_banco;HP3927316956;;;Cancelado;;2026-08-23 21:33:51;;Formação Instalador de Ar-condicionado + Climatiza5K;;394.02;;359.11;;359.11;;daniel.araujo84dani@gmail.com;41243;email;CSV_RECONCILE
+sobrando_no_banco;HP0274495574;;;Reclamado;;2026-08-23 21:50:19;;Formação Instalador de Ar-condicionado + Climatiza5K;;394.02;;359.11;;359.11;;daniel.araujo84dani@gmail.com;41243;email;CSV_RECONCILE
+sobrando_no_banco;HP1095195626;;;Pendente;;2026-08-23 23:09:38;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;rafix0912@gmail.com;69084;phone;
+sobrando_no_banco;HP4032550975;;;Pendente;;2026-08-24 04:03:44;;Formação Eletricista Residencial de Alto Nível;;43.19;;37.60;;33.63;;vieirafabricio776@gmail.com;31132;phone;
+sobrando_no_banco;HP3607018692;;;Pendente;;2026-08-24 04:05:09;;Formação Eletricista Residencial de Alto Nível;;44.77;;38.97;;34.89;;edivaniodesantana@hotmail.com;52117;phone;
+sobrando_no_banco;HP2860437260;;;Pendente;;2026-08-24 13:06:10;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;dijangomios@gmail.com;66060;phone;
+sobrando_no_banco;HP0213764900;;;Pendente;;2026-08-24 14:18:02;;Segredos da Elétrica Lucrativa;;147.00;;147.00;;133.80;;rgr.ed2021@gmail.com;61668;email;
+sobrando_no_banco;HP2248732481;;;Cancelado;;2026-08-24 15:53:48;;Formação Eletricista Residencial de Alto Nível;;397.01;;363.26;;363.26;;marcione2012lopes@hotmail.com;69368;phone;CSV_RECONCILE
+sobrando_no_banco;HP0860066431;;;Pendente;;2026-08-24 21:10:58;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;236.11;;petzerbruno@gmail.com;66702;phone;
+sobrando_no_banco;HP0586125214;;;Pendente;;2026-08-24 21:13:20;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;236.11;;bruno.petzer@hotmail.com;66702;phone;
+sobrando_no_banco;HP3998463733;;;Pendente;;2026-08-25 12:32:50;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;robertomouralza@gmail.com;67347;email;
+sobrando_no_banco;HP3611021591;;;Pendente;;2026-08-25 12:38:17;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;robertomouralza@gmail.com;67347;email;
+sobrando_no_banco;HP0510314881;;;Pendente;;2026-08-25 12:43:28;;Formação Eletricista Residencial de Alto Nível;;397.00;;397.00;;363.25;;robertomouralza@gmail.com;67347;email;
+sobrando_no_banco;HP0081920789;;;Cancelado;;2026-08-25 13:37:33;;Climatiza 5K;;57.00;;25.60;;25.60;;rodrigoaires1565@gmail.com;;none;CSV_RECONCILE

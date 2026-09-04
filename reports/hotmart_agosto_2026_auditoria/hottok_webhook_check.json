@@ -1,0 +1,19 @@
+{
+  "webhook_url": "https://professoremersonleite.com/area_membros/public/hotmart_metrics_webhook.php",
+  "token_saved": true,
+  "token_length": 66,
+  "post_without_token": {
+    "status": 401,
+    "body": "{\"ok\":false,\"message\":\"Não autorizado\"}"
+  },
+  "post_with_saved_token_invalid_json": {
+    "status": 400,
+    "body": "{\"ok\":false,\"message\":\"JSON inválido\"}"
+  },
+  "hotmart_events_count": 4640,
+  "hotmart_last_event_received_at": "2026-06-27 00:32:11",
+  "expected": {
+    "without_token": "401 Nao autorizado quando token esta configurado",
+    "with_saved_token_invalid_json": "400 JSON invalido, provando que passou da autenticacao sem gravar venda"
+  }
+}

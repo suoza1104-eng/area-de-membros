@@ -1,0 +1,149 @@
+﻿tipo;transaction_id;detalhe;report_status;db_status;report_amount;db_gross;db_net;report_created;db_last_received;report_email;db_email;report_name;db_name;db_match;db_user_id
+sobrando_no_banco;pagarme:oi_OEwaMOmiE3i8NmoV;;;UNKNOWN;;397.00;0.00;;2026-08-13 01:34:59;;;;;none;
+sobrando_no_banco;pagarme:addr_YvX6PG8cZi48lMkd;;;UNKNOWN;;0.00;0.00;;2026-08-13 01:34:59;;vivispaulino@hotmail.com;;José Alex dos santos;none;
+sobrando_no_banco;pagarme:cus_d49NLZXc03FQJj0W;;;UNKNOWN;;0.00;0.00;;2026-08-13 01:34:59;;;;;none;
+sobrando_no_banco;pagarme:cus_Xe5vVyZHDCWqYxQB;;;UNKNOWN;;0.00;0.00;;2026-08-14 20:43:57;;;;;none;
+sobrando_no_banco;pagarme:addr_z891V5eH8tEoVwoE;;;UNKNOWN;;0.00;0.00;;2026-08-14 20:43:57;;elias.mmad@gmail.com;;Elias Martins Madeira;email;58117
+sobrando_no_banco;pagarme:addr_3Le2rensGetRrzKB;;;UNKNOWN;;0.00;0.00;;2026-08-15 15:01:01;;mauriciorech932@gmail.com;;Mauricio Rech;none;
+sobrando_no_banco;pagarme:cus_7qYobEWtkJSNxV2b;;;UNKNOWN;;0.00;0.00;;2026-08-15 15:01:01;;;;;none;
+sobrando_no_banco;pagarme:cus_ZO8YJw0SMpHWNexo;;;UNKNOWN;;0.00;0.00;;2026-08-17 00:42:06;;;;;none;
+sobrando_no_banco;pagarme:addr_nrmBG6QhJi4e8q0V;;;UNKNOWN;;0.00;0.00;;2026-08-17 00:42:06;;juninsilvafr15@gmail.com;;Júnior da Silva Ferreira;email;66493
+sobrando_no_banco;pagarme:oi_n4qWO6XUpySrwYOL;;;UNKNOWN;;28.70;28.42;;2026-08-17 00:42:08;;;;;none;
+sobrando_no_banco;pagarme:sub_95k60oZsnrcj47wX;;;CANCELED;;0.00;0.00;;2026-08-17 00:42:19;;juninsilvafr15@gmail.com;;Júnior da Silva Ferreira;email;66493
+sobrando_no_banco;pagarme:si_qEw0r4GPhZSX5LV8;;;UNKNOWN;;0.00;0.00;;2026-08-17 00:42:19;;;;;none;
+sobrando_no_banco;pagarme:in_5lBnb7Df6I2d2gXo;;;CANCELED;;14.35;14.21;;2026-08-17 00:42:20;;juninsilvafr15@gmail.com;;Júnior da Silva Ferreira;email;66493
+sobrando_no_banco;pagarme:ch_bP9XymLSjuBkKLrm;;;CANCELED;;14.35;14.21;;2026-08-17 00:42:20;;juninsilvafr15@gmail.com;;Júnior da Silva Ferreira;email;66493
+sobrando_no_banco;pagarme:cus_amB3rL4CpumKxJjN;;;UNKNOWN;;0.00;0.00;;2026-08-19 00:18:46;;;;;none;
+sobrando_no_banco;pagarme:addr_r73qwXrGu0CANodD;;;UNKNOWN;;0.00;0.00;;2026-08-19 00:18:46;;jm8716563@gmail.com;;Junior Machado do Nascimento;email;63500
+sobrando_no_banco;pagarme:oi_e8WvKXukRIaXPjnX;;;UNKNOWN;;478.56;473.87;;2026-08-19 00:18:49;;;;;none;
+sobrando_no_banco;pagarme:cus_2lGgAW00I3UWmwLY;;;UNKNOWN;;0.00;0.00;;2026-08-20 15:22:37;;;;;none;
+sobrando_no_banco;pagarme:addr_z3wO1xsYbfd2XG2Y;;;UNKNOWN;;0.00;0.00;;2026-08-20 15:22:37;;nem.adriano10@gmail.com;;Adriano Correia de Melo;email;63191
+sobrando_no_banco;pagarme:oi_dZe4NWMuduJGq0Nm;;;UNKNOWN;;397.00;393.11;;2026-08-20 15:25:13;;;;;none;
+sobrando_no_banco;pagarme:addr_P3B6mPvizF9XLeqR;;;UNKNOWN;;0.00;0.00;;2026-08-22 02:45:31;;heltonsantosdelimaalvessantos@gmail.com;;HT;email;68848
+sobrando_no_banco;pagarme:cus_B7raRMqul9FA8568;;;UNKNOWN;;0.00;0.00;;2026-08-22 02:45:31;;;;;none;
+sobrando_no_banco;pagarme:oi_RVDAaL9UvVc0gmYP;;;UNKNOWN;;24.90;24.66;;2026-08-22 02:45:31;;;;;none;
+sobrando_no_banco;pagarme:cus_wDnLlopSeCz016y9;;;UNKNOWN;;0.00;0.00;;2026-08-22 03:47:15;;;;;none;
+sobrando_no_banco;pagarme:addr_Q5rNWwqUKkIpM6jz;;;UNKNOWN;;0.00;0.00;;2026-08-22 03:47:15;;delioestrela@yahoo.com.br;;Delio Estrela;email;44863
+sobrando_no_banco;pagarme:oi_KbRJg03iKRCOG95n;;;UNKNOWN;;24.90;24.66;;2026-08-22 03:47:15;;;;;none;
+sobrando_no_banco;pagarme:addr_JGMvKM0iEmF0rNwo;;;UNKNOWN;;0.00;0.00;;2026-08-22 12:38:58;;galvesdasilva077@gmail.com;;Guilherme Alves;email;69141
+sobrando_no_banco;pagarme:cus_0YVgmlju77sRK9Ex;;;UNKNOWN;;0.00;0.00;;2026-08-22 12:38:58;;;;;none;
+sobrando_no_banco;pagarme:oi_4WN62EpsKycNW7vz;;;UNKNOWN;;24.90;24.66;;2026-08-22 12:38:58;;;;;none;
+sobrando_no_banco;pagarme:cus_RpGKN4vu7SKbjwmP;;;UNKNOWN;;0.00;0.00;;2026-08-22 16:03:13;;;;;none;
+sobrando_no_banco;pagarme:addr_ORe2JqpNUdTGKl1k;;;UNKNOWN;;0.00;0.00;;2026-08-22 16:03:13;;ozielpastor@hotmail.com;;Oziel  Pastor Carneiro;email;66021
+sobrando_no_banco;pagarme:oi_rENwZo0tdIR19Myz;;;UNKNOWN;;24.90;24.66;;2026-08-22 16:03:13;;;;;none;
+sobrando_no_banco;pagarme:cus_xA7y3aYhPviG3gXk;;;UNKNOWN;;0.00;0.00;;2026-08-22 19:54:38;;;;;none;
+sobrando_no_banco;pagarme:addr_20l1lQRUxPCODwVL;;;UNKNOWN;;0.00;0.00;;2026-08-22 19:54:38;;ropamolhovivo@gmail.com;;Celso Geraldo Borges Xavier;email;62918
+sobrando_no_banco;pagarme:oi_6AqodweC5CaJDvbx;;;UNKNOWN;;24.90;24.66;;2026-08-22 19:54:38;;;;;none;
+sobrando_no_banco;pagarme:cus_bOzyaYCWaSZ9yX5B;;;UNKNOWN;;0.00;0.00;;2026-08-22 23:09:24;;;;;none;
+sobrando_no_banco;pagarme:oi_yK0p96YsVPsK5a6L;;;UNKNOWN;;24.90;24.66;;2026-08-22 23:09:24;;;;;none;
+sobrando_no_banco;pagarme:addr_rW10WNrCeouPqnqa;;;UNKNOWN;;0.00;0.00;;2026-08-22 23:09:24;;isaacvieiraptbr@gmail.com;;Isaac Vieira da Silva;email;63592
+sobrando_no_banco;pagarme:cus_YOMNYDRSRguXmlgL;;;UNKNOWN;;0.00;0.00;;2026-08-23 00:42:38;;;;;none;
+sobrando_no_banco;pagarme:addr_2qdz2nVhYvsg3zg3;;;UNKNOWN;;0.00;0.00;;2026-08-23 00:42:38;;ess.40sales@gmail.com;;EDILSON SALES DA SILVA;none;
+sobrando_no_banco;pagarme:addr_rPnRa56TpIW5J7N2;;;UNKNOWN;;0.00;0.00;;2026-08-23 01:12:31;;levysilva2020.ls@gmail.com;;ANTONIO FRANCISCO CRUZ E SILVA;none;
+sobrando_no_banco;pagarme:cus_B07pXZF3lc4V54xn;;;UNKNOWN;;0.00;0.00;;2026-08-23 01:12:31;;;;;none;
+sobrando_no_banco;pagarme:oi_b2J91W3AUXCz1MAy;;;UNKNOWN;;478.56;473.87;;2026-08-23 01:12:33;;;;;none;
+sobrando_no_banco;pagarme:cus_nZ76mNoCMILxvwkW;;;UNKNOWN;;0.00;0.00;;2026-08-23 02:51:10;;;;;none;
+sobrando_no_banco;pagarme:addr_b2VWxPEhakcyXWx4;;;UNKNOWN;;0.00;0.00;;2026-08-23 02:51:11;;studiorrafaelducorte@gmail.com;;Silvio Rafael das chagas;email;64365
+sobrando_no_banco;pagarme:oi_r1QAx6EtKioE04OZ;;;UNKNOWN;;478.56;473.87;;2026-08-23 02:51:13;;;;;none;
+sobrando_no_banco;pagarme:si_G7RvgAaiYhxNgEzW;;;UNKNOWN;;0.00;0.00;;2026-08-23 02:51:15;;;;;none;
+sobrando_no_banco;pagarme:ch_DkQ5ZLguOsMRv6ly;;;UNKNOWN;;47.86;47.39;;2026-08-23 02:51:16;;studiorrafaelducorte@gmail.com;;Silvio Rafael das chagas;email;64365
+sobrando_no_banco;pagarme:sub_oZRKkJqubNfAw0Yv;;;UNKNOWN;;0.00;0.00;;2026-08-23 02:51:16;;studiorrafaelducorte@gmail.com;;Silvio Rafael das chagas;email;64365
+sobrando_no_banco;pagarme:in_zVoPdJSVeUkN0JWD;;;UNKNOWN;;47.86;47.39;;2026-08-23 02:51:16;;studiorrafaelducorte@gmail.com;;Silvio Rafael das chagas;email;64365
+sobrando_no_banco;pagarme:cus_l4NPk50FBwCGbmjR;;;UNKNOWN;;0.00;0.00;;2026-08-23 08:02:00;;;;;none;
+sobrando_no_banco;pagarme:addr_EPQKjEWUPPclmXeq;;;UNKNOWN;;0.00;0.00;;2026-08-23 08:02:00;;reginaldocruzmonteiro191@gmail.com;;Reginaldo Cruz monteiro;email;66623
+sobrando_no_banco;pagarme:oi_My7GK3rwHDCL5dmb;;;UNKNOWN;;24.90;24.66;;2026-08-23 08:02:00;;;;;none;
+sobrando_no_banco;pagarme:card_baDLBW0hB1tPe290;;;UNKNOWN;;0.00;0.00;;2026-08-23 09:57:22;;studiorrafaelducorte@gmail.com;;Silvio Rafael das chagas;email;64365
+sobrando_no_banco;pagarme:addr_q4oVyWNcdfoZrD2w;;;UNKNOWN;;0.00;0.00;;2026-08-23 13:21:02;;bastosd747@gmail.com;;Davi;email;69621
+sobrando_no_banco;pagarme:oi_7ErLvZgiDdhWLVPv;;;UNKNOWN;;24.90;24.66;;2026-08-23 13:21:02;;;;;none;
+sobrando_no_banco;pagarme:cus_7WY9kJXi1nu7ybG8;;;UNKNOWN;;0.00;0.00;;2026-08-23 13:21:02;;;;;none;
+sobrando_no_banco;pagarme:addr_bGWLeMpFMrtdLlN0;;;UNKNOWN;;0.00;0.00;;2026-08-23 14:04:34;;welintonlacerda261@gmail.com;;Welinton;email;62760
+sobrando_no_banco;pagarme:oi_P7NZKXy7sRf303o1;;;UNKNOWN;;24.90;24.66;;2026-08-23 14:04:34;;;;;none;
+sobrando_no_banco;pagarme:cus_d3GZBbqIyEsGZ56o;;;UNKNOWN;;0.00;0.00;;2026-08-23 14:04:34;;;;;none;
+sobrando_no_banco;pagarme:cus_l2Jx8PqhbjUk1kwD;;;UNKNOWN;;0.00;0.00;;2026-08-23 14:10:20;;;;;none;
+sobrando_no_banco;pagarme:addr_N8YrvkAimcV8Byo2;;;UNKNOWN;;0.00;0.00;;2026-08-23 14:10:20;;luizcastro156@gmail.com;;LUIZ CARLOS APARECIDO DE CASTRO;email;64594
+sobrando_no_banco;pagarme:oi_Nw9Gb8dTb9CJk7KB;;;UNKNOWN;;478.56;473.87;;2026-08-23 14:10:23;;;;;none;
+sobrando_no_banco;pagarme:cus_86PRWvqIq9T3oXG3;;;UNKNOWN;;0.00;0.00;;2026-08-23 15:55:24;;;;;none;
+sobrando_no_banco;pagarme:oi_p7jyOm7CRZSZGaOo;;;UNKNOWN;;24.90;24.66;;2026-08-23 15:55:24;;;;;none;
+sobrando_no_banco;pagarme:addr_VzvdXBQfjjcjMoYR;;;UNKNOWN;;0.00;0.00;;2026-08-23 15:55:24;;brennosousa7040@gmail.com;;Brenno;email;69824
+sobrando_no_banco;pagarme:addr_DKV4AOaC4sJjvqXr;;;UNKNOWN;;0.00;0.00;;2026-08-23 16:09:33;;carlossilvahc@gmail.com;;Carlos Roberto Rodrigues Silva;phone;66538
+sobrando_no_banco;pagarme:cus_3AJ05zfM1iLLEOd9;;;UNKNOWN;;0.00;0.00;;2026-08-23 16:09:33;;;;;none;
+sobrando_no_banco;pagarme:oi_A7qgZWRFNhnjGnMw;;;UNKNOWN;;427.20;423.01;;2026-08-23 16:09:35;;;;;none;
+sobrando_no_banco;pagarme:oi_2lVaRDzFrU3PoyZE;;;UNKNOWN;;158.20;156.65;;2026-08-23 16:09:35;;;;;none;
+sobrando_no_banco;pagarme:cus_xVmzy66fJQFZq3EA;;;UNKNOWN;;0.00;0.00;;2026-08-23 16:50:38;;;;;none;
+sobrando_no_banco;pagarme:addr_7OZJPxDCerfMRJ8j;;;UNKNOWN;;0.00;0.00;;2026-08-23 16:50:38;;claudineipe@gmail.com;;Claudinei pereira;email;69680
+sobrando_no_banco;pagarme:oi_0okX8BXeHMHAGD6l;;;UNKNOWN;;24.90;24.66;;2026-08-23 16:50:39;;;;;none;
+sobrando_no_banco;pagarme:cus_l69om4RTAmCK8LZ2;;;UNKNOWN;;0.00;0.00;;2026-08-23 19:15:35;;;;;none;
+sobrando_no_banco;pagarme:addr_O75VMOMFDs17z89D;;;UNKNOWN;;0.00;0.00;;2026-08-23 19:15:35;;welitooliveira250@gmail.com;;Uelington Rocha de Oliveira;email;69922
+sobrando_no_banco;pagarme:addr_Ql6A0Xei66IvWANa;;;UNKNOWN;;0.00;0.00;;2026-08-23 19:16:27;;welitooliveira250@gmail.com;;Uelington Rocha de Oliveira;email;69922
+sobrando_no_banco;pagarme:addr_xrjb7puwJugaNaqP;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:20:27;;joeksonlindoso21@gmail.com;;Joekson Lindoso;email;69612
+sobrando_no_banco;pagarme:cus_5Kk6O45CXu5ljXVG;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:20:27;;;;;none;
+sobrando_no_banco;pagarme:oi_By8m6GyuaUoMzOMY;;;UNKNOWN;;24.90;24.66;;2026-08-23 21:20:28;;;;;none;
+sobrando_no_banco;pagarme:addr_4A70yasrPfel03EJ;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:44:01;;cassiasousa369@gmail.com;;Ana Cassia Sousa Garcia;none;
+sobrando_no_banco;pagarme:cus_lG8jmoLS5tPJdY7A;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:44:01;;;;;none;
+sobrando_no_banco;pagarme:oi_4bRlzJdcwrfYjxqp;;;UNKNOWN;;478.56;473.87;;2026-08-23 21:44:05;;;;;none;
+sobrando_no_banco;pagarme:si_WdMgoXAhyT5AYG9w;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:44:08;;;;;none;
+sobrando_no_banco;pagarme:ch_L78gmr9F7wI8dkbR;;;UNKNOWN;;47.86;47.39;;2026-08-23 21:44:10;;cassiasousa369@gmail.com;;Ana Cassia Sousa Garcia;none;
+sobrando_no_banco;pagarme:sub_d6vye60Ig6Cvj1Q2;;;UNKNOWN;;0.00;0.00;;2026-08-23 21:44:10;;cassiasousa369@gmail.com;;Ana Cassia Sousa Garcia;none;
+sobrando_no_banco;pagarme:in_drBOnjjSYXtmKOWL;;;UNKNOWN;;47.86;47.39;;2026-08-23 21:44:10;;cassiasousa369@gmail.com;;Ana Cassia Sousa Garcia;none;
+sobrando_no_banco;pagarme:addr_wqJMr4duNwUZqY2o;;;UNKNOWN;;0.00;0.00;;2026-08-23 22:38:21;;vandersondoriguetto@gmail.com;;Vanderson;email;69936
+sobrando_no_banco;pagarme:cus_KoWn6mmfyBFyzOPp;;;UNKNOWN;;0.00;0.00;;2026-08-23 22:38:21;;;;;none;
+sobrando_no_banco;pagarme:oi_bVkYzNMfreS2pYMO;;;UNKNOWN;;24.90;24.66;;2026-08-23 22:38:21;;;;;none;
+sobrando_no_banco;pagarme:addr_BJoEeYah5FOLEgA1;;;UNKNOWN;;0.00;0.00;;2026-08-23 23:38:51;;oliveirajosecarlosjkc01@gmail.com;;José Carlos;email;46206
+sobrando_no_banco;pagarme:oi_AxOZp5mulfbap01V;;;UNKNOWN;;24.90;24.66;;2026-08-23 23:38:51;;;;;none;
+sobrando_no_banco;pagarme:cus_aZB91lL8FlIz1Qmy;;;UNKNOWN;;0.00;0.00;;2026-08-23 23:38:51;;;;;none;
+sobrando_no_banco;pagarme:oi_dr5wErOS88hybjOY;;;UNKNOWN;;24.90;24.66;;2026-08-24 00:15:13;;;;;none;
+sobrando_no_banco;pagarme:cus_62yYrxFE7IxrkZbr;;;UNKNOWN;;0.00;0.00;;2026-08-24 00:15:13;;;;;none;
+sobrando_no_banco;pagarme:addr_KdqNjvnni4I3jgPO;;;UNKNOWN;;0.00;0.00;;2026-08-24 00:15:13;;nilsongoncalves879@gmail.com;;Nilson de Oliveira Gonçalves;email;69367
+sobrando_no_banco;pagarme:addr_r9Q8w95hdvumeLWO;;;UNKNOWN;;0.00;0.00;;2026-08-24 00:58:23;;petzerbruno@gmail.com;;Bruno Petzer Zambotti Dias;email;66702
+sobrando_no_banco;pagarme:oi_X31w5jgFr2fROzRZ;;;UNKNOWN;;24.90;24.66;;2026-08-24 00:58:23;;;;;none;
+sobrando_no_banco;pagarme:cus_bnmeMLPcesGoMjzg;;;UNKNOWN;;0.00;0.00;;2026-08-24 00:58:23;;;;;none;
+sobrando_no_banco;pagarme:addr_7QonemDHyycQWn8b;;;UNKNOWN;;0.00;0.00;;2026-08-24 12:21:40;;isaias-alves-ds@hotmail.com;;Isaías Alves;email;65601
+sobrando_no_banco;pagarme:cus_0enBkysX3tdya5Om;;;UNKNOWN;;0.00;0.00;;2026-08-24 12:21:40;;;;;none;
+sobrando_no_banco;pagarme:oi_bxWJnmLcwKF89Roq;;;UNKNOWN;;24.90;24.66;;2026-08-24 12:21:41;;;;;none;
+sobrando_no_banco;pagarme:oi_ey2XaPQNsNcDObvl;;;UNKNOWN;;397.00;393.11;;2026-08-24 15:51:02;;;;;none;
+sobrando_no_banco;pagarme:addr_86Rb5DOioSypGMOj;;;UNKNOWN;;0.00;0.00;;2026-08-24 15:51:02;;dijangomios@gmail.com;;Elson Bispo da Cunha;email;66060
+sobrando_no_banco;pagarme:cus_M0ljL0RtdwFJjdwY;;;UNKNOWN;;0.00;0.00;;2026-08-24 15:51:02;;;;;none;
+sobrando_no_banco;pagarme:cus_5KpD47p5s2fDGNXm;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:24:43;;;;;none;
+sobrando_no_banco;pagarme:oi_D0WgLxKIdfB0gX3Q;;;UNKNOWN;;24.90;24.66;;2026-08-24 20:24:43;;;;;none;
+sobrando_no_banco;pagarme:addr_po9rWNkcmI4e8VN5;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:24:43;;pacheco.andys@yahoo.com;;Andys Pacheco;email;70599
+sobrando_no_banco;pagarme:addr_9gM1AaGfMWSbpLkn;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:36:05;;wendersongomespereira35@gmail.com;;Wenderson Gomes;email;70126
+sobrando_no_banco;pagarme:oi_yJ1eAxkfvhWpQ7jG;;;UNKNOWN;;24.90;24.66;;2026-08-24 20:36:05;;;;;none;
+sobrando_no_banco;pagarme:cus_80wzqK1Zs6frRrX4;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:36:05;;;;;none;
+sobrando_no_banco;pagarme:cus_vQqJRedIxTyA0wdk;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:43:49;;;;;none;
+sobrando_no_banco;pagarme:addr_a78vKnOT5OU6LkMd;;;UNKNOWN;;0.00;0.00;;2026-08-24 20:43:49;;miltoncaralo@gmail.com;;Milton de Souza Caralo;email;60638
+sobrando_no_banco;pagarme:oi_g1Z3AkQUmATkL2vr;;;UNKNOWN;;24.90;24.66;;2026-08-24 20:43:50;;;;;none;
+sobrando_no_banco;pagarme:oi_8ep6yWpTAieJbdPQ;;;UNKNOWN;;24.90;24.66;;2026-08-24 20:47:42;;;;;none;
+sobrando_no_banco;pagarme:oi_JY4Qg7RT4dSoQW0r;;;UNKNOWN;;24.90;24.66;;2026-08-24 21:22:12;;;;;none;
+sobrando_no_banco;pagarme:addr_re4mgpIq5cvL8Ekp;;;UNKNOWN;;0.00;0.00;;2026-08-24 21:22:12;;marcione2012lopes@hotmail.com;;Marcione;email;69368
+sobrando_no_banco;pagarme:cus_WRZDOqvHKgcqG7Aj;;;UNKNOWN;;0.00;0.00;;2026-08-24 21:22:12;;;;;none;
+sobrando_no_banco;pagarme:oi_8P1D1nOHMIBZKQJ5;;;UNKNOWN;;24.90;24.66;;2026-08-24 23:20:32;;;;;none;
+sobrando_no_banco;pagarme:cus_A2Y6qZOSjTdvpXB1;;;UNKNOWN;;0.00;0.00;;2026-08-24 23:20:32;;;;;none;
+sobrando_no_banco;pagarme:addr_q6p0g5BI42frpA9b;;;UNKNOWN;;0.00;0.00;;2026-08-24 23:20:32;;marcosdossantos1144@gmail.com;;Marcos Antonio Dos Santos;email;64367
+sobrando_no_banco;pagarme:cus_WjVa56GtpuZY26zb;;;UNKNOWN;;0.00;0.00;;2026-08-24 23:48:16;;;;;none;
+sobrando_no_banco;pagarme:addr_P90WrXSP4SNay6mO;;;UNKNOWN;;0.00;0.00;;2026-08-24 23:48:16;;hudsongaleguh@gmail.com;;Hudson Batista Ramalho;email;70703
+sobrando_no_banco;pagarme:oi_Vq5p4RDSpSMGOgmN;;;UNKNOWN;;24.90;24.66;;2026-08-24 23:48:17;;;;;none;
+sobrando_no_banco;pagarme:addr_Njaox1gI0TNLMD7Q;;;UNKNOWN;;0.00;0.00;;2026-08-25 00:49:59;;uiltondossantospaixao2050@gmail.com;;Uilton Dos Santos PAIXÃO;email;44105
+sobrando_no_banco;pagarme:oi_bM8dpZWf4gf8vBKv;;;UNKNOWN;;24.90;24.66;;2026-08-25 00:49:59;;;;;none;
+sobrando_no_banco;pagarme:cus_Zkn3nprsBvUkMqN1;;;UNKNOWN;;0.00;0.00;;2026-08-25 00:49:59;;;;;none;
+sobrando_no_banco;pagarme:addr_4g0Od0jC46I0OPlv;;;UNKNOWN;;0.00;0.00;;2026-08-25 01:51:01;;cerattidonizete6@gmail.com;;Donizete ceratti correia;email;67974
+sobrando_no_banco;pagarme:cus_a4bkmv5t5cXDWZrB;;;UNKNOWN;;0.00;0.00;;2026-08-25 01:51:01;;;;;none;
+sobrando_no_banco;pagarme:oi_zgr7m2bcvCPom64n;;;UNKNOWN;;24.90;24.66;;2026-08-25 01:51:02;;;;;none;
+sobrando_no_banco;pagarme:cus_EnMQpA6eFWFwNeBd;;;UNKNOWN;;0.00;0.00;;2026-08-25 02:02:51;;;;;none;
+sobrando_no_banco;pagarme:addr_qx2O2KvFEwSAzMLJ;;;UNKNOWN;;0.00;0.00;;2026-08-25 02:02:51;;evellyn.farias.ph@gmail.com;;Hevellyne de farias batista;email;63837
+sobrando_no_banco;pagarme:oi_B3ZVYb6iMu8YA6W1;;;UNKNOWN;;478.56;473.87;;2026-08-25 02:02:53;;;;;none;
+sobrando_no_banco;pagarme:addr_MD9j3YyIDtda36Y2;;;UNKNOWN;;0.00;0.00;;2026-08-25 10:39:54;;leandro.augustobraga@gmail.com;;Leandro Augusto;email;60094
+sobrando_no_banco;pagarme:oi_xEK46neksMCrzvbe;;;UNKNOWN;;24.90;24.66;;2026-08-25 10:39:54;;;;;none;
+sobrando_no_banco;pagarme:cus_WgVP9Zteai81xXEQ;;;UNKNOWN;;0.00;0.00;;2026-08-25 10:39:54;;;;;none;
+sobrando_no_banco;pagarme:addr_e7Qp3wRtvt7Jlnbd;;;UNKNOWN;;0.00;0.00;;2026-08-25 10:56:20;;jp606064@gmail.com;;João Paulo Correia Cunha;email;70927
+sobrando_no_banco;pagarme:oi_GmgnKp3T4fM72Obz;;;UNKNOWN;;24.90;24.66;;2026-08-25 10:56:20;;;;;none;
+sobrando_no_banco;pagarme:cus_1xemNydsKbiboyRJ;;;UNKNOWN;;0.00;0.00;;2026-08-25 10:56:20;;;;;none;
+sobrando_no_banco;pagarme:addr_nN5Zwryjc4T3aDX2;;;UNKNOWN;;0.00;0.00;;2026-08-25 14:42:38;;gleletricaresidencial@gmail.com;;Kleber cristiano de Souza;email;70739
+sobrando_no_banco;pagarme:oi_G9DoWbZtL3i9K4O1;;;UNKNOWN;;24.90;24.66;;2026-08-25 14:42:38;;;;;none;
+sobrando_no_banco;pagarme:cus_exr4oxb1CQTAZlR9;;;UNKNOWN;;0.00;0.00;;2026-08-25 14:42:38;;;;;none;
+sobrando_no_banco;pagarme:oi_Dl6x120GfxUnE294;;;UNKNOWN;;24.90;24.66;;2026-08-25 15:02:44;;;;;none;
+sobrando_no_banco;pagarme:cus_13xYl98kFbI1Wnyd;;;UNKNOWN;;0.00;0.00;;2026-08-25 15:02:44;;;;;none;
+sobrando_no_banco;pagarme:addr_O9EQD6Qi7Sk5pAma;;;UNKNOWN;;0.00;0.00;;2026-08-25 15:02:44;;antonioll@live.com;;Antonio Luiz de Lima;email;63025
+sobrando_no_banco;pagarme:cus_e8k1KY8ikU95gOAB;;;UNKNOWN;;0.00;0.00;;2026-08-25 19:40:59;;;;;none;
+sobrando_no_banco;pagarme:addr_dqVk6jquAuwd0YEj;;;UNKNOWN;;0.00;0.00;;2026-08-25 19:40:59;;marceloas@id.uff.br;;Marcelo Antonio da Silva de Moraes;email;67405
+sobrando_no_banco;pagarme:oi_gKEDXZPHZUDNYlW0;;;UNKNOWN;;478.56;473.87;;2026-08-25 19:41:01;;;;;none;
+sobrando_no_banco;pagarme:oi_9bwn2wjfbsnPz4Yp;;;UNKNOWN;;177.24;175.50;;2026-08-25 19:41:01;;;;;none;

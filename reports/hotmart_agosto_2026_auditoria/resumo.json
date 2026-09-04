@@ -1,0 +1,41 @@
+{
+  "csv_path": "C:\\Users\\Emerson\\Downloads\\sales_history_20260825230545_2F5E29F716253618490943717533.csv",
+  "db_table": "hotmart_sales_live",
+  "period": "2026-08-01 a 2026-08-31 por transaction_date",
+  "csv_total_rows": 311,
+  "db_total_rows_hotmart_august": 674,
+  "csv_status_counts": {
+    "Aprovado": 222,
+    "Completo": 89
+  },
+  "db_status_counts": {
+    "Aprovado": 222,
+    "Pendente": 247,
+    "Completo": 89,
+    "Cancelado": 100,
+    "Reembolsado": 12,
+    "Reclamado": 4
+  },
+  "csv_approved_count": 311,
+  "db_approved_count": 311,
+  "csv_approved_gross": "59671.41",
+  "db_approved_gross": "59671.41",
+  "csv_approved_net": "53474.33",
+  "db_approved_net": "53474.33",
+  "csv_approved_producer": "53474.33",
+  "db_approved_producer": "53474.33",
+  "missing_in_db_count": 0,
+  "extra_in_db_count": 363,
+  "field_divergence_count": 0,
+  "csv_duplicate_transactions": [],
+  "webhook_transactions_in_august": 0,
+  "outputs": {
+    "all_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\hotmart_agosto_2026_auditoria\\divergencias_hotmart_agosto_2026.csv",
+    "missing_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\hotmart_agosto_2026_auditoria\\faltando_no_banco.csv",
+    "extra_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\hotmart_agosto_2026_auditoria\\sobrando_no_banco.csv",
+    "field_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\hotmart_agosto_2026_auditoria\\campos_divergentes.csv",
+    "daily_summary": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\hotmart_agosto_2026_auditoria\\resumo_por_dia.csv"
+  },
+  "approved_count_diff_csv_minus_db": 0,
+  "approved_producer_diff_csv_minus_db": "0.00"
+}

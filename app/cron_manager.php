@@ -355,6 +355,18 @@ function cron_manager_ensure_tables(PDO $pdo): void {
     try {
         $pdo->exec("
             UPDATE cron_managed_tasks
+               SET fallback_after_minutes = GREATEST(fallback_after_minutes, 3),
+                   next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
+             WHERE task_key IN ('pagarme_sync', 'hotmart_sync', 'firepay_reconciliation')
+               AND enabled = 1
+               AND mode <> 'disabled'
+               AND (next_run_at IS NULL OR last_success_at IS NULL)
+        ");
+    } catch (Throwable $e) {}
+
+    try {
+        $pdo->exec("
+            UPDATE cron_managed_tasks
                SET interval_minutes = 1,
                    next_run_at = LEAST(COALESCE(next_run_at, NOW()), NOW())
              WHERE task_key = 'meta_leads_qualificados'

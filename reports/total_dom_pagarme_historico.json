@@ -1,0 +1,100 @@
+{
+  "fonte": "payment_sales",
+  "status_contabilizados_como_venda": [
+    "PAID",
+    "APPROVED",
+    "COMPLETED",
+    "COMPLETE"
+  ],
+  "total_historico_todas_transacoes": [
+    {
+      "provider": "dom",
+      "total_transacoes": 150,
+      "primeira": "2026-08-01 20:53:44",
+      "ultima": "2026-08-23 02:40:06",
+      "total_bruto": 16099.39,
+      "total_liquido": 14634.17,
+      "total_taxas": 1465.22
+    },
+    {
+      "provider": "pagarme",
+      "total_transacoes": 190,
+      "primeira": "2026-08-13 01:34:59",
+      "ultima": "2026-08-25 19:41:04",
+      "total_bruto": 12378.66,
+      "total_liquido": 11864.47,
+      "total_taxas": 117.19
+    }
+  ],
+  "total_historico_vendas_aprovadas": [
+    {
+      "provider": "dom",
+      "vendas": 114,
+      "primeira": "2026-08-01 20:53:44",
+      "ultima": "2026-08-21 18:45:28",
+      "bruto": 11050.39,
+      "liquido": 10023.65,
+      "taxas": 1026.74
+    },
+    {
+      "provider": "pagarme",
+      "vendas": 41,
+      "primeira": "2026-08-13 01:34:59",
+      "ultima": "2026-08-25 19:41:04",
+      "bruto": 4781.42,
+      "liquido": 4734.67,
+      "taxas": 46.75
+    }
+  ],
+  "por_status": [
+    {
+      "provider": "dom",
+      "normalized_status": "APPROVED",
+      "qtd": 114,
+      "bruto": 11050.39,
+      "liquido": 10023.65
+    },
+    {
+      "provider": "dom",
+      "normalized_status": "CANCELED",
+      "qtd": 35,
+      "bruto": 4570.44,
+      "liquido": 4205.2
+    },
+    {
+      "provider": "dom",
+      "normalized_status": "CHARGEBACK",
+      "qtd": 1,
+      "bruto": 478.56,
+      "liquido": 405.32
+    },
+    {
+      "provider": "pagarme",
+      "normalized_status": "UNKNOWN",
+      "qtd": 141,
+      "bruto": 6079.26,
+      "liquido": 5626.69
+    },
+    {
+      "provider": "pagarme",
+      "normalized_status": "APPROVED",
+      "qtd": 41,
+      "bruto": 4781.42,
+      "liquido": 4734.67
+    },
+    {
+      "provider": "pagarme",
+      "normalized_status": "CANCELED",
+      "qtd": 6,
+      "bruto": 1014.52,
+      "liquido": 1004.58
+    },
+    {
+      "provider": "pagarme",
+      "normalized_status": "PENDING",
+      "qtd": 2,
+      "bruto": 503.46,
+      "liquido": 498.53
+    }
+  ]
+}

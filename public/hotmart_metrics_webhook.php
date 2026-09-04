@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/metrics.php';
 require_once __DIR__ . '/../app/integration_hub.php';
+require_once __DIR__ . '/../app/course_access.php';
+require_once __DIR__ . '/../app/payment_events.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -55,6 +57,56 @@ function hmw_money_at(array $data, array $path): float {
         $current = $current[$key];
     }
     return is_numeric($current) ? (float)$current : 0.0;
+}
+
+function hmw_cents(float $value): int {
+    return (int)round($value * 100);
+}
+
+function hmw_payment_event_status(string $status): string {
+    $status = strtoupper(trim($status));
+    if (in_array($status, ['COMPLETE', 'COMPLETED', 'APPROVED', 'PAID'], true)) return 'APPROVED';
+    return $status;
+}
+
+function hmw_offer_candidates(array $product, array $offer): array {
+    $values = [
+        $offer['code'] ?? '',
+        $offer['name'] ?? '',
+        $product['id'] ?? '',
+        $product['name'] ?? '',
+    ];
+    $candidates = [];
+    foreach ($values as $value) {
+        foreach (course_access_offer_codes((string)$value) as $code) {
+            $candidates[] = $code;
+        }
+    }
+    return array_values(array_unique(array_filter($candidates, static fn($value) => trim((string)$value) !== '')));
+}
+
+function hmw_try_grant_lifetime(PDO $pdo, array $product, array $offer, string $transactionCode, string $status, string $event, string $email, string $phoneRaw, ?array $matched): array {
+    if (!course_access_purchase_is_approved($status, $event)) {
+        return ['granted' => false, 'reason' => 'payment_not_approved'];
+    }
+
+    $matchedUser = is_array($matched['user'] ?? null) ? $matched['user'] : null;
+    foreach (hmw_offer_candidates($product, $offer) as $offerCode) {
+        $attempt = course_access_try_grant_lifetime_purchase($pdo, [
+            'user_id' => isset($matchedUser['id']) ? (int)$matchedUser['id'] : null,
+            'offer_code' => $offerCode,
+            'transaction_code' => $transactionCode,
+            'status' => $status,
+            'event' => $event,
+            'email' => $email,
+            'phone' => $phoneRaw,
+            'payload' => ['product' => $product, 'offer' => $offer],
+            'source' => 'hotmart_webhook',
+        ]);
+        if (!empty($attempt['granted'])) return $attempt;
+    }
+
+    return ['granted' => false, 'reason' => 'no_hotmart_offer_candidate_matched', 'candidates' => hmw_offer_candidates($product, $offer)];
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') hmw_reply(405, ['ok' => false, 'message' => 'Método não permitido']);
@@ -161,7 +213,41 @@ try {
     $pdo->prepare("UPDATE hotmart_sales_live SET payment_type=:payment,installments_number=:installments,sale_origin=:origin,sales_channel='hotmart' WHERE transaction_code=:tx")->execute(['payment' => $payment ?: null, 'installments' => $installments ?: null, 'origin' => $origin ?: null, 'tx' => $txPrefixed]);
 
     $hubResult = hub_ingest_hotmart($pdo, $payload);
+    $lifetimeAttempt = hmw_try_grant_lifetime($pdo, $product, $offer, $txPrefixed, $status, $event, $email, $phoneRaw, $matched);
     $pdo->commit();
+
+    $paymentEventStatus = hmw_payment_event_status($status);
+    $paymentEvent = payment_event_register($pdo, [
+        'provider' => 'hotmart',
+        'normalized_status' => $paymentEventStatus,
+        'transaction_code' => $txPrefixed,
+        'provider_transaction_id' => $transaction,
+        'provider_status' => (string)($purchase['status'] ?? $event),
+        'payment_method' => $payment ?: null,
+        'currency' => (string)($sale['currency'] ?? 'BRL'),
+        'gross_amount_cents' => hmw_cents($gross),
+        'net_amount_cents' => hmw_cents($net),
+        'fee_amount_cents' => max(0, hmw_cents($gross - $producer)),
+        'installments' => $installments ?: null,
+        'product_name' => (string)($product['name'] ?? ''),
+        'product_code' => (string)($product['id'] ?? ''),
+        'checkout_id' => (string)($offer['code'] ?? ''),
+        'checkout_url' => payment_event_first_value($payload, ['checkout_url', 'payment_url', 'url']),
+        'buyer_name' => (string)($buyer['name'] ?? ''),
+        'buyer_email' => $email,
+        'buyer_phone' => $phoneRaw,
+        'buyer_document' => payment_event_first_value($buyer, ['document', 'document_number', 'cpf', 'cnpj']),
+        'user_id' => (int)($sale['matched_user_id'] ?? 0),
+        'raw_payload' => $payload,
+        'metadata' => [
+            'source' => 'hotmart_webhook',
+            'event' => $event,
+            'event_id' => $eventId,
+            'match_method' => (string)($sale['match_method'] ?? 'none'),
+            'lifetime_attempt' => $lifetimeAttempt,
+        ],
+        'occurred_at' => $sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: date('Y-m-d H:i:s'),
+    ]);
 
     hmw_reply(200, [
         'ok' => true,
@@ -169,11 +255,12 @@ try {
         'status' => $status,
         'match_method' => $sale['match_method'],
         'hub_deliveries' => $hubResult['deliveries'],
-        'dispatched' => false
+        'dispatched' => ((int)($paymentEvent['triggered'] ?? 0)) > 0,
+        'payment_event' => $paymentEvent,
+        'lifetime_granted' => !empty($lifetimeAttempt['granted'])
     ]);
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     app_log('Falha no webhook de metricas Hotmart', ['event_id' => $eventId, 'transaction' => $transaction, 'error' => $e->getMessage()]);
     hmw_reply(500, ['ok' => false, 'message' => 'Falha ao processar evento']);
 }
-

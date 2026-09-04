@@ -1,0 +1,13 @@
+{
+  "inserted_payment_sales": 7,
+  "inserted_hotmart_sales_live": 5,
+  "missing_ids": [
+    "7b5bd338-31fe-477f-886e-470af043d619",
+    "d36cfaa0-c8df-42d8-aeb9-317eb85c8a80",
+    "dfb79d2a-e919-46e7-a485-6756cfbf1112",
+    "fc6e6ff1-aeb6-48b4-af85-73f5134253d0",
+    "642388c5-f064-4a33-896b-6a643e0a0259",
+    "45c32f3b-5b7c-4abb-a9b5-8550aeb69905",
+    "fe0aad2e-8577-4bcd-b456-a2ccc68fb903"
+  ]
+}

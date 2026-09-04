@@ -1,0 +1,21 @@
+{
+  "inserted_payment_sales": 3,
+  "inserted_hotmart_sales_live": 1,
+  "updated_canceled": 1,
+  "ignored_extra_approved_payment_sales": 4,
+  "ignored_extra_approved_hotmart_sales_live": 4,
+  "missing_ids": [
+    "pagarme:ch_QJ2e5GDIZ5TkOdA3",
+    "pagarme:ch_ZLj1vADFgup9z74V",
+    "pagarme:ch_2nNpXKrSdxsM1eL4"
+  ],
+  "extra_approved_ids": [
+    "pagarme:ch_DkQ5ZLguOsMRv6ly",
+    "pagarme:in_zVoPdJSVeUkN0JWD",
+    "pagarme:ch_L78gmr9F7wI8dkbR",
+    "pagarme:in_drBOnjjSYXtmKOWL"
+  ],
+  "status_fix_ids": [
+    "pagarme:ch_y6JZLgPU4tpOaB15"
+  ]
+}

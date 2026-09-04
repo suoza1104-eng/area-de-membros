@@ -1,0 +1,43 @@
+{
+  "csv_path": "C:\\Users\\Emerson\\Downloads\\4a80f28b9c7d3c90dffb7467e7507fa79995.csv",
+  "db_table": "payment_sales",
+  "db_provider": "dom",
+  "match_key": "id_transaction/order_id contra external_transaction_id com e sem prefixo dom:",
+  "report_total_rows": 157,
+  "db_total_rows": 157,
+  "report_status_counts": {
+    "APPROVED": 119,
+    "CANCELED": 37,
+    "CHARGEBACK": 1
+  },
+  "db_status_counts": {
+    "APPROVED": 119,
+    "CANCELED": 37,
+    "CHARGEBACK": 1
+  },
+  "report_gross_total": 16188.54,
+  "db_gross_total": 16188.54,
+  "report_net_total": 14717.15,
+  "db_net_total": 14717.15,
+  "report_approved_count": 119,
+  "db_approved_count": 119,
+  "report_approved_gross": 11104.29,
+  "db_approved_gross": 11104.29,
+  "report_approved_net": 10072.71,
+  "db_approved_net": 10072.71,
+  "missing_in_db_count": 0,
+  "extra_in_db_count": 0,
+  "field_divergence_count": 0,
+  "duplicates_in_report": [
+    "dc13f28a-39c1-4509-aef2-b6d62795f241"
+  ],
+  "outputs": {
+    "all_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\dom_auditoria\\divergencias_dom.csv",
+    "missing_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\dom_auditoria\\faltando_no_banco.csv",
+    "extra_in_db": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\dom_auditoria\\sobrando_no_banco.csv",
+    "field_divergences": "C:\\Users\\Emerson\\Desktop\\area de membros - projeto\\area_membros\\area_membros\\reports\\dom_auditoria\\campos_divergentes.csv"
+  },
+  "approved_count_diff_report_minus_db": 0,
+  "approved_gross_diff_report_minus_db": 0.0,
+  "approved_net_diff_report_minus_db": 0.0
+}
