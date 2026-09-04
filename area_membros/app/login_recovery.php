@@ -96,14 +96,14 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
     $userId = 0;
     if ($user) {
         $userId = (int)$user['id'];
-        // Atualizar nome/telefone se estiverem vazios ou incompletos
+        // Atualizar nome/telefone se fornecidos
         $updCols = [];
         $updParams = [':id' => $userId];
-        if (empty($user['nome']) || trim((string)$user['nome']) === '') {
+        if (!empty($cleanNome)) {
             $updCols[] = "nome = :nome";
             $updParams[':nome'] = $cleanNome;
         }
-        if (empty($user['telefone']) || trim((string)$user['telefone']) === '') {
+        if (!empty($cleanTel)) {
             $updCols[] = "telefone = :tel";
             $updParams[':tel'] = $cleanTel;
         }
@@ -112,18 +112,40 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
             $pdo->prepare($sqlUpd)->execute($updParams);
         }
     } else {
-        // Verificar se usuário existe por telefone
-        $stTel = $pdo->prepare("SELECT * FROM users WHERE telefone IS NOT NULL AND telefone <> '' AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, '(', ''), ')', ''), '-', ''), ' ', '') LIKE :digits LIMIT 1");
-        $stTel->execute([':digits' => '%' . $digitsTel . '%']);
-        $userTel = $stTel->fetch(PDO::FETCH_ASSOC);
+        // 2. Verificar se usuário existe por match de telefone (exato, com/sem 55)
+        $phoneCandidates = [$digitsTel];
+        if (strlen($digitsTel) === 10 || strlen($digitsTel) === 11) {
+            if (!str_starts_with($digitsTel, '55')) {
+                $phoneCandidates[] = '55' . $digitsTel;
+            }
+        }
+        if (str_starts_with($digitsTel, '55') && (strlen($digitsTel) === 12 || strlen($digitsTel) === 13)) {
+            $phoneCandidates[] = substr($digitsTel, 2);
+        }
+
+        $userTel = null;
+        foreach ($phoneCandidates as $cand) {
+            $stTel = $pdo->prepare("
+                SELECT * FROM users 
+                WHERE telefone IS NOT NULL AND telefone <> '' 
+                  AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(telefone, '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE :digits 
+                ORDER BY id DESC LIMIT 1
+            ");
+            $stTel->execute([':digits' => '%' . $cand . '%']);
+            $res = $stTel->fetch(PDO::FETCH_ASSOC);
+            if ($res) {
+                $userTel = $res;
+                break;
+            }
+        }
         
         if ($userTel) {
             $userId = (int)$userTel['id'];
-            // Atualiza email se o cadastrado for genérico
-            $pdo->prepare("UPDATE users SET email = :email, nome = COALESCE(NULLIF(nome, ''), :nome) WHERE id = :id")
-                ->execute([':email' => $cleanEmail, ':nome' => $cleanNome, ':id' => $userId]);
+            // Usuário existente encontrado pelo telefone -> Atualiza email, nome e telefone sem duplicar registro
+            $pdo->prepare("UPDATE users SET email = :email, nome = COALESCE(NULLIF(:nome, ''), nome), telefone = :tel WHERE id = :id")
+                ->execute([':email' => $cleanEmail, ':nome' => $cleanNome, ':tel' => $cleanTel, ':id' => $userId]);
         } else {
-            // Criar novo usuário no banco
+            // Nenhum match por e-mail ou telefone -> Criar novo usuário no banco de dados
             $defaultPassword = bin2hex(random_bytes(6));
             $hash = password_hash($defaultPassword, PASSWORD_DEFAULT);
             $criadoEm = date('Y-m-d H:i:s');
@@ -196,3 +218,4 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
         'message' => 'Acesso liberado com sucesso!'
     ];
 }
+

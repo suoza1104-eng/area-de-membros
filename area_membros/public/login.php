@@ -865,6 +865,37 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     font-size: 13px;
     line-height: 1.45;
 }
+.rec-spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(15, 23, 42, 0.3);
+    border-radius: 50%;
+    border-top-color: #0f172a;
+    animation: recSpin 0.8s linear infinite;
+    vertical-align: middle;
+}
+@keyframes recSpin {
+    to { transform: rotate(360deg); }
+}
+.rec-loading-banner {
+    display: none;
+    margin-top: 14px;
+    padding: 12px 16px;
+    background: rgba(250, 204, 21, 0.1);
+    border: 1px dashed rgba(250, 204, 21, 0.4);
+    border-radius: 12px;
+    text-align: center;
+    color: #fde047;
+    font-size: 13px;
+    font-weight: 600;
+}
+.rec-loading-banner.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
 </style>
 
 <div class="rec-modal-overlay <?= $showRecoveryModal ? 'open' : '' ?>" id="loginRecoveryModal" role="dialog" aria-modal="true">
@@ -905,6 +936,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
                     <button type="submit" class="rec-btn-confirm" id="btnRecSubmit">Liberar Acesso e Assistir Aulas</button>
                     <button type="button" class="rec-btn-fix" id="btnRecBackStep1">← Voltar</button>
                 </div>
+                <div class="rec-loading-banner" id="recLoadingBanner"></div>
             </form>
         </div>
     </div>
@@ -982,6 +1014,9 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
 
     // Step 2: Submit (Auto-Register)
     if (formStep2) {
+        var loadingBanner = document.getElementById('recLoadingBanner');
+        var msgTimer = null;
+
         formStep2.addEventListener('submit', function(e){
             e.preventDefault();
             var emailTyped = typedDisplay ? typedDisplay.textContent.trim() : '';
@@ -991,7 +1026,26 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
             msgErr.style.display = 'none';
             msgErr.textContent = '';
             btnSubmit.disabled = true;
-            btnSubmit.textContent = 'Liberando acesso...';
+            btnSubmit.innerHTML = '<span class="rec-spinner"></span> Liberando acesso...';
+
+            if (loadingBanner) {
+                loadingBanner.classList.add('active');
+                loadingBanner.innerHTML = '<span class="rec-spinner"></span> Localizando sua inscrição e preparando ambiente de aulas...';
+            }
+
+            var stepMsgs = [
+                'Localizando sua inscrição e preparando ambiente de aulas...',
+                'Validando dados de acesso...',
+                'Quase lá! Gerando seu acesso à área de membros...'
+            ];
+            var msgIndex = 0;
+            if (msgTimer) clearInterval(msgTimer);
+            msgTimer = setInterval(function(){
+                msgIndex = (msgIndex + 1) % stepMsgs.length;
+                if (loadingBanner && loadingBanner.classList.contains('active')) {
+                    loadingBanner.innerHTML = '<span class="rec-spinner"></span> ' + stepMsgs[msgIndex];
+                }
+            }, 1800);
 
             fetch(window.location.href, {
                 method: 'POST',
@@ -1005,19 +1059,24 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
             })
             .then(function(res){ return res.json(); })
             .then(function(data){
+                if (msgTimer) clearInterval(msgTimer);
                 if (data && data.ok) {
-                    btnSubmit.textContent = 'Redirecionando...';
+                    btnSubmit.innerHTML = '<span class="rec-spinner"></span> Redirecionando...';
+                    if (loadingBanner) loadingBanner.innerHTML = '<span class="rec-spinner"></span> Acesso liberado! Entrando nas aulas...';
                     window.location.href = data.redirect || 'trilha.php';
                 } else {
                     btnSubmit.disabled = false;
                     btnSubmit.textContent = 'Liberar Acesso e Assistir Aulas';
+                    if (loadingBanner) loadingBanner.classList.remove('active');
                     msgErr.textContent = (data && data.message) ? data.message : 'Ocorreu um erro. Tente novamente.';
                     msgErr.style.display = 'block';
                 }
             })
             .catch(function(err){
+                if (msgTimer) clearInterval(msgTimer);
                 btnSubmit.disabled = false;
                 btnSubmit.textContent = 'Liberar Acesso e Assistir Aulas';
+                if (loadingBanner) loadingBanner.classList.remove('active');
                 msgErr.textContent = 'Erro ao se comunicar com o servidor. Tente novamente.';
                 msgErr.style.display = 'block';
             });
