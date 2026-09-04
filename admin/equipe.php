@@ -40,6 +40,7 @@ foreach ([
 $PAGINAS = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
+    'ads_manager'      => 'Gerenciador de Anúncios',
     'alunos'           => 'Alunos',
     'retorno_agendamentos' => 'Agendamentos de Retorno',
     'reagendamentos_live' => 'Reagendamentos de Live',

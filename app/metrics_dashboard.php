@@ -858,6 +858,90 @@ function md_ads_hierarchy(PDO $pdo,string $endDate,string $model,array $windowDa
     return ['windows'=>$windows,'tree'=>$tree,'totals'=>$totals];
 }
 
+/**
+ * Reagrupa a arvore de md_ads_hierarchy() por conta de anuncio (integracao
+ * Meta ativa), sem alterar md_ads_hierarchy() em si — outras paginas (ex.:
+ * vendas_analytics.php) dependem do formato de retorno atual dela.
+ * Cada campanha ja carrega o nome da conta dona ('account'), resolvido via
+ * build_meta_name_lookup(). O gasto/impressoes/etc de cada conta e
+ * sobrescrito com a verdade de meta_account_daily filtrada por
+ * integration_id (mesmo padrao que md_ads_hierarchy ja usa pro total geral),
+ * porque isso cobre tambem o gasto que a Meta relata sem estar ligado a
+ * nenhuma campanha com venda/lead cruzado no periodo. Os numeros nossos
+ * (cross_leads/cross_sales/cross_revenue) continuam sendo a soma de baixo
+ * para cima das campanhas — sao o cruzamento real, a Meta nao os tem.
+ */
+function md_ads_group_by_account(PDO $pdo, array $tree, array $windows, string $endDate): array
+{
+    $start = min($windows);
+    $integrations = metrics_active_integrations($pdo);
+    $buckets = [];
+    foreach ($integrations as $integration) {
+        $id = (int)$integration['id'];
+        $name = (string)($integration['name'] ?? ('Conta ' . $id));
+        $buckets[$name] = [
+            'integration_id' => $id,
+            'name' => $name,
+            'ad_account_id' => (string)($integration['ad_account_id'] ?? ''),
+            'last_success_sync_at' => $integration['last_success_sync_at'] ?? null,
+            'metrics' => md_ads_empty_metrics($windows),
+            'tree' => [],
+        ];
+    }
+    $unresolvedName = 'Sem conta identificada';
+    $buckets[$unresolvedName] = [
+        'integration_id' => null,
+        'name' => $unresolvedName,
+        'ad_account_id' => '',
+        'last_success_sync_at' => null,
+        'metrics' => md_ads_empty_metrics($windows),
+        'tree' => [],
+    ];
+
+    foreach ($tree as $campaignName => $campaign) {
+        $accountName = (string)($campaign['account'] ?? '');
+        $bucketKey = ($accountName !== '' && isset($buckets[$accountName])) ? $accountName : $unresolvedName;
+        $buckets[$bucketKey]['tree'][$campaignName] = $campaign;
+        md_ads_merge_metrics($buckets[$bucketKey]['metrics'], $campaign['metrics']);
+    }
+
+    $metaFields = ['spend','impressions','reach','clicks','meta_leads','meta_sales','meta_revenue','meta_roas_revenue'];
+    $windowKeys = function (string $date) use ($windows): array {
+        $out = [];
+        foreach ($windows as $key => $from) if ($date >= $from) $out[] = $key;
+        return $out;
+    };
+    foreach ($integrations as $integration) {
+        $id = (int)$integration['id'];
+        $name = (string)($integration['name'] ?? ('Conta ' . $id));
+        $rows = md_rows($pdo, "SELECT report_date,SUM(spend) spend,SUM(impressions) impressions,SUM(reach) reach,SUM(clicks) clicks,SUM(leads) meta_leads,SUM(purchases) meta_sales,SUM(purchase_value) meta_revenue,SUM(purchase_roas*spend) meta_roas_revenue FROM meta_account_daily WHERE integration_id=:id AND report_date BETWEEN :start AND :end GROUP BY report_date", ['id' => $id, 'start' => $start, 'end' => $endDate]);
+        $accountMetrics = md_ads_empty_metrics($windows);
+        foreach ($rows as $r) foreach ($windowKeys((string)$r['report_date']) as $w) foreach ($metaFields as $field) $accountMetrics[$w][$field] += (float)$r[$field];
+        foreach ($windows as $w => $unused) foreach ($metaFields as $field) $buckets[$name]['metrics'][$w][$field] = $accountMetrics[$w][$field];
+    }
+
+    if (empty($buckets[$unresolvedName]['tree'])) unset($buckets[$unresolvedName]);
+    uasort($buckets, static fn($a, $b) => (float)($b['metrics']['x']['spend'] ?? 0) <=> (float)($a['metrics']['x']['spend'] ?? 0));
+    return array_values($buckets);
+}
+
+/**
+ * Status mais recente de cada campanha (ativa/pausada/etc) por conta, so
+ * para exibicao (badge) — nao entra em nenhum calculo de metrica.
+ */
+function md_campaign_status_map(PDO $pdo, int $integrationId): array
+{
+    $rows = md_rows($pdo, "SELECT t.campaign_name, t.effective_status FROM meta_campaign_daily t
+        INNER JOIN (SELECT campaign_name, MAX(report_date) AS max_date FROM meta_campaign_daily WHERE integration_id=:id GROUP BY campaign_name) latest
+          ON latest.campaign_name = t.campaign_name AND latest.max_date = t.report_date
+        WHERE t.integration_id = :id2", ['id' => $integrationId, 'id2' => $integrationId]);
+    $map = [];
+    foreach ($rows as $r) {
+        $map[normalize_match_key((string)$r['campaign_name'])] = (string)($r['effective_status'] ?? '');
+    }
+    return $map;
+}
+
 function md_ads_metric_view(array $metrics,string $source): array
 {
     $spend=(float)($metrics['spend']??0);$impressions=(int)($metrics['impressions']??0);$reach=(int)($metrics['reach']??0);$clicks=(int)($metrics['clicks']??0);$meta=$source==='meta';

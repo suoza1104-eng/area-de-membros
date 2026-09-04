@@ -64,7 +64,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 
 // Visibilidade dos itens do sidebar
 $__sbV = [];
-foreach (['dashboard','vendas_analytics','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
+foreach (['dashboard','vendas_analytics','ads_manager','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
           'integracoes','webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
@@ -98,6 +98,7 @@ if (is_array($__supportCache) && (time() - (int)($__supportCache['ts'] ?? 0)) < 
 $titleMap = [
     'dashboard'        => 'Dashboard',
     'vendas_analytics' => 'Analise de Vendas',
+    'ads_manager'      => 'Gerenciador de Anúncios',
     'hotmart_import'   => 'Conciliar Vendas',
     'vendas_vitalicio' => 'Vendas Vitalicio',
     'alunos'           => 'Alunos',
@@ -700,7 +701,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['ads_manager'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -733,6 +734,21 @@ button:not([class]):hover { filter: brightness(1.07); }
         <line x1="16" y1="17" x2="8" y2="17"/>
       </svg>
       Auditoria de Vendas
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['ads_manager']): ?>
+    <a href="gerenciador_anuncios.php" class="sb-item <?= $currentMenu === 'ads_manager' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="5" cy="6" r="2.4"/>
+        <circle cx="12" cy="12" r="2.4"/>
+        <circle cx="12" cy="19" r="2.4"/>
+        <circle cx="19" cy="6" r="2.4"/>
+        <path d="M5 8.4V12a2 2 0 0 0 2 2h3"/>
+        <path d="M19 8.4V12a2 2 0 0 0-2 2h-3"/>
+        <path d="M12 14.4V16.6"/>
+      </svg>
+      Gerenciador de Anúncios
     </a>
     <?php endif; ?>
 
