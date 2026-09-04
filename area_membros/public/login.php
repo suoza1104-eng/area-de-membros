@@ -411,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $failureReason, $senha);
             $mensagemErro = $blocked ? 'Seu acesso está bloqueado. Fale com a equipe de suporte.' : 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
             if ($loginIgnorePassword && $failureReason === 'user_not_found') {
-                $mensagemErro = 'Não encontrei esse e-mail cadastrado. A senha não bloqueia o acesso; confira se digitou o mesmo e-mail da inscrição ou fale com o suporte.';
+                $mensagemErro = 'Não encontrei esse e-mail cadastrado. Confira se digitou o mesmo e-mail da inscrição e tente novamente ou fale com o suporte.';
             }
         } else {
             $_SESSION['aluno_id'] = (int)$user['id'];
@@ -723,13 +723,13 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
                 <label class="form-label" for="email">E-mail</label>
                 <input type="email" id="email" name="email"
                        value="<?= h($emailForm) ?>"
-                       placeholder="seuemail@exemplo.com" required <?= $showRecoveryModal ? '' : 'autofocus' ?>>
+                       placeholder="seuemail@exemplo.com" required <?= $showRecoveryModal ? 'readonly tabindex="-1"' : 'autofocus' ?>>
             </div>
 
             <div class="form-group">
                 <label class="form-label" for="senha">Senha</label>
                 <input type="password" id="senha" name="senha"
-                       placeholder="<?= $loginIgnorePassword ? 'Senha dispensada' : 'Digite sua senha' ?>" <?= $loginIgnorePassword ? '' : 'required' ?>>
+                       placeholder="<?= $loginIgnorePassword ? 'Senha dispensada' : 'Digite sua senha' ?>" <?= $showRecoveryModal ? 'readonly tabindex="-1"' : ($loginIgnorePassword ? '' : 'required') ?>>
             </div>
 
             <?php if ($loginIgnorePassword): ?>
@@ -1010,7 +1010,23 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     var msgErr = document.getElementById('recMsgErr');
     var mainEmailInput = document.querySelector('input[name="email"]');
 
-    // Desfocar qualquer campo ao carregar para impedir a abertura automatica do teclado no mobile
+    function enableMainInputs() {
+        var inputs = document.querySelectorAll('.card input');
+        for (var i = 0; i < inputs.length; i++) {
+            inputs[i].removeAttribute('readonly');
+            inputs[i].removeAttribute('tabindex');
+        }
+    }
+
+    // Interceptar foco para impedir que campos externos ou teclado abram automaticamente no mobile
+    window.addEventListener('focusin', function(e){
+        if (modal && modal.classList.contains('open')) {
+            if (!e.target.closest('.rec-modal-card') || (step1 && step1.classList.contains('active'))) {
+                e.target.blur();
+            }
+        }
+    }, true);
+
     if (modal.classList.contains('open')) {
         setTimeout(function(){
             if (document.activeElement && typeof document.activeElement.blur === 'function') {
@@ -1033,9 +1049,11 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
                 })
             }).catch(function(){});
 
+            enableMainInputs();
             modal.classList.remove('open');
-            if (document.activeElement && typeof document.activeElement.blur === 'function') {
-                document.activeElement.blur();
+            if (mainEmailInput) {
+                mainEmailInput.focus();
+                mainEmailInput.select();
             }
         });
     }
@@ -1067,6 +1085,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
                 })
             }).catch(function(){});
 
+            enableMainInputs();
             modal.classList.remove('open');
             if (mainEmailInput) {
                 mainEmailInput.focus();
