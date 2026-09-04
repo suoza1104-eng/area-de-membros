@@ -4,8 +4,32 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/login_recovery.php';
 
 $pdo = getPDO();
+
+// Tratar requisições AJAX de recuperação inteligente de login
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ajax_recover_register') {
+    header('Content-Type: application/json; charset=utf-8');
+    $email = (string)($_POST['email'] ?? '');
+    $nome = (string)($_POST['nome'] ?? '');
+    $telefone = (string)($_POST['telefone'] ?? '');
+    
+    $res = login_recovery_auto_register($pdo, $email, $nome, $telefone);
+    echo json_encode($res, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ajax_recover_event') {
+    header('Content-Type: application/json; charset=utf-8');
+    $eventType = (string)($_POST['event_type'] ?? '');
+    $emailTyped = (string)($_POST['email_typed'] ?? '');
+    $emailCorrected = (string)($_POST['email_corrected'] ?? '');
+    
+    login_recovery_log_event($pdo, $eventType, $emailTyped, $emailCorrected);
+    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -414,6 +438,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
+
+$recoveryConfig = login_recovery_get_config($pdo);
+$isDemoRecovery = !empty($_GET['demo_recovery']);
+$showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensagemErro !== '' || $isDemoRecovery);
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -734,6 +762,270 @@ $finalHelpUrl = $helpUrl !== '' ? $helpUrl : $mailtoHelp;
     </div>
 
 </div>
+
+<!-- MODAL INTELIGENTE DE RECUPERAÇÃO DE LOGIN (PRIORIDADE TOTAL Z-INDEX 50000) -->
+<style>
+.rec-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 50000;
+    background: rgba(2, 6, 15, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+.rec-modal-overlay.open {
+    display: flex;
+}
+.rec-modal-card {
+    position: relative;
+    width: min(520px, 100%);
+    background: #0d1b33;
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    border-radius: 22px;
+    padding: 32px 26px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85), 0 0 50px rgba(250, 204, 21, 0.15);
+    color: #e2e8f0;
+    font-family: 'Inter', -apple-system, sans-serif;
+    animation: recModalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes recModalPop {
+    from { opacity: 0; transform: scale(0.94) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.rec-modal-step { display: none; }
+.rec-modal-step.active { display: block; }
+.rec-modal-header { text-align: center; margin-bottom: 20px; }
+.rec-modal-header h3 { font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 8px; line-height: 1.25; }
+.rec-modal-header p { font-size: 14px; color: #94a3b8; line-height: 1.5; }
+.rec-typed-email-box {
+    background: rgba(250, 204, 21, 0.08);
+    border: 2px dashed rgba(250, 204, 21, 0.5);
+    border-radius: 14px;
+    padding: 16px 18px;
+    text-align: center;
+    margin: 20px 0 24px 0;
+}
+.rec-typed-email-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #fde047; font-weight: 700; margin-bottom: 6px; }
+.rec-typed-email-value { font-size: 22px; font-weight: 800; color: #facc15; word-break: break-all; }
+.rec-btn-group { display: flex; flex-direction: column; gap: 12px; }
+.rec-btn-confirm {
+    width: 100%;
+    padding: 15px 20px;
+    border-radius: 12px;
+    border: none;
+    background: linear-gradient(135deg, #fde047, #eab308);
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 0.15s, filter 0.15s;
+    box-shadow: 0 4px 16px rgba(250, 204, 21, 0.35);
+}
+.rec-btn-confirm:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.rec-btn-confirm:disabled { opacity: 0.65; cursor: wait; transform: none; }
+.rec-btn-fix {
+    width: 100%;
+    padding: 13px 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    background: rgba(15, 23, 42, 0.6);
+    color: #cbd5e1;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.rec-btn-fix:hover { background: rgba(30, 41, 59, 0.8); border-color: rgba(148, 163, 184, 0.6); color: #fff; }
+.rec-field { margin-bottom: 16px; }
+.rec-field label { display: block; font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 6px; }
+.rec-field input {
+    width: 100%;
+    padding: 13px 15px;
+    border-radius: 10px;
+    border: 1px solid #1e293b;
+    background: #0f172a;
+    color: #fff;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.rec-field input:focus { border-color: #facc15; }
+.rec-msg-err {
+    display: none;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    font-size: 13px;
+    line-height: 1.45;
+}
+</style>
+
+<div class="rec-modal-overlay <?= $showRecoveryModal ? 'open' : '' ?>" id="loginRecoveryModal" role="dialog" aria-modal="true">
+    <div class="rec-modal-card">
+        <!-- STEP 1: Confirmação de E-mail -->
+        <div class="rec-modal-step active" id="recStep1">
+            <div class="rec-modal-header">
+                <h3><?= h($recoveryConfig['title']) ?></h3>
+                <p><?= h($recoveryConfig['subtitle']) ?></p>
+            </div>
+            <div class="rec-typed-email-box">
+                <div class="rec-typed-email-label">E-mail digitado:</div>
+                <div class="rec-typed-email-value" id="recTypedEmailDisplay"><?= h($emailForm !== '' ? $emailForm : ($cookieEmail !== '' ? $cookieEmail : 'aluno@exemplo.com')) ?></div>
+            </div>
+            <div class="rec-btn-group">
+                <button type="button" class="rec-btn-confirm" id="btnRecConfirm"><?= h($recoveryConfig['btn_confirm']) ?></button>
+                <button type="button" class="rec-btn-fix" id="btnRecFix"><?= h($recoveryConfig['btn_fix']) ?></button>
+            </div>
+        </div>
+
+        <!-- STEP 2: Cadastro Automático e Atualização -->
+        <div class="rec-modal-step" id="recStep2">
+            <div class="rec-modal-header">
+                <h3><?= h($recoveryConfig['step2_title']) ?></h3>
+                <p><?= h($recoveryConfig['step2_desc']) ?></p>
+            </div>
+            <div class="rec-msg-err" id="recMsgErr"></div>
+            <form id="recFormStep2" onsubmit="return false;">
+                <div class="rec-field">
+                    <label for="recInputNome">Nome Completo</label>
+                    <input type="text" id="recInputNome" placeholder="Digite seu nome completo" required autocomplete="name">
+                </div>
+                <div class="rec-field">
+                    <label for="recInputTel">WhatsApp (com DDD)</label>
+                    <input type="tel" id="recInputTel" placeholder="(XX) XXXXX-XXXX" maxlength="15" required autocomplete="tel">
+                </div>
+                <div class="rec-btn-group" style="margin-top: 20px;">
+                    <button type="submit" class="rec-btn-confirm" id="btnRecSubmit">Liberar Acesso e Assistir Aulas</button>
+                    <button type="button" class="rec-btn-fix" id="btnRecBackStep1">← Voltar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    var modal = document.getElementById('loginRecoveryModal');
+    if (!modal) return;
+
+    var step1 = document.getElementById('recStep1');
+    var step2 = document.getElementById('recStep2');
+    var btnConfirm = document.getElementById('btnRecConfirm');
+    var btnFix = document.getElementById('btnRecFix');
+    var btnBack = document.getElementById('btnRecBackStep1');
+    var formStep2 = document.getElementById('recFormStep2');
+    var btnSubmit = document.getElementById('btnRecSubmit');
+    var inputTel = document.getElementById('recInputTel');
+    var inputNome = document.getElementById('recInputNome');
+    var typedDisplay = document.getElementById('recTypedEmailDisplay');
+    var msgErr = document.getElementById('recMsgErr');
+    var mainEmailInput = document.querySelector('input[name="email"]');
+
+    // Máscara dinâmica de telefone com DDD (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
+    if (inputTel) {
+        inputTel.addEventListener('input', function(e){
+            var v = e.target.value.replace(/\D/g, '');
+            if (v.length > 11) v = v.substring(0, 11);
+            if (v.length <= 10) {
+                e.target.value = v.replace(/^(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3').replace(/-$/, '');
+            } else {
+                e.target.value = v.replace(/^(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3').replace(/-$/, '');
+            }
+        });
+    }
+
+    // Step 1: "Não, digitei errado (Corrigir)"
+    if (btnFix) {
+        btnFix.addEventListener('click', function(){
+            var emailTyped = typedDisplay ? typedDisplay.textContent.trim() : '';
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    'action': 'ajax_recover_event',
+                    'event_type': 'typo_corrected',
+                    'email_typed': emailTyped
+                })
+            }).catch(function(){});
+
+            modal.classList.remove('open');
+            if (mainEmailInput) {
+                mainEmailInput.focus();
+                mainEmailInput.select();
+            }
+        });
+    }
+
+    // Step 1: "Sim, meu e-mail está certo"
+    if (btnConfirm) {
+        btnConfirm.addEventListener('click', function(){
+            step1.classList.remove('active');
+            step2.classList.add('active');
+            if (inputNome) inputNome.focus();
+        });
+    }
+
+    // Step 2: "Voltar"
+    if (btnBack) {
+        btnBack.addEventListener('click', function(){
+            step2.classList.remove('active');
+            step1.classList.add('active');
+        });
+    }
+
+    // Step 2: Submit (Auto-Register)
+    if (formStep2) {
+        formStep2.addEventListener('submit', function(e){
+            e.preventDefault();
+            var emailTyped = typedDisplay ? typedDisplay.textContent.trim() : '';
+            var nome = inputNome ? inputNome.value.trim() : '';
+            var tel = inputTel ? inputTel.value.trim() : '';
+
+            msgErr.style.display = 'none';
+            msgErr.textContent = '';
+            btnSubmit.disabled = true;
+            btnSubmit.textContent = 'Liberando acesso...';
+
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    'action': 'ajax_recover_register',
+                    'email': emailTyped,
+                    'nome': nome,
+                    'telefone': tel
+                })
+            })
+            .then(function(res){ return res.json(); })
+            .then(function(data){
+                if (data && data.ok) {
+                    btnSubmit.textContent = 'Redirecionando...';
+                    window.location.href = data.redirect || 'trilha.php';
+                } else {
+                    btnSubmit.disabled = false;
+                    btnSubmit.textContent = 'Liberar Acesso e Assistir Aulas';
+                    msgErr.textContent = (data && data.message) ? data.message : 'Ocorreu um erro. Tente novamente.';
+                    msgErr.style.display = 'block';
+                }
+            })
+            .catch(function(err){
+                btnSubmit.disabled = false;
+                btnSubmit.textContent = 'Liberar Acesso e Assistir Aulas';
+                msgErr.textContent = 'Erro ao se comunicar com o servidor. Tente novamente.';
+                msgErr.style.display = 'block';
+            });
+        });
+    }
+})();
+</script>
+
 <?php include __DIR__ . '/_pwa_runtime.php'; ?>
 </body>
 </html>

@@ -296,6 +296,22 @@ if (table_ok($pdo, 'login_events')) {
     } catch (Throwable $e) {}
 }
 
+$recTypoCount = 0;
+$recAutoRegCount = 0;
+try {
+    if (table_ok($pdo, 'login_recovery_events')) {
+        $stRec = $pdo->query("
+            SELECT event_type, COUNT(*) AS total
+            FROM login_recovery_events
+            GROUP BY event_type
+        ");
+        while ($rRec = $stRec->fetch(PDO::FETCH_ASSOC)) {
+            if ($rRec['event_type'] === 'typo_corrected') $recTypoCount = (int)$rRec['total'];
+            if ($rRec['event_type'] === 'auto_registered') $recAutoRegCount = (int)$rRec['total'];
+        }
+    }
+} catch (Throwable $e) {}
+
 require_once __DIR__ . '/_header.php';
 ?>
 <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -488,6 +504,30 @@ require_once __DIR__ . '/_header.php';
     <div class="lni-card alert-card">
       <small>Fora da Captura de Leads</small>
       <strong><?= number_format($noLeadCount, 0, ',', '.') ?></strong>
+    </div>
+  </div>
+
+  <!-- 2.3 FUNIL DE RECUPERAÇÃO DE LOGIN -->
+  <div style="background: linear-gradient(135deg, rgba(250, 204, 21, 0.08), rgba(15, 23, 42, 0.6)); border: 1px solid rgba(250, 204, 21, 0.3); border-radius: 12px; padding: 16px 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+      <h3 style="font-size: 15px; font-weight: 750; margin: 0; color: #facc15; display: flex; align-items: center; gap: 8px;">
+        <span>🛡️ Funil de Recuperação de Login Inteligente</span>
+      </h3>
+      <a href="config_app.php" style="font-size: 12px; color: #fde047; text-decoration: underline; font-weight: 600;">Configurar Modal &amp; Simulador →</a>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em;">Typo Corrigido (Email Errado)</div>
+        <div style="font-size: 22px; font-weight: 800; color: #fde047; margin-top: 2px;"><?= number_format($recTypoCount, 0, ',', '.') ?></div>
+      </div>
+      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em;">Auto-Cadastros / Acesso Liberado</div>
+        <div style="font-size: 22px; font-weight: 800; color: #4ade80; margin-top: 2px;"><?= number_format($recAutoRegCount, 0, ',', '.') ?></div>
+      </div>
+      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em;">Total Alunos Salvos</div>
+        <div style="font-size: 22px; font-weight: 800; color: #60a5fa; margin-top: 2px;"><?= number_format($recTypoCount + $recAutoRegCount, 0, ',', '.') ?></div>
+      </div>
     </div>
   </div>
 

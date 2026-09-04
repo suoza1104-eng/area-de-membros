@@ -1,4 +1,8 @@
 <?php
+if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['just_recovered_login'])) {
+    unset($_SESSION['just_recovered_login']);
+    return;
+}
 $pwaBool = static fn(string $key, bool $default=false): bool => in_array(strtolower(trim((string)(get_setting($key, $default?'1':'0')??''))), ['1','true','yes','on'], true);
 if (!$pwaBool('push_popup_enabled', true)) return;
 $pwaPopup = [

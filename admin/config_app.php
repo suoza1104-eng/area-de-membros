@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/metrics.php';
+require_once __DIR__ . '/../app/login_recovery.php';
 
 proteger_admin();
 $pdo = getPDO();
@@ -109,6 +110,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $formSection !== 'metrics') {
             $mensagemOk = 'Configurações salvas com sucesso.';
             set_setting('login_ignore_password', $loginIgnorePassword);
 
+            set_setting('login_recovery_enabled', !empty($_POST['login_recovery_enabled']) ? '1' : '0');
+            if (isset($_POST['login_recovery_title'])) set_setting('login_recovery_title', trim((string)$_POST['login_recovery_title']));
+            if (isset($_POST['login_recovery_subtitle'])) set_setting('login_recovery_subtitle', trim((string)$_POST['login_recovery_subtitle']));
+            if (isset($_POST['login_recovery_btn_confirm'])) set_setting('login_recovery_btn_confirm', trim((string)$_POST['login_recovery_btn_confirm']));
+            if (isset($_POST['login_recovery_btn_fix'])) set_setting('login_recovery_btn_fix', trim((string)$_POST['login_recovery_btn_fix']));
+            if (isset($_POST['login_recovery_step2_title'])) set_setting('login_recovery_step2_title', trim((string)$_POST['login_recovery_step2_title']));
+            if (isset($_POST['login_recovery_step2_desc'])) set_setting('login_recovery_step2_desc', trim((string)$_POST['login_recovery_step2_desc']));
+
             // Recarrega config
             $st = $pdo->query("SELECT * FROM app_config WHERE id = 1 LIMIT 1");
             $config = $st->fetch();
@@ -122,6 +131,7 @@ $metricsIntegration = metrics_active_integration($pdo) ?: [];
 $metricsRevenueBasis = get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net';
 $hasHotmartToken = (get_setting('metrics_hotmart_hottok', '') ?: '') !== '';
 $loginIgnorePassword = (int)(get_setting('login_ignore_password', '0') ?: '0') === 1;
+$recConfig = login_recovery_get_config($pdo);
 
 function h(string $v): string {
     return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -202,9 +212,126 @@ include __DIR__ . '/_header.php';
                 </span>
             </label>
 
+            <!-- SEÇÃO DE RECUPERAÇÃO DE LOGIN E AUTO-CADASTRO -->
+            <div class="section-label" style="display:flex;align-items:center;justify-content:space-between;margin-top:24px;">
+                <span>🛡️ Recuperação de Login &amp; Cadastro Automático (Modal Inteligente)</span>
+            </div>
+            
+            <label class="form-group" style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid rgba(250,204,21,0.3);border-radius:10px;background:rgba(250,204,21,0.04)">
+                <input type="checkbox" name="login_recovery_enabled" value="1" <?= $recConfig['enabled'] ? 'checked' : '' ?> style="margin-top:2px">
+                <span>
+                    <span style="display:block;font-size:13px;font-weight:700;color:#facc15">Ativar Modal Inteligente de Recuperação quando o login falhar</span>
+                    <span style="display:block;font-size:12px;color:var(--muted);line-height:1.45;margin-top:3px">
+                        Exibe confirmação de e-mail em destaque e formulário de cadastro/liberção automática para alunos que erraram o e-mail ou não foram encontrados.
+                    </span>
+                </span>
+            </label>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:12px;margin-top:12px">
+                <div class="form-group">
+                    <label class="form-label" for="login_recovery_title">Título (Passo 1)</label>
+                    <input type="text" id="login_recovery_title" name="login_recovery_title" value="<?= h($recConfig['title']) ?>">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="login_recovery_btn_confirm">Botão de Confirmação (Passo 1)</label>
+                    <input type="text" id="login_recovery_btn_confirm" name="login_recovery_btn_confirm" value="<?= h($recConfig['btn_confirm']) ?>">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="login_recovery_btn_fix">Botão de Erro (Passo 1)</label>
+                    <input type="text" id="login_recovery_btn_fix" name="login_recovery_btn_fix" value="<?= h($recConfig['btn_fix']) ?>">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="login_recovery_subtitle">Subtítulo (Passo 1)</label>
+                <input type="text" id="login_recovery_subtitle" name="login_recovery_subtitle" value="<?= h($recConfig['subtitle']) ?>">
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:12px;margin-top:12px">
+                <div class="form-group">
+                    <label class="form-label" for="login_recovery_step2_title">Título (Passo 2)</label>
+                    <input type="text" id="login_recovery_step2_title" name="login_recovery_step2_title" value="<?= h($recConfig['step2_title']) ?>">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="login_recovery_step2_desc">Descrição (Passo 2)</label>
+                    <input type="text" id="login_recovery_step2_desc" name="login_recovery_step2_desc" value="<?= h($recConfig['step2_desc']) ?>">
+                </div>
+            </div>
+
+            <div style="background:rgba(15,23,42,0.6);border:1px solid var(--border);border-radius:10px;padding:14px;margin:16px 0 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <strong style="color:#f8fafc;font-size:13px;display:block;">🎮 Simulador Interativo do Modal</strong>
+                    <span style="color:var(--muted);font-size:12px;">Testar a experiência do aluno diretamente na tela sem sair desta página.</span>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <button type="button" class="btn btn-secondary" onclick="openLiveRecoverySimulator()" style="font-size:12px;">⚡ Abrir Simulador Aqui</button>
+                    <a href="../public/login.php?demo_recovery=1" target="_blank" class="btn btn-secondary" style="font-size:12px;text-decoration:none;">🔗 Testar no Login Real</a>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-primary">Salvar configurações</button>
         </form>
     </div>
+
+    <!-- MODAL SIMULADOR AO VIVO NO ADMIN -->
+    <div id="adminRecoverySimulatorOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(2,6,15,0.88);backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:16px;">
+        <div style="position:relative;width:min(520px,100%);background:#0d1b33;border:1px solid rgba(250,204,21,0.4);border-radius:22px;padding:32px 26px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.85);color:#e2e8f0;font-family:'Inter',sans-serif;">
+            <button type="button" onclick="closeLiveRecoverySimulator()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">✕</button>
+            <div style="text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#fde047;font-weight:700;margin-bottom:12px;">[ MODO SIMULADOR ]</div>
+            
+            <div id="simStep1">
+                <div style="text-align:center;margin-bottom:16px;">
+                    <h3 style="font-size:20px;font-weight:800;color:#fff;" id="simTitle1"><?= h($recConfig['title']) ?></h3>
+                    <p style="font-size:13px;color:#94a3b8;" id="simSubtitle1"><?= h($recConfig['subtitle']) ?></p>
+                </div>
+                <div style="background:rgba(250,204,21,0.08);border:2px dashed rgba(250,204,21,0.5);border-radius:14px;padding:14px;text-align:center;margin:16px 0;">
+                    <div style="font-size:11px;text-transform:uppercase;color:#fde047;font-weight:700;">E-mail digitado (Exemplo):</div>
+                    <div style="font-size:20px;font-weight:800;color:#facc15;">aluno_teste@gmail.com</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <button type="button" class="btn btn-primary" onclick="simGoStep(2)" id="simBtnConfirm"><?= h($recConfig['btn_confirm']) ?></button>
+                    <button type="button" class="btn btn-secondary" onclick="closeLiveRecoverySimulator()" id="simBtnFix"><?= h($recConfig['btn_fix']) ?></button>
+                </div>
+            </div>
+
+            <div id="simStep2" style="display:none;">
+                <div style="text-align:center;margin-bottom:16px;">
+                    <h3 style="font-size:20px;font-weight:800;color:#fff;" id="simTitle2"><?= h($recConfig['step2_title']) ?></h3>
+                    <p style="font-size:13px;color:#94a3b8;" id="simSubtitle2"><?= h($recConfig['step2_desc']) ?></p>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:12px;">
+                    <div>
+                        <label style="font-size:12px;color:#cbd5e1;">Nome Completo</label>
+                        <input type="text" value="Aluno de Teste" style="width:100%;padding:10px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;" readonly>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:#cbd5e1;">WhatsApp com DDD</label>
+                        <input type="text" value="(11) 98765-4321" style="width:100%;padding:10px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;" readonly>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="alert('Simulação concluída com sucesso! No login real, o aluno seria cadastrado/atualizado e redirecionado para as aulas.')">Liberar Acesso e Assistir Aulas</button>
+                    <button type="button" class="btn btn-secondary" onclick="simGoStep(1)">← Voltar ao Passo 1</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function openLiveRecoverySimulator() {
+        var overlay = document.getElementById('adminRecoverySimulatorOverlay');
+        if (overlay) {
+            simGoStep(1);
+            overlay.style.display = 'flex';
+        }
+    }
+    function closeLiveRecoverySimulator() {
+        var overlay = document.getElementById('adminRecoverySimulatorOverlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+    function simGoStep(step) {
+        document.getElementById('simStep1').style.display = step === 1 ? 'block' : 'none';
+        document.getElementById('simStep2').style.display = step === 2 ? 'block' : 'none';
+    }
+    </script>
 
     <div class="card" style="margin-top:16px">
         <form method="post" action="" autocomplete="off">
