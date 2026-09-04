@@ -121,7 +121,8 @@ function pagarme_find_matching_user(PDO $pdo, string $emailNorm, string $phoneNo
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row) return ['user' => $row, 'method' => 'email'];
     }
-    return hotmart_find_matching_user($pdo, '', $phoneNorm);
+    $match = hotmart_find_matching_user($pdo, '', $phoneNorm);
+    return is_array($match) ? $match : [];
 }
 
 function pagarme_offer_candidates(array $data, array $charge): array
@@ -479,6 +480,56 @@ function pagarme_upsert_sales_master(PDO $pdo, array $event): void
     ]);
 }
 
+function pagarme_fetch_charge_payables_summary(string $chargeId, string $apiKey): ?array
+{
+    if (empty($chargeId) || empty($apiKey)) return null;
+
+    $url = "https://api.pagar.me/core/v5/payables?charge_id=" . urlencode($chargeId) . "&size=100";
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code !== 200 || !$resp) return null;
+
+    $json = json_decode($resp, true);
+    $data = is_array($json['data'] ?? null) ? $json['data'] : [];
+    if (empty($data)) return null;
+
+    $totalAmount = 0;
+    $totalFees = 0;
+
+    foreach ($data as $p) {
+        if (($p['charge_id'] ?? '') !== $chargeId) continue;
+
+        $amt = (int)($p['amount'] ?? 0);
+        $fee = (int)($p['fee'] ?? 0);
+        $ant = (int)($p['anticipation_fee'] ?? 0);
+        $frd = (int)($p['fraud_coverage_fee'] ?? 0);
+
+        $totalAmount += $amt;
+        $totalFees += ($fee + $ant + $frd);
+    }
+
+    if ($totalAmount <= 0) return null;
+
+    $netCents = max(0, $totalAmount - $totalFees);
+
+    return [
+        'amount_cents' => $totalAmount,
+        'fee_cents' => $totalFees,
+        'net_cents' => $netCents,
+        'gross' => $totalAmount / 100,
+        'net' => $netCents / 100,
+        'fees' => $totalFees / 100,
+    ];
+}
+
 function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
 {
     pagarme_ensure_schema($pdo);
@@ -492,11 +543,13 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
     $errors = [];
 
     for ($p = 1; $p <= $pages; $p++) {
-        $url = "https://api.pagar.me/core/v5/orders?page={$p}&size=30";
-        $ch = curl_init($url);
+        $url = "https://api.pagar.me/core/v5/orders?page={$p}&size=50";
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ':');
+        curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        
         $res = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
@@ -525,13 +578,30 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
 
             $amountCents = (int)($ord['amount'] ?? 0);
             $gross = $amountCents / 100;
-            $fees = round($gross * 0.01, 2); // 1% est
+            $fees = round($gross * 0.01, 2); // default 1% MDR
             $net = max(0, $gross - $fees);
+            $feeCents = (int)($fees * 100);
+            $netCents = (int)($net * 100);
 
             $charges = is_array($ord['charges'] ?? null) ? $ord['charges'] : [];
             $firstCharge = $charges[0] ?? [];
+            $chargeId = (string)($firstCharge['id'] ?? '');
             $payMethod = (string)($firstCharge['payment_method'] ?? 'pix');
+            $installments = (int)($firstCharge['last_transaction']['installments'] ?? 1);
             $saleDate = date('Y-m-d H:i:s', strtotime((string)($ord['created_at'] ?? 'now')));
+
+            // Consultar recebíveis (payables) reais da Pagar.me para taxa MDR + antecipação exata
+            if (!empty($chargeId)) {
+                $paySummary = pagarme_fetch_charge_payables_summary($chargeId, $apiKey);
+                if ($paySummary) {
+                    $amountCents = $paySummary['amount_cents'];
+                    $feeCents = $paySummary['fee_cents'];
+                    $netCents = $paySummary['net_cents'];
+                    $gross = $paySummary['gross'];
+                    $net = $paySummary['net'];
+                    $fees = $paySummary['fees'];
+                }
+            }
 
             $st = $pdo->prepare("
                 INSERT INTO pagarme_sales (
@@ -542,12 +612,19 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
                 ) VALUES (
                     :tx, :status, 'pagarme', 'Curso de Quadros Elétricos',
                     :amount_c, :fee_c, :net_c, :gross, :net, :prod, :fees,
-                    :b_name, :b_email, :b_phone, :b_doc, :pay_method, 1,
+                    :b_name, :b_email, :b_phone, :b_doc, :pay_method, :inst,
                     :sdate, :confirmed_at, NOW(), NOW()
                 ) ON DUPLICATE KEY UPDATE
                     status = VALUES(status),
+                    amount_cents = VALUES(amount_cents),
+                    fee_cents = VALUES(fee_cents),
+                    net_cents = VALUES(net_cents),
                     gross_revenue = VALUES(gross_revenue),
+                    net_revenue = VALUES(net_revenue),
                     producer_net = VALUES(producer_net),
+                    fees = VALUES(fees),
+                    payment_method = VALUES(payment_method),
+                    installments = VALUES(installments),
                     buyer_name = IF(VALUES(buyer_name) <> '', VALUES(buyer_name), buyer_name),
                     buyer_email = IF(VALUES(buyer_email) <> '', VALUES(buyer_email), buyer_email),
                     payment_confirmed_at = IF(VALUES(status) = 'APPROVED' AND payment_confirmed_at IS NULL, VALUES(sale_date), payment_confirmed_at),
@@ -558,8 +635,8 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
                 'tx' => $txCode,
                 'status' => $stEnum,
                 'amount_c' => $amountCents,
-                'fee_c' => (int)($fees * 100),
-                'net_c' => (int)($net * 100),
+                'fee_c' => $feeCents,
+                'net_c' => $netCents,
                 'gross' => $gross,
                 'net' => $net,
                 'prod' => $net,
@@ -569,6 +646,7 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
                 'b_phone' => $bPhone,
                 'b_doc' => $bDoc,
                 'pay_method' => $payMethod,
+                'inst' => $installments,
                 'sdate' => $saleDate,
                 'confirmed_at' => $stEnum === 'APPROVED' ? $saleDate : null,
             ]);
