@@ -680,6 +680,69 @@ $temFiltroUtm  = ($fUtmSrc !== '' || $fUtmMed !== '' || $fUtmCamp !== '');
 $temFiltroData = ($fDateFrom !== '' || $fDateTo !== '');
 $reagendarLiveSlots = al_available_reagendar_slots($pdo);
 
+// ─── Dataset de Erros de Login (Alunos Únicos e Tentativas) ───
+$failedLoginDataSets = [
+    'dia' => ['labels' => [], 'unicos' => [], 'tentativas' => []],
+    'semana' => ['labels' => [], 'unicos' => [], 'tentativas' => []],
+    'mes' => ['labels' => [], 'unicos' => [], 'tentativas' => []],
+];
+
+if (table_ok($pdo, 'login_events')) {
+    // Por Dia (últimos 30 dias)
+    $sqlDia = "
+        SELECT 
+            DATE_FORMAT(logged_at, '%d/%m') AS display_label,
+            COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+            COUNT(*) AS total_tentativas
+        FROM login_events
+        WHERE success = 0
+          AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(logged_at), DATE_FORMAT(logged_at, '%d/%m')
+        ORDER BY DATE(logged_at) ASC
+    ";
+    foreach ($pdo->query($sqlDia)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $failedLoginDataSets['dia']['labels'][] = $r['display_label'];
+        $failedLoginDataSets['dia']['unicos'][] = (int)$r['alunos_unicos'];
+        $failedLoginDataSets['dia']['tentativas'][] = (int)$r['total_tentativas'];
+    }
+
+    // Por Semana (últimas 12 semanas)
+    $sqlSemana = "
+        SELECT 
+            CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y')) AS display_label,
+            COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+            COUNT(*) AS total_tentativas
+        FROM login_events
+        WHERE success = 0
+          AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)
+        GROUP BY DATE_FORMAT(logged_at, '%x-W%v'), CONCAT('Sem ', DATE_FORMAT(logged_at, '%v/%Y'))
+        ORDER BY DATE_FORMAT(logged_at, '%x-W%v') ASC
+    ";
+    foreach ($pdo->query($sqlSemana)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $failedLoginDataSets['semana']['labels'][] = $r['display_label'];
+        $failedLoginDataSets['semana']['unicos'][] = (int)$r['alunos_unicos'];
+        $failedLoginDataSets['semana']['tentativas'][] = (int)$r['total_tentativas'];
+    }
+
+    // Por Mês (últimos 12 meses)
+    $sqlMes = "
+        SELECT 
+            DATE_FORMAT(logged_at, '%m/%Y') AS display_label,
+            COUNT(DISTINCT COALESCE(NULLIF(TRIM(email), ''), CAST(user_id AS CHAR))) AS alunos_unicos,
+            COUNT(*) AS total_tentativas
+        FROM login_events
+        WHERE success = 0
+          AND logged_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+        GROUP BY DATE_FORMAT(logged_at, '%Y-%m'), DATE_FORMAT(logged_at, '%m/%Y')
+        ORDER BY DATE_FORMAT(logged_at, '%Y-%m') ASC
+    ";
+    foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $failedLoginDataSets['mes']['labels'][] = $r['display_label'];
+        $failedLoginDataSets['mes']['unicos'][] = (int)$r['alunos_unicos'];
+        $failedLoginDataSets['mes']['tentativas'][] = (int)$r['total_tentativas'];
+    }
+}
+
 require __DIR__ . '/_header.php';
 ?>
 <style>
@@ -831,24 +894,31 @@ require __DIR__ . '/_header.php';
 .modal-overlay.open { display:flex; }
 .modal-box { background:var(--bg-card); border:1px solid var(--border-light); border-radius:var(--r-xl); padding:24px; width:100%; max-width:400px; box-shadow:var(--shadow-lg); }
 .modal-title { font-size:14px; font-weight:700; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
-.modal-footer { display:flex; gap:8px; margin-top:16px; }
+/* ── Granularity buttons (Erros de Login) ─────────────────── */
+.btn-gran {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+.btn-gran:hover {
+    color: var(--text);
+}
+.btn-gran.active {
+    background: var(--primary-dim, rgba(250,204,21,.15));
+    color: var(--primary, #facc15);
+    font-weight: 700;
+}
 </style>
 
 <?php if ($msgPost): ?>
 <div class="alert <?= $msgPostTipo==='ok'?'alert-ok':'alert-error' ?>" style="margin-bottom:14px"><?= h($msgPost) ?></div>
 <?php endif; ?>
-
-<!-- ─── Barra de Ações Rápidas & Auditoria ────────────────────────────── -->
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;background:var(--bg-card);border:1px solid var(--border);padding:12px 16px;border-radius:10px;">
-    <div style="font-weight:700;font-size:15px;color:var(--text);">
-        👥 Gestão de Alunos & Cadastros
-    </div>
-    <div>
-        <a href="logins_nao_encontrados.php" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(249,115,22,0.18);border:1px solid rgba(249,115,22,0.35);border-radius:8px;color:#fb923c;font-size:12px;font-weight:700;text-decoration:none;">
-            🚨 Logins Não Identificados (Usuários Sem Cadastro)
-        </a>
-    </div>
-</div>
 
 <!-- ─── Filtros ──────────────────────────────────────────────────────── -->
 <div class="filter-bar" style="margin-bottom:14px">
@@ -983,6 +1053,47 @@ require __DIR__ . '/_header.php';
     <div class="al-kpi">
         <div class="al-kpi-v" style="color:var(--info)"><?= $comTurma ?></div>
         <div class="al-kpi-l">Com turma</div>
+    </div>
+</div>
+
+<!-- ─── Gráfico de Alunos Únicos com Erro de Login ──────────────────── -->
+<div class="card" style="margin-bottom:14px;padding:16px 20px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+        <div>
+            <h3 style="font-size:15px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
+                <span>❌ Alunos Únicos com Erro de Login</span>
+            </h3>
+            <p style="font-size:12px;color:var(--muted);margin:4px 0 0;">
+                Monitore quantos alunos únicos tentaram acessar a plataforma e tiveram erro de login ou senha incorreta.
+            </p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div class="btn-group-gran" style="display:inline-flex;background:var(--bg,#090d16);border:1px solid var(--border);border-radius:8px;padding:2px;">
+                <button type="button" class="btn-gran active" data-gran="dia" onclick="setFailedLoginGranularity('dia')">Por Dia</button>
+                <button type="button" class="btn-gran" data-gran="semana" onclick="setFailedLoginGranularity('semana')">Por Semana</button>
+                <button type="button" class="btn-gran" data-gran="mes" onclick="setFailedLoginGranularity('mes')">Por Mês</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mini KPIs do Gráfico -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px;">
+        <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:10px 14px;">
+            <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;">Alunos Únicos c/ Erro</div>
+            <div id="fl-kpi-unicos" style="font-size:20px;font-weight:700;color:#f87171;margin-top:2px;">-</div>
+        </div>
+        <div style="background:rgba(249,115,22,.06);border:1px solid rgba(249,115,22,.2);border-radius:10px;padding:10px 14px;">
+            <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;">Total Tentativas c/ Erro</div>
+            <div id="fl-kpi-tentativas" style="font-size:20px;font-weight:700;color:#fb923c;margin-top:2px;">-</div>
+        </div>
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">
+            <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;">Média no Período</div>
+            <div id="fl-kpi-media" style="font-size:20px;font-weight:700;color:var(--text);margin-top:2px;">-</div>
+        </div>
+    </div>
+
+    <div style="position:relative;height:230px;width:100%;">
+        <canvas id="chartFailedLogins"></canvas>
     </div>
 </div>
 
@@ -1569,6 +1680,124 @@ function carregarModeloRetorno(id) {
 function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-overlay').forEach(function(m) {
     m.addEventListener('click', function(e) { if (e.target === m) m.classList.remove('open'); });
+});
+
+// ── Gráfico de Alunos Únicos com Erro de Login ──
+const failedLoginData = <?= json_encode($failedLoginDataSets) ?>;
+let flChartInstance = null;
+
+function renderFailedLoginsChart(granularity) {
+    granularity = granularity || 'dia';
+    const dataObj = failedLoginData[granularity] || { labels: [], unicos: [], tentativas: [] };
+    
+    const totalUnicos = dataObj.unicos.reduce(function(a, b){ return a + b; }, 0);
+    const totalTentativas = dataObj.tentativas.reduce(function(a, b){ return a + b; }, 0);
+    const countItems = dataObj.unicos.length;
+    const mediaUnicos = countItems > 0 ? (totalUnicos / countItems).toFixed(1) : '0';
+    const sufixo = granularity === 'dia' ? '/dia' : granularity === 'semana' ? '/semana' : '/mês';
+
+    const elemUnicos = document.getElementById('fl-kpi-unicos');
+    const elemTentativas = document.getElementById('fl-kpi-tentativas');
+    const elemMedia = document.getElementById('fl-kpi-media');
+
+    if (elemUnicos) elemUnicos.textContent = totalUnicos.toLocaleString('pt-BR');
+    if (elemTentativas) elemTentativas.textContent = totalTentativas.toLocaleString('pt-BR');
+    if (elemMedia) elemMedia.textContent = mediaUnicos.replace('.', ',') + ' ' + sufixo;
+
+    const canvasElem = document.getElementById('chartFailedLogins');
+    if (!canvasElem) return;
+    const ctx = canvasElem.getContext('2d');
+    if (flChartInstance) {
+        flChartInstance.destroy();
+    }
+
+    flChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: dataObj.labels,
+            datasets: [
+                {
+                    label: 'Alunos Únicos com Erro',
+                    data: dataObj.unicos,
+                    backgroundColor: 'rgba(239, 68, 68, 0.75)',
+                    borderColor: '#ef4444',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    hoverBackgroundColor: 'rgba(239, 68, 68, 0.95)'
+                },
+                {
+                    label: 'Total Tentativas com Erro',
+                    data: dataObj.tentativas,
+                    backgroundColor: 'rgba(249, 115, 22, 0.35)',
+                    borderColor: '#f97316',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    hoverBackgroundColor: 'rgba(249, 115, 22, 0.65)'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: '#94a3b8',
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#0f172a',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    titleColor: '#f8fafc',
+                    bodyColor: '#cbd5e1',
+                    padding: 10,
+                    callbacks: {
+                        label: function(context) {
+                            return ' ' + context.dataset.label + ': ' + context.parsed.y.toLocaleString('pt-BR');
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: '#94a3b8', font: { size: 10 } }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: {
+                        color: '#94a3b8',
+                        font: { size: 10 },
+                        precision: 0
+                    }
+                }
+            }
+        }
+    });
+}
+
+function setFailedLoginGranularity(gran) {
+    document.querySelectorAll('.btn-gran').forEach(function(btn) {
+        if (btn.dataset.gran === gran) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    renderFailedLoginsChart(gran);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    renderFailedLoginsChart('dia');
 });
 </script>
 <?php require __DIR__ . '/_footer.php'; ?>
