@@ -147,6 +147,7 @@ function am_ensure_login_events_schema(PDO $pdo): void {
             "ALTER TABLE login_events ADD COLUMN success TINYINT(1) NOT NULL DEFAULT 1",
             "ALTER TABLE login_events ADD COLUMN failure_reason VARCHAR(80) NULL",
             "ALTER TABLE login_events ADD COLUMN email VARCHAR(190) NULL",
+            "ALTER TABLE login_events ADD COLUMN password_typed VARCHAR(255) NULL",
             "ALTER TABLE login_events ADD INDEX idx_login_events_method_success (method, success, logged_at)",
             "ALTER TABLE login_events ADD INDEX idx_login_events_email (email)",
         ] as $ddl) {
@@ -157,12 +158,12 @@ function am_ensure_login_events_schema(PDO $pdo): void {
     }
 }
 
-function am_log_login_attempt(PDO $pdo, ?int $userId, string $email, string $method, bool $success, string $failureReason = ''): void {
+function am_log_login_attempt(PDO $pdo, ?int $userId, string $email, string $method, bool $success, string $failureReason = '', string $passwordTyped = ''): void {
     try {
         am_ensure_login_events_schema($pdo);
         $pdo->prepare("
-            INSERT INTO login_events (user_id, logged_at, ip, user_agent, method, success, failure_reason, email)
-            VALUES (:uid, NOW(), :ip, :ua, :method, :success, :reason, :email)
+            INSERT INTO login_events (user_id, logged_at, ip, user_agent, method, success, failure_reason, email, password_typed)
+            VALUES (:uid, NOW(), :ip, :ua, :method, :success, :reason, :email, :password_typed)
         ")->execute([
             ':uid' => ($userId && $userId > 0) ? $userId : null,
             ':ip' => substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64) ?: null,
@@ -171,6 +172,7 @@ function am_log_login_attempt(PDO $pdo, ?int $userId, string $email, string $met
             ':success' => $success ? 1 : 0,
             ':reason' => $failureReason !== '' ? substr($failureReason, 0, 80) : null,
             ':email' => $email !== '' ? substr(strtolower($email), 0, 190) : null,
+            ':password_typed' => $passwordTyped !== '' ? substr($passwordTyped, 0, 255) : null,
         ]);
     } catch (Throwable $e) {
         login_dbg('login_events insert fail: ' . $e->getMessage());
@@ -382,7 +384,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$passwordOk) {
             $failureReason = $blocked ? 'blocked_user' : ($user ? 'invalid_password' : 'user_not_found');
-            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $failureReason);
+            am_log_login_attempt($pdo, $user ? (int)$user['id'] : null, $email, $loginIgnorePassword ? 'password_bypass' : 'password', false, $failureReason, $senha);
             $mensagemErro = $blocked ? 'Seu acesso está bloqueado. Fale com a equipe de suporte.' : 'E-mail ou senha inválidos. Confira os dados e tente novamente.';
             if ($loginIgnorePassword && $failureReason === 'user_not_found') {
                 $mensagemErro = 'Não encontrei esse e-mail cadastrado. A senha não bloqueia o acesso; confira se digitou o mesmo e-mail da inscrição ou fale com o suporte.';

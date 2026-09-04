@@ -95,14 +95,14 @@ if ($reason !== '' && $reason !== 'all') {
 }
 
 if ($q !== '') {
-    $whereClauses[] = "(le.email LIKE :q OR le.ip LIKE :q OR le.failure_reason LIKE :q OR le.user_agent LIKE :q)";
+    $whereClauses[] = "(le.email LIKE :q OR le.ip LIKE :q OR le.failure_reason LIKE :q OR le.user_agent LIKE :q OR le.password_typed LIKE :q)";
     $params['q'] = '%' . $q . '%';
 }
 
 $whereSql = 'WHERE ' . implode(' AND ', $whereClauses);
 
 // Buscar todos os registros do período para cruzamento e aplicação de filtros em memória (lead_filter, sales_filter)
-$allSql = "SELECT le.id, le.user_id, le.logged_at, le.ip, le.user_agent, le.method, le.success, le.failure_reason, LOWER(TRIM(le.email)) AS email
+$allSql = "SELECT le.id, le.user_id, le.logged_at, le.ip, le.user_agent, le.method, le.success, le.failure_reason, le.password_typed, LOWER(TRIM(le.email)) AS email
            FROM login_events le
            {$whereSql}
            ORDER BY le.logged_at DESC, le.id DESC";
@@ -150,7 +150,7 @@ if ($export === 'csv') {
 
     $output = fopen('php://output', 'w');
     fputcsv($output, [
-        'ID Evento', 'Data e Hora', 'E-mail Digitado', 'Motivo da Falha',
+        'ID Evento', 'Data e Hora', 'E-mail Digitado', 'Senha Digitada', 'Motivo da Falha',
         'Status em Leads', 'Turma Lead', 'Status em Vendas', 'IP Origem', 'Método', 'User Agent'
     ]);
 
@@ -163,6 +163,7 @@ if ($export === 'csv') {
             $r['id'],
             $r['logged_at'],
             $r['email'],
+            $r['password_typed'] ?: '-',
             $r['failure_reason'] ?: 'user_not_found',
             $leadStr,
             $turmaStr,
@@ -497,6 +498,7 @@ foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
         <tr>
           <th>Data / Hora</th>
           <th>E-mail Digitado</th>
+          <th>Senha Digitada</th>
           <th>Motivo do Erro</th>
           <th>Status em Leads</th>
           <th>Status em Vendas</th>
@@ -507,7 +509,7 @@ foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
       <tbody>
         <?php if (empty($pagedEvents)): ?>
           <tr>
-            <td colspan="7" style="text-align:center; padding: 40px; color: var(--muted);">
+            <td colspan="8" style="text-align:center; padding: 40px; color: var(--muted);">
               Nenhuma tentativa de login não identificada encontrada para os filtros aplicados.
             </td>
           </tr>
@@ -523,6 +525,11 @@ foreach ($pdo->query($sqlMes)->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 <strong style="color: #93c5fd; font-size: 13px;">
                   <?= htmlspecialchars((string)($r['email'] ?: 'Não informado')) ?>
                 </strong>
+              </td>
+              <td>
+                <code style="color: #f87171; font-size: 12px; font-weight: 600; background: rgba(239,68,68,0.1); padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(239,68,68,0.25); display: inline-block;">
+                  <?= htmlspecialchars((string)($r['password_typed'] ?: '-')) ?>
+                </code>
               </td>
               <td>
                 <?= lni_reason_badge((string)$r['failure_reason']) ?>
