@@ -723,7 +723,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
                 <label class="form-label" for="email">E-mail</label>
                 <input type="email" id="email" name="email"
                        value="<?= h($emailForm) ?>"
-                       placeholder="seuemail@exemplo.com" required autofocus>
+                       placeholder="seuemail@exemplo.com" required <?= $showRecoveryModal ? '' : 'autofocus' ?>>
             </div>
 
             <div class="form-group">
@@ -793,6 +793,32 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     font-family: 'Inter', -apple-system, sans-serif;
     animation: recModalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
+.rec-modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 10;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.15s, color 0.15s, border-color 0.15s;
+}
+.rec-modal-close:hover {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: #ffffff;
+    transform: scale(1.08);
+}
 @media (max-width: 600px) {
     .rec-modal-overlay {
         padding: 20px 16px;
@@ -808,6 +834,9 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     .rec-typed-email-value {
         font-size: 19px;
     }
+    .rec-field input {
+        font-size: 16px !important; /* Previne auto-zoom no iOS Safari */
+    }
 }
 @keyframes recModalPop {
     from { opacity: 0; transform: scale(0.94) translateY(10px); }
@@ -815,7 +844,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
 }
 .rec-modal-step { display: none; }
 .rec-modal-step.active { display: block; }
-.rec-modal-header { text-align: center; margin-bottom: 20px; }
+.rec-modal-header { text-align: center; margin-bottom: 20px; padding-right: 20px; }
 .rec-modal-header h3 { font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 8px; line-height: 1.25; }
 .rec-modal-header p { font-size: 14px; color: #94a3b8; line-height: 1.5; }
 .rec-typed-email-box {
@@ -866,7 +895,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     border: 1px solid #1e293b;
     background: #0f172a;
     color: #fff;
-    font-size: 15px;
+    font-size: 16px; /* 16px obrigatorio para evitar zoom automatico no mobile */
     outline: none;
     transition: border-color 0.15s;
 }
@@ -917,6 +946,9 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
 
 <div class="rec-modal-overlay <?= $showRecoveryModal ? 'open' : '' ?>" id="loginRecoveryModal" role="dialog" aria-modal="true">
     <div class="rec-modal-card">
+        <!-- BOTÃO DE FECHAR (X VERMELHO) -->
+        <button type="button" class="rec-modal-close" id="btnRecCloseModal" title="Fechar" aria-label="Fechar modal">✕</button>
+
         <!-- STEP 1: Confirmação de E-mail -->
         <div class="rec-modal-step active" id="recStep1">
             <div class="rec-modal-header">
@@ -968,6 +1000,7 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     var step2 = document.getElementById('recStep2');
     var btnConfirm = document.getElementById('btnRecConfirm');
     var btnFix = document.getElementById('btnRecFix');
+    var btnCloseModal = document.getElementById('btnRecCloseModal');
     var btnBack = document.getElementById('btnRecBackStep1');
     var formStep2 = document.getElementById('recFormStep2');
     var btnSubmit = document.getElementById('btnRecSubmit');
@@ -976,6 +1009,36 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
     var typedDisplay = document.getElementById('recTypedEmailDisplay');
     var msgErr = document.getElementById('recMsgErr');
     var mainEmailInput = document.querySelector('input[name="email"]');
+
+    // Desfocar qualquer campo ao carregar para impedir a abertura automatica do teclado no mobile
+    if (modal.classList.contains('open')) {
+        setTimeout(function(){
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
+        }, 50);
+    }
+
+    // Botao X Vermelho para fechar o modal
+    if (btnCloseModal) {
+        btnCloseModal.addEventListener('click', function(){
+            var emailTyped = typedDisplay ? typedDisplay.textContent.trim() : '';
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    'action': 'ajax_recover_event',
+                    'event_type': 'abandoned',
+                    'email_typed': emailTyped
+                })
+            }).catch(function(){});
+
+            modal.classList.remove('open');
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
+        });
+    }
 
     // Máscara dinâmica de telefone com DDD (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
     if (inputTel) {
@@ -1017,7 +1080,9 @@ $showRecoveryModal = ($recoveryConfig['enabled'] || $isDemoRecovery) && ($mensag
         btnConfirm.addEventListener('click', function(){
             step1.classList.remove('active');
             step2.classList.add('active');
-            if (inputNome) inputNome.focus();
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
         });
     }
 
