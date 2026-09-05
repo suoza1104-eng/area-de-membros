@@ -733,7 +733,7 @@ include __DIR__ . '/_header.php';
       <div><label>Fonte de leads/vendas</label><select name="ads_metric_source"><option value="cross" <?= $adsMetricSource === 'cross' ? 'selected' : '' ?>>Cruzamento real</option><option value="meta" <?= $adsMetricSource === 'meta' ? 'selected' : '' ?>>Reportado pela Meta</option></select></div>
       <div class="actions"><button class="btn btn-primary" type="submit">Aplicar</button></div>
     </form>
-    <p style="margin:8px 0 0;font-size:10px;color:var(--muted)">Período selecionado: <strong><?= am_h(date('d/m/Y', strtotime($period['start']))) ?></strong> a <strong><?= am_h(date('d/m/Y', strtotime($period['end']))) ?></strong> (<?= $compareDays['x'] ?> dia(s)).</p>
+    <p style="margin:8px 0 0;font-size:10px;color:var(--muted)">Período selecionado: <strong><?= am_h(date('d/m/Y', strtotime($period['start']))) ?></strong> a <strong><?= am_h(date('d/m/Y', strtotime($period['end']))) ?></strong> (<?= $period['days'] ?> dia(s)).</p>
   </div>
 
   <details class="am-collapsible" data-ajax-url="?ajax_section=kpis_attributed&<?= $ajaxQueryBase ?>">
