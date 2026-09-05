@@ -538,8 +538,13 @@ function pagarme_fetch_charge_payables_summary(string $chargeId, string $apiKey)
     ];
 }
 
-function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
+function pagarme_sync_orders_api(PDO $pdo, int $pages = 20): array
 {
+    // $pages e um teto de seguranca, nao o numero de paginas que o cron busca
+    // de fato: o loop abaixo para sozinho assim que uma pagina volta com
+    // menos que o tamanho pedido (ultima pagina). Sem isso, uma janela com
+    // mais pedidos que $pages*50 teria o excedente descartado em silencio —
+    // exatamente a classe de bug corrigida no sync da Hotmart.
     pagarme_ensure_schema($pdo);
     $apiKey = trim((string)get_setting('pagarme_api_key', ''));
     if ($apiKey === '') {
@@ -569,6 +574,7 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
 
         $json = json_decode($res, true);
         $orders = is_array($json['data'] ?? null) ? $json['data'] : [];
+        $pageSize = count($orders);
 
         foreach ($orders as $ord) {
             $txId = trim((string)($ord['id'] ?? ''));
@@ -708,6 +714,8 @@ function pagarme_sync_orders_api(PDO $pdo, int $pages = 3): array
 
             $totalSynced++;
         }
+
+        if ($pageSize < 50) break;
     }
 
     return [

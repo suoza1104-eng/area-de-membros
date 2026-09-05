@@ -12,5 +12,5 @@ if (empty($GLOBALS['cron_manager_task_key'])) {
 require_once __DIR__ . '/../app/pagarme.php';
 
 $pdo = getPDO();
-$res = pagarme_sync_orders_api($pdo, 3);
+$res = pagarme_sync_orders_api($pdo, 20);
 echo json_encode($res, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
