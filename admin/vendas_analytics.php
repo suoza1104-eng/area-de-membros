@@ -106,7 +106,7 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
               COUNT(*) matched_sales
             FROM v_sales_master s
             WHERE " . md_approved_sql('s') . "
-              AND s.sale_date BETWEEN :start AND :end{$saleFilter}", $saleParams);
+              AND " . md_sale_revenue_date_sql('s') . " BETWEEN :start AND :end{$saleFilter}", $saleParams);
 
     $attrParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59', 'model' => ($filters['model'] ?? 'last_touch') === 'first_touch' ? 'first_touch' : 'last_touch'];
     $attrWhere = [];
@@ -123,7 +123,7 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
             JOIN attribution_leads al ON al.id=am.lead_id
             WHERE am.attribution_model=:model
               AND " . md_approved_sql('hs') . "
-              AND hs.sale_date BETWEEN :start AND :end{$attrExtra}", $attrParams);
+              AND " . md_sale_revenue_date_sql('hs') . " BETWEEN :start AND :end{$attrExtra}", $attrParams);
 
     $refundParams = ['start' => $start . ' 00:00:00', 'end' => $end . ' 23:59:59'];
     $refundFilter = md_filter_sql($filters, 'sale', $refundParams);
@@ -131,7 +131,7 @@ function va_hotmart_snapshot(PDO $pdo, string $start, string $end, array $filter
               COALESCE(SUM(s.gross_revenue),0) refunded_value
             FROM v_sales_master s
             WHERE " . md_refund_sql('s') . "
-              AND s.sale_date BETWEEN :start AND :end{$refundFilter}", $refundParams);
+              AND " . md_sale_revenue_date_sql('s') . " BETWEEN :start AND :end{$refundFilter}", $refundParams);
 
     $out = array_merge($sales, $attr, $refunds);
     foreach ($out as $key => $value) if (is_numeric($value)) $out[$key] = (float)$value;
@@ -195,87 +195,102 @@ function va_month_compare_series(PDO $pdo, DateTimeImmutable $monthStart, int $l
 function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filters): array {
     $monthStart = $today->modify('first day of this month');
     $limitDay = (int)$today->format('j');
-    $labelDays = (int)$monthStart->modify('last day of this month')->format('j');
+    $currentMonthDays = (int)$monthStart->modify('last day of this month')->format('j');
+    $monthStarts = [$monthStart];
+    for ($i = 1; $i <= 12; $i++) $monthStarts[] = $monthStart->modify('-' . $i . ' months');
+    // O eixo de dias cobre o mes mais longo entre o atual e os 12 historicos, para nao truncar
+    // o(s) ultimo(s) dia(s) de meses de 31 dias quando o mes atual tem 28/29/30 dias.
+    $labelDays = 0;
+    foreach ($monthStarts as $ms) $labelDays = max($labelDays, (int)$ms->modify('last day of this month')->format('j'));
     $labels = [];
     for ($i = 1; $i <= $labelDays; $i++) $labels[] = str_pad((string)$i, 2, '0', STR_PAD_LEFT);
-    $months = [va_month_compare_series($pdo, $monthStart, $labelDays, $filters, 'Mes atual', true)];
+    $months = [va_month_compare_series($pdo, $monthStarts[0], $labelDays, $filters, 'Mes atual', true)];
     for ($i = 1; $i <= 12; $i++) {
-        $start = $monthStart->modify('-' . $i . ' months');
-        $months[] = va_month_compare_series($pdo, $start, $labelDays, $filters, $start->format('m/Y'), $i === 1);
+        $months[] = va_month_compare_series($pdo, $monthStarts[$i], $labelDays, $filters, $monthStarts[$i]->format('m/Y'), $i === 1);
     }
     $historical = array_slice($months, 1);
-    $histWithRevenue = array_values(array_filter($historical, static fn(array $m): bool => max($m['commission'] ?: [0]) > 0));
-    $histForRoas = array_values(array_filter($historical, static fn(array $m): bool => max($m['roas'] ?: [0]) > 0));
-    $avgCommission = []; $avgRoas = []; $avgRevenueShareByDay = []; $avgRoasRatioByDay = [];
-    for ($i = 0; $i < $labelDays; $i++) {
-        $sum = 0.0; $count = 0;
-        foreach ($histWithRevenue as $m) if (isset($m['commission'][$i]) && $m['commission'][$i] !== null) { $sum += (float)$m['commission'][$i]; $count++; }
-        $avgCommission[] = $count > 0 ? round($sum / $count, 2) : 0;
-    }
     $currentCommissionSeries = $months[0]['commission'];
     $currentRoasSeries = $months[0]['roas'];
     $currentCommission = (float)end($currentCommissionSeries);
     $currentRoas = (float)end($currentRoasSeries);
-    $revShareSum = 0.0; $revShareCount = 0; $roasRatioSum = 0.0; $roasRatioCount = 0;
+
+    // Curvas historicas ponderadas por volume (pooled): meses com mais receita/investimento
+    // pesam mais na media, em vez de cada mes contar igual como numa media simples de razoes.
+    // Dias alem do ultimo dia real de um mes historico mais curto carregam o acumulado final
+    // (mes ja fechado), em vez de sair da media - assim um mes de 28/30 dias nao "some" da
+    // curva perto do dia 31 so porque o eixo foi esticado para caber os meses de 31 dias.
     $pooledRoasByDay = []; $pooledFullCommission = 0.0; $pooledFullSpend = 0.0; $pooledRoasMonths = 0;
+    $pooledShareByDay = []; $pooledShareFullCommission = 0.0; $pooledShareMonths = 0;
     foreach ($historical as $m) {
         $start = DateTimeImmutable::createFromFormat('Y-m-d', $m['key'] . '-01') ?: $monthStart;
         $fullSeries = md_daily_series($pdo, $start->format('Y-m-d'), $start->modify('last day of this month')->format('Y-m-d'), $filters);
-        $fullCommission = 0.0; $dayCommission = 0.0; $fullSpend = 0.0; $daySpend = 0.0;
-        $cumCommission = 0.0; $cumSpend = 0.0; $dayShares = []; $roasRatios = [];
-        foreach ($fullSeries as $idx => $row) {
+        $fullCommission = 0.0; $fullSpend = 0.0;
+        foreach ($fullSeries as $row) {
             $fullCommission += (float)($row['producer'] ?? 0);
             $fullSpend += (float)($row['spend'] ?? 0);
-            if ($idx < min($limitDay, count($fullSeries))) {
-                $dayCommission += (float)($row['producer'] ?? 0);
-                $daySpend += (float)($row['spend'] ?? 0);
-            }
         }
-        $fullRoas = $fullSpend > 0 ? $fullCommission / $fullSpend : 0;
         $useForRoasCurve = $fullSpend > 0 && $fullCommission > 0;
-        if ($useForRoasCurve) {
-            $pooledFullCommission += $fullCommission;
-            $pooledFullSpend += $fullSpend;
-            $pooledRoasMonths++;
-        }
-        foreach ($fullSeries as $idx => $row) {
-            $cumCommission += (float)($row['producer'] ?? 0);
-            $cumSpend += (float)($row['spend'] ?? 0);
-            if ($fullCommission > 0) $dayShares[$idx] = $cumCommission / $fullCommission;
-            if ($fullRoas > 0 && $cumSpend > 0) $roasRatios[$idx] = ($cumCommission / $cumSpend) / $fullRoas;
+        if ($useForRoasCurve) { $pooledFullCommission += $fullCommission; $pooledFullSpend += $fullSpend; $pooledRoasMonths++; }
+        $useForShareCurve = $fullCommission > 0;
+        if ($useForShareCurve) { $pooledShareFullCommission += $fullCommission; $pooledShareMonths++; }
+        $cumCommission = 0.0; $cumSpend = 0.0;
+        for ($idx = 0; $idx < $labelDays; $idx++) {
+            $row = $fullSeries[$idx] ?? null;
+            if ($row !== null) {
+                $cumCommission += (float)($row['producer'] ?? 0);
+                $cumSpend += (float)($row['spend'] ?? 0);
+            }
             if ($useForRoasCurve && $cumSpend > 0) {
                 $pooledRoasByDay[$idx]['commission'] = ($pooledRoasByDay[$idx]['commission'] ?? 0) + $cumCommission;
                 $pooledRoasByDay[$idx]['spend'] = ($pooledRoasByDay[$idx]['spend'] ?? 0) + $cumSpend;
             }
+            if ($useForShareCurve) {
+                $pooledShareByDay[$idx] = ($pooledShareByDay[$idx] ?? 0) + $cumCommission;
+            }
         }
-        foreach ($dayShares as $idx => $share) { $avgRevenueShareByDay[$idx]['sum'] = ($avgRevenueShareByDay[$idx]['sum'] ?? 0) + $share; $avgRevenueShareByDay[$idx]['count'] = ($avgRevenueShareByDay[$idx]['count'] ?? 0) + 1; }
-        foreach ($roasRatios as $idx => $ratio) { $avgRoasRatioByDay[$idx]['sum'] = ($avgRoasRatioByDay[$idx]['sum'] ?? 0) + $ratio; $avgRoasRatioByDay[$idx]['count'] = ($avgRoasRatioByDay[$idx]['count'] ?? 0) + 1; }
-        if ($fullCommission > 0 && $dayCommission > 0) { $revShareSum += $dayCommission / $fullCommission; $revShareCount++; }
-        $dayRoas = $daySpend > 0 ? $dayCommission / $daySpend : 0;
-        if ($fullRoas > 0 && $dayRoas > 0) { $roasRatioSum += $dayRoas / $fullRoas; $roasRatioCount++; }
     }
-    $avgRevenueShare = $revShareCount > 0 ? $revShareSum / $revShareCount : 0;
     $pooledFullRoas = $pooledFullSpend > 0 ? $pooledFullCommission / $pooledFullSpend : 0;
+    $avgCommission = []; $avgRoas = []; $avgRevenueShareByDay = []; $avgRoasRatioByDay = [];
     for ($i = 0; $i < $labelDays; $i++) {
         $daySpend = (float)($pooledRoasByDay[$i]['spend'] ?? 0);
         $dayCommission = (float)($pooledRoasByDay[$i]['commission'] ?? 0);
         $avgRoas[] = $daySpend > 0 ? round($dayCommission / $daySpend, 4) : 0;
-        if ($pooledFullRoas > 0 && $daySpend > 0) {
-            $avgRoasRatioByDay[$i] = ['sum' => ($dayCommission / $daySpend) / $pooledFullRoas, 'count' => 1];
-        }
+        $avgRoasRatioByDay[$i] = ($pooledFullRoas > 0 && $daySpend > 0) ? ($dayCommission / $daySpend) / $pooledFullRoas : 0;
+
+        $pooledShareCum = (float)($pooledShareByDay[$i] ?? 0);
+        $avgRevenueShareByDay[$i] = $pooledShareFullCommission > 0 ? $pooledShareCum / $pooledShareFullCommission : 0;
+        $avgCommission[] = $pooledShareMonths > 0 ? round($pooledShareCum / $pooledShareMonths, 2) : 0;
     }
-    $todayRoasRatio = $avgRoasRatioByDay[$limitDay - 1]['sum'] ?? 0;
-    $avgRoasRatio = $todayRoasRatio > 0 ? $todayRoasRatio : ($roasRatioCount > 0 ? $roasRatioSum / $roasRatioCount : 0);
-    $projectedCommission = $avgRevenueShare > 0 ? $currentCommission / $avgRevenueShare : 0;
-    $projectedRoas = $avgRoasRatio > 0 ? $currentRoas / $avgRoasRatio : 0;
+    $avgRevenueShare = $avgRevenueShareByDay[$limitDay - 1] ?? 0;
+    $avgRoasRatio = $avgRoasRatioByDay[$limitDay - 1] ?? 0;
+
+    // Quanto mais cedo no mes, mais ruidosa e a extrapolacao pela participacao historica (uma unica
+    // venda isolada pode distorcer o total projetado). Nos primeiros dias a projecao e "puxada" para
+    // a media historica do mes ja fechado; a partir do dia $confidenceDays passa a confiar 100% na
+    // curva de participacao/razao do dia.
+    $confidenceDays = 10;
+    $confidence = min(1.0, $limitDay / $confidenceDays);
+    $historicalAvgCommission = $pooledShareMonths > 0 ? $pooledShareFullCommission / $pooledShareMonths : 0;
+    $shareBasedCommission = $avgRevenueShare > 0 ? $currentCommission / $avgRevenueShare : 0;
+    $projectedCommission = $historicalAvgCommission > 0
+        ? ($confidence * $shareBasedCommission + (1 - $confidence) * $historicalAvgCommission)
+        : $shareBasedCommission;
+    $shareBasedRoas = $avgRoasRatio > 0 ? $currentRoas / $avgRoasRatio : 0;
+    $projectedRoas = $pooledFullRoas > 0
+        ? ($confidence * $shareBasedRoas + (1 - $confidence) * $pooledFullRoas)
+        : $shareBasedRoas;
+
     $currentActualCommission = $currentProjectionCommission = $currentActualRoas = $currentProjectionRoas = [];
     for ($i = 0; $i < $labelDays; $i++) {
-        $share = !empty($avgRevenueShareByDay[$i]['count']) ? $avgRevenueShareByDay[$i]['sum'] / $avgRevenueShareByDay[$i]['count'] : (($i + 1) / max(1, $labelDays));
-        $ratio = !empty($avgRoasRatioByDay[$i]['count']) ? $avgRoasRatioByDay[$i]['sum'] / $avgRoasRatioByDay[$i]['count'] : 1;
+        $share = $avgRevenueShareByDay[$i] > 0 ? $avgRevenueShareByDay[$i] : (($i + 1) / max(1, $labelDays));
+        $ratio = $avgRoasRatioByDay[$i] > 0 ? $avgRoasRatioByDay[$i] : 1;
         $currentActualCommission[] = $i < $limitDay ? $months[0]['commission'][$i] : null;
         $currentActualRoas[] = $i < $limitDay ? $months[0]['roas'][$i] : null;
-        $currentProjectionCommission[] = $i + 1 >= $limitDay ? round($projectedCommission * $share, 2) : null;
-        $currentProjectionRoas[] = $i + 1 >= $limitDay ? round($projectedRoas * $ratio, 4) : null;
+        // Nao projeta alem do ultimo dia real do mes atual, mesmo que o eixo compartilhado
+        // seja mais longo por causa de um mes historico de 31 dias.
+        $withinCurrentMonth = $i < $currentMonthDays;
+        $currentProjectionCommission[] = ($i + 1 >= $limitDay && $withinCurrentMonth) ? round($projectedCommission * $share, 2) : null;
+        $currentProjectionRoas[] = ($i + 1 >= $limitDay && $withinCurrentMonth) ? round($projectedRoas * $ratio, 4) : null;
     }
     return [
         'labels' => $labels,
@@ -290,11 +305,13 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
         ],
         'average' => ['label'=>'Media 12 meses','commission'=>$avgCommission,'roas'=>$avgRoas,'visible'=>false],
         'projection' => [
-            'commission' => $projectedCommission,
-            'roas' => $projectedRoas,
-            'months' => max(count($histWithRevenue), $pooledRoasMonths),
+            'commission' => round($projectedCommission, 2),
+            'roas' => round($projectedRoas, 4),
+            'months' => $pooledShareMonths,
+            'roas_months' => $pooledRoasMonths,
             'revenue_share' => $avgRevenueShare,
             'roas_ratio' => $avgRoasRatio,
+            'confidence' => round($confidence, 2),
         ],
     ];
 }
