@@ -304,7 +304,7 @@ $palette = ['#facc15', '#38bdf8', '#22c55e', '#f472b6', '#a78bfa', '#f59e0b'];
 
 $adsColumns = [
     ['spend', 'Gasto', 'money'], ['leads', 'Leads', 'num'], ['cpl', 'CPL', 'money'], ['cpc', 'CPC', 'money'],
-    ['sales', 'Vendas', 'num'], ['cac', 'CAC', 'money'], ['roas', 'ROAS', 'decimal'], ['cpm', 'CPM', 'money'], ['frequency', 'Frequência', 'decimal'],
+    ['sales', 'Vendas', 'num'], ['revenue', 'Faturamento', 'money'], ['cac', 'CAC', 'money'], ['roas', 'ROAS', 'decimal'], ['cpm', 'CPM', 'money'], ['frequency', 'Frequência', 'decimal'],
 ];
 $chipColumns = [
     ['spend', 'Gasto', 'money'], ['leads', 'Leads reais', 'num'], ['sales', 'Vendas atribuídas', 'num'], ['revenue', 'Receita atribuída', 'money'],
@@ -520,12 +520,25 @@ if ($ajaxSection !== '') {
         <?php else: ?>
         <div class="ads-scroll">
           <table class="ads-table" data-account-table="<?= $accTableId ?>">
-            <thead><tr>
-              <th class="no-sort">Campanha / conjunto / anúncio<div class="ads-head-note">Clique no nome para abrir no dashboard geral · clique num valor para ver a evolução</div></th>
-              <?php foreach ($adsColumns as [$sortKey, $head, $fmt]): ?>
-              <th data-sort-key="<?= $sortKey ?>">↕ <?= am_h($head) ?><div class="ads-head-note"><?= am_h($windowLegend) ?></div></th>
-              <?php endforeach; ?>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th class="no-sort">Campanha / conjunto / anúncio<div class="ads-head-note">Clique no nome para abrir no dashboard geral · clique num valor para ver a evolução</div></th>
+                <?php foreach ($adsColumns as [$sortKey, $head, $fmt]): ?>
+                <th data-sort-key="<?= $sortKey ?>">↕ <?= am_h($head) ?><div class="ads-head-note"><?= am_h($windowLegend) ?></div></th>
+                <?php endforeach; ?>
+              </tr>
+              <tr class="am-account-total-row" style="background:#0f172a;border-bottom:2px solid #334155;">
+                <td style="padding:10px 12px;white-space:nowrap;">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#facc15;box-shadow:0 0 6px rgba(250,204,21,0.6);"></span>
+                    <strong style="font-size:11.5px;color:#f8fafc;letter-spacing:0.03em;text-transform:uppercase;">📊 TOTALIZAÇÃO DA CONTA</strong>
+                  </div>
+                </td>
+                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?>
+                  <?= am_kpi_td($account['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'account') ?>
+                <?php endforeach; ?>
+              </tr>
+            </thead>
             <?php foreach ($account['tree'] as $ci => $campaign):
               $cid = $accTableId . '-c' . substr(md5((string)$ci), 0, 10);
               $cView = md_ads_metric_view($campaign['metrics']['x'] ?? [], $adsMetricSource);
@@ -533,7 +546,7 @@ if ($ajaxSection !== '') {
               $status = $statusMap[$statusKey] ?? '';
               $statusClass = $status !== '' ? 'is-' . strtolower(preg_replace('/[^a-z]+/i', '', $status)) : '';
             ?>
-            <tbody class="camp-block" data-campaign-name="<?= am_h($campaign['name']) ?>" data-spend="<?= (float)($campaign['metrics']['x']['spend'] ?? 0) ?>" data-leads="<?= (int)$cView['leads'] ?>" data-sales="<?= (int)$cView['sales'] ?>" data-cpl="<?= (float)$cView['cpl'] ?>" data-cpc="<?= (float)$cView['cpc'] ?>" data-cac="<?= (float)$cView['cac'] ?>" data-roas="<?= (float)$cView['roas'] ?>" data-cpm="<?= (float)$cView['cpm'] ?>" data-frequency="<?= (float)$cView['frequency'] ?>" data-search-blob="<?= am_h(mb_strtolower((string)$campaign['name'], 'UTF-8')) ?>">
+            <tbody class="camp-block" data-campaign-name="<?= am_h($campaign['name']) ?>" data-spend="<?= (float)($campaign['metrics']['x']['spend'] ?? 0) ?>" data-leads="<?= (int)$cView['leads'] ?>" data-sales="<?= (int)$cView['sales'] ?>" data-revenue="<?= (float)$cView['revenue'] ?>" data-cpl="<?= (float)$cView['cpl'] ?>" data-cpc="<?= (float)$cView['cpc'] ?>" data-cac="<?= (float)$cView['cac'] ?>" data-roas="<?= (float)$cView['roas'] ?>" data-cpm="<?= (float)$cView['cpm'] ?>" data-frequency="<?= (float)$cView['frequency'] ?>" data-search-blob="<?= am_h(mb_strtolower((string)$campaign['name'], 'UTF-8')) ?>">
               <tr data-row-id="<?= $cid ?>">
                 <td><div class="ads-name"><button type="button" class="ads-toggle" data-target="<?= $cid ?>" aria-expanded="false">▶</button>
                   <span class="dot-sale <?= $cView['sales'] > 0 ? 'has-sale' : 'no-sale' ?>" title="<?= $cView['sales'] > 0 ? 'Teve venda no período' : 'Sem venda no período' ?>"></span>
