@@ -670,6 +670,47 @@ button:not([class]):hover { filter: brightness(1.07); }
   .filter-bar { flex-direction: column; }
   .filter-group { min-width: 100%; }
 }
+
+/* ===== TOP GROUP NAVIGATION TABS ===== */
+.am-group-nav-wrapper {
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.am-group-nav-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.am-group-nav-tabs .am-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+  border-radius: 6px 6px 0 0;
+}
+.am-group-nav-tabs .am-nav-item:hover {
+  color: var(--text-heading, #fff);
+  background: rgba(255, 255, 255, 0.04);
+}
+.am-group-nav-tabs .am-nav-item.active {
+  color: var(--accent, #3b82f6);
+  border-bottom-color: var(--accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+}
+.am-group-nav-tabs .am-nav-item svg {
+  width: 16px;
+  height: 16px;
+}
 </style>
 <!-- Theme overrides from DB (runs after defaults so it wins the cascade) -->
 <style><?= theme_inline_css_vars(); ?></style>
@@ -701,7 +742,7 @@ button:not([class]):hover { filter: brightness(1.07); }
   </div>
 
   <nav class="sb-nav">
-    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['ads_manager'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas']): ?>
+    <?php if ($__sbV['dashboard'] || $__sbV['vendas_analytics'] || $__sbV['ads_manager'] || $__sbV['hotmart_import'] || $__sbV['vendas_vitalicio'] || $__sbV['alunos'] || $__sbV['retorno_agendamentos'] || $__sbV['reagendamentos_live'] || $__sbV['aulas'] || $__sbV['turmas'] || $__sbV['cursos'] || $__sbV['certificado']): ?>
     <div class="sb-section">Geral</div>
     <?php endif; ?>
 
@@ -717,23 +758,28 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['vendas_analytics']): ?>
-    <a href="vendas_analytics.php" class="sb-item <?= $currentMenu === 'vendas_analytics' && basename($_SERVER['PHP_SELF']) !== 'vendas_auditoria.php' ? 'active' : '' ?>">
+    <?php
+    $vendasTarget = 'vendas_analytics.php';
+    if (empty($__sbV['vendas_analytics'])) {
+      if (!empty($__sbV['hotmart_import'])) {
+        $vendasTarget = 'import_vendas_hotmart.php';
+      } elseif (!empty($__sbV['vendas_vitalicio'])) {
+        $vendasTarget = 'vendas_vitalicio.php';
+      }
+    }
+    $isVendasActive = in_array(basename($_SERVER['PHP_SELF']), [
+      'vendas_analytics.php', 'vendas_auditoria.php', 'import_vendas_hotmart.php', 'vendas_vitalicio.php'
+    ], true);
+    $canSeeVendas = !empty($__sbV['vendas_analytics']) || !empty($__sbV['hotmart_import']) || !empty($__sbV['vendas_vitalicio']);
+    ?>
+    <?php if ($canSeeVendas): ?>
+    <a href="<?= $vendasTarget ?>" class="sb-item <?= $isVendasActive ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="12" y1="20" x2="12" y2="10"/>
         <line x1="18" y1="20" x2="18" y2="4"/>
         <line x1="6" y1="20" x2="6" y2="16"/>
       </svg>
-      Desempenho Vendas
-    </a>
-    <a href="vendas_auditoria.php" class="sb-item <?= basename($_SERVER['PHP_SELF']) === 'vendas_auditoria.php' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-      </svg>
-      Auditoria de Vendas
+      Vendas
     </a>
     <?php endif; ?>
 
@@ -752,35 +798,12 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['hotmart_import']): ?>
-    <a href="import_vendas_hotmart.php" class="sb-item <?= $currentMenu === 'hotmart_import' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 3v12"/>
-        <path d="m7 10 5 5 5-5"/>
-        <path d="M5 21h14"/>
-      </svg>
-      Conciliar Vendas
-    </a>
-    <?php endif; ?>
-
-    <?php if ($__sbV['vendas_vitalicio']): ?>
-    <a href="vendas_vitalicio.php" class="sb-item <?= $currentMenu === 'vendas_vitalicio' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M20 7h-9"/>
-        <path d="M14 17H5"/>
-        <circle cx="17" cy="17" r="3"/>
-        <circle cx="7" cy="7" r="3"/>
-      </svg>
-      Vendas Vitalicio
-    </a>
-    <?php endif; ?>
-
     <?php if ($__sbV['alunos']): ?>
     <a href="alunos.php" class="sb-item <?= $currentMenu === 'alunos' ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
         <circle cx="9" cy="7" r="4"/>
-        <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+        <path d="M23 21v-2a4 4 0 010 7.75"/>
       </svg>
       Alunos
     </a>
@@ -807,49 +830,29 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['aulas']): ?>
-    <a href="aulas.php" class="sb-item <?= $currentMenu === 'aulas' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <polygon points="10 8 16 12 10 16 10 8"/>
-      </svg>
-      Aulas
-    </a>
-    <?php endif; ?>
-
-    <?php if ($__sbV['turmas']): ?>
-    <a href="turmas.php" class="sb-item <?= $currentMenu === 'turmas' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="4" width="18" height="18" rx="2"/>
-        <line x1="16" y1="2" x2="16" y2="6"/>
-        <line x1="8" y1="2" x2="8" y2="6"/>
-        <line x1="3" y1="10" x2="21" y2="10"/>
-      </svg>
-      Turmas
-    </a>
-    <?php endif; ?>
-
-    <?php if ($__sbV['cursos'] || $__sbV['certificado']): ?>
-    <div class="sb-section">Conteúdo</div>
-    <?php endif; ?>
-
-    <?php if ($__sbV['cursos']): ?>
-    <a href="cursos_recomendados.php" class="sb-item <?= $currentMenu === 'cursos' ? 'active' : '' ?>">
+    <?php
+    $areaMembrosTarget = 'aulas.php';
+    if (empty($__sbV['aulas'])) {
+      if (!empty($__sbV['turmas'])) {
+        $areaMembrosTarget = 'turmas.php';
+      } elseif (!empty($__sbV['cursos'])) {
+        $areaMembrosTarget = 'cursos_recomendados.php';
+      } elseif (!empty($__sbV['certificado'])) {
+        $areaMembrosTarget = 'certificado_config.php';
+      }
+    }
+    $isAreaMembrosActive = in_array(basename($_SERVER['PHP_SELF']), [
+      'aulas.php', 'turmas.php', 'cursos_recomendados.php', 'certificado_config.php'
+    ], true);
+    $canSeeAreaMembros = !empty($__sbV['aulas']) || !empty($__sbV['turmas']) || !empty($__sbV['cursos']) || !empty($__sbV['certificado']);
+    ?>
+    <?php if ($canSeeAreaMembros): ?>
+    <a href="<?= $areaMembrosTarget ?>" class="sb-item <?= $isAreaMembrosActive ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
       </svg>
-      Cursos Recom.
-    </a>
-    <?php endif; ?>
-
-    <?php if ($__sbV['certificado']): ?>
-    <a href="certificado_config.php" class="sb-item <?= $currentMenu === 'certificado' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="8" r="6"/>
-        <path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>
-      </svg>
-      Certificado
+      Área de Membros
     </a>
     <?php endif; ?>
 
@@ -1165,3 +1168,113 @@ button:not([class]):hover { filter: brightness(1.07); }
   </header>
 
   <div id="page-content">
+  <?php
+  $currentScript = basename($_SERVER['PHP_SELF']);
+  $vendasGroup = [
+    'vendas_analytics.php',
+    'vendas_auditoria.php',
+    'import_vendas_hotmart.php',
+    'vendas_vitalicio.php'
+  ];
+  $areaMembrosGroup = [
+    'aulas.php',
+    'turmas.php',
+    'cursos_recomendados.php',
+    'certificado_config.php'
+  ];
+
+  if (in_array($currentScript, $vendasGroup, true)):
+  ?>
+  <div class="am-group-nav-wrapper">
+    <nav class="am-group-nav-tabs">
+      <?php if (!empty($__sbV['vendas_analytics'])): ?>
+      <a href="vendas_analytics.php" class="am-nav-item <?= $currentScript === 'vendas_analytics.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="20" x2="12" y2="10"/>
+          <line x1="18" y1="20" x2="18" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="16"/>
+        </svg>
+        Desempenho Vendas
+      </a>
+      <a href="vendas_auditoria.php" class="am-nav-item <?= $currentScript === 'vendas_auditoria.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        Auditoria de Vendas
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['hotmart_import'])): ?>
+      <a href="import_vendas_hotmart.php" class="am-nav-item <?= $currentScript === 'import_vendas_hotmart.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 3v12"/>
+          <path d="m7 10 5 5 5-5"/>
+          <path d="M5 21h14"/>
+        </svg>
+        Conciliar Vendas
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['vendas_vitalicio'])): ?>
+      <a href="vendas_vitalicio.php" class="am-nav-item <?= $currentScript === 'vendas_vitalicio.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 7h-9"/>
+          <path d="M14 17H5"/>
+          <circle cx="17" cy="17" r="3"/>
+          <circle cx="7" cy="7" r="3"/>
+        </svg>
+        Vendas Vitalício
+      </a>
+      <?php endif; ?>
+    </nav>
+  </div>
+  <?php elseif (in_array($currentScript, $areaMembrosGroup, true)): ?>
+  <div class="am-group-nav-wrapper">
+    <nav class="am-group-nav-tabs">
+      <?php if (!empty($__sbV['aulas'])): ?>
+      <a href="aulas.php" class="am-nav-item <?= $currentScript === 'aulas.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="10 8 16 12 10 16 10 8"/>
+        </svg>
+        Aulas
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['turmas'])): ?>
+      <a href="turmas.php" class="am-nav-item <?= $currentScript === 'turmas.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        Turmas
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['cursos'])): ?>
+      <a href="cursos_recomendados.php" class="am-nav-item <?= $currentScript === 'cursos_recomendados.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+        </svg>
+        Cursos Recomendados
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['certificado'])): ?>
+      <a href="certificado_config.php" class="am-nav-item <?= $currentScript === 'certificado_config.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="8" r="6"/>
+          <path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>
+        </svg>
+        Certificado
+      </a>
+      <?php endif; ?>
+    </nav>
+  </div>
+  <?php endif; ?>
