@@ -798,8 +798,13 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
+    <?php
+    $isAlunosActive = in_array(basename($_SERVER['PHP_SELF']), [
+      'alunos.php', 'compradores.php', 'logins_nao_encontrados.php'
+    ], true);
+    ?>
     <?php if ($__sbV['alunos']): ?>
-    <a href="alunos.php" class="sb-item <?= $currentMenu === 'alunos' ? 'active' : '' ?>">
+    <a href="alunos.php" class="sb-item <?= $isAlunosActive ? 'active' : '' ?>">
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
         <circle cx="9" cy="7" r="4"/>
@@ -1183,6 +1188,11 @@ button:not([class]):hover { filter: brightness(1.07); }
     'cursos_recomendados.php',
     'certificado_config.php'
   ];
+  $alunosGroup = [
+    'alunos.php',
+    'compradores.php',
+    'logins_nao_encontrados.php'
+  ];
 
   if (in_array($currentScript, $vendasGroup, true)):
   ?>
@@ -1285,6 +1295,35 @@ button:not([class]):hover { filter: brightness(1.07); }
         Certificado
       </a>
       <?php endif; ?>
+    </nav>
+  </div>
+  <?php elseif (in_array($currentScript, $alunosGroup, true)): ?>
+  <div class="am-group-nav-wrapper">
+    <nav class="am-group-nav-tabs">
+      <a href="alunos.php" class="am-nav-item <?= $currentScript === 'alunos.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 010 7.75"/>
+        </svg>
+        Alunos Inscritos
+      </a>
+      <a href="compradores.php" class="am-nav-item <?= $currentScript === 'compradores.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="9" cy="21" r="1"/>
+          <circle cx="20" cy="21" r="1"/>
+          <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+        </svg>
+        Lista de Compradores
+      </a>
+      <a href="logins_nao_encontrados.php" class="am-nav-item <?= $currentScript === 'logins_nao_encontrados.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        Erros de Login
+      </a>
     </nav>
   </div>
   <?php endif; ?>

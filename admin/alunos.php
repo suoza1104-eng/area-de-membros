@@ -991,12 +991,6 @@ require __DIR__ . '/_header.php';
         <div class="al-kpi-v" style="color:var(--info)"><?= $comTurma ?></div>
         <div class="al-kpi-l">Com turma</div>
     </div>
-    <a href="logins_nao_encontrados.php" class="al-kpi" style="text-decoration:none;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08);margin-left:auto;transition:all var(--t);">
-        <div class="al-kpi-v" style="color:#f87171;font-size:15px;display:flex;align-items:center;gap:6px;">
-            <span>🚨 Erros de Login</span>
-        </div>
-        <div class="al-kpi-l" style="color:#fca5a5;">Ver histórico & gráfico ➔</div>
-    </a>
 </div>
 
 <!-- ─── Tabela ──────────────────────────────────────────────────────── -->

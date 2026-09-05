@@ -402,9 +402,6 @@ require_once __DIR__ . '/_header.php';
       <h1>🚨 Tentativas de Login Não Identificadas</h1>
       <p>Lista de e-mails que tentaram acessar a área de membros sem cadastro de usuário atrelado.</p>
     </div>
-    <a href="alunos.php" class="lni-nav-btn">
-      <i class="ph ph-arrow-left"></i> ⬅️ Voltar para a Lista de Alunos
-    </a>
   </div>
 
   <!-- 1. FORMULÁRIO DE FILTROS (NO TOPO) -->
