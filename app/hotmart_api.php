@@ -28,6 +28,47 @@ function hotmart_get_oauth_token(string $clientId, string $clientSecret): ?strin
     return is_array($json) && !empty($json['access_token']) ? (string)$json['access_token'] : null;
 }
 
+/**
+ * Busca todas as paginas de um endpoint da API de Pagamentos da Hotmart,
+ * seguindo page_info.next_page_token ate esgotar. Sem isso, qualquer janela
+ * com mais de max_results (100) transacoes descarta o excedente em silencio
+ * — foi a causa raiz de centenas de vendas aprovadas que nunca chegavam em
+ * hotmart_sales via este sync.
+ */
+function hotmart_api_fetch_all_pages(string $baseUrl, string $token, int $maxPages = 50): array
+{
+    $items = [];
+    $pageToken = null;
+    $firstPageHttpCode = null;
+    for ($page = 0; $page < $maxPages; $page++) {
+        $url = $baseUrl;
+        if ($pageToken !== null && $pageToken !== '') {
+            $url .= '&page_token=' . urlencode($pageToken);
+        }
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $token
+        ]);
+        $res = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($page === 0) $firstPageHttpCode = $httpCode;
+
+        if ($httpCode !== 200 || !$res) break;
+
+        $json = json_decode($res, true);
+        $pageItems = is_array($json['items'] ?? null) ? $json['items'] : [];
+        $items = array_merge($items, $pageItems);
+
+        $pageToken = $json['page_info']['next_page_token'] ?? null;
+        if ($pageToken === null || $pageToken === '') break;
+    }
+    return ['items' => $items, 'first_page_http_code' => $firstPageHttpCode];
+}
+
 function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
 {
     $clientId = trim((string)get_setting('hotmart_client_id', ''));
@@ -52,56 +93,32 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
     $startDateMs = (int)(strtotime("-{$days} days") * 1000);
 
     $url = "https://developers.hotmart.com/payments/api/v1/sales/history?start_date={$startDateMs}&end_date={$endDateMs}&transaction_status=APPROVED&max_results=100";
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $token
-    ]);
-    
-    $res = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($httpCode !== 200 || !$res) {
+    $salesFetch = hotmart_api_fetch_all_pages($url, $token);
+    if ($salesFetch['first_page_http_code'] !== 200) {
         return [
             'ok' => false,
-            'message' => "Erro ao consultar histórico de vendas Hotmart (HTTP {$httpCode})."
+            'message' => "Erro ao consultar histórico de vendas Hotmart (HTTP {$salesFetch['first_page_http_code']})."
         ];
     }
-
-    $json = json_decode($res, true);
-    $items = is_array($json['items'] ?? null) ? $json['items'] : [];
+    $items = $salesFetch['items'];
 
     // Buscar comissões reais do produtor via API de Comissões
     $commMap = [];
     $commUrl = "https://developers.hotmart.com/payments/api/v1/sales/commissions?start_date={$startDateMs}&end_date={$endDateMs}&max_results=100";
-    $chC = curl_init($commUrl);
-    curl_setopt($chC, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($chC, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $token
-    ]);
-    $resC = curl_exec($chC);
-    curl_close($chC);
-    if ($resC) {
-        $jsonC = json_decode($resC, true);
-        $itemsC = is_array($jsonC['items'] ?? null) ? $jsonC['items'] : [];
-        foreach ($itemsC as $itC) {
-            $tCode = trim((string)($itC['transaction'] ?? ''));
-            if ($tCode === '') continue;
-            $prodVal = 0.0;
-            $comms = is_array($itC['commissions'] ?? null) ? $itC['commissions'] : [];
-            foreach ($comms as $cm) {
-                $src = strtoupper(trim((string)($cm['source'] ?? '')));
-                if ($src === 'PRODUCER' || strpos($src, 'PRODUCER') !== false) {
-                    $prodVal += (float)($cm['commission']['value'] ?? $cm['value'] ?? 0);
-                }
+    $commItems = hotmart_api_fetch_all_pages($commUrl, $token)['items'];
+    foreach ($commItems as $itC) {
+        $tCode = trim((string)($itC['transaction'] ?? ''));
+        if ($tCode === '') continue;
+        $prodVal = 0.0;
+        $comms = is_array($itC['commissions'] ?? null) ? $itC['commissions'] : [];
+        foreach ($comms as $cm) {
+            $src = strtoupper(trim((string)($cm['source'] ?? '')));
+            if ($src === 'PRODUCER' || strpos($src, 'PRODUCER') !== false) {
+                $prodVal += (float)($cm['commission']['value'] ?? $cm['value'] ?? 0);
             }
-            if ($prodVal > 0) {
-                $commMap[$tCode] = $prodVal;
-            }
+        }
+        if ($prodVal > 0) {
+            $commMap[$tCode] = $prodVal;
         }
     }
 

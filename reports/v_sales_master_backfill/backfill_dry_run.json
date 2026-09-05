@@ -1,0 +1,52 @@
+{
+  "mode": "dry-run",
+  "generated_at": "2026-09-05 00:32:33",
+  "channels": {
+    "hotmart": {
+      "target_table": "hotmart_sales",
+      "missing_count": 4641,
+      "missing_gross_revenue_sum": 1117723.74,
+      "sample_transaction_codes": [
+        "HP2937511490",
+        "HP3842840976",
+        "HP3843903278",
+        "HP2383027028",
+        "HP0465544135",
+        "HP1168388430",
+        "HP3015137178",
+        "HP0906343781",
+        "HP2473318782",
+        "HP2883689328"
+      ]
+    },
+    "dom": {
+      "target_table": "dom_sales",
+      "missing_count": 5,
+      "missing_gross_revenue_sum": 53.9,
+      "sample_transaction_codes": [
+        "dom:7b5bd338-31fe-477f-886e-470af043d619",
+        "dom:d36cfaa0-c8df-42d8-aeb9-317eb85c8a80",
+        "dom:dfb79d2a-e919-46e7-a485-6756cfbf1112",
+        "dom:45c32f3b-5b7c-4abb-a9b5-8550aeb69905",
+        "dom:fe0aad2e-8577-4bcd-b456-a2ccc68fb903"
+      ]
+    },
+    "pagarme": {
+      "target_table": "pagarme_sales",
+      "missing_count": 76,
+      "missing_gross_revenue_sum": 7706.63,
+      "sample_transaction_codes": [
+        "pagarme:ch_QJ2e5GDIZ5TkOdA3",
+        "pagarme:ch_nxBqv4EnS1fa9ezd",
+        "pagarme:ch_ygao1eRhJUnvoqjA",
+        "pagarme:ch_5aox49cLjho5KJmn",
+        "pagarme:ch_ekZBY5zsJxUmYB1L",
+        "pagarme:ch_w1d3WA8IPrhM4ryA",
+        "pagarme:ch_xkArVJ2DH9cXVEyO",
+        "pagarme:ch_oYmBJkQH8air0bOl",
+        "pagarme:ch_BmePV60sNqFZlOjz",
+        "pagarme:ch_A4JEZ3VUjjiRPqRe"
+      ]
+    }
+  }
+}

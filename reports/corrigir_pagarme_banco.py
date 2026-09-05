@@ -211,6 +211,59 @@ def apply():
                         )
                         stats["inserted_hotmart_sales_live"] += cur.rowcount
 
+                    if normalized == "APPROVED":
+                        # hotmart_sales_live e o ledger de atribuicao (aceita
+                        # status em portugues), mas pagarme_sales/v_sales_master
+                        # (usados pelos relatorios financeiros e pelo Gerenciador
+                        # de Anuncios) exigem o ENUM em ingles e nunca eram
+                        # alimentados por este script — a venda ficava invisivel
+                        # ali mesmo com o webhook original correto.
+                        cur.execute(
+                            """
+                            INSERT INTO pagarme_sales (
+                                transaction_code, status, checkout_platform, product_name,
+                                amount_cents, fee_cents, net_cents, gross_revenue, net_revenue, producer_net, fees,
+                                buyer_name, buyer_email, buyer_phone, buyer_document, payment_method, installments,
+                                sale_date, payment_confirmed_at, raw_payload_json, created_at, updated_at
+                            ) VALUES (
+                                %s, 'APPROVED', 'pagarme', %s,
+                                %s, 0, %s, %s, %s, %s, 0,
+                                %s, %s, %s, %s, NULL, 1,
+                                %s, %s, %s, NOW(), NOW()
+                            )
+                            ON DUPLICATE KEY UPDATE
+                                status='APPROVED',
+                                gross_revenue=VALUES(gross_revenue),
+                                net_revenue=VALUES(net_revenue),
+                                producer_net=VALUES(producer_net),
+                                amount_cents=VALUES(amount_cents),
+                                net_cents=VALUES(net_cents),
+                                buyer_name=VALUES(buyer_name),
+                                buyer_email=VALUES(buyer_email),
+                                buyer_phone=VALUES(buyer_phone),
+                                raw_payload_json=VALUES(raw_payload_json),
+                                updated_at=NOW()
+                            """,
+                            (
+                                tx,
+                                source.get("Product_Name") or None,
+                                amount,
+                                amount,
+                                amount / 100,
+                                amount / 100,
+                                amount / 100,
+                                source.get("Customer_Name") or None,
+                                (source.get("Customer_Email") or "").strip().lower() or None,
+                                source.get("Customer_Cell_phone") or source.get("Customer_Home_phone") or None,
+                                source.get("Customer_Document") or None,
+                                created,
+                                updated,
+                                raw,
+                            ),
+                        )
+                        stats.setdefault("inserted_pagarme_sales", 0)
+                        stats["inserted_pagarme_sales"] += cur.rowcount
+
                 for audit_row in divergent:
                     tx = audit_row["transaction_id"]
                     if audit_row.get("report_status") == "CANCELED":

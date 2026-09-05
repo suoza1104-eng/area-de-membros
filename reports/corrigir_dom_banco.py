@@ -203,6 +203,49 @@ def main():
                             },
                         )
                         stats["inserted_hotmart_sales_live"] += cur.rowcount
+
+                        # dom_sales/v_sales_master (usados pelos relatorios
+                        # financeiros e pelo Gerenciador de Anuncios) nunca eram
+                        # alimentados por este script — so hotmart_sales_live
+                        # (ledger de atribuicao) recebia a venda reconciliada.
+                        cur.execute(
+                            """
+                            INSERT INTO dom_sales (
+                                transaction_code, status, checkout_platform, product_name,
+                                amount_cents, fee_cents, net_cents, gross_revenue, net_revenue, producer_net, fees,
+                                buyer_name, buyer_email, buyer_phone, buyer_document, payment_method, installments,
+                                sale_date, payment_confirmed_at, raw_payload_json, created_at, updated_at
+                            ) VALUES (
+                                %(external_transaction_id)s, 'APPROVED', 'dom', %(product_name)s,
+                                %(gross_amount_cents)s, %(fee_amount_cents)s, %(net_amount_cents)s,
+                                %(gross_revenue)s, %(net_revenue)s, %(producer_net)s, %(fees)s,
+                                %(buyer_name)s, %(buyer_email)s, %(buyer_phone)s, %(buyer_document)s,
+                                %(payment_method)s, %(installments)s,
+                                %(first_received_at)s, %(last_received_at)s, %(raw_payload_json)s, NOW(), NOW()
+                            )
+                            ON DUPLICATE KEY UPDATE
+                                status='APPROVED',
+                                gross_revenue=VALUES(gross_revenue),
+                                net_revenue=VALUES(net_revenue),
+                                producer_net=VALUES(producer_net),
+                                amount_cents=VALUES(amount_cents),
+                                net_cents=VALUES(net_cents),
+                                buyer_name=VALUES(buyer_name),
+                                buyer_email=VALUES(buyer_email),
+                                buyer_phone=VALUES(buyer_phone),
+                                raw_payload_json=VALUES(raw_payload_json),
+                                updated_at=NOW()
+                            """,
+                            {
+                                **row,
+                                "gross_revenue": row["gross_amount_cents"] / 100,
+                                "net_revenue": row["net_amount_cents"] / 100,
+                                "producer_net": row["net_amount_cents"] / 100,
+                                "fees": row["fee_amount_cents"] / 100,
+                            },
+                        )
+                        stats.setdefault("inserted_dom_sales", 0)
+                        stats["inserted_dom_sales"] += cur.rowcount
             conn.commit()
         except Exception:
             conn.rollback()

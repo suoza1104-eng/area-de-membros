@@ -813,6 +813,23 @@ include __DIR__ . '/_header.php';
         <button type="button" data-range="90">90d</button>
         <button type="button" data-range="365">365d</button>
       </div>
+      <div class="am-modal-secondary-wrap" style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+        <label for="amModalSecondarySelect" style="font-size:11px;color:var(--muted);white-space:nowrap;font-weight:500;">Segunda variável (Linha Azul):</label>
+        <select id="amModalSecondarySelect" style="height:28px;padding:0 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:11px;outline:none;cursor:pointer;">
+          <option value="">Nenhuma (Apenas Barra)</option>
+          <option value="spend">Gasto (R$)</option>
+          <option value="leads">Leads</option>
+          <option value="sales">Vendas</option>
+          <option value="revenue">Receita (R$)</option>
+          <option value="roas">ROAS</option>
+          <option value="cac">CAC (R$)</option>
+          <option value="cpl">CPL (R$)</option>
+          <option value="cpc">CPC (R$)</option>
+          <option value="cpm">CPM (R$)</option>
+          <option value="ctr">CTR (%)</option>
+          <option value="frequency">Frequência</option>
+        </select>
+      </div>
     </div>
     <div class="am-modal-body">
       <div class="am-modal-spinner"></div>
@@ -1019,8 +1036,21 @@ include __DIR__ . '/_header.php';
     num: function(v){ return Number(v||0).toLocaleString('pt-BR'); },
     pct: function(v){ return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) + '%'; },
   };
+  var amKpiOptions = {
+    spend: { label: 'Gasto', format: 'money' },
+    leads: { label: 'Leads', format: 'num' },
+    sales: { label: 'Vendas', format: 'num' },
+    revenue: { label: 'Receita', format: 'money' },
+    roas: { label: 'ROAS', format: 'decimal' },
+    cac: { label: 'CAC', format: 'money' },
+    cpl: { label: 'CPL', format: 'money' },
+    cpc: { label: 'CPC', format: 'money' },
+    cpm: { label: 'CPM', format: 'money' },
+    ctr: { label: 'CTR', format: 'pct' },
+    frequency: { label: 'Frequência', format: 'decimal' }
+  };
   var amModalChart = null;
-  var amModalState = { level:'', campaign:'', adset:'', ad:'', accountKey:'', accountName:'', kpi:'', format:'num', label:'', granularity:'day', range:30, userGran:false };
+  var amModalState = { level:'', campaign:'', adset:'', ad:'', accountKey:'', accountName:'', kpi:'', format:'num', label:'', granularity:'day', range:30, userGran:false, secondaryKpi:'', rawRows:[] };
 
   function amPeriodLabel(p, gran){
     var d = new Date(p + 'T00:00:00');
@@ -1029,14 +1059,26 @@ include __DIR__ . '/_header.php';
     return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
   }
   window.amOpenKpiModal = function(scope){
-    amModalState = Object.assign({ range: 30, userGran: false }, scope);
+    amModalState = Object.assign({ range: 30, userGran: false, secondaryKpi: '', rawRows: [] }, scope);
     amModalState.granularity = amModalState.range <= 31 ? 'day' : (amModalState.range <= 180 ? 'week' : 'month');
+    var secSelect = document.getElementById('amModalSecondarySelect');
+    if (secSelect) secSelect.value = '';
     document.getElementById('amKpiModal').hidden = false;
     document.body.style.overflow = 'hidden';
     amUpdateModalTitle();
     amModalSetActiveButtons();
     amFetchKpiHistory();
   };
+
+  document.addEventListener('change', function(e){
+    if (e.target && e.target.id === 'amModalSecondarySelect') {
+      amModalState.secondaryKpi = e.target.value;
+      if (amModalState.rawRows && amModalState.rawRows.length > 0) {
+        amRenderKpiHistory(amModalState.rawRows);
+      }
+    }
+  });
+
   function amUpdateModalTitle(){
     var s = amModalState, where = 'Visão geral';
     if (s.level === 'account') where = s.accountName || '';
@@ -1067,27 +1109,106 @@ include __DIR__ . '/_header.php';
       .finally(function(){ bodyEl.classList.remove('is-loading'); });
   }
   function amRenderKpiHistory(rows){
+    amModalState.rawRows = rows;
     var s = amModalState;
     var labels = rows.map(function(r){ return amPeriodLabel(r.period, s.granularity); });
-    var values = rows.map(function(r){ return r[s.kpi] || 0; });
-    var fmt = amKpiFmt[s.format] || amKpiFmt.num;
+    var primaryValues = rows.map(function(r){ return r[s.kpi] || 0; });
+    var primaryFmt = amKpiFmt[s.format] || amKpiFmt.num;
+
+    var datasets = [
+      {
+        type: 'bar',
+        label: s.label || s.kpi,
+        data: primaryValues,
+        backgroundColor: '#facc15',
+        borderRadius: 4,
+        yAxisID: 'y',
+        order: 2
+      }
+    ];
+
+    var scales = {
+      x: { ticks: { color: '#94a3b8', font:{size:9} }, grid: { display:false } },
+      y: {
+        type: 'linear',
+        position: 'left',
+        ticks: { color: '#facc15', font:{size:9} },
+        grid: { color: 'rgba(148,163,184,.12)' }
+      }
+    };
+
+    var secKpi = s.secondaryKpi;
+    var secConfig = secKpi ? amKpiOptions[secKpi] : null;
+
+    if (secConfig) {
+      var secValues = rows.map(function(r){ return r[secKpi] || 0; });
+      var secFmt = amKpiFmt[secConfig.format] || amKpiFmt.num;
+
+      datasets.push({
+        type: 'line',
+        label: secConfig.label,
+        data: secValues,
+        borderColor: '#3b82f6',
+        backgroundColor: '#3b82f6',
+        borderWidth: 2,
+        pointBackgroundColor: '#3b82f6',
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.2,
+        yAxisID: 'y1',
+        order: 1
+      });
+
+      scales.y1 = {
+        type: 'linear',
+        position: 'right',
+        ticks: { color: '#60a5fa', font:{size:9} },
+        grid: { display: false }
+      };
+    }
+
     var ctx = document.getElementById('amKpiModalChart');
     if (amModalChart) amModalChart.destroy();
+
     amModalChart = new Chart(ctx, {
-      type: 'bar', plugins: [ChartDataLabels],
-      data: { labels: labels, datasets: [{ label: s.label, data: values, backgroundColor: '#facc15', borderRadius: 4 }] },
+      plugins: [ChartDataLabels],
+      data: { labels: labels, datasets: datasets },
       options: {
-        responsive: true, maintainAspectRatio: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { display: false },
-          datalabels: { anchor:'end', align:'top', color:'#e2e8f0', font:{size:9,weight:'700'}, formatter: function(v){ return v ? fmt(v) : ''; } },
+          legend: {
+            display: secConfig ? true : false,
+            labels: { color: '#e2e8f0', font: { size: 11 } }
+          },
+          datalabels: {
+            display: true,
+            anchor: 'end',
+            align: 'top',
+            font: { size: 9, weight: '700' },
+            formatter: function(value, context) {
+              if (value === null || value === undefined) return '';
+              if (context.datasetIndex === 0) {
+                return value ? primaryFmt(value) : '';
+              } else if (context.datasetIndex === 1 && secConfig) {
+                var secFmt = amKpiFmt[secConfig.format] || amKpiFmt.num;
+                return value ? secFmt(value) : '';
+              }
+              return '';
+            },
+            color: function(context) {
+              if (context.datasetIndex === 1) {
+                return '#60a5fa'; // Blue data labels for secondary line
+              }
+              return '#e2e8f0'; // Default text color for bars
+            }
+          }
         },
-        scales: {
-          x: { ticks: { color: '#94a3b8', font:{size:9} }, grid: { display:false } },
-          y: { ticks: { color: '#94a3b8', font:{size:9} }, grid: { color: 'rgba(148,163,184,.12)' } },
-        },
-      },
+        scales: scales
+      }
     });
+
     var tbody = document.getElementById('amKpiModalTableBody');
     var html = rows.slice().reverse().map(function(r){
       return '<tr><td>'+amPeriodLabel(r.period, s.granularity)+'</td><td>'+amKpiFmt.money(r.spend)+'</td><td>'+amKpiFmt.num(r.leads)+'</td><td>'+amKpiFmt.num(r.sales)+'</td><td>'+amKpiFmt.money(r.revenue)+'</td><td>'+amKpiFmt.decimal(r.roas)+'</td><td>'+amKpiFmt.money(r.cac)+'</td><td>'+amKpiFmt.money(r.cpl)+'</td><td>'+amKpiFmt.money(r.cpc)+'</td><td>'+amKpiFmt.money(r.cpm)+'</td><td>'+amKpiFmt.pct(r.ctr)+'</td><td>'+amKpiFmt.decimal(r.frequency)+'</td></tr>';
