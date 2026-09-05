@@ -768,7 +768,7 @@ button:not([class]):hover { filter: brightness(1.07); }
       }
     }
     $isVendasActive = in_array(basename($_SERVER['PHP_SELF']), [
-      'vendas_analytics.php', 'vendas_auditoria.php', 'import_vendas_hotmart.php', 'vendas_vitalicio.php'
+      'vendas_analytics.php', 'vendas_auditoria.php', 'import_vendas_hotmart.php', 'vendas_vitalicio.php', 'vendas_nao_atribuidas.php'
     ], true);
     $canSeeVendas = !empty($__sbV['vendas_analytics']) || !empty($__sbV['hotmart_import']) || !empty($__sbV['vendas_vitalicio']);
     ?>
@@ -1174,7 +1174,8 @@ button:not([class]):hover { filter: brightness(1.07); }
     'vendas_analytics.php',
     'vendas_auditoria.php',
     'import_vendas_hotmart.php',
-    'vendas_vitalicio.php'
+    'vendas_vitalicio.php',
+    'vendas_nao_atribuidas.php'
   ];
   $areaMembrosGroup = [
     'aulas.php',
@@ -1204,6 +1205,15 @@ button:not([class]):hover { filter: brightness(1.07); }
           <line x1="16" y1="17" x2="8" y2="17"/>
         </svg>
         Auditoria de Vendas
+      </a>
+      <a href="vendas_nao_atribuidas.php" class="am-nav-item <?= $currentScript === 'vendas_nao_atribuidas.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          <line x1="11" y1="8" x2="11" y2="14"/>
+          <line x1="8" y1="11" x2="14" y2="11"/>
+        </svg>
+        Vendas Não Atribuídas
       </a>
       <?php endif; ?>
 
