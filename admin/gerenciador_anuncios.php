@@ -313,7 +313,77 @@ $chipColumns = [
 
 $ajaxParams = ['period' => $preset, 'model' => $model, 'ads_metric_source' => $adsMetricSource, 'compare_y' => $compareDays['y'], 'compare_z' => $compareDays['z']];
 if ($preset === 'custom') { $ajaxParams['from'] = $period['start']; $ajaxParams['to'] = $period['end']; }
-$ajaxQueryBase = http_build_query($ajaxParams);
+if (empty($_SESSION['sales_csrf'])) $_SESSION['sales_csrf'] = bin2hex(random_bytes(24));
+
+if ((string)($_GET['ajax'] ?? '') === 'lead_search') {
+    header('Content-Type: application/json; charset=UTF-8');
+    $term = trim((string)($_GET['q'] ?? ''));
+    $rows = [];
+    if (mb_strlen($term) >= 2) {
+        $st = $pdo->prepare("SELECT id,source_user_id,lead_name,lead_email,lead_phone_raw,turma_codigo,created_at FROM attribution_leads WHERE lead_name LIKE :q OR lead_email LIKE :q OR lead_phone_raw LIKE :q OR CAST(source_user_id AS CHAR)=:exact ORDER BY created_at DESC LIMIT 20");
+        $st->execute(['q' => '%' . $term . '%', 'exact' => $term]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+    echo json_encode(['ok' => true, 'rows' => $rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'atribuir_venda_manual') {
+    $returnQuery = (string)($_POST['return_query'] ?? '');
+    try {
+        if (!hash_equals((string)($_SESSION['sales_csrf'] ?? ''), (string)($_POST['csrf'] ?? ''))) {
+            throw new RuntimeException('Sessão expirada. Recarregue a página.');
+        }
+        $saleId = (int)($_POST['sale_id'] ?? 0);
+        $leadId = (int)($_POST['lead_id'] ?? 0);
+        $model = (string)($_POST['attribution_model'] ?? 'last_touch');
+        if (!in_array($model, ['first_touch', 'last_touch'], true)) $model = 'last_touch';
+        $sale = md_row($pdo, "SELECT * FROM attribution_sales WHERE source_sale_id=:id LIMIT 1", ['id' => $saleId]);
+        $lead = md_row($pdo, "SELECT * FROM attribution_leads WHERE id=:id LIMIT 1", ['id' => $leadId]);
+        if (!$sale || !$lead) throw new RuntimeException('Venda ou lead não encontrado para atribuição.');
+        $resolved = [
+            'campaign_group' => (string)$lead['utm_campaign_group'],
+            'campaign_group_norm' => (string)$lead['utm_campaign_group_norm'],
+            'campaign_name' => (string)$lead['utm_campaign_name'],
+            'campaign_name_norm' => (string)$lead['utm_campaign_name_norm'],
+            'ad_name' => (string)$lead['utm_ad_name'],
+            'ad_name_norm' => (string)$lead['utm_ad_name_norm'],
+            'integration_id' => null,
+            'ad_account_name' => ''
+        ];
+        $candidate = resolve_meta_names_from_lead(build_meta_name_lookup($pdo, 0), $lead);
+        if (!empty($candidate['matched'])) $resolved = array_merge($resolved, $candidate);
+        $manual = $pdo->prepare("INSERT INTO manual_sale_attributions (transaction_code,attribution_model,campaign_group,campaign_group_norm,campaign_name,campaign_name_norm,ad_name,ad_name_norm,source_user_id,lead_utm_source,lead_utm_medium,lead_utm_campaign,lead_utm_term,lead_utm_content,assigned_by,notes) VALUES (:tx,:model,:cg,:cgn,:cn,:cnn,:ad,:adn,:uid,:us,:um,:uc,:ut,:uco,:by,'Atribuição manual pelo Gerenciador de Anúncios') ON DUPLICATE KEY UPDATE campaign_group=VALUES(campaign_group),campaign_group_norm=VALUES(campaign_group_norm),campaign_name=VALUES(campaign_name),campaign_name_norm=VALUES(campaign_name_norm),ad_name=VALUES(ad_name),ad_name_norm=VALUES(ad_name_norm),source_user_id=VALUES(source_user_id),assigned_by=VALUES(assigned_by),updated_at=NOW()");
+        $manual->execute([
+            'tx' => $sale['transaction_code'], 'model' => $model,
+            'cg' => $resolved['campaign_group'], 'cgn' => $resolved['campaign_group_norm'],
+            'cn' => $resolved['campaign_name'], 'cnn' => $resolved['campaign_name_norm'],
+            'ad' => $resolved['ad_name'], 'adn' => $resolved['ad_name_norm'],
+            'uid' => $lead['source_user_id'], 'us' => $lead['utm_source'],
+            'um' => $lead['utm_campaign_group'], 'uc' => $lead['utm_campaign_name'],
+            'ut' => $lead['utm_term'], 'uco' => $lead['utm_ad_name'],
+            'by' => (string)($_SESSION['equipe_nome'] ?? 'Administrador')
+        ]);
+        $saleTs = strtotime((string)$sale['sale_date']);
+        $leadTs = strtotime((string)$lead['created_at']);
+        upsert_attribution_match($pdo, [
+            'sale_id' => (int)$sale['id'], 'lead_id' => (int)$lead['id'],
+            'attribution_model' => $model, 'match_type' => 'manual',
+            'attribution_seconds_diff' => max(0, $saleTs - $leadTs),
+            'lead_created_at' => $lead['created_at'], 'sale_date' => $sale['sale_date'],
+            'campaign_group' => $resolved['campaign_group'], 'campaign_group_norm' => $resolved['campaign_group_norm'],
+            'campaign_name' => $resolved['campaign_name'], 'campaign_name_norm' => $resolved['campaign_name_norm'],
+            'ad_name' => $resolved['ad_name'], 'ad_name_norm' => $resolved['ad_name_norm'],
+            'integration_id' => $resolved['integration_id'], 'ad_account_name' => $resolved['ad_account_name'],
+            'revenue_value' => (float)$sale['producer_net'], 'product_name' => (string)$sale['product_name']
+        ]);
+        header('Location: gerenciador_anuncios.php?' . $returnQuery . '&manual_ok=1#nao-atribuidas');
+        exit;
+    } catch (Throwable $e) {
+        header('Location: gerenciador_anuncios.php?' . $returnQuery . '&manual_err=' . urlencode($e->getMessage()) . '#nao-atribuidas');
+        exit;
+    }
+}
 
 // ---------------------------------------------------------------------
 // AJAX: historico de um KPI (JSON), usado pelo popup. Nao renderiza nada
@@ -583,6 +653,11 @@ if ($ajaxSection !== '') {
     }
     exit;
 }
+$unattributedParams = ['model' => $model, 'start' => $period['start'] . ' 00:00:00', 'end' => $period['end'] . ' 23:59:59'];
+$unattributedRows = md_rows($pdo, "SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE " . md_approved_sql('s') . " AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL ORDER BY s.sale_date DESC LIMIT 50", $unattributedParams);
+$manualReturn = $_GET;
+unset($manualReturn['manual_ok'], $manualReturn['manual_err']);
+$manualReturnQuery = http_build_query($manualReturn);
 
 include __DIR__ . '/_header.php';
 ?>
@@ -708,6 +783,7 @@ include __DIR__ . '/_header.php';
 @media(max-width:1400px){.am-top-ads{grid-template-columns:repeat(5,1fr)}}
 @media(max-width:1100px){.metric-grid{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.am-filter form{grid-template-columns:repeat(3,1fr)}.am-chips{grid-template-columns:repeat(3,1fr)}.am-top-ads{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:640px){.am-top-ads{grid-template-columns:repeat(2,1fr)}}
+.manual-alert{padding:10px 12px;border-radius:9px;margin-bottom:10px;font-size:11px}.manual-alert.ok{background:var(--success-dim);color:#86efac}.manual-alert.err{background:var(--danger-dim);color:#fca5a5}.unattr-table{min-width:1050px}.lead-picker{position:relative;min-width:290px}.lead-picker input[type=search]{width:100%;height:32px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);padding:0 8px;font-size:10px}.lead-results{position:absolute;left:0;right:0;top:35px;z-index:20;background:#0f172a;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);max-height:220px;overflow:auto;display:none}.lead-option{display:block;width:100%;padding:8px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;font-size:10px;cursor:pointer}.lead-option:hover{background:var(--bg-hover)}.lead-selected{margin:5px 0;color:#86efac;font-size:9px}.manual-form-actions{display:flex;gap:6px;align-items:center}
 </style>
 
 <div class="am">
@@ -805,6 +881,19 @@ include __DIR__ . '/_header.php';
   <?php else: ?>
   <section class="section-card"><div class="empty">Nenhuma conta de anúncio ativa configurada em Integrações.</div></section>
   <?php endif; ?>
+  <section class="section-card" id="nao-atribuidas" style="margin-top:16px;">
+    <div class="section-head"><div><h2>Vendas não atribuídas</h2><p>Vendas aprovadas sem lead vinculado no modelo <?=am_h($model==='first_touch'?'First touch':'Last touch')?>. Pesquise o lead e confirme a atribuição manual.</p></div></div>
+    <?php if(isset($_GET['manual_ok'])):?><div class="manual-alert ok">Atribuição manual salva. O vínculo será preservado nas próximas sincronizações.</div><?php endif;?>
+    <?php if(!empty($_GET['manual_err'])):?><div class="manual-alert err"><?=am_h((string)$_GET['manual_err'])?></div><?php endif;?>
+    <div class="table-wrap"><table class="eff-table unattr-table"><thead><tr><th>Venda</th><th>Comprador</th><th>Produto</th><th>Valor</th><th>Atribuir ao lead</th></tr></thead><tbody>
+    <?php foreach($unattributedRows as $sale):?>
+      <tr><td><strong><?=am_h(date('d/m/Y H:i',strtotime((string)$sale['sale_date'])))?></strong><div class="subtext" style="font-size:9px;color:var(--muted);"><?=am_h((string)$sale['transaction_code'])?></div></td><td><strong><?=am_h((string)$sale['buyer_name'])?></strong><div class="subtext" style="font-size:9px;color:var(--muted);"><?=am_h((string)$sale['buyer_email'])?></div><div class="subtext" style="font-size:9px;color:var(--muted);"><?=am_h((string)$sale['buyer_phone'])?></div></td><td><strong><?=am_h((string)$sale['product_name'])?></strong></td><td><strong><?=am_money($sale['gross_revenue'])?></strong><div class="subtext" style="font-size:9px;color:var(--muted);">Produtor: <?=am_money($sale['producer_net'])?></div></td><td>
+        <form method="post" class="manual-attribution-form"><input type="hidden" name="acao" value="atribuir_venda_manual"><input type="hidden" name="csrf" value="<?=am_h((string)$_SESSION['sales_csrf'])?>"><input type="hidden" name="sale_id" value="<?=(int)$sale['id']?>"><input type="hidden" name="lead_id" value=""><input type="hidden" name="attribution_model" value="<?=am_h($model)?>"><input type="hidden" name="return_query" value="<?=am_h($manualReturnQuery)?>"><div class="lead-picker"><input type="search" class="lead-search" placeholder="Nome, e-mail, telefone ou ID" autocomplete="off"><div class="lead-results"></div><div class="lead-selected">Nenhum lead selecionado</div></div><div class="manual-form-actions" style="margin-top:6px;"><button class="btn btn-primary" type="submit" disabled style="height:30px;padding:0 12px;font-size:11px;">Confirmar atribuição</button></div></form>
+      </td></tr>
+    <?php endforeach;?>
+    <?php if(!$unattributedRows):?><tr><td colspan="5" class="empty">Todas as vendas aprovadas do período estão atribuídas.</td></tr><?php endif;?>
+    </tbody></table></div>
+  </section>
 </div>
 
 <div id="amKpiModal" class="am-modal" hidden>
@@ -1227,6 +1316,11 @@ include __DIR__ . '/_header.php';
       return '<tr><td>'+amPeriodLabel(r.period, s.granularity)+'</td><td>'+amKpiFmt.money(r.spend)+'</td><td>'+amKpiFmt.num(r.leads)+'</td><td>'+amKpiFmt.num(r.sales)+'</td><td>'+amKpiFmt.money(r.revenue)+'</td><td>'+amKpiFmt.decimal(r.roas)+'</td><td>'+amKpiFmt.money(r.cac)+'</td><td>'+amKpiFmt.money(r.cpl)+'</td><td>'+amKpiFmt.money(r.cpc)+'</td><td>'+amKpiFmt.money(r.cpm)+'</td><td>'+amKpiFmt.pct(r.ctr)+'</td><td>'+amKpiFmt.decimal(r.frequency)+'</td></tr>';
     }).join('');
     tbody.innerHTML = html || '<tr><td colspan="12">Sem dados no período.</td></tr>';
+    document.querySelectorAll('.manual-attribution-form').forEach(function(form){
+      var input=form.querySelector('.lead-search'),results=form.querySelector('.lead-results'),selected=form.querySelector('.lead-selected'),leadId=form.querySelector('input[name=lead_id]'),submit=form.querySelector('button[type=submit]');var timer;
+      input.addEventListener('input',function(){clearTimeout(timer);leadId.value='';submit.disabled=true;selected.textContent='Nenhum lead selecionado';var q=input.value.trim();if(q.length<2){results.style.display='none';return;}timer=setTimeout(async function(){try{var url=new URL(window.location.href);url.search='';url.searchParams.set('ajax','lead_search');url.searchParams.set('q',q);var response=await fetch(url,{headers:{Accept:'application/json'}});var data=await response.json();results.innerHTML='';(data.rows||[]).forEach(function(lead){var option=document.createElement('button');option.type='button';option.className='lead-option';option.textContent=(lead.lead_name||'Sem nome')+' · '+(lead.lead_email||lead.lead_phone_raw||'ID '+lead.source_user_id)+' · Turma '+(lead.turma_codigo||'-');option.addEventListener('click',function(){leadId.value=lead.id;input.value=lead.lead_name||lead.lead_email||lead.source_user_id;selected.textContent='Selecionado: '+option.textContent;submit.disabled=false;results.style.display='none';});results.appendChild(option);});results.style.display=(data.rows||[]).length?'block':'none';}catch(e){results.style.display='none';}},300);});
+      form.addEventListener('submit',function(e){if(!leadId.value){e.preventDefault();}});
+    });
   }
 })();
 </script>

@@ -318,86 +318,7 @@ function va_build_mtd_comparison(PDO $pdo, DateTimeImmutable $today, array $filt
 
 if(empty($_SESSION['sales_csrf']))$_SESSION['sales_csrf']=bin2hex(random_bytes(24));
 
-if ((string)($_GET['ajax'] ?? '') === 'lead_search') {
-    header('Content-Type: application/json; charset=UTF-8');
-    $term=trim((string)($_GET['q']??''));$rows=[];
-    if(mb_strlen($term)>=2){$st=$pdo->prepare("SELECT id,source_user_id,lead_name,lead_email,lead_phone_raw,turma_codigo,created_at FROM attribution_leads WHERE lead_name LIKE :q OR lead_email LIKE :q OR lead_phone_raw LIKE :q OR CAST(source_user_id AS CHAR)=:exact ORDER BY created_at DESC LIMIT 20");$st->execute(['q'=>'%'.$term.'%','exact'=>$term]);$rows=$st->fetchAll(PDO::FETCH_ASSOC)?:[];}
-    echo json_encode(['ok'=>true,'rows'=>$rows],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);exit;
-}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['ajax'] ?? '') === 'buyer_profile_ai') {
-    header('Content-Type: application/json; charset=UTF-8');
-    try {
-        if (!hash_equals((string)($_SESSION['sales_csrf'] ?? ''), (string)($_POST['csrf'] ?? ''))) {
-            throw new RuntimeException('Sessao expirada. Recarregue a pagina.');
-        }
-        $aiPreset = (string)($_POST['period'] ?? 'month');
-        if (!in_array($aiPreset, ['today','7','30','90','365','month','quarter','year','custom'], true)) $aiPreset = 'month';
-        $aiPeriod = metrics_period($aiPreset, $_POST['from'] ?? null, $_POST['to'] ?? null);
-        $aiFilters = [
-            'basis' => in_array(($_POST['basis'] ?? ''), ['gross_revenue','net_revenue','producer_net'], true) ? $_POST['basis'] : (get_setting('metrics_default_revenue_basis', 'producer_net') ?: 'producer_net'),
-            'model' => ($_POST['model'] ?? '') === 'first_touch' ? 'first_touch' : 'last_touch',
-            'product' => trim((string)($_POST['product'] ?? '')),
-            'turma' => trim((string)($_POST['turma'] ?? '')),
-            'campaign' => trim((string)($_POST['campaign'] ?? '')),
-            'adset' => trim((string)($_POST['adset'] ?? '')),
-        ];
-        $profile = md_buyer_profile($pdo, $aiPeriod['start'], $aiPeriod['end'], $aiFilters, 800);
-        $result = md_buyer_profile_ai($pdo, $profile);
-        echo json_encode([
-            'ok' => true,
-            'analysis' => $result['analysis'],
-            'model' => $result['model'],
-            'summary' => $profile['summary'],
-            'truncated' => $profile['truncated'],
-            'detail_limit' => $profile['detail_limit'],
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    } catch (Throwable $e) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 'salvar_buyer_ai_config') {
-    try {
-        if (!hash_equals((string)($_SESSION['sales_csrf'] ?? ''), (string)($_POST['csrf'] ?? ''))) {
-            throw new RuntimeException('Sessao expirada. Recarregue a pagina.');
-        }
-        $apiKey = trim((string)($_POST['openai_api_key'] ?? ''));
-        if ($apiKey !== '') set_setting('buyer_profile_ai_openai_api_key', $apiKey);
-        set_setting('buyer_profile_ai_model', trim((string)($_POST['model'] ?? 'gpt-4.1-mini')) ?: 'gpt-4.1-mini');
-        set_setting('buyer_profile_ai_max_tokens', (string)max(800, min(8000, (int)($_POST['max_tokens'] ?? 2400))));
-        set_setting('buyer_profile_ai_prompt', trim((string)($_POST['prompt'] ?? '')));
-        $return = $_GET;
-        $return['buyer_ai_config_ok'] = '1';
-        header('Location: vendas_analytics.php?' . http_build_query($return) . '#config-agente-vendas');
-        exit;
-    } catch (Throwable $e) {
-        $return = $_GET;
-        $return['buyer_ai_config_err'] = $e->getMessage();
-        header('Location: vendas_analytics.php?' . http_build_query($return) . '#config-agente-vendas');
-        exit;
-    }
-}
-
-if ($_SERVER['REQUEST_METHOD']==='POST' && (string)($_POST['acao']??'')==='atribuir_venda_manual') {
-    $returnQuery=(string)($_POST['return_query']??'');
-    try {
-        if(!hash_equals((string)($_SESSION['sales_csrf']??''),(string)($_POST['csrf']??'')))throw new RuntimeException('Sessão expirada. Recarregue a página.');
-        $saleId=(int)($_POST['sale_id']??0);$leadId=(int)($_POST['lead_id']??0);$model=(string)($_POST['attribution_model']??'last_touch');if(!in_array($model,['first_touch','last_touch'],true))$model='last_touch';
-        $sale=md_row($pdo,"SELECT * FROM attribution_sales WHERE source_sale_id=:id LIMIT 1",['id'=>$saleId]);$lead=md_row($pdo,"SELECT * FROM attribution_leads WHERE id=:id LIMIT 1",['id'=>$leadId]);
-        if(!$sale||!$lead)throw new RuntimeException('Venda ou lead não encontrado para atribuição.');
-        $resolved=['campaign_group'=>(string)$lead['utm_campaign_group'],'campaign_group_norm'=>(string)$lead['utm_campaign_group_norm'],'campaign_name'=>(string)$lead['utm_campaign_name'],'campaign_name_norm'=>(string)$lead['utm_campaign_name_norm'],'ad_name'=>(string)$lead['utm_ad_name'],'ad_name_norm'=>(string)$lead['utm_ad_name_norm'],'integration_id'=>null,'ad_account_name'=>''];
-        // integrationId=0 combina todas as contas Meta ativas, igual ao cron —
-        // uma atribuicao manual precisa achar a campanha em QUALQUER conta, nao so na primeira.
-        $candidate=resolve_meta_names_from_lead(build_meta_name_lookup($pdo,0),$lead);if(!empty($candidate['matched']))$resolved=array_merge($resolved,$candidate);
-        $manual=$pdo->prepare("INSERT INTO manual_sale_attributions (transaction_code,attribution_model,campaign_group,campaign_group_norm,campaign_name,campaign_name_norm,ad_name,ad_name_norm,source_user_id,lead_utm_source,lead_utm_medium,lead_utm_campaign,lead_utm_term,lead_utm_content,assigned_by,notes) VALUES (:tx,:model,:cg,:cgn,:cn,:cnn,:ad,:adn,:uid,:us,:um,:uc,:ut,:uco,:by,'Atribuição manual pelo painel de vendas') ON DUPLICATE KEY UPDATE campaign_group=VALUES(campaign_group),campaign_group_norm=VALUES(campaign_group_norm),campaign_name=VALUES(campaign_name),campaign_name_norm=VALUES(campaign_name_norm),ad_name=VALUES(ad_name),ad_name_norm=VALUES(ad_name_norm),source_user_id=VALUES(source_user_id),assigned_by=VALUES(assigned_by),updated_at=NOW()");
-        $manual->execute(['tx'=>$sale['transaction_code'],'model'=>$model,'cg'=>$resolved['campaign_group'],'cgn'=>$resolved['campaign_group_norm'],'cn'=>$resolved['campaign_name'],'cnn'=>$resolved['campaign_name_norm'],'ad'=>$resolved['ad_name'],'adn'=>$resolved['ad_name_norm'],'uid'=>$lead['source_user_id'],'us'=>$lead['utm_source'],'um'=>$lead['utm_campaign_group'],'uc'=>$lead['utm_campaign_name'],'ut'=>$lead['utm_term'],'uco'=>$lead['utm_ad_name'],'by'=>(string)($_SESSION['equipe_nome']??'Administrador')]);
-        $saleTs=strtotime((string)$sale['sale_date']);$leadTs=strtotime((string)$lead['created_at']);upsert_attribution_match($pdo,['sale_id'=>(int)$sale['id'],'lead_id'=>(int)$lead['id'],'attribution_model'=>$model,'match_type'=>'manual','attribution_seconds_diff'=>max(0,$saleTs-$leadTs),'lead_created_at'=>$lead['created_at'],'sale_date'=>$sale['sale_date'],'campaign_group'=>$resolved['campaign_group'],'campaign_group_norm'=>$resolved['campaign_group_norm'],'campaign_name'=>$resolved['campaign_name'],'campaign_name_norm'=>$resolved['campaign_name_norm'],'ad_name'=>$resolved['ad_name'],'ad_name_norm'=>$resolved['ad_name_norm'],'integration_id'=>$resolved['integration_id'],'ad_account_name'=>$resolved['ad_account_name'],'revenue_value'=>(float)$sale['producer_net'],'product_name'=>(string)$sale['product_name']]);
-        header('Location: vendas_analytics.php?'.$returnQuery.'&manual_ok=1#nao-atribuidas');exit;
-    } catch(Throwable $e){header('Location: vendas_analytics.php?'.$returnQuery.'&manual_err='.urlencode($e->getMessage()).'#nao-atribuidas');exit;}
-}
 
 $preset = (string)($_GET['period'] ?? 'month');
 if (!in_array($preset, ['today','7','30','90','365','month','quarter','year','custom'], true)) $preset = 'month';
@@ -525,11 +446,7 @@ $salesSql = $salesSelectSql . " LIMIT {$salesPerPage} OFFSET {$salesOffset}";
 $salesStmt = $pdo->prepare($salesSql);
 $salesStmt->execute($salesParams);
 $salesRows = $salesStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-$unattributedParams=['model'=>$filters['model'],'start'=>$period['start'].' 00:00:00','end'=>$period['end'].' 23:59:59'];
-$unattributedProduct='';
-if($filters['product']!==''){$unattributedProduct=' AND s.product_name=:product';$unattributedParams['product']=$filters['product'];}
-$unattributedRows=md_rows($pdo,"SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE ".md_approved_sql('s')." AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProduct} ORDER BY s.sale_date DESC LIMIT 50",$unattributedParams);
-$manualReturn=$_GET;unset($manualReturn['manual_ok'],$manualReturn['manual_err']);$manualReturnQuery=http_build_query($manualReturn);
+
 
 $metricCards = [
     ['spend','Investimento Meta','money',true,'Valor total gasto em anúncios no Meta Ads (Facebook/Instagram) confirmado na API.'],
@@ -631,7 +548,60 @@ include __DIR__ . '/_header.php';
     <?php endforeach; ?>
   </div>
 
+  <section class="section-card" id="perfil-compradores">
+    <div class="section-head">
+      <div><h2>Perfil dos compradores</h2><p>Compradores, tags, aulas, eventos e live usando a mesma janela dos filtros.</p></div>
+      <div class="ai-actions"><span class="ai-status" id="buyerAiStatus">Base: <?=va_num($buyerProfile['summary']['buyers'] ?? 0)?> compradores</span><button type="button" class="btn btn-primary" id="buyerAiBtn">Analise da IA</button></div>
+    </div>
+    <div class="profile-grid">
+      <div class="profile-kpi"><small>Compradores</small><strong><?=va_num($buyerProfile['summary']['buyers'] ?? 0)?></strong><span><?=va_num($buyerProfile['summary']['sales'] ?? 0)?> vendas aprovadas</span></div>
+      <div class="profile-kpi"><small>Compraram sem ver aula</small><strong><?=va_num($buyerProfile['summary']['buyers_without_any_lesson'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_without_any_lesson_pct'] ?? 0)?> dos compradores</span></div>
+      <div class="profile-kpi"><small>Passaram pela live</small><strong><?=va_num($buyerProfile['summary']['buyers_with_live_access'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_with_live_access_pct'] ?? 0)?> com evento de live</span></div>
+      <div class="profile-kpi"><small>Tempo ate comprar</small><strong><?=($buyerProfile['summary']['median_days_to_purchase'] ?? null)!==null?va_num($buyerProfile['summary']['median_days_to_purchase'],1).' dias':'Sem base'?></strong><span>Mediana desde cadastro/lead</span></div>
+    </div>
+    <div class="profile-panel">
+      <div>
+        <div class="section-head" style="margin-bottom:8px"><div><h2>Tags mais presentes</h2><p>Tags dos leads que compraram.</p></div></div>
+        <div class="profile-list">
+          <?php foreach(array_slice($buyerProfile['top_tags'] ?? [],0,8) as $tag): ?>
+            <div class="profile-item"><div><strong><?=va_h($tag['tag'])?></strong><small><?=va_h($tag['meaning'])?></small></div><span><?=va_num($tag['buyers'])?> leads</span></div>
+          <?php endforeach; ?>
+          <?php if(empty($buyerProfile['top_tags'])):?><div class="empty">Sem tags nos compradores filtrados.</div><?php endif;?>
+        </div>
+      </div>
+      <div>
+        <div class="section-head" style="margin-bottom:8px"><div><h2>Aquecimento por curso</h2><p>Curso, compradores e tempo medio ate a compra.</p></div></div>
+        <div class="profile-list">
+          <?php foreach(array_slice($buyerProfile['products'] ?? [],0,8) as $product): ?>
+            <div class="profile-item"><div><strong><?=va_h($product['product'])?></strong><small><?=va_num($product['sales'])?> vendas · <?=va_money($product['revenue'])?></small></div><span><?=($product['median_warmup_days'] ?? null)!==null?va_num($product['median_warmup_days'],1).'d':'-'?></span></div>
+          <?php endforeach; ?>
+          <?php if(empty($buyerProfile['products'])):?><div class="empty">Sem cursos vendidos no periodo.</div><?php endif;?>
+        </div>
+      </div>
+    </div>
+    <div class="ai-box" id="buyerAiResult"></div>
+  </section>
 
+  <section class="section-card" id="config-agente-vendas">
+    <div class="section-head"><div><h2>Configurar agente de IA de vendas</h2><p>Este agente analisa compradores, tags, eventos, cursos, live e tempo de aquecimento na propria tela de vendas.</p></div></div>
+    <?php if(isset($_GET['buyer_ai_config_ok'])):?><div class="ai-config-ok">Configuracao do agente salva.</div><?php endif;?>
+    <?php if(!empty($_GET['buyer_ai_config_err'])):?><div class="ai-config-err"><?=va_h((string)$_GET['buyer_ai_config_err'])?></div><?php endif;?>
+    <?php $aiConfigQuery=$_GET;unset($aiConfigQuery['buyer_ai_config_ok'],$aiConfigQuery['buyer_ai_config_err']); ?>
+    <form method="post" action="vendas_analytics.php?<?=va_h(http_build_query($aiConfigQuery))?>#config-agente-vendas">
+      <input type="hidden" name="acao" value="salvar_buyer_ai_config">
+      <input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>">
+      <div class="ai-config-grid">
+        <div><label>Chave OpenAI deste agente</label><input type="password" name="openai_api_key" value="" placeholder="<?= $buyerAiConfig['has_key'] ? 'Chave ja configurada. Preencha apenas para trocar.' : 'Cole a chave da OpenAI' ?>" autocomplete="off"></div>
+        <div><label>Modelo</label><input type="text" name="model" value="<?=va_h($buyerAiConfig['model'])?>" placeholder="gpt-4.1-mini"></div>
+        <div><label>Limite da resposta</label><input type="number" name="max_tokens" min="800" max="8000" step="100" value="<?=(int)$buyerAiConfig['max_tokens']?>"></div>
+      </div>
+      <div class="ai-prompt"><label>Prompt do agente</label><textarea name="prompt"><?=va_h($buyerAiConfig['prompt'])?></textarea></div>
+      <div class="ai-config-foot">
+        <span class="ai-config-note"><?= $buyerAiConfig['has_key'] ? 'Status: chave disponivel para gerar analises.' : 'Status: configure uma chave para habilitar a analise.' ?></span>
+        <button class="btn btn-primary" type="submit">Salvar agente</button>
+      </div>
+    </form>
+  </section>
 
   <section class="section-card">
     <div class="section-head"><div><h2>Mes atual ate o dia <?=date('d')?></h2><p>Comparacoes com a mesma quantidade de dias, sem comparar mes parcial com mes cheio.</p></div></div>
@@ -684,7 +654,46 @@ include __DIR__ . '/_header.php';
 
   <section class="section-card"><div class="section-head"><div><h2>Evolucao dos ultimos 12 meses</h2><p>Bruto, liquido, liquido do produtor e quantidade de vendas.</p></div></div><div class="chart-box"><canvas id="monthlyChart"></canvas></div></section>
 
+  <?php
+    $windowLegend=$compareDays['x'].'d / '.$compareDays['y'].'d / '.$compareDays['z'].'d';
+    $renderAdsMetrics=static function(array $metrics)use($compareDays,$adsMetricSource):void{
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'spend','money').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'leads').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpl','money').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpc','money').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'sales').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cac','money').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'roas','decimal').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpm','money').'</td>';
+      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'frequency','decimal').'</td>';
+    };
+  ?>
+  <section class="section-card" id="ads-hierarchy">
+    <div class="section-head"><div><h2>Campanhas, conjuntos e anúncios</h2><p><?= $adsMetricSource==='meta'?'Resultados informados pela Meta.':'Resultados reais cruzados por UTM e compra.' ?> CPM, CPC, frequência e gasto sempre vêm da Meta.</p></div></div>
+    <form class="ads-controls" method="get" action="#ads-hierarchy">
+      <?php foreach($_GET as $key=>$value):if(in_array((string)$key,['compare_x','compare_y','compare_z','ads_metric_source'],true)||!is_scalar($value))continue;?><input type="hidden" name="<?=va_h((string)$key)?>" value="<?=va_h((string)$value)?>"><?php endforeach;?>
+      <div><label>Período X (dias)</label><input type="number" min="1" max="365" name="compare_x" value="<?=$compareDays['x']?>"></div>
+      <div><label>Período Y (dias)</label><input type="number" min="1" max="365" name="compare_y" value="<?=$compareDays['y']?>"></div>
+      <div><label>Período Z (dias)</label><input type="number" min="1" max="365" name="compare_z" value="<?=$compareDays['z']?>"></div>
+      <div class="ads-source"><input type="checkbox" id="adsMetaMode" name="ads_metric_source" value="meta" <?=$adsMetricSource==='meta'?'checked':''?>><label for="adsMetaMode">Usar resultados apresentados pela Meta</label></div>
+      <div class="fg-actions"><button class="btn btn-primary" type="submit">Aplicar</button></div>
+    </form>
+    <div class="ads-scroll"><table class="ads-table"><thead><tr><th>Campanha / conjunto / anúncio<div class="ads-head-note">Clique para expandir</div></th><?php foreach(['Gasto','Leads','CPL','CPC','Vendas','CAC','ROAS','CPM','Frequência'] as $head):?><th><?=$head?><div class="ads-head-note"><?=va_h($windowLegend)?></div></th><?php endforeach;?></tr></thead><tbody>
+    <?php foreach($adsHierarchy['tree'] as $ci=>$campaign):$cid='camp-'.substr(md5((string)$ci),0,10);?>
+      <tr data-row-id="<?=$cid?>"><td><div class="ads-name"><button type="button" class="ads-toggle" data-target="<?=$cid?>" aria-expanded="false">▶</button><div><strong><?=va_h($campaign['name'])?></strong><div class="ads-level">Campanha<?=!empty($campaign['account'])?' · Conta: '.va_h($campaign['account']):''?> · <?=count($campaign['adsets'])?> conjuntos</div></div></div></td><?php $renderAdsMetrics($campaign['metrics']);?></tr>
+      <?php foreach($campaign['adsets'] as $ai=>$adset):$aid=$cid.'-'.substr(md5((string)$ai),0,8);?>
+        <tr data-row-id="<?=$aid?>" data-parent="<?=$cid?>" hidden><td><div class="ads-name ads-indent-1"><button type="button" class="ads-toggle" data-target="<?=$aid?>" aria-expanded="false">▶</button><div><strong><?=va_h($adset['name'])?></strong><div class="ads-level">Conjunto · <?=count($adset['ads'])?> anúncios</div></div></div></td><?php $renderAdsMetrics($adset['metrics']);?></tr>
+        <?php foreach($adset['ads'] as $ad):?><tr data-parent="<?=$aid?>" hidden><td><div class="ads-name ads-indent-2"><span style="color:#22c55e">●</span><div><strong><?=va_h($ad['name'])?></strong><div class="ads-level">Anúncio</div></div></div></td><?php $renderAdsMetrics($ad['metrics']);?></tr><?php endforeach;?>
+      <?php endforeach;?>
+    <?php endforeach;?>
+    <?php if(!$adsHierarchy['tree']):?><tr><td colspan="10" class="empty">Sem campanhas no período comparado.</td></tr><?php endif;?>
+    </tbody></table></div>
+  </section>
 
+  <?php $tv=[];foreach(['x','y','z'] as $w)$tv[$w]=md_ads_metric_view($adsHierarchy['totals'][$w]??[],$adsMetricSource);?>
+  <section class="section-card"><div class="section-head"><div><h2>Tendências de eficiência</h2><p>Comparação configurável dos indicadores consolidados.</p></div></div><div class="table-wrap"><table class="eff-table"><thead><tr><th>Comparativo</th><th>CAC</th><th>CPL</th><th>ROAS</th><th>CPM</th><th>Frequência</th><th>CPC</th></tr></thead><tbody>
+    <?php foreach([['x','y'],['y','z']] as [$a,$b]):?><tr><td><strong><?=$compareDays[$a]?>d vs <?=$compareDays[$b]?>d</strong></td><td><?=va_compare_cell($tv[$a]['cac'],$tv[$b]['cac'],true)?></td><td><?=va_compare_cell($tv[$a]['cpl'],$tv[$b]['cpl'],true)?></td><td><?=va_compare_cell($tv[$a]['roas'],$tv[$b]['roas'],false,'decimal')?></td><td><?=va_compare_cell($tv[$a]['cpm'],$tv[$b]['cpm'],true)?></td><td><?=va_compare_cell($tv[$a]['frequency'],$tv[$b]['frequency'],true,'decimal')?></td><td><?=va_compare_cell($tv[$a]['cpc'],$tv[$b]['cpc'],true)?></td></tr><?php endforeach;?>
+  </tbody></table></div></section>
 
   <div class="four-col">
     <section class="section-card"><div class="section-head"><div><h2>Formas de pagamento</h2><p>Vendas aprovadas por meio.</p></div></div><div class="bar-list"><?php $maxPay=max(array_column($breakdowns['payments'],'qty')?:[1]);foreach($breakdowns['payments'] as $r):?><div class="bar-row"><span><?=va_h($r['label'])?></span><div class="bar-track"><div class="bar-fill" style="width:<?=min(100,(float)$r['qty']/$maxPay*100)?>%"></div></div><strong><?=va_num($r['qty'])?></strong></div><?php endforeach;?><?php if(!$breakdowns['payments']):?><div class="empty">Sem dados.</div><?php endif;?></div></section>
@@ -697,19 +706,7 @@ include __DIR__ . '/_header.php';
 
   <section class="section-card"><div class="section-head"><div><h2>Conversao por turma</h2><p>Custo de trafego rateado por dia conforme as entradas de alunos em cada turma.</p></div></div><div class="table-wrap"><table class="bi-table cohort-table"><thead><tr><th>Turma</th><th>Entradas</th><th>Alunos</th><th>Custo trafego</th><th>CPL</th><th>Vendas</th><th>Faturamento</th><th>Liquido produtor</th><th>ROAS</th><th>Conversao</th></tr></thead><tbody><?php foreach($cohorts as $r):?><tr><td><strong><?=va_h($r['turma'])?></strong></td><td><?=!empty($r['entry_start'])&& !empty($r['entry_end']) ? va_h(date('d/m/y',strtotime((string)$r['entry_start'])).' a '.date('d/m/y',strtotime((string)$r['entry_end']))) : '-'?></td><td><?=va_num($r['leads'])?></td><td><?=va_money($r['traffic_cost'] ?? 0)?></td><td><?=va_money($r['cpl'] ?? 0)?></td><td><?=va_num($r['sales'])?></td><td><?=va_money($r['gross'])?></td><td><?=va_money($r['producer'])?></td><td><?=va_num($r['roas'] ?? 0,2)?></td><td><?=va_pct($r['conversion'])?></td></tr><?php endforeach;?><?php if(!$cohorts):?><tr><td colspan="10" class="empty">Sem turmas atribuidas no periodo.</td></tr><?php endif;?></tbody></table></div></section>
 
-  <section class="section-card" id="nao-atribuidas">
-    <div class="section-head"><div><h2>Vendas não atribuídas</h2><p>Vendas aprovadas sem lead vinculado no modelo <?=va_h($filters['model']==='first_touch'?'First touch':'Last touch')?>. Pesquise o lead e confirme a atribuição manual.</p></div></div>
-    <?php if(isset($_GET['manual_ok'])):?><div class="manual-alert ok">Atribuição manual salva. O vínculo será preservado nas próximas sincronizações.</div><?php endif;?>
-    <?php if(!empty($_GET['manual_err'])):?><div class="manual-alert err"><?=va_h((string)$_GET['manual_err'])?></div><?php endif;?>
-    <div class="table-wrap"><table class="bi-table unattr-table"><thead><tr><th>Venda</th><th>Comprador</th><th>Produto</th><th>Valor</th><th>Atribuir ao lead</th></tr></thead><tbody>
-    <?php foreach($unattributedRows as $sale):?>
-      <tr><td><strong><?=va_h(date('d/m/Y H:i',strtotime((string)$sale['sale_date'])))?></strong><div class="subtext"><?=va_h((string)$sale['transaction_code'])?></div></td><td><strong><?=va_h((string)$sale['buyer_name'])?></strong><div class="subtext"><?=va_h((string)$sale['buyer_email'])?></div><div class="subtext"><?=va_h((string)$sale['buyer_phone'])?></div></td><td><strong><?=va_h((string)$sale['product_name'])?></strong></td><td><strong><?=va_money($sale['gross_revenue'])?></strong><div class="subtext">Produtor: <?=va_money($sale['producer_net'])?></div></td><td>
-        <form method="post" class="manual-attribution-form"><input type="hidden" name="acao" value="atribuir_venda_manual"><input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>"><input type="hidden" name="sale_id" value="<?=(int)$sale['id']?>"><input type="hidden" name="lead_id" value=""><input type="hidden" name="attribution_model" value="<?=va_h($filters['model'])?>"><input type="hidden" name="return_query" value="<?=va_h($manualReturnQuery)?>"><div class="lead-picker"><input type="search" class="lead-search" placeholder="Nome, e-mail, telefone ou ID" autocomplete="off"><div class="lead-results"></div><div class="lead-selected">Nenhum lead selecionado</div></div><div class="manual-form-actions"><button class="btn btn-primary" type="submit" disabled>Confirmar atribuição</button></div></form>
-      </td></tr>
-    <?php endforeach;?>
-    <?php if(!$unattributedRows):?><tr><td colspan="5" class="empty">Todas as vendas aprovadas do período estão atribuídas.</td></tr><?php endif;?>
-    </tbody></table></div>
-  </section>
+
 
   <section class="section-card" id="lista-vendas">
     <div class="section-head"><div><h2>Relação detalhada de vendas</h2><p>Todas as transações recebidas no período, com comprador, valores, turma, atribuição e UTMs.</p></div></div>
@@ -787,11 +784,7 @@ document.querySelectorAll('.ads-toggle').forEach(btn=>btn.addEventListener('clic
   const id=btn.dataset.target,opening=btn.getAttribute('aria-expanded')!=='true';btn.setAttribute('aria-expanded',opening?'true':'false');btn.textContent=opening?'▼':'▶';
   document.querySelectorAll(`[data-parent="${id}"]`).forEach(row=>{row.hidden=!opening;if(!opening){const child=row.dataset.rowId;if(child){const childBtn=row.querySelector('.ads-toggle');if(childBtn){childBtn.setAttribute('aria-expanded','false');childBtn.textContent='▶';}document.querySelectorAll(`[data-parent="${child}"]`).forEach(r=>r.hidden=true);}}});
 }));
-document.querySelectorAll('.manual-attribution-form').forEach(form=>{
-  const input=form.querySelector('.lead-search'),results=form.querySelector('.lead-results'),selected=form.querySelector('.lead-selected'),leadId=form.querySelector('input[name=lead_id]'),submit=form.querySelector('button[type=submit]');let timer;
-  input.addEventListener('input',()=>{clearTimeout(timer);leadId.value='';submit.disabled=true;selected.textContent='Nenhum lead selecionado';const q=input.value.trim();if(q.length<2){results.style.display='none';return;}timer=setTimeout(async()=>{try{const url=new URL(window.location.href);url.search='';url.searchParams.set('ajax','lead_search');url.searchParams.set('q',q);const response=await fetch(url,{headers:{Accept:'application/json'}});const data=await response.json();results.innerHTML='';(data.rows||[]).forEach(lead=>{const option=document.createElement('button');option.type='button';option.className='lead-option';option.textContent=`${lead.lead_name||'Sem nome'} · ${lead.lead_email||lead.lead_phone_raw||'ID '+lead.source_user_id} · Turma ${lead.turma_codigo||'-'}`;option.addEventListener('click',()=>{leadId.value=lead.id;input.value=lead.lead_name||lead.lead_email||lead.source_user_id;selected.textContent=`Selecionado: ${option.textContent}`;submit.disabled=false;results.style.display='none';});results.appendChild(option);});results.style.display=(data.rows||[]).length?'block':'none';}catch(e){results.style.display='none';}},300);});
-  form.addEventListener('submit',e=>{if(!leadId.value){e.preventDefault();}});
-});
+
 const daily=<?=json_encode($daily,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
 const monthly=<?=json_encode($monthly,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
 const mtdComparison=<?=json_encode($mtdComparison,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
