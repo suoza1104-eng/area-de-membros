@@ -755,59 +755,27 @@ $eventExpr = function(string $tipo) use ($impactStartExpr, $eventTimeExpr): stri
 $exprAcessou = $liveEventsReady ? $eventExpr('acessou') : '0';
 $exprOferta = $liveEventsReady ? $eventExpr('oferta') : '0';
 $exprCliqueCompra = $liveEventsReady ? $eventExpr('compra') : '0';
-$hotmartSalesReady = rl_table_exists($pdo, 'hotmart_sales')
-    && rl_col_exists($pdo, 'hotmart_sales', 'matched_user_id')
-    && rl_col_exists($pdo, 'hotmart_sales', 'status')
-    && rl_col_exists($pdo, 'hotmart_sales', 'transaction_date');
-$approvedSalesStatusSql = "LOWER(COALESCE(s.status,'')) IN ('aprovado','completo','approved','complete','paid')";
-$exprCompraCurso = ($hotmartSalesReady && $liveEventsReady)
+$salesMasterReady = rl_table_exists($pdo, 'v_sales_master');
+$approvedSalesStatusSql = "LOWER(COALESCE(s.status,'')) IN ('approved','completed','paid','aprovado','concluído')";
+$exprCompraCurso = $salesMasterReady
     ? "EXISTS (
         SELECT 1
-        FROM hotmart_sales s
-        WHERE s.matched_user_id = r.user_id
+        FROM v_sales_master s
+        WHERE (
+            (u.email IS NOT NULL AND u.email <> '' AND LOWER(s.buyer_email) COLLATE utf8mb4_unicode_ci = LOWER(u.email) COLLATE utf8mb4_unicode_ci)
+            OR
+            (u.telefone IS NOT NULL AND u.telefone <> '' AND s.buyer_phone IS NOT NULL AND s.buyer_phone <> '' AND LOWER(s.buyer_phone) COLLATE utf8mb4_unicode_ci = LOWER(u.telefone) COLLATE utf8mb4_unicode_ci)
+        )
           AND $approvedSalesStatusSql
-          AND s.transaction_date IS NOT NULL
-          AND s.transaction_date >= $impactStartExpr
-          AND EXISTS (
-              SELECT 1
-              FROM live_event_recebimentos ler_acesso
-              JOIN live_events le_acesso ON le_acesso.id = ler_acesso.event_id
-              WHERE ler_acesso.user_id = r.user_id
-                AND ler_acesso.status = 'processado'
-                AND le_acesso.tipo = 'acessou'
-                AND COALESCE(ler_acesso.processado_em, ler_acesso.recebido_em) >= $impactStartExpr
-                AND COALESCE(ler_acesso.processado_em, ler_acesso.recebido_em) <= s.transaction_date
-              LIMIT 1
-          )
-          AND EXISTS (
-              SELECT 1
-              FROM live_event_recebimentos ler_oferta
-              JOIN live_events le_oferta ON le_oferta.id = ler_oferta.event_id
-              WHERE ler_oferta.user_id = r.user_id
-                AND ler_oferta.status = 'processado'
-                AND le_oferta.tipo = 'oferta'
-                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) >= $impactStartExpr
-                AND COALESCE(ler_oferta.processado_em, ler_oferta.recebido_em) <= s.transaction_date
-              LIMIT 1
-          )
+          AND s.sale_date IS NOT NULL
+          AND s.sale_date >= $impactStartExpr
           AND NOT EXISTS (
               SELECT 1
               FROM reagendamentos_live r2
               WHERE r2.user_id = r.user_id
                 AND r2.id <> r.id
                 AND COALESCE(r2.new_turma_live_at, r2.created_at) > $impactStartExpr
-                AND COALESCE(r2.new_turma_live_at, r2.created_at) <= s.transaction_date
-                AND EXISTS (
-                    SELECT 1
-                    FROM live_event_recebimentos ler2
-                    JOIN live_events le2 ON le2.id = ler2.event_id
-                    WHERE ler2.user_id = r2.user_id
-                      AND ler2.status = 'processado'
-                      AND le2.tipo = 'oferta'
-                      AND COALESCE(ler2.processado_em, ler2.recebido_em) >= COALESCE(r2.new_turma_live_at, r2.created_at)
-                      AND COALESCE(ler2.processado_em, ler2.recebido_em) <= s.transaction_date
-                    LIMIT 1
-                )
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) <= s.sale_date
           )
         LIMIT 1
     )"
