@@ -27,7 +27,14 @@ function am_ads_cell(array $metrics, array $days, string $source, string $key, s
         $value = $view[$key] ?? 0;
         $parts[] = $format === 'money' ? am_money($value) : ($format === 'decimal' ? am_num($value, 2) : am_num($value));
     }
-    return implode(' <span class="ads-sep">/</span> ', $parts);
+    $windowsHtml = '<span class="am-val-windows">' . implode(' <span class="ads-sep">/</span> ', $parts) . '</span>';
+
+    $filterView = md_ads_metric_view($metrics['filter'] ?? ($metrics['x'] ?? []), $source);
+    $filterVal = $filterView[$key] ?? 0;
+    $filterFormatted = $format === 'money' ? am_money($filterVal) : ($format === 'decimal' ? am_num($filterVal, 2) : am_num($filterVal));
+    $filterHtml = '<span class="am-val-filter" style="display:none">' . $filterFormatted . '</span>';
+
+    return $windowsHtml . $filterHtml;
 }
 function am_kpi_td(array $metrics, array $days, string $source, string $key, string $label, string $format, string $level): string {
     return '<td class="ads-values" data-kpi-cell data-level="' . am_h($level) . '" data-kpi="' . am_h($key) . '" data-format="' . am_h($format) . '" data-kpi-label="' . am_h($label) . '">' . am_ads_cell($metrics, $days, $source, $key, $format) . '</td>';
@@ -281,9 +288,10 @@ if (!in_array($preset, ['today', '7', '15', '30', '60', '90', '365', 'month', 'y
 $period = metrics_period($preset, $_GET['from'] ?? null, $_GET['to'] ?? null);
 $endDate = $period['end'];
 $compareDays = [
-    'x' => max(1, min(400, (int)$period['days'])),
+    'x' => max(1, min(400, (int)($_GET['compare_x'] ?? 7))),
     'y' => max(1, min(400, (int)($_GET['compare_y'] ?? 30))),
     'z' => max(1, min(400, (int)($_GET['compare_z'] ?? 90))),
+    'filter' => max(1, min(400, (int)$period['days'])),
 ];
 $model = ($_GET['model'] ?? '') === 'first_touch' ? 'first_touch' : 'last_touch';
 $adsMetricSource = (string)($_GET['ads_metric_source'] ?? '') === 'meta' ? 'meta' : 'cross';
@@ -494,6 +502,11 @@ if ($ajaxSection !== '') {
             $accTableId = 'acc' . preg_replace('/[^a-z0-9]/i', '', $accountKey); ?>
         <div class="am-acc-tools">
           <input type="search" class="am-search" placeholder="Buscar campanha, conjunto ou anúncio…" data-search-for="<?= $accTableId ?>">
+          <div class="am-view-mode-toggle">
+            <span class="am-toggle-label">Modo:</span>
+            <button type="button" class="am-mode-btn active" data-mode="windows" data-table-target="<?= $accTableId ?>">7d / 30d / 90d</button>
+            <button type="button" class="am-mode-btn" data-mode="filter" data-table-target="<?= $accTableId ?>">Filtro Selecionado (<?= $compareDays['filter'] ?>d)</button>
+          </div>
           <button type="button" class="am-btn" data-expand-all="<?= $accTableId ?>">Expandir tudo</button>
           <button type="button" class="am-btn" data-collapse-all="<?= $accTableId ?>">Recolher tudo</button>
         </div>
@@ -596,6 +609,11 @@ include __DIR__ . '/_header.php';
 .am-search{height:32px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 10px;font-size:11px;width:200px}
 .am-btn{height:32px;padding:0 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--muted);font-size:10.5px;cursor:pointer}
 .am-btn:hover{color:var(--text);border-color:var(--border-light)}
+.am-view-mode-toggle{display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:2px 4px;height:32px}
+.am-toggle-label{font-size:10px;color:var(--muted);font-weight:600;padding:0 4px}
+.am-mode-btn{height:26px;padding:0 9px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:6px;font-size:10px;font-weight:650;cursor:pointer;transition:all .2s ease}
+.am-mode-btn:hover{color:var(--text)}
+.am-mode-btn.active{color:var(--primary);background:var(--primary-dim);border-color:rgba(250,204,21,.35)}
 .am-chips{display:grid;grid-template-columns:repeat(7,minmax(90px,1fr));gap:8px;margin-bottom:14px}
 .am-chip{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px}
 .am-chip small{display:block;font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
@@ -841,6 +859,39 @@ include __DIR__ . '/_header.php';
   }, true);
 
   document.addEventListener('click', function(e){
+    var modeBtn = e.target.closest('.am-mode-btn');
+    if (modeBtn) {
+      var tableId = modeBtn.dataset.tableTarget;
+      var mode = modeBtn.dataset.mode;
+      var parentToggle = modeBtn.closest('.am-view-mode-toggle');
+      if (parentToggle) {
+        parentToggle.querySelectorAll('.am-mode-btn').forEach(function(b){ b.classList.remove('active'); });
+      }
+      modeBtn.classList.add('active');
+
+      var table = document.querySelector('table[data-account-table="' + tableId + '"]');
+      if (table) {
+        var notes = table.querySelectorAll('.ads-head-note');
+        if (mode === 'filter') {
+          notes.forEach(function(n){
+            if (!n.dataset.origText) n.dataset.origText = n.textContent;
+            if (n.dataset.origText.indexOf('d /') !== -1) {
+              n.textContent = 'Filtro (<?= $compareDays['filter'] ?>d)';
+            }
+          });
+          table.querySelectorAll('.am-val-windows').forEach(function(el){ el.style.display = 'none'; });
+          table.querySelectorAll('.am-val-filter').forEach(function(el){ el.style.display = 'inline'; });
+        } else {
+          notes.forEach(function(n){
+            if (n.dataset.origText) n.textContent = n.dataset.origText;
+          });
+          table.querySelectorAll('.am-val-windows').forEach(function(el){ el.style.display = 'inline'; });
+          table.querySelectorAll('.am-val-filter').forEach(function(el){ el.style.display = 'none'; });
+        }
+      }
+      return;
+    }
+
     var retry = e.target.closest('[data-retry]');
     if (retry) { var det = retry.closest('.am-collapsible'); if (det) amLoadSection(det); return; }
 
