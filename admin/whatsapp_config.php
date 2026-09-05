@@ -33,15 +33,6 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim((string)($_POST['action'] ?? ''));
     try {
-        if ($action === 'save_evolution') {
-            evolution_set_config(
-                trim((string)($_POST['base_url'] ?? '')),
-                trim((string)($_POST['apikey'] ?? '')),
-                (int)($_POST['timeout_seconds'] ?? 20)
-            );
-            wcfg_redirect('saved=evolution');
-        }
-
         if ($action === 'create_instance') {
             $name = trim((string)($_POST['name'] ?? '')) ?: 'Número WhatsApp';
             $instanceKey = trim((string)($_POST['instance_key'] ?? '')) ?: evolution_slug_instance($name);
@@ -63,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             $instance = evolution_get_instance($pdo, (int)$pdo->lastInsertId());
             if ($instance) evolution_create_remote_instance($pdo, $instance);
-            wcfg_redirect('saved=instance');
+            wcfg_redirect('saved=instance&tab=instancias');
         }
 
         if ($action === 'update_instance') {
@@ -84,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':enabled' => !empty($_POST['is_enabled']) ? 1 : 0,
                 ':id' => $id,
             ]);
-            wcfg_redirect('saved=instance');
+            wcfg_redirect('saved=instance&tab=instancias');
         }
 
         if (in_array($action, ['connect_instance', 'refresh_instance', 'delete_instance', 'set_instance_webhook'], true)) {
@@ -101,14 +92,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $res = evolution_set_group_webhook((string)$instance['instance_key'], $url);
                 if (empty($res['ok'])) throw new RuntimeException('Falha ao configurar webhook: ' . substr((string)($res['raw'] ?? $res['error']), 0, 800));
             }
-            wcfg_redirect('saved=instance');
+            wcfg_redirect('saved=instance&tab=instancias');
         }
 
         if ($action === 'toggle_group_ignore') {
             $groupId = trim((string)($_POST['group_id'] ?? ''));
             $pdo->prepare("UPDATE whatsapp_groups SET is_ignored=IF(is_ignored=1,0,1), last_seen_at=NOW() WHERE group_id=:gid LIMIT 1")
                 ->execute([':gid' => $groupId]);
-            wcfg_redirect('saved=group');
+            wcfg_redirect('saved=group&tab=instancias');
         }
 
         if ($action === 'save_ai') {
@@ -135,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'direct_support_link' => $_POST['direct_support_link'] ?? '',
                 'direct_reply_template' => $_POST['direct_reply_template'] ?? '',
             ]);
-            wcfg_redirect('saved=ai');
+            wcfg_redirect('saved=ai&tab=ia');
         }
 
         if ($action === 'save_blacklist') {
@@ -146,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'group_ids' => $_POST['blacklist_group_ids'] ?? [],
                 'message_template' => $_POST['blacklist_message_template'] ?? '',
             ]);
-            wcfg_redirect('saved=blacklist');
+            wcfg_redirect('saved=blacklist&tab=fraude');
         }
 
         if ($action === 'test_blacklist') {
@@ -197,7 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 if (!empty($res['ok'])) $sent++;
             }
-            wcfg_redirect('tested=' . $sent . '&total=' . count($destinations));
+            wcfg_redirect('tested=' . $sent . '&total=' . count($destinations) . '&tab=fraude');
         }
 
         if ($action === 'save_event_rule') {
@@ -224,7 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $it = $pdo->prepare("INSERT INTO whatsapp_event_notification_rule_team (rule_id,admin_equipe_id) VALUES (:r,:t)");
             foreach (array_unique(array_filter($team)) as $tid) $it->execute([':r'=>$ruleId,':t'=>$tid]);
             $pdo->commit();
-            wcfg_redirect('saved=rule');
+            wcfg_redirect('saved=rule&tab=gatilhos');
         }
 
         if (in_array($action, ['toggle_event_rule', 'delete_event_rule'], true)) {
@@ -236,7 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("DELETE FROM whatsapp_event_notification_rule_team WHERE rule_id=:id")->execute([':id'=>$ruleId]);
                 $pdo->prepare("DELETE FROM whatsapp_event_notification_rules WHERE id=:id")->execute([':id'=>$ruleId]);
             }
-            wcfg_redirect('saved=rule');
+            wcfg_redirect('saved=rule&tab=gatilhos');
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -247,7 +238,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (isset($_GET['saved'])) $notice = 'Configuração salva.';
 if (isset($_GET['tested'])) $notice = 'Teste concluído: ' . (int)$_GET['tested'] . ' de ' . (int)($_GET['total'] ?? 0) . ' envio(s) realizado(s).';
 
-$evolutionCfg = evolution_get_config();
+$tab = (string)($_GET['tab'] ?? 'instancias');
+if (!in_array($tab, ['instancias', 'ia', 'fraude', 'gatilhos'], true)) $tab = 'instancias';
+
 $aiCfg = whatsapp_ai_get_config();
 $blacklistCfg = evolution_blacklist_get_config();
 $instances = $pdo->query("SELECT * FROM whatsapp_instances ORDER BY role_priority, id")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -273,7 +266,9 @@ sort($events);
 require __DIR__ . '/_header.php';
 ?>
 <style>
-.wc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.wc-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+.wc-tabs a{padding:9px 12px;border:1px solid var(--border);border-radius:8px;color:var(--muted);text-decoration:none;background:var(--bg-card);font-size:13px;font-weight:700}
+.wc-tabs a.active{color:#fff;border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.12)}
 .wc-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:17px;margin-bottom:16px}
 .wc-title{font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
 .wc-help{font-size:11px;color:var(--muted);line-height:1.5;margin-top:5px}
@@ -287,24 +282,19 @@ require __DIR__ . '/_header.php';
 .wc-status.connected{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.38);color:#86efac}
 .wc-status.disconnected{background:rgba(239,68,68,.13);border:1px solid rgba(239,68,68,.34);color:#fca5a5}
 .wc-model-help{margin-top:6px;padding:8px 10px;border-radius:8px;background:rgba(59,130,246,.08);color:var(--muted);font-size:11px;line-height:1.45}
-@media(max-width:1000px){.wc-grid,.wc-row{grid-template-columns:1fr}}
+@media(max-width:1000px){.wc-row{grid-template-columns:1fr}}
 </style>
 <?php if ($notice): ?><div class="alert alert-ok mb-3"><?= wcfg_h($notice) ?></div><?php endif; ?>
 <?php if ($error): ?><div class="alert alert-error mb-3"><?= wcfg_h($error) ?></div><?php endif; ?>
+<div class="wc-help" style="margin-bottom:14px">Credenciais de conexão da Evolution API (URL base, chave e timeout) ficam em <a href="integracoes.php?tab=whatsapp" style="color:var(--primary)">Integrações → WhatsApp (Evolution API)</a>.</div>
 
-<div class="wc-grid">
-<div>
-    <div class="wc-card">
-        <div class="wc-title">Evolution API</div>
-        <form method="post">
-            <input type="hidden" name="action" value="save_evolution">
-            <div class="form-group"><label class="form-label">URL base</label><input type="url" name="base_url" value="<?= wcfg_h($evolutionCfg['base_url']) ?>"></div>
-            <div class="form-group"><label class="form-label">API key</label><input type="password" name="apikey" value="<?= wcfg_h($evolutionCfg['apikey']) ?>"></div>
-            <div class="form-group"><label class="form-label">Timeout</label><input type="number" name="timeout_seconds" min="3" max="120" value="<?= (int)$evolutionCfg['timeout'] ?>"></div>
-            <button class="btn btn-primary">Salvar Evolution</button>
-        </form>
-    </div>
+<nav class="wc-tabs">
+    <?php foreach (['instancias'=>'Instâncias e grupos','ia'=>'IA WhatsApp','fraude'=>'Lista de fraude','gatilhos'=>'Gatilhos de notificação'] as $navKey=>$navLabel): ?>
+        <a class="<?= $tab===$navKey?'active':'' ?>" href="whatsapp_config.php?tab=<?= $navKey ?>"><?= $navLabel ?></a>
+    <?php endforeach; ?>
+</nav>
 
+<?php if ($tab === 'instancias'): ?>
     <div class="wc-card">
         <div class="wc-title">Instâncias e funções</div>
         <div class="wc-help">Espião observa e registra. Administrador executa remoções. Reserva assume ações administrativas quando não houver administrador conectado.</div>
@@ -346,9 +336,7 @@ require __DIR__ . '/_header.php';
             <?php foreach ($groups as $group): ?><form method="post" class="wc-check"><input type="hidden" name="action" value="toggle_group_ignore"><input type="hidden" name="group_id" value="<?= wcfg_h((string)$group['group_id']) ?>"><input type="checkbox" onchange="this.form.submit()" <?= (int)$group['is_ignored']===1?'checked':'' ?>><span><?= wcfg_h((string)($group['group_name']?:$group['group_id'])) ?></span></form><?php endforeach; ?>
         </div>
     </div>
-</div>
-
-<div>
+<?php elseif ($tab === 'ia'): ?>
     <div class="wc-card">
         <div class="wc-title">IA WhatsApp</div>
         <form method="post">
@@ -389,7 +377,7 @@ require __DIR__ . '/_header.php';
             <button class="btn btn-primary">Salvar IA e direct</button>
         </form>
     </div>
-
+<?php elseif ($tab === 'fraude'): ?>
     <div class="wc-card">
         <div class="wc-title">Automação da Lista de fraude</div>
         <div class="wc-help">O cadastro da Lista de fraude e dos números confiáveis fica na tela WhatsApp Monitor. Aqui são configuradas a remoção automática, as notificações e a mensagem.</div>
@@ -410,7 +398,7 @@ require __DIR__ . '/_header.php';
         </form>
             <div class="wc-help">O teste respeita intervalo de 10 segundos entre cada destino.</div>
     </div>
-
+<?php elseif ($tab === 'gatilhos'): ?>
     <div class="wc-card">
         <div class="wc-title">Gatilhos de notificação</div>
         <datalist id="wc-events"><?php foreach ($events as $event): ?><option value="<?= wcfg_h($event) ?>"></option><?php endforeach; ?></datalist>
@@ -424,8 +412,7 @@ require __DIR__ . '/_header.php';
             </div>
         <?php endforeach; ?>
     </div>
-</div>
-</div>
+<?php endif; ?>
 <script>
 (function(){
     var select=document.getElementById('whatsapp-ai-model');

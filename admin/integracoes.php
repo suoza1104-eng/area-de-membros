@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/payment_events.php';
+require_once __DIR__ . '/../app/evolution_api.php';
 
 proteger_admin();
 $pdo = getPDO();
@@ -43,7 +44,7 @@ function int_filter_base(string $alias, string $dateCol, array &$params, string 
 }
 
 $tab = (string)($_GET['tab'] ?? 'logs');
-if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','meta','logs'], true)) $tab = 'logs';
+if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','whatsapp','meta','logs'], true)) $tab = 'logs';
 
 $msgOk = '';
 $msgError = '';
@@ -172,6 +173,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Throwable $e) {
             $msgError = "Erro ao excluir integração: " . $e->getMessage();
         }
+    } elseif ($action === 'save_evolution') {
+        try {
+            evolution_set_config(
+                trim((string)($_POST['evolution_base_url'] ?? '')),
+                trim((string)($_POST['evolution_apikey'] ?? '')),
+                (int)($_POST['evolution_timeout_seconds'] ?? 20)
+            );
+            $msgOk = "Configuração da Evolution API salva com sucesso!";
+        } catch (Throwable $e) {
+            $msgError = "Erro ao salvar Evolution API: " . $e->getMessage();
+        }
     }
 }
 
@@ -191,6 +203,8 @@ $stats = [
     'meta' => int_table_exists($pdo, 'meta_integrations') ? (int)$pdo->query("SELECT COUNT(*) FROM meta_integrations")->fetchColumn() : 0,
     'payment_events' => int_table_exists($pdo, 'student_payment_events') ? (int)$pdo->query("SELECT COUNT(*) FROM student_payment_events")->fetchColumn() : 0,
 ];
+
+$evolutionCfg = evolution_get_config();
 
 $rows = [];
 
@@ -407,7 +421,7 @@ include __DIR__ . '/_header.php';
   </div>
 
   <nav class="int-tabs">
-    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','meta'=>'META (Anúncios)','logs'=>'Logs'] as $key => $label): ?>
+    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','whatsapp'=>'WhatsApp (Evolution API)','meta'=>'META (Anúncios)','logs'=>'Logs'] as $key => $label): ?>
       <a class="<?= $tab === $key ? 'active' : '' ?>" href="integracoes.php?tab=<?= int_h($key) ?>"><?= int_h($label) ?></a>
     <?php endforeach; ?>
   </nav>
@@ -427,8 +441,43 @@ include __DIR__ . '/_header.php';
         <a class="int-btn" href="integracoes.php?tab=hub">Hub de Integrações</a>
         <a class="int-btn" href="integracoes.php?tab=superfuncionario">SuperFuncionário</a>
         <a class="int-btn" href="integracoes.php?tab=manychat">ManyChat</a>
+        <a class="int-btn" href="integracoes.php?tab=whatsapp">WhatsApp (Evolution API)</a>
         <a class="int-btn" href="integracoes.php?tab=meta">META (Anúncios)</a>
         <a class="int-btn primary" href="integracoes.php?tab=logs">Logs</a>
+      </div>
+    </div>
+  <?php elseif ($tab === 'whatsapp'): ?>
+    <?php if (!empty($msgOk)): ?>
+      <div class="int-panel" style="border-color:#22c55e;color:#86efac;background:rgba(34,197,94,0.1);font-weight:600;padding:12px 16px;margin-bottom:16px;">
+        ✅ <?= int_h($msgOk) ?>
+      </div>
+    <?php endif; ?>
+    <?php if (!empty($msgError)): ?>
+      <div class="int-panel" style="border-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,0.1);font-weight:600;padding:12px 16px;margin-bottom:16px;">
+        ❌ <?= int_h($msgError) ?>
+      </div>
+    <?php endif; ?>
+    <div class="int-panel">
+      <h2 style="margin:0;font-size:18px;">WhatsApp — Evolution API</h2>
+      <p class="int-muted" style="margin:4px 0 0;font-size:12px;">Credenciais de conexão com o servidor Evolution API (URL base, chave e timeout). Instâncias, IA, Lista de fraude e gatilhos de notificação do WhatsApp continuam na tela dedicada.</p>
+      <form method="post" action="integracoes.php?tab=whatsapp" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end;margin-top:16px;">
+        <input type="hidden" name="action" value="save_evolution">
+        <div>
+          <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">URL base</label>
+          <input type="url" name="evolution_base_url" value="<?= int_h($evolutionCfg['base_url']) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+        </div>
+        <div>
+          <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">API key</label>
+          <input type="password" name="evolution_apikey" value="<?= int_h($evolutionCfg['apikey']) ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+        </div>
+        <div>
+          <label style="display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;">Timeout (segundos)</label>
+          <input type="number" name="evolution_timeout_seconds" min="3" max="120" value="<?= (int)$evolutionCfg['timeout'] ?>" style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);">
+        </div>
+        <div><button class="int-btn primary" type="submit">Salvar Evolution</button></div>
+      </form>
+      <div class="int-actions" style="margin-top:16px">
+        <a class="int-btn" href="whatsapp_config.php">Abrir Configurações WhatsApp (instâncias, IA, lista de fraude, gatilhos)</a>
       </div>
     </div>
   <?php elseif ($tab === 'meta'): ?>
