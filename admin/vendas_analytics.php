@@ -548,60 +548,9 @@ include __DIR__ . '/_header.php';
     <?php endforeach; ?>
   </div>
 
-  <section class="section-card" id="perfil-compradores">
-    <div class="section-head">
-      <div><h2>Perfil dos compradores</h2><p>Compradores, tags, aulas, eventos e live usando a mesma janela dos filtros.</p></div>
-      <div class="ai-actions"><span class="ai-status" id="buyerAiStatus">Base: <?=va_num($buyerProfile['summary']['buyers'] ?? 0)?> compradores</span><button type="button" class="btn btn-primary" id="buyerAiBtn">Analise da IA</button></div>
-    </div>
-    <div class="profile-grid">
-      <div class="profile-kpi"><small>Compradores</small><strong><?=va_num($buyerProfile['summary']['buyers'] ?? 0)?></strong><span><?=va_num($buyerProfile['summary']['sales'] ?? 0)?> vendas aprovadas</span></div>
-      <div class="profile-kpi"><small>Compraram sem ver aula</small><strong><?=va_num($buyerProfile['summary']['buyers_without_any_lesson'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_without_any_lesson_pct'] ?? 0)?> dos compradores</span></div>
-      <div class="profile-kpi"><small>Passaram pela live</small><strong><?=va_num($buyerProfile['summary']['buyers_with_live_access'] ?? 0)?></strong><span><?=va_pct($buyerProfile['summary']['buyers_with_live_access_pct'] ?? 0)?> com evento de live</span></div>
-      <div class="profile-kpi"><small>Tempo ate comprar</small><strong><?=($buyerProfile['summary']['median_days_to_purchase'] ?? null)!==null?va_num($buyerProfile['summary']['median_days_to_purchase'],1).' dias':'Sem base'?></strong><span>Mediana desde cadastro/lead</span></div>
-    </div>
-    <div class="profile-panel">
-      <div>
-        <div class="section-head" style="margin-bottom:8px"><div><h2>Tags mais presentes</h2><p>Tags dos leads que compraram.</p></div></div>
-        <div class="profile-list">
-          <?php foreach(array_slice($buyerProfile['top_tags'] ?? [],0,8) as $tag): ?>
-            <div class="profile-item"><div><strong><?=va_h($tag['tag'])?></strong><small><?=va_h($tag['meaning'])?></small></div><span><?=va_num($tag['buyers'])?> leads</span></div>
-          <?php endforeach; ?>
-          <?php if(empty($buyerProfile['top_tags'])):?><div class="empty">Sem tags nos compradores filtrados.</div><?php endif;?>
-        </div>
-      </div>
-      <div>
-        <div class="section-head" style="margin-bottom:8px"><div><h2>Aquecimento por curso</h2><p>Curso, compradores e tempo medio ate a compra.</p></div></div>
-        <div class="profile-list">
-          <?php foreach(array_slice($buyerProfile['products'] ?? [],0,8) as $product): ?>
-            <div class="profile-item"><div><strong><?=va_h($product['product'])?></strong><small><?=va_num($product['sales'])?> vendas · <?=va_money($product['revenue'])?></small></div><span><?=($product['median_warmup_days'] ?? null)!==null?va_num($product['median_warmup_days'],1).'d':'-'?></span></div>
-          <?php endforeach; ?>
-          <?php if(empty($buyerProfile['products'])):?><div class="empty">Sem cursos vendidos no periodo.</div><?php endif;?>
-        </div>
-      </div>
-    </div>
-    <div class="ai-box" id="buyerAiResult"></div>
-  </section>
 
-  <section class="section-card" id="config-agente-vendas">
-    <div class="section-head"><div><h2>Configurar agente de IA de vendas</h2><p>Este agente analisa compradores, tags, eventos, cursos, live e tempo de aquecimento na propria tela de vendas.</p></div></div>
-    <?php if(isset($_GET['buyer_ai_config_ok'])):?><div class="ai-config-ok">Configuracao do agente salva.</div><?php endif;?>
-    <?php if(!empty($_GET['buyer_ai_config_err'])):?><div class="ai-config-err"><?=va_h((string)$_GET['buyer_ai_config_err'])?></div><?php endif;?>
-    <?php $aiConfigQuery=$_GET;unset($aiConfigQuery['buyer_ai_config_ok'],$aiConfigQuery['buyer_ai_config_err']); ?>
-    <form method="post" action="vendas_analytics.php?<?=va_h(http_build_query($aiConfigQuery))?>#config-agente-vendas">
-      <input type="hidden" name="acao" value="salvar_buyer_ai_config">
-      <input type="hidden" name="csrf" value="<?=va_h((string)$_SESSION['sales_csrf'])?>">
-      <div class="ai-config-grid">
-        <div><label>Chave OpenAI deste agente</label><input type="password" name="openai_api_key" value="" placeholder="<?= $buyerAiConfig['has_key'] ? 'Chave ja configurada. Preencha apenas para trocar.' : 'Cole a chave da OpenAI' ?>" autocomplete="off"></div>
-        <div><label>Modelo</label><input type="text" name="model" value="<?=va_h($buyerAiConfig['model'])?>" placeholder="gpt-4.1-mini"></div>
-        <div><label>Limite da resposta</label><input type="number" name="max_tokens" min="800" max="8000" step="100" value="<?=(int)$buyerAiConfig['max_tokens']?>"></div>
-      </div>
-      <div class="ai-prompt"><label>Prompt do agente</label><textarea name="prompt"><?=va_h($buyerAiConfig['prompt'])?></textarea></div>
-      <div class="ai-config-foot">
-        <span class="ai-config-note"><?= $buyerAiConfig['has_key'] ? 'Status: chave disponivel para gerar analises.' : 'Status: configure uma chave para habilitar a analise.' ?></span>
-        <button class="btn btn-primary" type="submit">Salvar agente</button>
-      </div>
-    </form>
-  </section>
+
+
 
   <section class="section-card">
     <div class="section-head"><div><h2>Mes atual ate o dia <?=date('d')?></h2><p>Comparacoes com a mesma quantidade de dias, sem comparar mes parcial com mes cheio.</p></div></div>
