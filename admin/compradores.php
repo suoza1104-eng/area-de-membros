@@ -8,6 +8,12 @@ $menu       = 'alunos';
 $page_title = 'Lista de Compradores';
 $pdo        = getPDO();
 
+if (!function_exists('am_h')) {
+    function am_h($value): string {
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
 // --- FILTROS E PARÂMETROS ---
 $q        = trim($_GET['q'] ?? '');
 $preset   = trim($_GET['period'] ?? 'all');
@@ -120,7 +126,6 @@ if ($export === 'csv') {
                       s.product_name, s.payment_method, s.installments,
                       s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
                       u.id AS user_id, u.created_at AS user_created_at
-                      s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
                FROM v_sales_master s
                LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
                {$whereSql}
@@ -583,4 +588,3 @@ require_once __DIR__ . '/_header.php';
 </div>
 
 <?php require_once __DIR__ . '/_footer.php'; ?>
-
