@@ -499,9 +499,6 @@ require_once __DIR__ . '/_header.php';
                 <?php if ($s['buyer_phone']): ?>
                   <span style="color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; margin-top: 2px;">
                     📞 <?= am_h($s['buyer_phone']) ?>
-                    <?php if ($waPhone): ?>
-                      <a href="https://wa.me/<?= am_h($waPhone) ?>" target="_blank" class="wa-btn">💬 Whats</a>
-                    <?php endif; ?>
                   </span>
                 <?php endif; ?>
               </td>
