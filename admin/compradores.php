@@ -118,8 +118,11 @@ function comp_clean_phone(?string $phone): string {
 if ($export === 'csv') {
     $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                       s.product_name, s.payment_method, s.installments,
+                      s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
+                      u.id AS user_id, u.created_at AS user_created_at
                       s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
                FROM v_sales_master s
+               LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
                {$whereSql}
                ORDER BY s.sale_date DESC, s.id DESC";
     $stmtCsv = $pdo->prepare($csvSql);
@@ -152,6 +155,7 @@ if ($export === 'csv') {
     ]);
 
     foreach ($rows as $r) {
+        $userStatus = !empty($r['user_id']) ? 'Inscrito' : 'Nao Inscrito';
         $em = mb_strtolower(trim((string)$r['buyer_email']));
         $uId = $csvUserMap[$em] ?? null;
         $userStatus = !empty($uId) ? 'Inscrito' : 'Nao Inscrito';
@@ -226,7 +230,7 @@ try {
     $providersList = $pdo->query("SELECT DISTINCT provider FROM v_sales_master WHERE provider IS NOT NULL AND provider != '' ORDER BY provider ASC")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Throwable $e) {}
 
-// CONSULTA PRINCIPAL DAS VENDAS COM DADOS DOS ALUNOS (RÁPIDA)
+// CONSULTA PRINCIPAL DAS VENDAS (RÁPIDA)
 $salesSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                     s.product_name, s.payment_method, s.installments,
                     s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
@@ -236,7 +240,7 @@ $salesSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date,
              LIMIT {$perPage} OFFSET {$offset}";
 $stmtSales = $pdo->prepare($salesSql);
 $stmtSales->execute($params);
-$sales = $stmtSales->fetchAll(PDO::FETCH_ASSOC);
+$sales = $stmtSales->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 // MAPEAMENTO RÁPIDO DE ALUNOS EM MEMÓRIA (50 VENDAS DA PÁGINA ATUAL)
 $pageEmails = array_filter(array_unique(array_map('trim', array_column($sales, 'buyer_email'))));
