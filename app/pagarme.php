@@ -348,7 +348,7 @@ function pagarme_process_webhook(PDO $pdo, array $payload, string $rawPayload, a
                 'transaction_code' => $transactionCode,
                 'normalized_status' => $normalizedStatus,
                 'checkout_platform' => (string)($data['metadata']['platform_integration'] ?? 'pagarme'),
-                'product_name' => (string)($data['metadata']['product_name'] ?? ''),
+                'product_name' => (string)($data['metadata']['product_name'] ?? '') ?: $productName,
                 'gross_amount_cents' => $amountCents,
                 'net_amount_cents' => $netCents,
                 'buyer_name' => pagarme_scalar($customer, 'name'),
@@ -453,7 +453,7 @@ function pagarme_upsert_sales_master(PDO $pdo, array $event): void
             :sale_date, :confirmed_at, :raw, NOW()
         ) ON DUPLICATE KEY UPDATE
             status = VALUES(status),
-            product_name = VALUES(product_name),
+            product_name = COALESCE(NULLIF(VALUES(product_name), ''), product_name),
             gross_revenue = VALUES(gross_revenue),
             net_revenue = VALUES(net_revenue),
             producer_net = VALUES(producer_net),
