@@ -326,3 +326,4 @@ document.querySelectorAll('.manual-attribution-form').forEach(function(form) {
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>
+

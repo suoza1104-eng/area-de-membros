@@ -356,7 +356,6 @@ $monthly = md_monthly_series($pdo, $filters);
 $breakdowns = md_breakdowns($pdo, $period['start'], $period['end'], $filters);
 $buyerProfile = md_buyer_profile($pdo, $period['start'], $period['end'], $filters, 120);
 $cohorts = md_cohorts($pdo, $period['start'], $period['end'], $filters);
-$adsHierarchy = md_ads_hierarchy($pdo,$period['end'],$filters['model'],$compareDays);
 $options = md_filter_options($pdo);
 $integration = metrics_active_integration($pdo);
 
@@ -603,46 +602,7 @@ include __DIR__ . '/_header.php';
 
   <section class="section-card"><div class="section-head"><div><h2>Evolucao dos ultimos 12 meses</h2><p>Bruto, liquido, liquido do produtor e quantidade de vendas.</p></div></div><div class="chart-box"><canvas id="monthlyChart"></canvas></div></section>
 
-  <?php
-    $windowLegend=$compareDays['x'].'d / '.$compareDays['y'].'d / '.$compareDays['z'].'d';
-    $renderAdsMetrics=static function(array $metrics)use($compareDays,$adsMetricSource):void{
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'spend','money').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'leads').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpl','money').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpc','money').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'sales').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cac','money').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'roas','decimal').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'cpm','money').'</td>';
-      echo '<td class="ads-values">'.va_ads_cell($metrics,$compareDays,$adsMetricSource,'frequency','decimal').'</td>';
-    };
-  ?>
-  <section class="section-card" id="ads-hierarchy">
-    <div class="section-head"><div><h2>Campanhas, conjuntos e anúncios</h2><p><?= $adsMetricSource==='meta'?'Resultados informados pela Meta.':'Resultados reais cruzados por UTM e compra.' ?> CPM, CPC, frequência e gasto sempre vêm da Meta.</p></div></div>
-    <form class="ads-controls" method="get" action="#ads-hierarchy">
-      <?php foreach($_GET as $key=>$value):if(in_array((string)$key,['compare_x','compare_y','compare_z','ads_metric_source'],true)||!is_scalar($value))continue;?><input type="hidden" name="<?=va_h((string)$key)?>" value="<?=va_h((string)$value)?>"><?php endforeach;?>
-      <div><label>Período X (dias)</label><input type="number" min="1" max="365" name="compare_x" value="<?=$compareDays['x']?>"></div>
-      <div><label>Período Y (dias)</label><input type="number" min="1" max="365" name="compare_y" value="<?=$compareDays['y']?>"></div>
-      <div><label>Período Z (dias)</label><input type="number" min="1" max="365" name="compare_z" value="<?=$compareDays['z']?>"></div>
-      <div class="ads-source"><input type="checkbox" id="adsMetaMode" name="ads_metric_source" value="meta" <?=$adsMetricSource==='meta'?'checked':''?>><label for="adsMetaMode">Usar resultados apresentados pela Meta</label></div>
-      <div class="fg-actions"><button class="btn btn-primary" type="submit">Aplicar</button></div>
-    </form>
-    <div class="ads-scroll"><table class="ads-table"><thead><tr><th>Campanha / conjunto / anúncio<div class="ads-head-note">Clique para expandir</div></th><?php foreach(['Gasto','Leads','CPL','CPC','Vendas','CAC','ROAS','CPM','Frequência'] as $head):?><th><?=$head?><div class="ads-head-note"><?=va_h($windowLegend)?></div></th><?php endforeach;?></tr></thead><tbody>
-    <?php foreach($adsHierarchy['tree'] as $ci=>$campaign):$cid='camp-'.substr(md5((string)$ci),0,10);?>
-      <tr data-row-id="<?=$cid?>"><td><div class="ads-name"><button type="button" class="ads-toggle" data-target="<?=$cid?>" aria-expanded="false">▶</button><div><strong><?=va_h($campaign['name'])?></strong><div class="ads-level">Campanha<?=!empty($campaign['account'])?' · Conta: '.va_h($campaign['account']):''?> · <?=count($campaign['adsets'])?> conjuntos</div></div></div></td><?php $renderAdsMetrics($campaign['metrics']);?></tr>
-      <?php foreach($campaign['adsets'] as $ai=>$adset):$aid=$cid.'-'.substr(md5((string)$ai),0,8);?>
-        <tr data-row-id="<?=$aid?>" data-parent="<?=$cid?>" hidden><td><div class="ads-name ads-indent-1"><button type="button" class="ads-toggle" data-target="<?=$aid?>" aria-expanded="false">▶</button><div><strong><?=va_h($adset['name'])?></strong><div class="ads-level">Conjunto · <?=count($adset['ads'])?> anúncios</div></div></div></td><?php $renderAdsMetrics($adset['metrics']);?></tr>
-        <?php foreach($adset['ads'] as $ad):?><tr data-parent="<?=$aid?>" hidden><td><div class="ads-name ads-indent-2"><span style="color:#22c55e">●</span><div><strong><?=va_h($ad['name'])?></strong><div class="ads-level">Anúncio</div></div></div></td><?php $renderAdsMetrics($ad['metrics']);?></tr><?php endforeach;?>
-      <?php endforeach;?>
-    <?php endforeach;?>
-    <?php if(!$adsHierarchy['tree']):?><tr><td colspan="10" class="empty">Sem campanhas no período comparado.</td></tr><?php endif;?>
-    </tbody></table></div>
-  </section>
 
-  <?php $tv=[];foreach(['x','y','z'] as $w)$tv[$w]=md_ads_metric_view($adsHierarchy['totals'][$w]??[],$adsMetricSource);?>
-  <section class="section-card"><div class="section-head"><div><h2>Tendências de eficiência</h2><p>Comparação configurável dos indicadores consolidados.</p></div></div><div class="table-wrap"><table class="eff-table"><thead><tr><th>Comparativo</th><th>CAC</th><th>CPL</th><th>ROAS</th><th>CPM</th><th>Frequência</th><th>CPC</th></tr></thead><tbody>
-    <?php foreach([['x','y'],['y','z']] as [$a,$b]):?><tr><td><strong><?=$compareDays[$a]?>d vs <?=$compareDays[$b]?>d</strong></td><td><?=va_compare_cell($tv[$a]['cac'],$tv[$b]['cac'],true)?></td><td><?=va_compare_cell($tv[$a]['cpl'],$tv[$b]['cpl'],true)?></td><td><?=va_compare_cell($tv[$a]['roas'],$tv[$b]['roas'],false,'decimal')?></td><td><?=va_compare_cell($tv[$a]['cpm'],$tv[$b]['cpm'],true)?></td><td><?=va_compare_cell($tv[$a]['frequency'],$tv[$b]['frequency'],true,'decimal')?></td><td><?=va_compare_cell($tv[$a]['cpc'],$tv[$b]['cpc'],true)?></td></tr><?php endforeach;?>
-  </tbody></table></div></section>
 
   <div class="four-col">
     <section class="section-card"><div class="section-head"><div><h2>Formas de pagamento</h2><p>Vendas aprovadas por meio.</p></div></div><div class="bar-list"><?php $maxPay=max(array_column($breakdowns['payments'],'qty')?:[1]);foreach($breakdowns['payments'] as $r):?><div class="bar-row"><span><?=va_h($r['label'])?></span><div class="bar-track"><div class="bar-fill" style="width:<?=min(100,(float)$r['qty']/$maxPay*100)?>%"></div></div><strong><?=va_num($r['qty'])?></strong></div><?php endforeach;?><?php if(!$breakdowns['payments']):?><div class="empty">Sem dados.</div><?php endif;?></div></section>
