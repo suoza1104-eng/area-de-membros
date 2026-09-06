@@ -118,15 +118,27 @@ function comp_clean_phone(?string $phone): string {
 if ($export === 'csv') {
     $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                       s.product_name, s.payment_method, s.installments,
-                      s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
-                      u.id AS user_id, u.created_at AS user_created_at
+                      s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
                FROM v_sales_master s
-               LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
                {$whereSql}
                ORDER BY s.sale_date DESC, s.id DESC";
     $stmtCsv = $pdo->prepare($csvSql);
     $stmtCsv->execute($params);
     $rows = $stmtCsv->fetchAll(PDO::FETCH_ASSOC);
+
+    $csvEmails = array_filter(array_unique(array_map('trim', array_column($rows, 'buyer_email'))));
+    $csvUserMap = [];
+    if (!empty($csvEmails)) {
+        $chunks = array_chunk(array_values($csvEmails), 500);
+        foreach ($chunks as $chunk) {
+            $ph = implode(',', array_fill(0, count($chunk), '?'));
+            $stU = $pdo->prepare("SELECT id, email FROM users WHERE email IN ($ph)");
+            $stU->execute($chunk);
+            while ($u = $stU->fetch(PDO::FETCH_ASSOC)) {
+                $csvUserMap[mb_strtolower(trim((string)$u['email']))] = $u['id'];
+            }
+        }
+    }
 
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="compradores_suporte_' . date('Y-m-d_H-i') . '.csv"');
@@ -140,7 +152,9 @@ if ($export === 'csv') {
     ]);
 
     foreach ($rows as $r) {
-        $userStatus = !empty($r['user_id']) ? 'Inscrito' : 'Nao Inscrito';
+        $em = mb_strtolower(trim((string)$r['buyer_email']));
+        $uId = $csvUserMap[$em] ?? null;
+        $userStatus = !empty($uId) ? 'Inscrito' : 'Nao Inscrito';
         fputcsv($output, [
             $r['id'],
             strtoupper((string)$r['provider']),
@@ -155,7 +169,7 @@ if ($export === 'csv') {
             $r['buyer_phone'],
             $r['buyer_document'],
             $userStatus,
-            $r['user_id'] ?: ''
+            $uId ?: ''
         ]);
     }
     fclose($output);
@@ -175,16 +189,31 @@ $offset     = ($page - 1) * $perPage;
 $kpiSql = "SELECT 
               COUNT(*) AS total_sales,
               COUNT(DISTINCT NULLIF(TRIM(s.buyer_email), '')) AS unique_buyers,
-              COUNT(DISTINCT u.id) AS enrolled_students,
               SUM(CASE WHEN s.status IN ('REFUNDED', 'REFUNDED_REQUEST', 'REFUND_REQUESTED') THEN 1 ELSE 0 END) AS total_refunded
            FROM v_sales_master s
-           LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
            {$whereSql}";
 $stmtKpi = $pdo->prepare($kpiSql);
 $stmtKpi->execute($params);
 $kpiData = $stmtKpi->fetch(PDO::FETCH_ASSOC) ?: [
-    'total_sales' => 0, 'unique_buyers' => 0, 'enrolled_students' => 0, 'total_refunded' => 0
+    'total_sales' => 0, 'unique_buyers' => 0, 'total_refunded' => 0
 ];
+
+$enrolledCount = 0;
+try {
+    $stEmails = $pdo->prepare("SELECT DISTINCT NULLIF(TRIM(s.buyer_email), '') AS email FROM v_sales_master s {$whereSql}");
+    $stEmails->execute($params);
+    $distinctEmails = array_filter(array_unique(array_map('trim', $stEmails->fetchAll(PDO::FETCH_COLUMN))));
+    if (!empty($distinctEmails)) {
+        $chunks = array_chunk(array_values($distinctEmails), 500);
+        foreach ($chunks as $chunk) {
+            $ph = implode(',', array_fill(0, count($chunk), '?'));
+            $stU = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email IN ($ph)");
+            $stU->execute($chunk);
+            $enrolledCount += (int)$stU->fetchColumn();
+        }
+    }
+} catch (Throwable $e) {}
+$kpiData['enrolled_students'] = $enrolledCount;
 
 // PRODUTOS E PROVIDERS DISPONÍVEIS PARA DROPDOWNS
 $productsList = [];
@@ -197,19 +226,36 @@ try {
     $providersList = $pdo->query("SELECT DISTINCT provider FROM v_sales_master WHERE provider IS NOT NULL AND provider != '' ORDER BY provider ASC")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Throwable $e) {}
 
-// CONSULTA PRINCIPAL DAS VENDAS COM DADOS DOS ALUNOS
+// CONSULTA PRINCIPAL DAS VENDAS COM DADOS DOS ALUNOS (RÁPIDA)
 $salesSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                     s.product_name, s.payment_method, s.installments,
-                    s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
-                    u.id AS user_id, u.created_at AS user_created_at, u.turma_codigo
+                    s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
              FROM v_sales_master s
-             LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
              {$whereSql}
              ORDER BY s.sale_date DESC, s.id DESC
              LIMIT {$perPage} OFFSET {$offset}";
 $stmtSales = $pdo->prepare($salesSql);
 $stmtSales->execute($params);
 $sales = $stmtSales->fetchAll(PDO::FETCH_ASSOC);
+
+// MAPEAMENTO RÁPIDO DE ALUNOS EM MEMÓRIA (50 VENDAS DA PÁGINA ATUAL)
+$pageEmails = array_filter(array_unique(array_map('trim', array_column($sales, 'buyer_email'))));
+$userMap = [];
+if (!empty($pageEmails)) {
+    $ph = implode(',', array_fill(0, count($pageEmails), '?'));
+    $stU = $pdo->prepare("SELECT id, email, created_at, turma_codigo FROM users WHERE email IN ($ph)");
+    $stU->execute(array_values($pageEmails));
+    while ($u = $stU->fetch(PDO::FETCH_ASSOC)) {
+        $userMap[mb_strtolower(trim((string)$u['email']))] = $u;
+    }
+}
+foreach ($sales as &$s) {
+    $em = mb_strtolower(trim((string)$s['buyer_email']));
+    $s['user_id'] = $userMap[$em]['id'] ?? null;
+    $s['user_created_at'] = $userMap[$em]['created_at'] ?? null;
+    $s['turma_codigo'] = $userMap[$em]['turma_codigo'] ?? null;
+}
+unset($s);
 
 require_once __DIR__ . '/_header.php';
 ?>
@@ -533,3 +579,4 @@ require_once __DIR__ . '/_header.php';
 </div>
 
 <?php require_once __DIR__ . '/_footer.php'; ?>
+
