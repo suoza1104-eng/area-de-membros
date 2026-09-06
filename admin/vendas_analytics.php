@@ -355,7 +355,7 @@ $daily = md_daily_series($pdo, $period['start'], $period['end'], $filters);
 $monthly = md_monthly_series($pdo, $filters);
 $breakdowns = md_breakdowns($pdo, $period['start'], $period['end'], $filters);
 $buyerProfile = md_buyer_profile($pdo, $period['start'], $period['end'], $filters, 120);
-$cohorts = md_cohorts($pdo, $period['start'], $period['end'], $filters);
+$cohorts = md_cohorts($pdo, $filters);
 $cohortsWithCost = array_filter($cohorts, static fn(array $r): bool => (float)($r['traffic_cost'] ?? 0) > 0);
 $cohortAvgRoas = $cohortsWithCost ? array_sum(array_column($cohortsWithCost, 'roas')) / count($cohortsWithCost) : 0.0;
 $options = md_filter_options($pdo);
