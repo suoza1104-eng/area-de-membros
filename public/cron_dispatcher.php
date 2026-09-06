@@ -63,6 +63,7 @@ try {
     if ($taskKey === 'agendamentos_retorno') {
         $result['companion_lives_turma'] = cron_manager_execute($pdo, 'lives_turma', $source, false);
         $result['companion_whatsapp_grupos'] = cron_manager_execute($pdo, 'whatsapp_grupos', $source, false);
+        $result['companion_whatsapp_status'] = cron_manager_execute($pdo, 'whatsapp_status', $source, false);
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);
         $result['companion_automacoes'] = cron_manager_execute($pdo, 'automacoes', $source, false);
         $result['companion_automacoes_email'] = cron_manager_execute($pdo, 'automacoes_email', $source, false);

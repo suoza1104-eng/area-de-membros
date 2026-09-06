@@ -19,6 +19,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'whatsapp_status' => [
+            'label' => 'Status das instancias WhatsApp',
+            'description' => 'Consulta o estado de conexao de cada instancia na Evolution API e atualiza o status, que antes so mudava com clique manual em Gerar QR ou Atualizar status.',
+            'script' => __DIR__ . '/../cron/processar_whatsapp_status.php',
+            'interval' => 5,
+            'timeout' => 120,
+        ],
         'reagendamentos_live' => [
             'label' => 'Reagendamentos de live',
             'description' => 'Envia lembretes e encerra reagendamentos vencidos.',
