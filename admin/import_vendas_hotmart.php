@@ -12,6 +12,53 @@ function hmri_h($value): string { return htmlspecialchars((string)$value, ENT_QU
 function hmri_money($value): string { return 'R$ ' . number_format((float)$value, 2, ',', '.'); }
 function hmri_num($value): string { return number_format((float)$value, 0, ',', '.'); }
 
+/**
+ * hmri_sale_from_csv_row()/hmri_read_csv_sales() (o parser especifico do
+ * layout de exportacao da Hotmart) chamavam estas 5 funcoes sem elas nunca
+ * terem sido implementadas — a tela "Conciliar Vendas" nunca funcionou para
+ * Hotmart (so para Dom/Pagar.me, que usam hmri_key/hmri_row_get/etc). Ver
+ * tambem hmri_parse_datetime_value(), que ja dependia de
+ * hotmart_parse_datetime_value() como fallback para datas em texto.
+ */
+function hotmart_guess_separator(string $firstLine): string
+{
+    return hmri_guess_csv_separator($firstLine);
+}
+
+function hotmart_normalize_header(string $value): string
+{
+    return hmri_key($value);
+}
+
+function hotmart_pick(array $row, array $map, array $candidates, $default = '')
+{
+    foreach ($candidates as $candidate) {
+        $key = hmri_key((string)$candidate);
+        if ($key !== '' && isset($map[$key]) && array_key_exists($map[$key], $row)) {
+            $value = $row[$map[$key]];
+            if ($value !== null && trim((string)$value) !== '') return $value;
+        }
+    }
+    return $default;
+}
+
+function hotmart_parse_decimal($value): float
+{
+    return hmri_decimal_to_cents($value) / 100;
+}
+
+function hotmart_parse_datetime_value($value): ?string
+{
+    $raw = trim((string)$value);
+    if ($raw === '' || strtolower($raw) === '(none)' || strtolower($raw) === 'none') return null;
+    foreach (['d/m/Y H:i:s', 'd/m/Y H:i', 'd/m/Y', 'Y-m-d H:i:s', 'Y-m-d\TH:i:s', 'Y-m-d'] as $fmt) {
+        $dt = DateTime::createFromFormat($fmt, $raw);
+        if ($dt instanceof DateTime) return $dt->format('Y-m-d H:i:s');
+    }
+    $ts = strtotime($raw);
+    return $ts !== false ? date('Y-m-d H:i:s', $ts) : null;
+}
+
 function hmri_provider_labels(): array
 {
     return [
