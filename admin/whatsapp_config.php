@@ -318,6 +318,7 @@ require __DIR__ . '/_header.php';
                     <div class="form-group"><label class="form-label">Prioridade administrativa</label><input type="number" name="role_priority" value="<?= (int)$instance['role_priority'] ?>"><div class="wc-help">Menor número tem preferência entre administradores e reservas conectados.</div></div>
                     <label class="form-label"><input type="checkbox" name="is_enabled" value="1" <?= (int)$instance['is_enabled']===1?'checked':'' ?>> Ativa</label>
                     <div class="wc-status <?= $isConnected?'connected':'disconnected' ?>"><span><?= $isConnected?'● CONECTADO':'● DESCONECTADO' ?></span><small><?= wcfg_h((string)$instance['instance_key']) ?></small></div>
+                    <?php if (!$isConnected && trim((string)($instance['last_error'] ?? '')) !== ''): ?><div class="wc-help" style="color:#fca5a5"><?= wcfg_h((string)$instance['last_error']) ?></div><?php endif; ?>
                     <button class="btn btn-primary btn-sm">Salvar função</button>
                 </form>
                 <div class="wc-actions" style="margin-top:8px">

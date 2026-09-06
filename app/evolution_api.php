@@ -425,8 +425,36 @@ function evolution_connect_instance(PDO $pdo, array $instance): array {
     return $res;
 }
 
+// Codigos do DisconnectReason do Baileys que NAO se recuperam sozinhos (a sessao
+// foi de fato encerrada pelo WhatsApp - ex.: dispositivo removido pelo celular,
+// login substituido em outro lugar, sessao invalida). Nesses casos e preciso
+// gerar QR/pairing novo; a Evolution API deixa isso registrado em
+// disconnectionReasonCode/disconnectionAt, mas o campo connectionStatus costuma
+// ficar preso em "open" mesmo apos o desligamento, entao ele sozinho nao e
+// confiavel para esses codigos.
+function evolution_terminal_disconnect_label(int $code): ?string {
+    $labels = [
+        401 => 'sessao encerrada pelo WhatsApp (dispositivo removido ou logout)',
+        403 => 'acesso recusado pelo WhatsApp',
+        411 => 'conflito de multiplos dispositivos',
+        440 => 'sessao substituida por outra conexao',
+        500 => 'sessao invalida (bad session)',
+    ];
+    return $labels[$code] ?? null;
+}
+
+function evolution_fetch_instance_detail(string $instanceKey): array {
+    $res = evolution_http('GET', '/instance/fetchInstances?instanceName=' . rawurlencode($instanceKey));
+    if (empty($res['ok']) || !is_array($res['data'])) return [];
+    foreach ($res['data'] as $row) {
+        if (is_array($row) && (string)($row['name'] ?? '') === $instanceKey) return $row;
+    }
+    return [];
+}
+
 function evolution_fetch_state(PDO $pdo, array $instance): array {
-    $res = evolution_http('GET', '/instance/connectionState/' . rawurlencode((string)$instance['instance_key']));
+    $instanceKey = (string)$instance['instance_key'];
+    $res = evolution_http('GET', '/instance/connectionState/' . rawurlencode($instanceKey));
     $status = 'DISCONNECTED';
     $state = '';
     if (is_array($res['data'])) {
@@ -438,6 +466,24 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
         $status = 'CONNECTING';
     }
     evolution_update_instance_from_response($pdo, (int)$instance['id'], $res, $status);
+
+    // connectionState/connectionStatus podem continuar dizendo "open" mesmo depois
+    // de um desligamento terminal (ex.: device_removed). fetchInstances registra
+    // esse desligamento em disconnectionReasonCode/disconnectionAt e e a fonte que
+    // prevalece quando os dois divergirem.
+    $detail = evolution_fetch_instance_detail($instanceKey);
+    $reasonCode = isset($detail['disconnectionReasonCode']) ? (int)$detail['disconnectionReasonCode'] : null;
+    if ($reasonCode !== null) {
+        $label = evolution_terminal_disconnect_label($reasonCode);
+        if ($label !== null) {
+            $disconnectedAt = trim((string)($detail['disconnectionAt'] ?? ''));
+            $message = 'Desconectado pelo WhatsApp: ' . $label . ' (codigo ' . $reasonCode . ')'
+                . ($disconnectedAt !== '' ? ' em ' . $disconnectedAt : '')
+                . '. Gere um novo QR/pairing para reconectar.';
+            $pdo->prepare("UPDATE whatsapp_instances SET status = 'DISCONNECTED', last_error = :last_error, updated_at = NOW() WHERE id = :id LIMIT 1")
+                ->execute([':last_error' => $message, ':id' => (int)$instance['id']]);
+        }
+    }
     return $res;
 }
 
