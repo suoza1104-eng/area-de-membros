@@ -608,6 +608,7 @@ function support_chat_submit_feedback(PDO $pdo,int $conversationId,int $userId,i
 function support_agent_evaluate_conversation(PDO $pdo,int $conversationId): void
 {
     try{
+        if(get_setting('support_learning_enabled','1')==='0')return;
         if(!support_chat_table_exists($pdo,'support_ai_evaluations'))return;
         $cfg=support_agent_config($pdo);if(empty($cfg['enabled'])||trim((string)($cfg['api_key']??''))==='')return;
         $agents=support_agent_agents_by_id($cfg);$quality=$agents['quality']??null;if(!$quality||empty($quality['active']))return;
@@ -635,6 +636,7 @@ function support_agent_evaluate_conversation(PDO $pdo,int $conversationId): void
 
 function support_learning_collect_suggestions(PDO $pdo): int
 {
+    if(get_setting('support_learning_enabled','1')==='0')return 0;
     support_chat_ensure_schema($pdo);
     $inserted=0;
     if(!support_chat_table_exists($pdo,'support_ai_evaluations'))return 0;
