@@ -7,6 +7,7 @@ proteger_admin();
 $menu       = 'alunos';
 $page_title = 'Lista de Compradores';
 $pdo        = getPDO();
+$isEquipe   = (($_SESSION['admin_tipo'] ?? 'principal') === 'equipe');
 
 if (!function_exists('am_h')) {
     function am_h($value): string {
@@ -120,8 +121,12 @@ function comp_clean_phone(?string $phone): string {
     return $clean;
 }
 
-// EXPORTAÇÃO CSV PARA EQUIPE DE SUPORTE (SEM VALORES MONETÁRIOS)
+// EXPORTAÇÃO CSV PARA EQUIPE DE SUPORTE (APENAS ADMINISTRADORES)
 if ($export === 'csv') {
+    if ($isEquipe) {
+        header('Location: compradores.php');
+        exit;
+    }
     $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                       s.product_name, s.payment_method, s.installments,
                       s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
@@ -302,6 +307,7 @@ require_once __DIR__ . '/_header.php';
 .comp-btn-primary:hover { background: #2563eb; }
 .comp-btn-csv { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: #4ade80; }
 .comp-btn-csv:hover { background: rgba(34,197,94,0.3); }
+.comp-btn-disabled { background: #1e293b !important; border: 1px solid #334155 !important; color: #64748b !important; cursor: not-allowed !important; opacity: 0.65; pointer-events: none; }
 .comp-btn-clear { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 .comp-btn-clear:hover { color: var(--text); background: var(--bg-hover); }
 
@@ -440,7 +446,11 @@ require_once __DIR__ . '/_header.php';
           <?php if ($q !== '' || $product !== '' || $status !== 'all' || $provider !== 'all' || $preset !== 'all'): ?>
             <a href="compradores.php" class="comp-btn comp-btn-clear">Limpar</a>
           <?php endif; ?>
-          <a href="?<?= am_h(http_build_query(array_merge($_GET, ['export' => 'csv']))) ?>" class="comp-btn comp-btn-csv">⬇️ Exportar CSV (Suporte)</a>
+          <?php if ($isEquipe): ?>
+            <button type="button" class="comp-btn comp-btn-disabled" disabled title="Apenas administradores podem exportar o relatório CSV">🔒 Exportar CSV (Apenas Admin)</button>
+          <?php else: ?>
+            <a href="?<?= am_h(http_build_query(array_merge($_GET, ['export' => 'csv']))) ?>" class="comp-btn comp-btn-csv">⬇️ Exportar CSV (Suporte)</a>
+          <?php endif; ?>
         </div>
       </div>
 
