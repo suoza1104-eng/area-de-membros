@@ -280,6 +280,15 @@ function hmri_sale_from_csv_row(PDO $sourcePdo, array $row, array $map, array $h
     if ($tx === '') {
         throw new RuntimeException('Transacao/HP nao encontrada no CSV.');
     }
+    // A planilha da Hotmart traz o codigo puro (ex: HP123...), mas o webhook e
+    // o restante do sistema sempre gravam com o prefixo "hotmart:". Sem essa
+    // normalizacao, toda venda ja existente virava uma linha duplicada aqui
+    // (chave diferente) e, pior, era marcada como "ausente na planilha" e
+    // cancelada por engano em hmri_load_missing_in_file/hmri_mark_missing_in_file,
+    // que comparam pelo transaction_code exato.
+    if ($tx !== '' && strpos($tx, 'hotmart:') !== 0) {
+        $tx = 'hotmart:' . $tx;
+    }
 
     $buyerEmail = trim((string)hotmart_pick($row, $map, ['emaildoacompradora','emaildocomprador','emailcomprador','email'], ''));
     $buyerPhoneRaw = trim((string)hotmart_pick($row, $map, ['telefonedocomprador','telefonecomprador','telefone','celular'], ''));
@@ -1062,6 +1071,7 @@ function hmri_load_missing_in_file(PDO $pdo, string $provider, array $sales): ar
             FROM hotmart_sales_live
             WHERE DATE(COALESCE(payment_confirmed_at, transaction_date, updated_at)) BETWEEN :start AND :end
               AND COALESCE(excluded_from_financials,0)=0
+              AND COALESCE(NULLIF(sales_channel,''), 'hotmart') = 'hotmart'
               AND UPPER(COALESCE(status,'')) IN ('APPROVED','APROVADO','REFUNDED','REEMBOLSADO','CHARGEBACK')");
         $stmt->execute(['start'=>$start, 'end'=>$end]);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {

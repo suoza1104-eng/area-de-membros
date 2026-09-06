@@ -1,0 +1,8 @@
+{
+  "mode": "dry-run",
+  "generated_at": "2026-09-06 00:35:34",
+  "wrongly_canceled_live": 4899,
+  "wrongly_canceled_master": 4840,
+  "total_duplicate_pairs_live": 6881,
+  "total_duplicate_pairs_master": 4912
+}
