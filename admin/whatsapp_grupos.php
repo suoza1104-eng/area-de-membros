@@ -40,8 +40,9 @@ function wg_handle_media_upload(array $file): ?array {
     $fileName = date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . substr($safeName, 0, 70) . '.' . $ext;
     $target = $dir . '/' . $fileName;
     if (!move_uploaded_file((string)$file['tmp_name'], $target)) throw new RuntimeException('Nao foi possivel salvar o arquivo enviado.');
+    $rootUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/'));
     return [
-        'url' => rtrim(BASE_URL, '/') . '/uploads/whatsapp_groups/' . rawurlencode($fileName),
+        'url' => $rootUrl . '/uploads/whatsapp_groups/' . rawurlencode($fileName),
         'name' => $original,
         'ext' => $ext,
     ];

@@ -270,6 +270,9 @@ function telegram_send_rich_message(int|string $chatId, array $message, array $c
     $kind = in_array((string)($message['message_kind'] ?? 'text'), ['text','photo','video'], true) ? (string)$message['message_kind'] : 'text';
     $text = trim(telegram_render_vars((string)($message['message_text'] ?? ''), $ctx));
     $mediaUrl = trim(telegram_render_vars((string)($message['media_url'] ?? ''), $ctx));
+    if ($mediaUrl !== '') {
+        $mediaUrl = preg_replace('~/public/uploads/~', '/uploads/', $mediaUrl);
+    }
     $buttons = telegram_reply_markup($message['buttons_json'] ?? null);
     $parseMode = in_array((string)($message['parse_mode'] ?? ''), ['HTML','MarkdownV2'], true) ? (string)$message['parse_mode'] : null;
     if ($text === '' && $kind === 'text') throw new InvalidArgumentException('Mensagem vazia.');

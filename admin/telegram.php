@@ -71,7 +71,8 @@ function tg_media_upload_url(array $file): string {
     $name = date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . substr($safe, 0, 70) . '.' . $ext;
     $target = $dir . '/' . $name;
     if (!move_uploaded_file((string)$file['tmp_name'], $target)) throw new RuntimeException('Nao foi possivel salvar a midia.');
-    return rtrim(BASE_URL, '/') . '/uploads/telegram/' . rawurlencode($name);
+    $rootUrl = preg_replace('~/public/?$~', '', rtrim(BASE_URL, '/'));
+    return $rootUrl . '/uploads/telegram/' . rawurlencode($name);
 }
 
 if (isset($_GET['msg'])) $notice = (string)$_GET['msg'];
@@ -107,6 +108,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $kind = in_array((string)($_POST['message_kind'] ?? 'text'), ['text','photo','video'], true) ? (string)$_POST['message_kind'] : 'text';
             $mediaUrl = tg_media_upload_url($_FILES['media_file'] ?? []);
             if ($mediaUrl === '') $mediaUrl = trim((string)($_POST['media_url'] ?? ''));
+            if ($mediaUrl !== '') {
+                $mediaUrl = preg_replace('~/public/uploads/~', '/uploads/', $mediaUrl);
+            }
             $buttons = tg_build_buttons($_POST);
             $sendAt = trim((string)($_POST['send_at'] ?? ''));
             $next = $trigger === 'scheduled' ? ($sendAt !== '' ? date('Y-m-d H:i:s', strtotime($sendAt)) : date('Y-m-d H:i:s')) : null;

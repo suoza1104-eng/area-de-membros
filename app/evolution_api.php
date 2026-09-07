@@ -460,18 +460,42 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
     if (is_array($res['data'])) {
         $state = strtolower((string)($res['data']['instance']['state'] ?? $res['data']['state'] ?? ''));
     }
-    if (in_array($state, ['open', 'connected'], true)) {
+
+    $detail = evolution_fetch_instance_detail($instanceKey);
+    $detailState = strtolower((string)($detail['connectionStatus'] ?? $detail['state'] ?? ''));
+
+    if (in_array($state, ['open', 'connected'], true) || in_array($detailState, ['open', 'connected'], true)) {
         $status = 'CONNECTED';
-    } elseif (in_array($state, ['connecting', 'qrcode', 'pairing'], true)) {
+    } elseif (in_array($state, ['connecting', 'qrcode', 'pairing'], true) || in_array($detailState, ['connecting', 'qrcode', 'pairing'], true)) {
         $status = 'CONNECTING';
     }
+
+    if ($status === 'CONNECTED') {
+        $ownerJid = (string)($detail['ownerJid'] ?? $detail['owner'] ?? $detail['number'] ?? $detail['profileName'] ?? '');
+        $connectedPhone = '';
+        if ($ownerJid !== '') {
+            $connectedPhone = preg_replace('/\D+/', '', explode('@', $ownerJid)[0]);
+        }
+
+        $stmt = $pdo->prepare("
+            UPDATE whatsapp_instances
+               SET status = 'CONNECTED',
+                   phone_number = COALESCE(NULLIF(:phone, ''), phone_number),
+                   last_error = NULL,
+                   last_connected_at = NOW(),
+                   updated_at = NOW()
+             WHERE id = :id
+             LIMIT 1
+        ");
+        $stmt->execute([
+            ':phone' => $connectedPhone,
+            ':id' => (int)$instance['id'],
+        ]);
+        return $res;
+    }
+
     evolution_update_instance_from_response($pdo, (int)$instance['id'], $res, $status);
 
-    // connectionState/connectionStatus podem continuar dizendo "open" mesmo depois
-    // de um desligamento terminal (ex.: device_removed). fetchInstances registra
-    // esse desligamento em disconnectionReasonCode/disconnectionAt e e a fonte que
-    // prevalece quando os dois divergirem.
-    $detail = evolution_fetch_instance_detail($instanceKey);
     $reasonCode = isset($detail['disconnectionReasonCode']) ? (int)$detail['disconnectionReasonCode'] : null;
     if ($reasonCode !== null) {
         $label = evolution_terminal_disconnect_label($reasonCode);
