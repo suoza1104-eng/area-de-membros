@@ -293,8 +293,16 @@ include __DIR__ . '/_header.php';
               </div>
             </div>
             <div class="tg-card-body">
-              <div class="tg-actions"><span class="tg-pill <?=$m['status']==='active'?'ok':'warn'?>"><?=tg_h($m['status'])?></span><span class="tg-pill"><?=tg_h($m['message_kind'] ?? 'text')?></span><span class="tg-note"><?=tg_h($m['group_title'] ?: 'Todos os grupos')?></span></div>
-              <?php if(($m['message_kind'] ?? 'text') !== 'text'): ?><div class="tg-preview-media"><?=tg_h($m['message_kind'])?><?=!empty($m['media_url'])?' anexado':''?></div><?php endif; ?>
+              <div class="tg-actions"><span class="tg-pill <?=$m['status']==='active'?'ok':($m['status']==='sent'?'ok':'warn')?>"><?=tg_h($m['status'])?></span><span class="tg-pill"><?=tg_h($m['message_kind'] ?? 'text')?></span><span class="tg-note"><?=tg_h($m['group_title'] ?: 'Todos os grupos')?></span></div>
+              <?php if(($m['message_kind'] ?? 'text') !== 'text'): ?>
+                <?php if(($m['message_kind'] ?? '') === 'photo' && !empty($m['media_url'])): ?>
+                  <div class="tg-preview-media" style="padding:0;overflow:hidden;background:#000;"><img src="<?=tg_h(preg_replace('~/public/uploads/~', '/uploads/', (string)$m['media_url']))?>" style="width:100%;height:100%;object-fit:cover;display:block;" alt="preview" onerror="this.style.display='none';this.parentElement.textContent='photo anexado';"></div>
+                <?php elseif(($m['message_kind'] ?? '') === 'video' && !empty($m['media_url'])): ?>
+                  <div class="tg-preview-media" style="padding:0;overflow:hidden;background:#000;"><video src="<?=tg_h(preg_replace('~/public/uploads/~', '/uploads/', (string)$m['media_url']))?>" style="width:100%;height:100%;object-fit:cover;display:block;" controls></video></div>
+                <?php else: ?>
+                  <div class="tg-preview-media"><?=tg_h($m['message_kind'])?><?=!empty($m['media_url'])?' anexado':''?></div>
+                <?php endif; ?>
+              <?php endif; ?>
               <div class="tg-preview-bubble"><?=tg_h(mb_substr((string)$m['message_text'], 0, 520))?></div>
               <?php if($buttons): ?><div class="tg-preview-buttons"><?php foreach(array_slice($buttons,0,8) as $b): $bw=(string)($b['width'] ?? 'full') === 'half' ? 'half' : 'full'; ?><div class="tg-preview-button <?=$bw?>"><?=tg_h($b['text'] ?? 'Botao')?></div><?php endforeach; ?></div><?php endif; ?>
               <div class="tg-note">Enviadas: <?=(int)$m['sent_count']?><?=!empty($m['last_sent_at'])?' · Ultimo: '.tg_h(tg_dt($m['last_sent_at'])):''?></div>
@@ -491,9 +499,25 @@ include __DIR__ . '/_header.php';
   function renderPreview(){
     const text=fields.text.value.trim()||'Nenhuma mensagem adicionada.';
     previewText.textContent=text;
-    const kind=fields.kind.value, media=fields.media.value.trim();
-    previewMedia.style.display=kind==='text'?'none':'flex';
-    previewMedia.textContent=kind==='photo'?(media?'Imagem anexada':'Imagem'):(media?'Video anexado':'Video');
+    const kind=fields.kind.value, rawMedia=fields.media.value.trim();
+    const media=rawMedia.replace(/\/public\/uploads\//g, '/uploads/');
+    if (kind === 'photo' && media) {
+      previewMedia.style.display = 'block';
+      previewMedia.style.padding = '0';
+      previewMedia.style.overflow = 'hidden';
+      previewMedia.innerHTML = `<img src="${esc(media)}" style="width:100%;height:100%;object-fit:cover;display:block;" alt="preview" onerror="this.style.display='none';this.parentElement.innerText='photo anexado';">`;
+    } else if (kind === 'video' && media) {
+      previewMedia.style.display = 'block';
+      previewMedia.style.padding = '0';
+      previewMedia.style.overflow = 'hidden';
+      previewMedia.innerHTML = `<video src="${esc(media)}" style="width:100%;height:100%;object-fit:cover;display:block;" controls></video>`;
+    } else if (kind !== 'text') {
+      previewMedia.style.display = 'flex';
+      previewMedia.style.padding = '';
+      previewMedia.textContent = kind === 'photo' ? (media ? 'photo anexado' : 'Imagem') : (media ? 'video anexado' : 'Video');
+    } else {
+      previewMedia.style.display = 'none';
+    }
     previewButtons.innerHTML='';
     buttonsWrap.querySelectorAll('.tg-button-row').forEach(row=>{
       const label=row.querySelector('[name="button_text[]"]').value.trim();
