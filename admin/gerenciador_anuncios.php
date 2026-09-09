@@ -20,24 +20,25 @@ function am_initials(string $name): string {
     $last = count($parts) > 1 ? mb_substr($parts[count($parts) - 1], 0, 1, 'UTF-8') : '';
     return mb_strtoupper($first . $last, 'UTF-8');
 }
-function am_ads_cell(array $metrics, array $days, string $source, string $key, string $format = 'num'): string {
+function am_ads_cell(array $metrics, array $days, string $source, string $key, string $format = 'num', string $initialWindow = 'x'): string {
     $parts = [];
     foreach (['x', 'y', 'z'] as $w) {
         $view = md_ads_metric_view($metrics[$w] ?? [], $source);
         $value = $view[$key] ?? 0;
         $parts[] = $format === 'money' ? am_money($value) : ($format === 'decimal' ? am_num($value, 2) : am_num($value));
     }
-    $windowsHtml = '<span class="am-val-windows">' . implode(' <span class="ads-sep">/</span> ', $parts) . '</span>';
+    $showWindows = $initialWindow !== 'filter';
+    $windowsHtml = '<span class="am-val-windows" style="' . ($showWindows ? '' : 'display:none;') . '">' . implode(' <span class="ads-sep">/</span> ', $parts) . '</span>';
 
     $filterView = md_ads_metric_view($metrics['filter'] ?? ($metrics['x'] ?? []), $source);
     $filterVal = $filterView[$key] ?? 0;
     $filterFormatted = $format === 'money' ? am_money($filterVal) : ($format === 'decimal' ? am_num($filterVal, 2) : am_num($filterVal));
-    $filterHtml = '<span class="am-val-filter" style="display:none">' . $filterFormatted . '</span>';
+    $filterHtml = '<span class="am-val-filter" style="' . ($showWindows ? 'display:none;' : 'display:inline;') . '">' . $filterFormatted . '</span>';
 
     return $windowsHtml . $filterHtml;
 }
-function am_kpi_td(array $metrics, array $days, string $source, string $key, string $label, string $format, string $level): string {
-    return '<td class="ads-values" data-kpi-cell data-level="' . am_h($level) . '" data-kpi="' . am_h($key) . '" data-format="' . am_h($format) . '" data-kpi-label="' . am_h($label) . '">' . am_ads_cell($metrics, $days, $source, $key, $format) . '</td>';
+function am_kpi_td(array $metrics, array $days, string $source, string $key, string $label, string $format, string $level, string $initialWindow = 'x'): string {
+    return '<td class="ads-values" data-kpi-cell data-level="' . am_h($level) . '" data-kpi="' . am_h($key) . '" data-format="' . am_h($format) . '" data-kpi-label="' . am_h($label) . '">' . am_ads_cell($metrics, $days, $source, $key, $format, $initialWindow) . '</td>';
 }
 function am_compare_cell(float $a, float $b, bool $lowerBetter = false, string $format = 'money'): string {
     $fmt = static fn(float $v): string => $format === 'money' ? am_money($v) : am_num($v, 2);
@@ -420,19 +421,19 @@ if ($ajaxSection !== '') {
     header('Content-Type: text/html; charset=utf-8');
     $adsHierarchy = md_ads_hierarchy($pdo, $endDate, $model, $compareDays);
     $accounts = md_ads_group_by_account($pdo, $adsHierarchy['tree'], $adsHierarchy['windows'], $endDate);
-    $globalView = md_ads_metric_view($adsHierarchy['totals']['x'] ?? [], $adsMetricSource);
-    $crossView = md_ads_metric_view($adsHierarchy['totals']['x'] ?? [], 'cross');
+    $globalView = md_ads_metric_view($adsHierarchy['totals']['filter'] ?? ($adsHierarchy['totals']['x'] ?? []), $adsMetricSource);
+    $crossView = md_ads_metric_view($adsHierarchy['totals']['filter'] ?? ($adsHierarchy['totals']['x'] ?? []), 'cross');
     $tv = [];
-    foreach (['x', 'y', 'z'] as $w) { $tv[$w] = md_ads_metric_view($adsHierarchy['totals'][$w] ?? [], $adsMetricSource); }
+    foreach (['x', 'y', 'z', 'filter'] as $w) { $tv[$w] = md_ads_metric_view($adsHierarchy['totals'][$w] ?? [], $adsMetricSource); }
 
-    $periodStartDt = $adsHierarchy['windows']['x'] . ' 00:00:00';
+    $periodStartDt = ($adsHierarchy['windows']['filter'] ?? $adsHierarchy['windows']['x']) . ' 00:00:00';
     $periodEndDt = $endDate . ' 23:59:59';
     $totalSalesRow = md_row($pdo, "SELECT COUNT(*) sales, COALESCE(SUM(s.net_revenue),0) net, COALESCE(SUM(s.producer_net),0) producer
         FROM v_sales_master s WHERE " . md_approved_sql('s') . " AND " . md_sale_revenue_date_sql('s') . " BETWEEN :start AND :end",
         ['start' => $periodStartDt, 'end' => $periodEndDt]);
     $totalSales = (int)($totalSalesRow['sales'] ?? 0);
     $totalRevenue = (float)($totalSalesRow['producer'] ?? 0);
-    $totalSpend = (float)($adsHierarchy['totals']['x']['spend'] ?? 0);
+    $totalSpend = (float)($adsHierarchy['totals']['filter']['spend'] ?? ($adsHierarchy['totals']['x']['spend'] ?? 0));
     $totalLeads = (int)$crossView['leads'];
     $totalRoas = $totalSpend > 0 ? $totalRevenue / $totalSpend : 0.0;
     $totalCac = $totalSales > 0 ? $totalSpend / $totalSales : 0.0;
@@ -448,7 +449,7 @@ if ($ajaxSection !== '') {
 
     if ($ajaxSection === 'kpis_attributed') {
         $metricCards = [
-            ['spend', 'Investimento (' . $compareDays['x'] . 'd)', 'money'], ['leads', 'Leads reais', 'num'], ['sales', 'Vendas atribuídas', 'num'],
+            ['spend', 'Investimento (' . $compareDays['filter'] . 'd)', 'money'], ['leads', 'Leads reais', 'num'], ['sales', 'Vendas atribuídas', 'num'],
             ['revenue', 'Receita atribuída', 'money'], ['roas', 'ROAS', 'decimal'], ['cac', 'CAC', 'money'], ['cpl', 'CPL', 'money'], ['cpm', 'CPM (sempre Meta)', 'money'],
         ]; ?>
         <div class="metric-grid">
@@ -567,22 +568,51 @@ if ($ajaxSection !== '') {
         if (!$account) { ?>
         <div class="empty">Nenhuma campanha encontrada para esta conta no período selecionado.</div>
         <?php } else {
-            $accView = md_ads_metric_view($account['metrics']['x'] ?? [], $adsMetricSource);
+            $accViews = [
+                'x' => md_ads_metric_view($account['metrics']['x'] ?? [], $adsMetricSource),
+                'y' => md_ads_metric_view($account['metrics']['y'] ?? [], $adsMetricSource),
+                'z' => md_ads_metric_view($account['metrics']['z'] ?? [], $adsMetricSource),
+                'filter' => md_ads_metric_view($account['metrics']['filter'] ?? [], $adsMetricSource),
+            ];
+            $initialWindow = ($preset !== '7') ? 'filter' : 'x';
             $statusMap = $account['integration_id'] ? md_campaign_status_map($pdo, (int)$account['integration_id']) : [];
             $accTableId = 'acc' . preg_replace('/[^a-z0-9]/i', '', $accountKey); ?>
         <div class="am-acc-tools">
           <input type="search" class="am-search" placeholder="Buscar campanha, conjunto ou anúncio…" data-search-for="<?= $accTableId ?>">
           <div class="am-view-mode-toggle">
             <span class="am-toggle-label">Modo:</span>
-            <button type="button" class="am-mode-btn active" data-mode="windows" data-table-target="<?= $accTableId ?>">7d / 30d / 90d</button>
-            <button type="button" class="am-mode-btn" data-mode="filter" data-table-target="<?= $accTableId ?>">Filtro Selecionado (<?= $compareDays['filter'] ?>d)</button>
+            <button type="button" class="am-mode-btn <?= $initialWindow === 'x' ? 'active' : '' ?>" data-mode="windows" data-table-target="<?= $accTableId ?>">7d / 30d / 90d</button>
+            <button type="button" class="am-mode-btn <?= $initialWindow === 'filter' ? 'active' : '' ?>" data-mode="filter" data-table-target="<?= $accTableId ?>">Filtro Selecionado (<?= $compareDays['filter'] ?>d)</button>
           </div>
           <button type="button" class="am-btn" data-expand-all="<?= $accTableId ?>">Expandir tudo</button>
           <button type="button" class="am-btn" data-collapse-all="<?= $accTableId ?>">Recolher tudo</button>
         </div>
-        <div class="am-chips">
-          <?php foreach ($chipColumns as [$key, $label, $fmt]): $val = $accView[$key] ?? 0; ?>
-          <div class="am-chip" data-kpi-cell data-level="account" data-kpi="<?= $key ?>" data-format="<?= $fmt ?>" data-kpi-label="<?= am_h($label) ?>"><small><?= am_h($label) ?></small><strong><?= $fmt === 'money' ? am_money($val) : ($fmt === 'decimal' ? am_num($val, 2) : am_num($val)) ?></strong></div>
+        <div class="am-chip-window-selector" data-selector-for="<?= $accTableId ?>" style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+          <span style="font-size:11px;color:var(--muted);font-weight:600;">Exibir KPI cards por janela:</span>
+          <button type="button" class="am-chip-btn <?= $initialWindow === 'x' ? 'active' : '' ?>" data-chip-window="x" data-table-target="<?= $accTableId ?>">7d</button>
+          <button type="button" class="am-chip-btn" data-chip-window="y" data-table-target="<?= $accTableId ?>">30d</button>
+          <button type="button" class="am-chip-btn" data-chip-window="z" data-table-target="<?= $accTableId ?>">90d</button>
+          <button type="button" class="am-chip-btn <?= $initialWindow === 'filter' ? 'active' : '' ?>" data-chip-window="filter" data-table-target="<?= $accTableId ?>">Filtro (<?= $compareDays['filter'] ?>d)</button>
+        </div>
+        <div class="am-chips" data-chips-table-target="<?= $accTableId ?>">
+          <?php foreach ($chipColumns as [$key, $label, $fmt]):
+            $vx = $accViews['x'][$key] ?? 0;
+            $vy = $accViews['y'][$key] ?? 0;
+            $vz = $accViews['z'][$key] ?? 0;
+            $vf = $accViews['filter'][$key] ?? 0;
+            $fmtVal = static function($val) use ($fmt) {
+              return $fmt === 'money' ? am_money($val) : ($fmt === 'decimal' ? am_num($val, 2) : am_num($val));
+            };
+            $initVal = $accViews[$initialWindow][$key] ?? 0;
+          ?>
+          <div class="am-chip" data-kpi-cell data-level="account" data-kpi="<?= $key ?>" data-format="<?= $fmt ?>" data-kpi-label="<?= am_h($label) ?>"
+               data-val-x="<?= am_h($fmtVal($vx)) ?>"
+               data-val-y="<?= am_h($fmtVal($vy)) ?>"
+               data-val-z="<?= am_h($fmtVal($vz)) ?>"
+               data-val-filter="<?= am_h($fmtVal($vf)) ?>">
+            <small><?= am_h($label) ?></small>
+            <strong class="am-chip-val"><?= $fmtVal($initVal) ?></strong>
+          </div>
           <?php endforeach; ?>
         </div>
         <?php if (!$account['tree']): ?>
@@ -605,7 +635,7 @@ if ($ajaxSection !== '') {
                   </div>
                 </td>
                 <?php foreach ($adsColumns as [$key, $label, $fmt]): ?>
-                  <?= am_kpi_td($account['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'account') ?>
+                  <?= am_kpi_td($account['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'account', $initialWindow) ?>
                 <?php endforeach; ?>
               </tr>
             </thead>
@@ -625,7 +655,7 @@ if ($ajaxSection !== '') {
                     <div class="ads-level"><?php if ($statusClass): ?><span class="badge-status <?= am_h($statusClass) ?>"><?= am_h($status) ?></span><?php endif; ?><?= count($campaign['adsets']) ?> conjunto(s)</div>
                   </div>
                 </div></td>
-                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($campaign['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'campaign') ?><?php endforeach; ?>
+                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($campaign['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'campaign', $initialWindow) ?><?php endforeach; ?>
               </tr>
               <?php foreach ($campaign['adsets'] as $ai => $adset): $aid = $cid . '-a' . substr(md5((string)$ai), 0, 8); ?>
               <tr data-row-id="<?= $aid ?>" data-parent="<?= $cid ?>" data-adset-name="<?= am_h($adset['name']) ?>" hidden data-search-blob="<?= am_h(mb_strtolower((string)$campaign['name'] . ' ' . (string)$adset['name'], 'UTF-8')) ?>">
@@ -635,12 +665,12 @@ if ($ajaxSection !== '') {
                     <strong><?= am_h($adset['name']) ?></strong><div class="ads-level"><?= count($adset['ads']) ?> anúncio(s)</div>
                   </div>
                 </div></td>
-                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($adset['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'adset') ?><?php endforeach; ?>
+                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($adset['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'adset', $initialWindow) ?><?php endforeach; ?>
               </tr>
               <?php foreach ($adset['ads'] as $ad): $adView = md_ads_metric_view($ad['metrics']['x'] ?? [], $adsMetricSource); ?>
               <tr data-parent="<?= $aid ?>" data-adset-name="<?= am_h($adset['name']) ?>" data-ad-name="<?= am_h($ad['name']) ?>" hidden data-search-blob="<?= am_h(mb_strtolower((string)$campaign['name'] . ' ' . (string)$adset['name'] . ' ' . (string)$ad['name'], 'UTF-8')) ?>">
                 <td><div class="ads-name ads-indent-2"><span class="dot-sale <?= $adView['sales'] > 0 ? 'has-sale' : 'no-sale' ?>"></span><div><strong><?= am_h($ad['name']) ?></strong><div class="ads-level">Anúncio</div></div></div></td>
-                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($ad['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'ad') ?><?php endforeach; ?>
+                <?php foreach ($adsColumns as [$key, $label, $fmt]): ?><?= am_kpi_td($ad['metrics'], $compareDays, $adsMetricSource, $key, $label, $fmt, 'ad', $initialWindow) ?><?php endforeach; ?>
               </tr>
               <?php endforeach; ?>
               <?php endforeach; ?>
@@ -702,6 +732,9 @@ include __DIR__ . '/_header.php';
 .am-mode-btn{height:26px;padding:0 9px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:6px;font-size:10px;font-weight:650;cursor:pointer;transition:all .2s ease}
 .am-mode-btn:hover{color:var(--text)}
 .am-mode-btn.active{color:var(--primary);background:var(--primary-dim);border-color:rgba(250,204,21,.35)}
+.am-chip-btn{height:24px;padding:0 8px;border:1px solid var(--border);background:var(--bg);color:var(--muted);border-radius:6px;font-size:10px;font-weight:650;cursor:pointer;transition:all .2s ease}
+.am-chip-btn:hover{color:var(--text);border-color:var(--border-light)}
+.am-chip-btn.active{color:var(--primary);background:var(--primary-dim);border-color:rgba(250,204,21,.35)}
 .am-chips{display:grid;grid-template-columns:repeat(7,minmax(90px,1fr));gap:8px;margin-bottom:14px}
 .am-chip{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px}
 .am-chip small{display:block;font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
@@ -977,6 +1010,25 @@ include __DIR__ . '/_header.php';
     if (det.open && det.dataset.loaded !== '1') amLoadSection(det);
   }, true);
 
+  function amUpdateAccountChips(tableId, winKey) {
+    var container = document.querySelector('[data-chips-table-target="' + tableId + '"]');
+    if (!container) return;
+    container.querySelectorAll('.am-chip').forEach(function(chip) {
+      var val = chip.getAttribute('data-val-' + winKey);
+      if (val !== null) {
+        var strong = chip.querySelector('.am-chip-val');
+        if (strong) strong.textContent = val;
+      }
+    });
+    var selector = document.querySelector('[data-selector-for="' + tableId + '"]');
+    if (selector) {
+      selector.querySelectorAll('.am-chip-btn').forEach(function(b) {
+        if (b.dataset.chipWindow === winKey) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  }
+
   document.addEventListener('click', function(e){
     var modeBtn = e.target.closest('.am-mode-btn');
     if (modeBtn) {
@@ -1008,6 +1060,15 @@ include __DIR__ . '/_header.php';
           table.querySelectorAll('.am-val-filter').forEach(function(el){ el.style.display = 'none'; });
         }
       }
+      amUpdateAccountChips(tableId, mode === 'filter' ? 'filter' : 'x');
+      return;
+    }
+
+    var chipBtn = e.target.closest('.am-chip-btn');
+    if (chipBtn) {
+      var tableId = chipBtn.dataset.tableTarget;
+      var winKey = chipBtn.dataset.chipWindow;
+      amUpdateAccountChips(tableId, winKey);
       return;
     }
 
