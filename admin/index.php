@@ -2305,6 +2305,19 @@ dashTurmaRender();
 </script>
 <?php endif; ?>
 
+<style>
+.dash-collapsible{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-xl);margin-bottom:16px;overflow:hidden}
+.dash-collapsible>summary{list-style:none;cursor:pointer;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;font-weight:700;color:var(--text)}
+.dash-collapsible>summary::-webkit-details-marker{display:none}
+.dash-collapsible[open]>summary{border-bottom:1px solid var(--border)}
+.dash-chevron{flex-shrink:0;color:var(--muted);font-size:12px}
+.dash-section-body{padding:16px 18px}
+.dash-section-body>.panel,.dash-section-body>.grid-2,.dash-section-body>.card{margin-bottom:0}
+</style>
+
+<details class="dash-collapsible" open>
+<summary><span>Indicadores gerais</span><span class="dash-chevron">▼</span></summary>
+<div class="dash-section-body">
 <!-- KPI CARDS -->
 <div class="kpi-grid mb-4">
     <div class="kpi kpi-y">
@@ -2396,7 +2409,12 @@ dashTurmaRender();
         <div class="kpi-sub">viram a live</div>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Acessos ao login</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel login-access-panel mb-4">
     <div class="panel-title login-access-title">
         <div>
@@ -2438,6 +2456,8 @@ dashTurmaRender();
         </div>
     </div>
 </div>
+</div>
+</details>
 
 <style>
 .login-access-title {
@@ -2689,6 +2709,9 @@ body.dash-chart-fullscreen {
 }
 </style>
 
+<details class="dash-collapsible">
+<summary><span>Vendas por dia em relação à live</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:14px;justify-content:space-between;flex-wrap:wrap">
         <div>
@@ -2729,7 +2752,12 @@ body.dash-chart-fullscreen {
         <span id="liveRelativeEmpty" style="display:none">Sem vendas vinculadas a esta referência nos filtros atuais.</span>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Índice de engajamento dos leads</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHART: Indice de engajamento por cadastro -->
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
@@ -2764,7 +2792,12 @@ body.dash-chart-fullscreen {
         <span><strong style="color:#ef4444">Pelando</strong>: viu aulas 1-6, entrou na live e ficou ate oferta, ou gerou certificado.</span>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Atividade diária/mensal/anual</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS: Atividade diaria/mensal/anual -->
 <div class="grid-2 mb-4">
     <?php foreach ($dashLineCharts as $chartKey => $chartCfg): ?>
@@ -2792,7 +2825,12 @@ body.dash-chart-fullscreen {
         </div>
     <?php endforeach; ?>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Dispositivos usados nas aulas</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHART: Dispositivos usados para assistir às aulas -->
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
@@ -2820,7 +2858,12 @@ body.dash-chart-fullscreen {
         <p style="font-size:13px;color:var(--muted);text-align:center;padding:70px 0">Nenhuma abertura de aula registrada no período.</p>
     <?php endif; ?>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Novos vs Reinscritos</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS: Novos vs Reinscritos -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2864,7 +2907,12 @@ body.dash-chart-fullscreen {
         </div>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Certificados e compras</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS: Certificados x compras -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2904,7 +2952,12 @@ body.dash-chart-fullscreen {
         </div>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Concluintes e compras</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS: Concluintes x compras -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2944,7 +2997,12 @@ body.dash-chart-fullscreen {
         </div>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Compradores × conclusão e certificado</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS: Compradores x conclusao/certificado -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -2985,7 +3043,12 @@ body.dash-chart-fullscreen {
         <?php endif; ?>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Inscrições por dia e estágios</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- CHARTS ROW 1: Inscrições + Estágios -->
 <div class="grid-2 mb-4">
     <div class="panel">
@@ -3006,7 +3069,12 @@ body.dash-chart-fullscreen {
         <canvas id="chartStage" style="max-height:220px"></canvas>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Conclusão de aulas</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
         <div>
@@ -3048,7 +3116,12 @@ body.dash-chart-fullscreen {
         <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Sem aberturas ou conclusoes de aula no filtro atual.</p>
     <?php endif; ?>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Tempo até concluir 100% das aulas</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title">
         Tempo ate concluir 100% das aulas
@@ -3062,6 +3135,8 @@ body.dash-chart-fullscreen {
         <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhum aluno concluiu 100% das aulas no filtro atual.</p>
     <?php endif; ?>
 </div>
+</div>
+</details>
 
 <!-- FUNIL WEDGE SVG -->
 <?php if (!empty($funnelData)):
@@ -3078,6 +3153,9 @@ body.dash-chart-fullscreen {
         $hs[$idx] = max(6.0, round(($fstep['count'] / $fMax) * $maxFH, 1));
     }
 ?>
+<details class="dash-collapsible">
+<summary><span>Funil de conversão</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4" style="overflow:hidden">
     <div class="panel-title">Funil de conversão</div>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
@@ -3151,8 +3229,13 @@ body.dash-chart-fullscreen {
 
     </div>
 </div>
+</div>
+</details>
 <?php endif; ?>
 
+<details class="dash-collapsible">
+<summary><span>Funil de Live</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- ═══ LIVE: Funil exclusivo + cards ═══ -->
 <div class="panel mb-4">
     <div class="panel-title">Funil de Live<?= ($liveAcessou + $liveOferta + $liveCompra + $comprasReais) === 0 ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — configure eventos em Integrações → Eventos Live)</span>' : '' ?></div>
@@ -3212,7 +3295,12 @@ body.dash-chart-fullscreen {
         <?php endforeach; ?>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Entrada em grupos por turma</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <!-- ═══ Comparativo POR TURMA (barras) ═══ -->
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -3236,7 +3324,12 @@ body.dash-chart-fullscreen {
         <canvas id="chartWhatsappTurmas"></canvas>
     </div>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Tags por dia</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span>Tags por dia</span>
@@ -3265,7 +3358,12 @@ body.dash-chart-fullscreen {
         <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhuma tag disponivel.</p>
     <?php endif; ?>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Bloqueios por mês</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title">
         Bloqueios por mes
