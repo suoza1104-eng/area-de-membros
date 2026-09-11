@@ -18,6 +18,9 @@ $error = '';
 $canWrite = ($_SESSION['admin_tipo'] ?? 'principal') !== 'equipe';
 if (!$canWrite) {
     $perms = json_decode((string)($_SESSION['equipe_perms'] ?? ''), true) ?: [];
+    if (empty($perms['date_redirects']) && !empty($perms['disparos'])) {
+        $perms['date_redirects'] = $perms['disparos'];
+    }
     $canWrite = !empty($perms['date_redirects']['escrever']);
 }
 

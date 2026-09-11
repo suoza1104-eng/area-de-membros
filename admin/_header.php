@@ -50,6 +50,9 @@ if ($__isEquipe && empty($__equipePerms['automacoes'])) {
 if ($__isEquipe && empty($__equipePerms['hotmart_import']) && !empty($__equipePerms['vendas_analytics'])) {
     $__equipePerms['hotmart_import'] = $__equipePerms['vendas_analytics'];
 }
+if ($__isEquipe && empty($__equipePerms['date_redirects']) && !empty($__equipePerms['disparos'])) {
+    $__equipePerms['date_redirects'] = $__equipePerms['disparos'];
+}
 
 // Dashboard é sempre acessível (evita loop de redirect pós-login)
 if ($__isEquipe && $currentMenu !== 'dashboard') {
@@ -1007,7 +1010,7 @@ button:not([class]):hover { filter: brightness(1.07); }
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z"/>
       </svg>
-      Redirecionadores
+      Redirecionador por Data
     </a>
     <?php endif; ?>
 
