@@ -243,10 +243,6 @@ include __DIR__ . '/_header.php';
 .dr-pill.warn{color:var(--warning);background:var(--warning-dim);border-color:rgba(245,158,11,.25)}
 .dr-copy{font-size:12px}
 .dr-empty{color:var(--muted);text-align:center;padding:30px}
-.dr-editbar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.dr-step{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--muted);background:rgba(255,255,255,.02);font-size:13px;font-weight:600}
-.dr-step-number{width:22px;height:22px;border-radius:999px;border:1px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 auto}
-.dr-step.active{background:var(--primary-dim);border-color:rgba(250,204,21,.4);color:var(--primary)}
 .dr-editor-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
 .dr-editor-title{font-weight:800;color:var(--text);font-size:15px}
 .dr-editor-sub{color:var(--muted);font-size:12px;margin-top:3px}
@@ -267,7 +263,7 @@ include __DIR__ . '/_header.php';
 .dr-trash input{display:none}
 .dr-trash:hover{filter:brightness(1.08)}
 .dr-footer-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-create,.dr-config,.dr-link-head,.dr-link-row,.dr-editbar{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
+@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-create,.dr-config,.dr-link-head,.dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
 </style>
 
 <div class="dr-shell">
@@ -336,13 +332,6 @@ include __DIR__ . '/_header.php';
       <?php if(!$redirectors): ?><div class="dr-card dr-empty">Nenhum redirecionador criado.</div><?php endif; ?>
     </div>
   <?php else: $publicUrl = date_redirects_public_url((string)$edit['slug']); ?>
-    <div class="dr-editbar">
-      <div class="dr-step"><span class="dr-step-number">1</span> Informacoes basicas</div>
-      <div class="dr-step active"><span class="dr-step-number">2</span> Links</div>
-      <div class="dr-step"><span class="dr-step-number">3</span> Configuracoes</div>
-      <div class="dr-step"><span class="dr-step-number">4</span> Personalizacao</div>
-    </div>
-
     <section class="dr-editor">
       <div class="dr-editor-head">
         <div>
