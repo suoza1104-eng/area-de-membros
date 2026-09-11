@@ -209,19 +209,22 @@ $page_title = 'Redirecionadores por Data';
 include __DIR__ . '/_header.php';
 ?>
 <style>
-.dr-shell{max-width:1180px;margin:0 auto}
+.dr-shell{max-width:1120px;margin:0 auto}
 .dr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
 .dr-title h1{font-size:22px;line-height:1.1;margin:0;color:var(--text)}
 .dr-title p{margin:6px 0 0;color:var(--muted);font-size:13px}
 .dr-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.dr-msg,.dr-error{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--success-dim);color:var(--success);font-size:13px}
+.dr-msg,.dr-error{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px;background:var(--success-dim);color:var(--success);font-size:13px}
 .dr-error{background:var(--danger-dim);color:var(--danger)}
-.dr-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow);margin-bottom:14px}
+.dr-card,.dr-editor{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:var(--shadow);margin-bottom:14px}
+.dr-shell input,.dr-shell select{height:36px;width:100%;background:#101827!important;color:var(--text)!important;border:1px solid var(--border-light)!important;border-radius:6px!important;padding:0 10px!important;outline:none;box-shadow:none!important}
+.dr-shell input:focus{border-color:rgba(250,204,21,.55)!important;box-shadow:0 0 0 3px rgba(250,204,21,.09)!important}
+.dr-shell input[type="checkbox"]{width:auto;height:auto;padding:0!important}
 .dr-create{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
 .dr-list{display:grid;gap:12px}
-.dr-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px}
+.dr-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px}
 .dr-row-main{display:flex;align-items:center;gap:14px;min-width:0}
-.dr-icon{width:40px;height:40px;border-radius:10px;background:var(--primary-dim);color:var(--primary);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.dr-icon{width:40px;height:40px;border-radius:8px;background:var(--primary-dim);color:var(--primary);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 .dr-icon svg{width:20px;height:20px}
 .dr-name{font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dr-linkline{display:flex;gap:7px;align-items:center;color:var(--muted);font-size:12px;min-width:0;margin-top:3px}
@@ -229,28 +232,42 @@ include __DIR__ . '/_header.php';
 .dr-stat{font-size:12px;color:var(--muted);text-align:right;min-width:100px}
 .dr-stat strong{display:block;color:var(--text);font-size:16px}
 .dr-menu{position:relative}
-.dr-menu-panel{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:20;width:220px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:12px;padding:6px;box-shadow:var(--shadow-lg)}
+.dr-menu-panel{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:20;width:220px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:8px;padding:6px;box-shadow:var(--shadow-lg)}
 .dr-menu.open .dr-menu-panel{display:block}
-.dr-menu-panel a,.dr-menu-panel button{width:100%;display:flex;gap:8px;align-items:center;background:transparent;color:var(--text);padding:9px 10px;border-radius:8px;font-size:13px;text-decoration:none;text-align:left}
+.dr-menu-panel a,.dr-menu-panel button{width:100%;display:flex;gap:8px;align-items:center;background:transparent;color:var(--text);padding:9px 10px;border-radius:6px;font-size:13px;text-decoration:none;text-align:left}
 .dr-menu-panel a:hover,.dr-menu-panel button:hover{background:var(--bg-hover);text-decoration:none}
 .dr-menu-panel form{margin:0}
 .dr-danger{color:var(--danger)!important}
-.dr-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
-.dr-form-grid{display:grid;grid-template-columns:1fr 190px 64px;gap:10px;align-items:center}
-.dr-form-grid.header{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:700;letter-spacing:.05em;margin-bottom:6px;padding:0 8px}
-.dr-link-row{padding:8px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:rgba(255,255,255,.02)}
-.dr-field label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}
-.dr-field input{width:100%}
 .dr-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:12px;color:var(--muted)}
 .dr-pill.ok{color:var(--success);background:var(--success-dim);border-color:rgba(34,197,94,.25)}
 .dr-pill.warn{color:var(--warning);background:var(--warning-dim);border-color:rgba(245,158,11,.25)}
 .dr-copy{font-size:12px}
-.dr-side-list{display:grid;gap:9px;margin-top:12px}
-.dr-side-item{display:block;border:1px solid var(--border);border-radius:10px;padding:10px;text-decoration:none;color:var(--text)}
-.dr-side-item:hover{background:var(--bg-hover);text-decoration:none}
-.dr-side-item.active{border-color:rgba(250,204,21,.4);background:var(--primary-dim)}
 .dr-empty{color:var(--muted);text-align:center;padding:30px}
-@media(max-width:900px){.dr-head,.dr-row{grid-template-columns:1fr}.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-grid,.dr-create,.dr-form-grid{grid-template-columns:1fr}.dr-form-grid.header{display:none}}
+.dr-editbar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.dr-step{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--muted);background:rgba(255,255,255,.02);font-size:13px;font-weight:600}
+.dr-step-number{width:22px;height:22px;border-radius:999px;border:1px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 auto}
+.dr-step.active{background:var(--primary-dim);border-color:rgba(250,204,21,.4);color:var(--primary)}
+.dr-editor-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
+.dr-editor-title{font-weight:800;color:var(--text);font-size:15px}
+.dr-editor-sub{color:var(--muted);font-size:12px;margin-top:3px}
+.dr-config{display:grid;grid-template-columns:minmax(0,1fr) 220px auto;gap:10px;align-items:end;border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:16px}
+.dr-field label{display:block;color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.dr-link-row .dr-field label{display:none}
+.dr-public-url{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;min-width:0;margin-top:10px}
+.dr-public-url code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.dr-link-table{display:grid;gap:8px}
+.dr-link-head,.dr-link-row{display:grid;grid-template-columns:54px minmax(220px,1fr) 210px 52px;gap:10px;align-items:center}
+.dr-link-head{padding:0 8px 2px;color:var(--muted);font-size:10px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}
+.dr-link-row{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.025)}
+.dr-link-row.is-delete{opacity:.48;border-color:rgba(239,68,68,.35);background:var(--danger-dim)}
+.dr-link-label{color:var(--muted);font-size:12px;text-align:center}
+.dr-link-label strong{display:block;color:var(--text);font-size:12px}
+.dr-trash{width:36px;height:36px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:var(--danger)!important;color:white!important;border:0!important;padding:0!important}
+.dr-trash svg{width:16px;height:16px}
+.dr-trash input{display:none}
+.dr-trash:hover{filter:brightness(1.08)}
+.dr-footer-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-create,.dr-config,.dr-link-head,.dr-link-row,.dr-editbar{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
 </style>
 
 <div class="dr-shell">
@@ -319,71 +336,68 @@ include __DIR__ . '/_header.php';
       <?php if(!$redirectors): ?><div class="dr-card dr-empty">Nenhum redirecionador criado.</div><?php endif; ?>
     </div>
   <?php else: $publicUrl = date_redirects_public_url((string)$edit['slug']); ?>
-    <div class="dr-grid">
-      <section class="dr-card">
+    <div class="dr-editbar">
+      <div class="dr-step"><span class="dr-step-number">1</span> Informacoes basicas</div>
+      <div class="dr-step active"><span class="dr-step-number">2</span> Links</div>
+      <div class="dr-step"><span class="dr-step-number">3</span> Configuracoes</div>
+      <div class="dr-step"><span class="dr-step-number">4</span> Personalizacao</div>
+    </div>
+
+    <section class="dr-editor">
+      <div class="dr-editor-head">
+        <div>
+          <div class="dr-editor-title">Editar Redirecionador <?=date_redirects_h((string)$edit['name'])?></div>
+          <div class="dr-editor-sub">
+            <span class="dr-pill <?=(string)$edit['status']==='active'?'ok':'warn'?>"><?=(string)$edit['status']==='active'?'Ativo':'Pausado'?></span>
+            <span class="dr-pill"><?=(int)$edit['clicks_total']?> cliques</span>
+            <span class="dr-pill"><?=count($links)?> links</span>
+          </div>
+        </div>
+        <form method="post" class="dr-actions">
+          <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
+          <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
+          <button class="btn btn-ghost" name="action" value="toggle" <?=$canWrite?'':'disabled'?>><?=(string)$edit['status']==='active'?'Pausar':'Ativar'?></button>
+          <a href="date_redirects.php" class="btn btn-ghost">Voltar para lista</a>
+        </form>
+      </div>
+
         <form method="post">
           <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
           <input type="hidden" name="action" value="update_redirector">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
-          <div class="grid-2">
-            <div class="form-group">
-              <label class="form-label">Nome</label>
+          <div class="dr-config">
+            <div class="dr-field">
+              <label>Nome</label>
               <input name="name" value="<?=date_redirects_h($edit['name'])?>" required <?=$canWrite?'':'disabled'?>>
             </div>
-            <div class="form-group">
-              <label class="form-label">Slug do link</label>
+            <div class="dr-field">
+              <label>Slug do link</label>
               <input name="slug" value="<?=date_redirects_h($edit['slug'])?>" required <?=$canWrite?'':'disabled'?>>
             </div>
+            <button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar</button>
           </div>
           <div class="dr-actions">
-            <button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar redirecionador</button>
-            <button type="button" class="btn btn-ghost" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar link geral</button>
+            <button type="button" class="btn btn-primary" id="addDateLink" <?=$canWrite?'':'disabled'?>>+ Adicionar mais um link</button>
+            <button type="button" class="btn btn-ghost" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar link</button>
             <a class="btn btn-ghost" href="<?=date_redirects_h($publicUrl)?>" target="_blank">Testar</a>
           </div>
-          <div class="dr-linkline" style="margin-top:10px"><code><?=date_redirects_h($publicUrl)?></code></div>
+          <div class="dr-public-url"><span>Link geral</span><code><?=date_redirects_h($publicUrl)?></code></div>
         </form>
-      </section>
 
-      <aside class="dr-card">
-        <div class="card-header-title">Resumo</div>
-        <div style="display:grid;gap:9px;margin-top:12px">
-          <span class="dr-pill <?=(string)$edit['status']==='active'?'ok':'warn'?>"><?=(string)$edit['status']==='active'?'Ativo':'Pausado'?></span>
-          <span class="dr-pill"><?=(int)$edit['clicks_total']?> cliques totais</span>
-          <span class="dr-pill"><?=count($links)?> links configurados</span>
-        </div>
-        <form method="post" style="margin-top:14px">
-          <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
-          <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
-          <button class="btn btn-ghost" name="action" value="toggle" <?=$canWrite?'':'disabled'?>><?=(string)$edit['status']==='active'?'Pausar':'Ativar'?></button>
-        </form>
-        <div class="dr-side-list">
-          <?php foreach($redirectors as $r): ?>
-          <a class="dr-side-item <?=(int)$r['id']===(int)$edit['id']?'active':''?>" href="date_redirects.php?id=<?=(int)$r['id']?>">
-            <strong><?=date_redirects_h($r['name'])?></strong><br>
-            <small class="text-muted"><?=(int)$r['clicks_total']?> cliques</small>
-          </a>
-          <?php endforeach; ?>
-        </div>
-      </aside>
-
-      <section class="dr-card" style="grid-column:1/-1">
-        <div class="card-header">
-          <div>
-            <div class="card-header-title">Links por data</div>
-            <p class="text-muted">Quando o clique acontecer a partir da data da linha, este destino passa a valer.</p>
-          </div>
-          <button type="button" class="btn btn-ghost" id="addDateLink" <?=$canWrite?'':'disabled'?>>+ Adicionar linha</button>
-        </div>
-        <form method="post" id="linksForm">
+        <form method="post" id="linksForm" style="margin-top:16px">
           <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
           <input type="hidden" name="action" value="save_links">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
-          <div class="dr-form-grid header"><span>URL de destino</span><span>Comeca em</span><span></span></div>
-          <div id="dateLinks">
+          <div class="dr-link-table">
+            <div class="dr-link-head"><span>Link</span><span>URL</span><span>Data de inicio</span><span>Excluir</span></div>
+            <div id="dateLinks">
             <?php foreach($links as $link): ?>
             <div class="dr-link-row">
               <input type="hidden" name="link_id[]" value="<?=(int)$link['id']?>">
-              <div class="dr-form-grid">
+              <div class="dr-link-label">
+                <strong><?=date_redirects_h($link['label'])?></strong>
+                <?=(int)$link['clicks']?> cliques
+              </div>
                 <div class="dr-field">
                   <label><?=date_redirects_h($link['label'])?> · <?=(int)$link['clicks']?> cliques</label>
                   <input name="url[]" value="<?=date_redirects_h($link['url'])?>" required <?=$canWrite?'':'disabled'?>>
@@ -393,37 +407,36 @@ include __DIR__ . '/_header.php';
                   <label>Data e hora</label>
                   <input type="datetime-local" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>" required <?=$canWrite?'':'disabled'?>>
                 </div>
-                <label class="dr-field" style="align-self:end">
-                  <input type="checkbox" name="delete_link[]" value="<?=(int)$link['id']?>" <?=$canWrite?'':'disabled'?>> Apagar
+                <label class="dr-trash" title="Apagar link">
+                  <input type="checkbox" name="delete_link[]" value="<?=(int)$link['id']?>" <?=$canWrite?'':'disabled'?>>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>
+                  </svg>
                 </label>
-              </div>
             </div>
             <?php endforeach; ?>
           </div>
-          <div class="dr-actions" style="margin-top:14px">
+          </div>
+          <div class="dr-footer-actions">
             <button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar links</button>
           </div>
         </form>
       </section>
-    </div>
   <?php endif; ?>
 </div>
 
 <template id="dateLinkTemplate">
   <div class="dr-link-row">
     <input type="hidden" name="link_id[]" value="0">
-    <div class="dr-form-grid">
-      <div class="dr-field">
-        <label>Novo link</label>
-        <input name="url[]" placeholder="https://..." required>
-        <input type="hidden" name="label[]" value="Novo link">
-      </div>
-      <div class="dr-field">
-        <label>Data e hora</label>
-        <input type="datetime-local" name="starts_at[]" required>
-      </div>
-      <span></span>
+    <div class="dr-link-label"><strong>Novo</strong> 0 cliques</div>
+    <div class="dr-field">
+      <input name="url[]" placeholder="https://..." required>
+      <input type="hidden" name="label[]" value="Novo link">
     </div>
+    <div class="dr-field">
+      <input type="datetime-local" name="starts_at[]" required>
+    </div>
+    <span></span>
   </div>
 </template>
 
@@ -445,6 +458,14 @@ document.addEventListener('click', async function(e) {
     } catch (err) {
       prompt('Copie o link:', copy.getAttribute('data-copy'));
     }
+  }
+  const trash = e.target.closest('.dr-trash');
+  if (trash) {
+    setTimeout(function() {
+      const row = trash.closest('.dr-link-row');
+      const input = trash.querySelector('input[type="checkbox"]');
+      if (row && input) row.classList.toggle('is-delete', input.checked);
+    }, 0);
   }
 });
 const addDateLink = document.getElementById('addDateLink');
