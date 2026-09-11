@@ -378,7 +378,7 @@ include __DIR__ . '/_header.php';
           <input type="hidden" name="action" value="save_links">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
           <div class="dr-link-table">
-            <div class="dr-link-head"><span>Link</span><span>URL</span><span>Data de inicio</span><span>Excluir</span></div>
+            <div class="dr-link-head"><span>Link</span><span>URL</span><span>A partir de</span><span>Excluir</span></div>
             <div id="dateLinks">
             <?php foreach($links as $link): ?>
             <div class="dr-link-row">

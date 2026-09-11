@@ -16,7 +16,7 @@ try {
     $dest = date_redirects_find_destination($pdo, $slug);
     if (!$dest) {
         http_response_code(404);
-        echo 'Link indisponivel.';
+        echo 'Este redirecionamento ainda nao esta disponivel.';
         exit;
     }
     date_redirects_log_click($pdo, $dest['redirector'], $dest['link'], $dest['url']);

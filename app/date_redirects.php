@@ -178,18 +178,6 @@ function date_redirects_find_destination(PDO $pdo, string $slug): ?array
     $st->execute(['rid' => (int)$redirector['id']]);
     $link = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 
-    if (!$link) {
-        $st = $pdo->prepare("
-            SELECT *
-              FROM date_redirect_links
-             WHERE redirector_id = :rid
-             ORDER BY starts_at ASC, sort_order ASC, id ASC
-             LIMIT 1
-        ");
-        $st->execute(['rid' => (int)$redirector['id']]);
-        $link = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-    }
-
     if (!$link || !date_redirects_valid_url((string)$link['url'])) return null;
     return ['redirector' => $redirector, 'link' => $link, 'url' => (string)$link['url']];
 }
