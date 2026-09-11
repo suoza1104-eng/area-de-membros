@@ -65,7 +65,7 @@ $podeEscrever = !$__isEquipe || !empty($__equipePerms[$currentMenu]['escrever'])
 // Visibilidade dos itens do sidebar
 $__sbV = [];
 foreach (['dashboard','vendas_analytics','ads_manager','hotmart_import','vendas_vitalicio','alunos','retorno_agendamentos','reagendamentos_live','aulas','turmas','cursos','certificado',
-          'integracoes','webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
+          'integracoes','webhooks','integration_hub','meta_leads','meta_form_utms','superfuncionario','manychat','torpedo_voz','telegram','disparos','date_redirects','live_events','inbound_webhooks','whatsapp_config','whatsapp_monitor','whatsapp_grupos','whatsapp_ai','suporte_chat','automacoes','notificacoes','email_marketing','monitor','cron_monitor','logs','aparencia','config_app','equipe'] as $__k) {
     $__sbV[$__k] = !$__isEquipe || !empty($__equipePerms[$__k]['acesso']) || $__k === 'dashboard';
 }
 $__sbV['integracoes'] = $__sbV['integracoes'] || $__sbV['webhooks'] || $__sbV['integration_hub'] || $__sbV['superfuncionario'] || $__sbV['manychat'];
@@ -116,6 +116,7 @@ $titleMap = [
     'manychat'         => 'Manychat',
     'torpedo_voz'      => 'Torpedo de Voz',
     'telegram'         => 'Telegram',
+    'date_redirects'   => 'Redirecionadores por Data',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
@@ -861,7 +862,7 @@ button:not([class]):hover { filter: brightness(1.07); }
     </a>
     <?php endif; ?>
 
-    <?php if ($__sbV['integracoes'] || $__sbV['meta_leads'] || $__sbV['meta_form_utms'] || $__sbV['torpedo_voz'] || $__sbV['telegram'] || $__sbV['disparos'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
+    <?php if ($__sbV['integracoes'] || $__sbV['meta_leads'] || $__sbV['meta_form_utms'] || $__sbV['torpedo_voz'] || $__sbV['telegram'] || $__sbV['disparos'] || $__sbV['date_redirects'] || $__sbV['live_events'] || $__sbV['inbound_webhooks'] || $__sbV['whatsapp_config'] || $__sbV['whatsapp_monitor'] || $__sbV['whatsapp_grupos'] || $__sbV['whatsapp_ai']): ?>
     <div class="sb-section">Integrações</div>
     <?php endif; ?>
 
@@ -998,6 +999,15 @@ button:not([class]):hover { filter: brightness(1.07); }
         <polygon points="22 2 15 22 11 13 2 9 22 2"/>
       </svg>
       Disparos
+    </a>
+    <?php endif; ?>
+
+    <?php if ($__sbV['date_redirects']): ?>
+    <a href="date_redirects.php" class="sb-item <?= $currentMenu === 'date_redirects' ? 'active' : '' ?>">
+      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z"/>
+      </svg>
+      Redirecionadores
     </a>
     <?php endif; ?>
 
