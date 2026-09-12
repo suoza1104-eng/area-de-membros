@@ -5,6 +5,9 @@ proteger_admin();
 $pdo=getPDO();
 email_marketing_ensure_schema($pdo);
 $id=max(0,(int)($_GET['id']??$_POST['id']??0));
+$automationReturn=(string)($_GET['automation_return']??$_POST['automation_return']??'')==='1';
+$automationFlowId=max(0,(int)($_GET['flow_id']??$_POST['flow_id']??0));
+$automationNodeId=preg_replace('/[^a-zA-Z0-9_\-]/','',(string)($_GET['node_id']??$_POST['node_id']??'')) ?? '';
 $csrf=email_admin_csrf();
 $error='';
 
@@ -43,7 +46,12 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     try{
         email_check_csrf();
         $id=email_template_save($pdo,$_POST,(string)($_SESSION['equipe_nome']??'Administrador'));
-        header('Location: email_editor.php?id='.$id.'&saved=1');
+        $query=['id'=>$id,'saved'=>1];
+        if($automationReturn){
+            $versionId=(int)$pdo->query('SELECT current_version_id FROM email_templates WHERE id='.(int)$id.' LIMIT 1')->fetchColumn();
+            $query+=['automation_return'=>1,'flow_id'=>$automationFlowId,'node_id'=>$automationNodeId,'version_id'=>$versionId];
+        }
+        header('Location: email_editor.php?'.http_build_query($query));
         exit;
     }catch(Throwable $e){$error=$e->getMessage();}
 }
@@ -58,6 +66,12 @@ if($id){
     $st=$pdo->prepare("SELECT t.*,v.html_content FROM email_templates t LEFT JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.id=:id AND t.status<>'deleted'");
     $st->execute(['id'=>$id]);
     $template=$st->fetch(PDO::FETCH_ASSOC)?:$template;
+}
+$automationCreated=null;
+if($automationReturn&&isset($_GET['saved'])&&(int)($_GET['version_id']??0)>0){
+    $st=$pdo->prepare("SELECT t.id template_id,t.name,v.id version_id,v.version_number,v.subject FROM email_templates t JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.id=:id AND v.id=:version_id LIMIT 1");
+    $st->execute(['id'=>$id,'version_id'=>(int)$_GET['version_id']]);
+    $automationCreated=$st->fetch(PDO::FETCH_ASSOC)?:null;
 }
 
 $templateOptions=$pdo->query("SELECT id,name,subject FROM email_templates WHERE status<>'deleted' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC)?:[];
@@ -81,10 +95,12 @@ echo email_admin_styles();
             <button class="btn btn-ghost" type="button" id="tipsBtn">Boas práticas</button>
             <button class="btn btn-ghost" type="button" id="aiBtn" <?=$aiConfigured?'':'disabled'?>>Verificar com IA</button>
             <button class="btn btn-ghost" type="button" id="testBtn">Enviar teste</button>
+            <?php if($automationReturn&&$automationFlowId>0):?><a class="btn btn-ghost" href="automacoes.php?id=<?=(int)$automationFlowId?>">Voltar ao fluxo</a><?php endif?>
             <a class="btn btn-ghost" href="email_modelos.php">← Modelos</a>
         </div>
     </div>
     <?=email_admin_nav('templates')?>
+    <?php if($automationReturn):?><div class="em-msg">Crie ou gere com IA. Ao salvar, este e-mail sera selecionado no bloco da automacao.</div><?php endif?>
     <?php if(isset($_GET['saved'])):?><div class="em-msg">Nova versão salva.</div><?php endif?>
     <?php if(isset($_GET['cloned'])):?><div class="em-msg">Modelo clonado. Revise e salve a nova versão se fizer ajustes.</div><?php endif?>
     <?php if($error):?><div class="em-msg em-error"><?=email_h($error)?></div><?php endif?>
@@ -107,6 +123,9 @@ echo email_admin_styles();
     <form method="post" id="editorForm">
         <input type="hidden" name="csrf" id="csrf" value="<?=email_h($csrf)?>">
         <input type="hidden" name="id" value="<?=$id?>">
+        <input type="hidden" name="automation_return" value="<?=$automationReturn?'1':'0'?>">
+        <input type="hidden" name="flow_id" value="<?=(int)$automationFlowId?>">
+        <input type="hidden" name="node_id" value="<?=email_h($automationNodeId)?>">
         <input type="hidden" name="html" id="htmlField">
         <div class="ee-workspace">
             <aside class="ee-side left">
@@ -181,4 +200,23 @@ aiGenerate.onclick=()=>runAiDraft('ai_generate');aiAdjust.onclick=()=>runAiDraft
 runAi.onclick=async()=>{aiSummary.className='ee-status';aiSummary.textContent='Analisando conteúdo, ortografia e entregabilidade...';suggestions.innerHTML='';runAi.disabled=true;try{const d=await post('ai_review'),review=d.review;aiSummary.innerHTML=`<span class="ee-score">${review.score}/100</span><div>${esc(review.summary)}</div>`;suggestions.innerHTML=review.suggestions.length?review.suggestions.map((s,i)=>`<article class="ee-suggestion" data-i="${i}"><div class="ee-suggestion-head"><strong>${esc(s.title)}</strong><span class="ee-severity">${esc(s.severity)} · ${esc(s.category)}</span></div><p class="text-muted">${esc(s.explanation)}</p><div class="ee-diff"><div><b>Atual</b><br>${esc(s.original)}</div><div><b>Sugestão</b><br>${esc(s.replacement)}</div></div><button class="btn btn-primary btn-xs" type="button" data-apply="${i}">Aceitar esta alteração</button></article>`).join(''):'<div class="em-msg">Nenhuma alteração objetiva foi sugerida.</div>';suggestions.querySelectorAll('[data-apply]').forEach(b=>b.onclick=()=>applySuggestion(review.suggestions[+b.dataset.apply],b.closest('.ee-suggestion')))}catch(e){aiSummary.className='ee-status error';aiSummary.textContent=e.message}finally{runAi.disabled=false}};
 function applySuggestion(s,card){const el=s.target==='subject'?subject:s.target==='preheader'?preheader:null,replacement=s.target==='html'?safeHtml(s.replacement):String(s.replacement??'');if(el){if(s.original&&el.value.includes(s.original))el.value=el.value.replace(s.original,replacement);else el.value=replacement}else{if(s.original&&!v.innerHTML.includes(s.original)){alert('O trecho original não foi encontrado. Aplique manualmente.');return}v.innerHTML=v.innerHTML.replace(s.original,replacement)}card.innerHTML='<strong>✓ Alteração aplicada</strong>';sync()}sync();<?php if(isset($_GET['ai'])):?>open('aiCreateModal');<?php endif?>})();
 </script>
+<?php if($automationCreated): ?>
+<script>
+(function(){
+  var payload = {
+    type: 'email_template_created',
+    flow_id: <?=json_encode($automationFlowId)?>,
+    node_id: <?=json_encode($automationNodeId)?>,
+    template_id: <?=json_encode((int)$automationCreated['template_id'])?>,
+    version_id: <?=json_encode((int)$automationCreated['version_id'])?>,
+    version_number: <?=json_encode((int)$automationCreated['version_number'])?>,
+    name: <?=json_encode((string)$automationCreated['name'], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG)?>,
+    subject: <?=json_encode((string)$automationCreated['subject'], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG)?>
+  };
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage(payload, window.location.origin);
+  }
+})();
+</script>
+<?php endif; ?>
 <?php include __DIR__.'/_footer.php'; ?>
