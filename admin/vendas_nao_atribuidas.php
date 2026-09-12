@@ -96,6 +96,70 @@ function vna_h($value): string { return htmlspecialchars((string)$value, ENT_QUO
 function vna_money($value): string { return 'R$ ' . number_format((float)$value, 2, ',', '.'); }
 function vna_num($value): string { return number_format((float)$value, 0, ',', '.'); }
 function vna_selected($a, $b): string { return (string)$a === (string)$b ? ' selected' : ''; }
+function vna_compact_utm($value): string
+{
+    $value = trim((string)$value);
+    return $value !== '' ? $value : '-';
+}
+function vna_find_student_for_sale(PDO $pdo, array $sale): ?array
+{
+    $email = normalize_email_value($sale['buyer_email'] ?? '');
+    $phone = normalize_phone_value($sale['buyer_phone'] ?? '');
+    $transactionCode = (string)($sale['transaction_code'] ?? '');
+
+    $matchedUserId = 0;
+    if ($transactionCode !== '') {
+        $st = $pdo->prepare('SELECT matched_user_id FROM attribution_sales WHERE transaction_code=:tx LIMIT 1');
+        $st->execute(['tx' => $transactionCode]);
+        $matchedUserId = (int)$st->fetchColumn();
+    }
+
+    if ($matchedUserId > 0) {
+        $st = $pdo->prepare('SELECT id,nome,email,telefone,codigo_turma,created_at,utm_source,utm_medium,utm_campaign,utm_content,utm_term FROM users WHERE id=:uid LIMIT 1');
+        $st->execute(['uid' => $matchedUserId]);
+        $student = $st->fetch(PDO::FETCH_ASSOC);
+    } else {
+        $where = [];
+        $params = [];
+        if ($email !== '') {
+            $where[] = 'LOWER(TRIM(email))=:email';
+            $params['email'] = $email;
+        }
+        if ($phone !== '') {
+            $where[] = "RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), 11)=RIGHT(:phone, 11)";
+            $params['phone'] = $phone;
+        }
+        if (!$where) return null;
+
+        $st = $pdo->prepare('SELECT id,nome,email,telefone,codigo_turma,created_at,utm_source,utm_medium,utm_campaign,utm_content,utm_term FROM users WHERE ' . implode(' OR ', $where) . ' ORDER BY id DESC LIMIT 1');
+        $st->execute($params);
+        $student = $st->fetch(PDO::FETCH_ASSOC);
+    }
+    if (!$student) return null;
+
+    $lead = null;
+    $st = $pdo->prepare('SELECT id,created_at,utm_source,utm_campaign_group,utm_campaign_name,utm_ad_name,utm_term FROM attribution_leads WHERE source_user_id=:uid ORDER BY created_at DESC LIMIT 1');
+    $st->execute(['uid' => (int)$student['id']]);
+    $lead = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    $student['attribution_lead'] = $lead;
+
+    $reason = 'aluno_encontrado';
+    $saleTs = strtotime((string)($sale['sale_date'] ?? ''));
+    $leadTs = $lead ? strtotime((string)($lead['created_at'] ?? '')) : false;
+    $leadCampaign = $lead ? trim((string)($lead['utm_campaign_group'] ?? '')) : '';
+    $studentCampaign = trim((string)($student['utm_medium'] ?? '')) . trim((string)($student['utm_campaign'] ?? ''));
+    if (!$lead) {
+        $reason = 'sem_lead_atribuicao';
+    } elseif ($saleTs !== false && $leadTs !== false && $leadTs > $saleTs) {
+        $reason = 'lead_depois_venda';
+    } elseif ($leadCampaign === '' && $studentCampaign === '') {
+        $reason = 'sem_utm';
+    } elseif ($leadCampaign === '') {
+        $reason = 'lead_sem_campanha';
+    }
+    $student['attribution_failure_reason'] = $reason;
+    return $student;
+}
 
 $unattributedParams = ['model' => $model, 'start' => $period['start'] . ' 00:00:00', 'end' => $period['end'] . ' 23:59:59'];
 $unattributedProductSql = '';
@@ -105,6 +169,10 @@ if ($productFilter !== '') {
 }
 
 $unattributedRows = md_rows($pdo, "SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE " . md_approved_sql('s') . " AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProductSql} ORDER BY s.sale_date DESC LIMIT 100", $unattributedParams);
+foreach ($unattributedRows as &$saleRow) {
+    $saleRow['_student'] = vna_find_student_for_sale($pdo, $saleRow);
+}
+unset($saleRow);
 
 $options = md_filter_options($pdo);
 $manualReturn = $_GET;
@@ -136,7 +204,7 @@ include __DIR__ . '/_header.php';
 .manual-alert.ok { background: var(--success-dim); color: #86efac; border: 1px solid rgba(34,197,94,0.3); }
 .manual-alert.err { background: var(--danger-dim); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
 .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 10px; max-width: 100%; }
-.bi-table { width: 100%; border-collapse: collapse; min-width: 950px; }
+.bi-table { width: 100%; border-collapse: collapse; min-width: 1180px; }
 .bi-table th { position: sticky; top: 0; background: #101a2e; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .bi-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text); vertical-align: top; }
 .bi-table tr:hover td { background: var(--bg-hover); }
@@ -147,6 +215,14 @@ include __DIR__ . '/_header.php';
 .lead-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; font-size: 10.5px; cursor: pointer; }
 .lead-option:hover { background: var(--bg-hover); }
 .lead-selected { margin: 6px 0 0; color: #86efac; font-size: 10px; font-weight: 600; }
+.student-match { display: flex; flex-direction: column; gap: 6px; min-width: 260px; }
+.student-badge { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; border: 1px solid rgba(34,197,94,.35); background: rgba(34,197,94,.12); color: #86efac; }
+.student-badge.warn { border-color: rgba(250,204,21,.35); background: rgba(250,204,21,.12); color: #fde68a; }
+.student-name { font-weight: 800; color: var(--text); }
+.utm-grid { display: grid; grid-template-columns: 68px minmax(0,1fr); gap: 3px 7px; margin-top: 2px; }
+.utm-grid span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.utm-grid .k { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.utm-grid .v { color: #cbd5e1; font-size: 10px; }
 .empty { padding: 32px; text-align: center; color: var(--muted); font-size: 12px; }
 </style>
 
@@ -215,6 +291,7 @@ include __DIR__ . '/_header.php';
           <tr>
             <th>Data / Transação</th>
             <th>Comprador</th>
+            <th>Aluno / UTMs</th>
             <th>Produto</th>
             <th>Valores</th>
             <th>Atribuir ao Lead (Busca)</th>
@@ -231,6 +308,45 @@ include __DIR__ . '/_header.php';
               <strong><?= vna_h((string)($sale['buyer_name'] ?: 'Nome não informado')) ?></strong>
               <div class="subtext"><?= vna_h((string)($sale['buyer_email'] ?? '')) ?></div>
               <div class="subtext"><?= vna_h((string)($sale['buyer_phone'] ?? '')) ?></div>
+            </td>
+            <td>
+              <?php $student = $sale['_student'] ?? null; $lead = is_array($student['attribution_lead'] ?? null) ? $student['attribution_lead'] : null; ?>
+              <?php if ($student): ?>
+                <?php
+                  $hasLeadUtm = $lead && trim((string)($lead['utm_campaign_group'] ?? '')) !== '';
+                  $hasStudentUtm = trim((string)($student['utm_medium'] ?? '')) !== '' || trim((string)($student['utm_campaign'] ?? '')) !== '';
+                  $badgeClass = ($hasLeadUtm || $hasStudentUtm) ? '' : ' warn';
+                  $reasonLabels = [
+                    'aluno_encontrado' => 'Aluno localizado; atribuição de campanha não fechou.',
+                    'sem_lead_atribuicao' => 'Aluno localizado, mas sem lead na tabela de atribuição.',
+                    'lead_depois_venda' => 'Lead de atribuição criado depois da venda.',
+                    'sem_utm' => 'Aluno localizado, mas sem UTMs no cadastro.',
+                    'lead_sem_campanha' => 'Cadastro tem UTM, mas lead de atribuição está sem campanha.',
+                  ];
+                  $reason = (string)($student['attribution_failure_reason'] ?? 'aluno_encontrado');
+                ?>
+                <div class="student-match">
+                  <span class="student-badge<?= $badgeClass ?>"><?= $hasLeadUtm || $hasStudentUtm ? 'Aluno encontrado' : 'Aluno sem UTM' ?></span>
+                  <div>
+                    <div class="student-name">#<?= (int)$student['id'] ?> · <?= vna_h((string)($student['nome'] ?: 'Sem nome')) ?></div>
+                    <div class="subtext"><?= vna_h((string)$student['email']) ?> · <?= vna_h((string)$student['telefone']) ?></div>
+                    <div class="subtext">Turma <?= vna_h((string)($student['codigo_turma'] ?: '-')) ?> · Cadastro <?= vna_h(date('d/m/Y H:i', strtotime((string)$student['created_at']))) ?></div>
+                  </div>
+                  <div class="utm-grid" title="UTMs do cadastro do aluno">
+                    <span class="k">Source</span><span class="v"><?= vna_h(vna_compact_utm($student['utm_source'] ?? '')) ?></span>
+                    <span class="k">Medium</span><span class="v"><?= vna_h(vna_compact_utm($student['utm_medium'] ?? '')) ?></span>
+                    <span class="k">Campaign</span><span class="v"><?= vna_h(vna_compact_utm($student['utm_campaign'] ?? '')) ?></span>
+                    <span class="k">Content</span><span class="v"><?= vna_h(vna_compact_utm($student['utm_content'] ?? '')) ?></span>
+                    <span class="k">Term</span><span class="v"><?= vna_h(vna_compact_utm($student['utm_term'] ?? '')) ?></span>
+                  </div>
+                  <?php if ($lead): ?>
+                    <div class="subtext">Lead atribuição #<?= (int)$lead['id'] ?> · <?= vna_h(date('d/m/Y H:i', strtotime((string)$lead['created_at']))) ?></div>
+                  <?php endif; ?>
+                  <div class="subtext"><?= vna_h($reasonLabels[$reason] ?? $reasonLabels['aluno_encontrado']) ?></div>
+                </div>
+              <?php else: ?>
+                <span class="student-badge warn">Aluno não encontrado</span>
+              <?php endif; ?>
             </td>
             <td>
               <strong><?= vna_h((string)($sale['product_name'] ?: 'Sem produto')) ?></strong>
@@ -260,7 +376,7 @@ include __DIR__ . '/_header.php';
           </tr>
         <?php endforeach; ?>
         <?php if (!$unattributedRows): ?>
-          <tr><td colspan="5" class="empty">🎉 Todas as vendas aprovadas do período estão devidamente atribuídas!</td></tr>
+          <tr><td colspan="6" class="empty">🎉 Todas as vendas aprovadas do período estão devidamente atribuídas!</td></tr>
         <?php endif; ?>
         </tbody>
       </table>
@@ -326,4 +442,3 @@ document.querySelectorAll('.manual-attribution-form').forEach(function(form) {
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>
-
