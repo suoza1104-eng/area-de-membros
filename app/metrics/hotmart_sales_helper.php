@@ -229,6 +229,15 @@ function hotmart_find_matching_user(PDO $pdo, string $email, string $phone): ?ar
 function hotmart_build_sale_data_from_array(array $payload, ?array $matchedUser): array
 {
     $status = (string)($payload['status'] ?? 'PENDING');
+    $matchedUserId = null;
+    $matchMethod = 'none';
+    if ($matchedUser) {
+        $matchedUserData = is_array($matchedUser['user'] ?? null) ? $matchedUser['user'] : $matchedUser;
+        if (!empty($matchedUserData['id'])) {
+            $matchedUserId = (int)$matchedUserData['id'];
+        }
+        $matchMethod = (string)($matchedUser['match_method'] ?? $matchedUser['method'] ?? $matchedUserData['match_method'] ?? 'none');
+    }
 
     return [
         'webhook_event' => (string)($payload['webhook_event'] ?? ''),
@@ -253,8 +262,8 @@ function hotmart_build_sale_data_from_array(array $payload, ?array $matchedUser)
         'buyer_email' => (string)($payload['buyer_email'] ?? ''),
         'buyer_phone_raw' => (string)($payload['buyer_phone_raw'] ?? ''),
         'buyer_phone_norm' => (string)($payload['buyer_phone_norm'] ?? ''),
-        'matched_user_id' => $matchedUser ? (int)$matchedUser['id'] : null,
-        'match_method' => $matchedUser ? (string)$matchedUser['match_method'] : 'none',
+        'matched_user_id' => $matchedUserId,
+        'match_method' => $matchMethod,
         'utm_source' => (string)($payload['utm_source'] ?? ''),
         'utm_medium' => (string)($payload['utm_medium'] ?? ''),
         'utm_campaign' => (string)($payload['utm_campaign'] ?? ''),
