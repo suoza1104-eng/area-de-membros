@@ -48,6 +48,7 @@ include __DIR__ . '/_header.php';
     <div class="admapp-actions">
       <button class="admapp-btn primary" id="admInstallBtn" type="button">Instalar app</button>
       <button class="admapp-btn" id="admEnablePushBtn" type="button">Ativar notificações</button>
+      <button class="admapp-btn" id="admTestPushBtn" type="button">Testar push</button>
       <button class="admapp-btn" id="admTestSoundBtn" type="button">Testar som</button>
     </div>
   </section>
@@ -78,6 +79,7 @@ const statusEl=document.getElementById('admAppStatus');
 const installBadge=document.getElementById('admInstallBadge');
 const installBtn=document.getElementById('admInstallBtn');
 const pushBtn=document.getElementById('admEnablePushBtn');
+const testPushBtn=document.getElementById('admTestPushBtn');
 const testBtn=document.getElementById('admTestSoundBtn');
 let deferredPrompt=null;
 let swRegistration=null;
@@ -155,6 +157,18 @@ async function enablePush(){
   await loadPrefs();
 }
 pushBtn.onclick=()=>enablePush().catch(e=>msg(e.message,'err'));
+testPushBtn.onclick=async()=>{
+  testPushBtn.disabled=true;
+  try{
+    await enablePush();
+    const token=localStorage.getItem('admin_push_token')||'';
+    const resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
+    const json=await resp.json();
+    if(!resp.ok||!json.ok)throw new Error(json.message||'Falha ao enviar teste push.');
+    msg('Teste push enviado para este dispositivo. Confira a bandeirinha do sistema.','ok');
+  }catch(e){msg(e.message,'err');}
+  finally{testPushBtn.disabled=false;}
+};
 
 async function heartbeat(){
   try{
