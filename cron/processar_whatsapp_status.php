@@ -19,17 +19,25 @@ $checked = 0;
 $changed = 0;
 $errors = 0;
 foreach ($instances as $instance) {
-    $previousStatus = (string)$instance['status'];
+    $previousStatus = (string)($instance['status'] ?? '');
     try {
         $res = evolution_fetch_state($pdo, $instance);
         if (empty($res['ok'])) {
             $errors++;
+            if ($previousStatus === 'CONNECTED' && function_exists('evolution_notify_disconnection_to_admin_app')) {
+                evolution_notify_disconnection_to_admin_app($pdo, $instance, 'Falha de comunicação com a Evolution API.');
+            }
             continue;
         }
         $checked++;
         $updated = evolution_get_instance($pdo, (int)$instance['id']);
         if ($updated && (string)$updated['status'] !== $previousStatus) {
             $changed++;
+            if ($previousStatus === 'CONNECTED' && (string)$updated['status'] === 'DISCONNECTED') {
+                if (function_exists('evolution_notify_disconnection_to_admin_app')) {
+                    evolution_notify_disconnection_to_admin_app($pdo, $updated, (string)($updated['last_error'] ?? 'Instância desconectou do WhatsApp.'));
+                }
+            }
         }
     } catch (Throwable $e) {
         $errors++;

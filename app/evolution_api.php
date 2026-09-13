@@ -516,9 +516,11 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
         return $res;
     }
 
+    $previousStatus = (string)($instance['status'] ?? '');
     evolution_update_instance_from_response($pdo, (int)$instance['id'], $res, $status);
 
     $reasonCode = isset($detail['disconnectionReasonCode']) ? (int)$detail['disconnectionReasonCode'] : null;
+    $message = '';
     if ($reasonCode !== null) {
         $label = evolution_terminal_disconnect_label($reasonCode);
         if ($label !== null) {
@@ -530,7 +532,29 @@ function evolution_fetch_state(PDO $pdo, array $instance): array {
                 ->execute([':last_error' => $message, ':id' => (int)$instance['id']]);
         }
     }
+
+    if ($previousStatus === 'CONNECTED' && $status === 'DISCONNECTED') {
+        evolution_notify_disconnection_to_admin_app($pdo, $instance, $message ?: 'Instância desconectou do WhatsApp ou o número foi banido.');
+    }
+
     return $res;
+}
+
+function evolution_notify_disconnection_to_admin_app(PDO $pdo, array $instance, string $reason = ''): void {
+    if (file_exists(__DIR__ . '/admin_app_notifications.php')) {
+        require_once __DIR__ . '/admin_app_notifications.php';
+        if (function_exists('admin_app_notify_event')) {
+            $instKey = (string)($instance['instance_key'] ?? '');
+            $instName = (string)($instance['instance_name'] ?? $instance['instance_key'] ?? 'Instância WhatsApp');
+            try {
+                admin_app_notify_event($pdo, 'WHATSAPP_INSTANCIA_DESCONECTADA', [
+                    'instance_key' => $instKey,
+                    'instance_name' => $instName,
+                    'reason' => $reason ?: 'Número desconectado do WhatsApp ou foi banido.',
+                ]);
+            } catch (Throwable $e) {}
+        }
+    }
 }
 
 function evolution_set_group_webhook(string $instanceKey, string $webhookUrl): array {

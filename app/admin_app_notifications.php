@@ -96,6 +96,7 @@ function admin_app_events(): array
         'PAGAMENTO_CHARGEBACK' => ['label'=>'Chargeback', 'default_sound'=>'critical', 'default_enabled'=>true],
         'PAGAMENTO_CANCELADO' => ['label'=>'Pagamento cancelado', 'default_sound'=>'soft', 'default_enabled'=>false],
         'PAGAMENTO_AGUARDANDO' => ['label'=>'Pagamento pendente', 'default_sound'=>'soft', 'default_enabled'=>false],
+        'WHATSAPP_INSTANCIA_DESCONECTADA' => ['label'=>'WhatsApp Desconectado / Queda', 'default_sound'=>'critical', 'default_enabled'=>true],
     ];
 }
 
@@ -139,6 +140,12 @@ function admin_app_short_text(string $value, int $limit): string
 
 function admin_app_notification_text(string $eventCode, array $payload): array
 {
+    if ($eventCode === 'WHATSAPP_INSTANCIA_DESCONECTADA') {
+        $instName = trim((string)($payload['instance_name'] ?? $payload['instance_key'] ?? 'WhatsApp'));
+        $reason = trim((string)($payload['reason'] ?? $payload['error'] ?? 'Instância desconectou do WhatsApp ou foi banida.'));
+        return ['🚨 Alerta WhatsApp: Conexão Perdida!', 'Instância ' . $instName . ': ' . admin_app_short_text($reason, 90)];
+    }
+
     $product = trim((string)($payload['product_name'] ?? $payload['produto_nome'] ?? ''));
     $grossCents = (int)($payload['gross_amount_cents'] ?? round(((float)($payload['valor_bruto'] ?? 0)) * 100));
     $netCents = (int)($payload['net_amount_cents'] ?? round(((float)($payload['valor_liquido'] ?? 0)) * 100));
@@ -216,7 +223,9 @@ function admin_app_notify_event(PDO $pdo, string $eventCode, array $payload): ar
     $grossCents = (int)($payload['gross_amount_cents'] ?? round(((float)($payload['valor_bruto'] ?? 0)) * 100));
     $product = mb_strtolower(trim((string)($payload['product_name'] ?? $payload['produto_nome'] ?? '')));
     [$title, $body] = admin_app_notification_text($eventCode, $payload);
-    $clickUrl = rtrim(BASE_URL_ADMIN, '/') . '/vendas_auditoria.php';
+    $clickUrl = ($eventCode === 'WHATSAPP_INSTANCIA_DESCONECTADA')
+        ? (rtrim(BASE_URL_ADMIN, '/') . '/whatsapp_config.php')
+        : (rtrim(BASE_URL_ADMIN, '/') . '/vendas_auditoria.php');
     $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
 
     $devices = $pdo->query("SELECT * FROM admin_push_devices WHERE status='active' AND notification_permission='granted' AND token IS NOT NULL AND token<>'' ORDER BY last_seen_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
