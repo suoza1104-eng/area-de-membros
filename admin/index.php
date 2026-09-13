@@ -117,6 +117,25 @@ if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && 
                 transition: border-color .15s, box-shadow .15s;
                 margin-bottom: 14px;
             }
+            .pass-wrap { position: relative; margin-bottom: 14px; }
+            .pass-wrap input { padding-right: 44px; margin-bottom: 0; }
+            .toggle-pass {
+                position: absolute;
+                right: 8px;
+                top: 50%;
+                transform: translateY(-50%);
+                width: 32px;
+                height: 32px;
+                display: grid;
+                place-items: center;
+                border: 0;
+                border-radius: 8px;
+                background: transparent;
+                color: #94a3b8;
+                cursor: pointer;
+            }
+            .toggle-pass:hover { color: #facc15; background: rgba(250,204,21,.08); }
+            .toggle-pass svg { width: 18px; height: 18px; }
             input:focus {
                 border-color: #facc15;
                 box-shadow: 0 0 0 3px rgba(250,204,21,.15);
@@ -124,6 +143,7 @@ if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && 
             button[type="submit"] {
                 width: 100%;
                 padding: 10px;
+                min-height: 39px;
                 border-radius: 999px;
                 border: none;
                 background: #facc15;
@@ -136,6 +156,19 @@ if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && 
                 transition: filter .15s;
             }
             button[type="submit"]:hover { filter: brightness(1.07); }
+            button[type="submit"][disabled] { cursor: wait; filter: brightness(.95); }
+            .btn-content { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+            .spinner {
+                display: none;
+                width: 15px;
+                height: 15px;
+                border: 2px solid rgba(17,24,39,.28);
+                border-top-color: #111827;
+                border-radius: 50%;
+                animation: spin .75s linear infinite;
+            }
+            .is-loading .spinner { display: inline-block; }
+            @keyframes spin { to { transform: rotate(360deg); } }
             .erro {
                 background: rgba(239,68,68,.08);
                 border: 1px solid rgba(239,68,68,.2);
@@ -165,16 +198,55 @@ if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && 
             <input type="text" id="usuario" name="usuario" required autofocus>
 
             <label for="senha">Senha</label>
-            <input type="password" id="senha" name="senha" required>
+            <div class="pass-wrap">
+                <input type="password" id="senha" name="senha" required>
+                <button type="button" class="toggle-pass" id="togglePass" aria-label="Mostrar senha" title="Mostrar senha">
+                    <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+                        <path d="M3 3l18 18"/>
+                        <path d="M10.6 10.6A3 3 0 0012 15a3 3 0 002.1-.9"/>
+                        <path d="M9.9 4.3A10.4 10.4 0 0112 4c6.5 0 10 8 10 8a17.2 17.2 0 01-3.1 4.2"/>
+                        <path d="M6.6 6.6C3.6 8.7 2 12 2 12s3.5 8 10 8a9.7 9.7 0 004.3-1"/>
+                    </svg>
+                </button>
+            </div>
 
             <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:12px;color:#94a3b8;margin:0 0 14px">
                 <input type="checkbox" name="lembrar" value="1" checked style="width:auto;margin:0;accent-color:#facc15">
                 Manter conectado neste dispositivo
             </label>
 
-            <button type="submit">Entrar</button>
+            <button type="submit" id="loginBtn"><span class="btn-content"><span class="spinner"></span><span id="loginBtnText">Entrar</span></span></button>
         </form>
     </div>
+    <script>
+    (function(){
+        const pass = document.getElementById('senha');
+        const toggle = document.getElementById('togglePass');
+        const eyeOpen = document.getElementById('eyeOpen');
+        const eyeClosed = document.getElementById('eyeClosed');
+        const form = document.querySelector('form');
+        const btn = document.getElementById('loginBtn');
+        const btnText = document.getElementById('loginBtnText');
+        toggle.addEventListener('click', function(){
+            const show = pass.type === 'password';
+            pass.type = show ? 'text' : 'password';
+            eyeOpen.style.display = show ? 'none' : '';
+            eyeClosed.style.display = show ? '' : 'none';
+            toggle.setAttribute('aria-label', show ? 'Ocultar senha' : 'Mostrar senha');
+            toggle.title = show ? 'Ocultar senha' : 'Mostrar senha';
+            pass.focus();
+        });
+        form.addEventListener('submit', function(){
+            btn.disabled = true;
+            btn.classList.add('is-loading');
+            btnText.textContent = 'Entrando...';
+        });
+    })();
+    </script>
     </body>
     </html>
     <?php
