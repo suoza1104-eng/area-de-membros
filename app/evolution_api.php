@@ -2246,7 +2246,10 @@ function evolution_process_group_automations(PDO $pdo, string $eventType, string
                 }
                 if (function_exists('automation_flow_capture_event')) {
                     try {
+                        $phoneClean = preg_replace('/[^0-9]/', '', (string)($extra['participant_phone'] ?? ''));
+                        $eventIdDedupe = 'GRP_' . (int)$rule['id'] . '_' . (int)$userId . '_' . $phoneClean . '_' . date('YmdHi');
                         automation_flow_capture_event($pdo, $triggerCode, $userId, array_merge($extra, [
+                            'event_id' => $eventIdDedupe,
                             'group_id' => $groupId,
                             'rule_id' => (int)$rule['id'],
                             'rule_name' => $rule['name'],
