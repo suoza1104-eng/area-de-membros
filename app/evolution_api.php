@@ -283,6 +283,28 @@ function evolution_ensure_tables(PDO $pdo): void {
             KEY idx_wgm_synced (synced_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_group_automations (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(180) NOT NULL,
+            description VARCHAR(500) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            event_type VARCHAR(80) NOT NULL DEFAULT 'WHATSAPP_GRUPO_ENTROU',
+            target_scope VARCHAR(20) NOT NULL DEFAULT 'all',
+            group_ids_json LONGTEXT NULL,
+            add_tags VARCHAR(500) NULL,
+            remove_tags VARCHAR(500) NULL,
+            trigger_code VARCHAR(100) NULL,
+            trigger_label VARCHAR(180) NULL,
+            runs_count INT UNSIGNED NOT NULL DEFAULT 0,
+            last_run_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_wga_active (is_active),
+            KEY idx_wga_event (event_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
 function evolution_guess_turma_code_from_group_name(?string $name): ?string {
@@ -1616,6 +1638,10 @@ function evolution_record_group_event(PDO $pdo, int $logId, array $fields, ?int 
             ':is_blacklisted' => $blacklist ? 1 : 0,
             ':trigger_status' => $status,
         ]);
+
+        if ($userId && $userId > 0 && !empty($fields['interpreted_event']) && !empty($fields['group_id'])) {
+            evolution_process_group_automations($pdo, (string)$fields['interpreted_event'], (string)$fields['group_id'], (int)$userId, $fields);
+        }
     } catch (Throwable $e) {}
 }
 
@@ -2024,3 +2050,224 @@ function evolution_get_instance(PDO $pdo, int $id): ?array {
     $row = $st->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
 }
+
+function evolution_get_group_automations(PDO $pdo): array {
+    evolution_ensure_tables($pdo);
+    try {
+        return $pdo->query("SELECT * FROM whatsapp_group_automations ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function evolution_save_group_automation(PDO $pdo, array $data): int {
+    evolution_ensure_tables($pdo);
+    $id = (int)($data['id'] ?? 0);
+    $name = trim((string)($data['name'] ?? ''));
+    if ($name === '') throw new RuntimeException('Informe o nome da regra de automação.');
+
+    $eventType = trim((string)($data['event_type'] ?? 'WHATSAPP_GRUPO_ENTROU'));
+    if (!in_array($eventType, ['WHATSAPP_GRUPO_ENTROU', 'WHATSAPP_GRUPO_SAIU', 'WHATSAPP_GRUPO_REMOVIDO_ADMIN'], true)) {
+        $eventType = 'WHATSAPP_GRUPO_ENTROU';
+    }
+
+    $targetScope = trim((string)($data['target_scope'] ?? 'all'));
+    if (!in_array($targetScope, ['all', 'specific'], true)) $targetScope = 'all';
+
+    $groupIds = [];
+    if (is_array($data['group_ids'] ?? null)) {
+        $groupIds = array_values(array_filter(array_map('trim', $data['group_ids'])));
+    }
+    $groupIdsJson = $groupIds ? json_encode($groupIds, JSON_UNESCAPED_UNICODE) : null;
+
+    $addTags = trim((string)($data['add_tags'] ?? ''));
+    $removeTags = trim((string)($data['remove_tags'] ?? ''));
+
+    $rawTriggerCode = trim((string)($data['trigger_code'] ?? ''));
+    $triggerCode = strtoupper(preg_replace('/[^a-zA-Z0-9_]+/', '_', $rawTriggerCode));
+    $triggerLabel = trim((string)($data['trigger_label'] ?? ''));
+
+    if ($triggerCode !== '') {
+        if ($triggerLabel === '') $triggerLabel = 'Gatilho de Grupo: ' . $name;
+        if (function_exists('automation_triggers_ensure_schema')) {
+            try {
+                automation_triggers_ensure_schema($pdo);
+                $stTrig = $pdo->prepare("
+                    INSERT INTO automation_triggers (code, label, description, category, badge, is_active, is_system, sort_order)
+                    VALUES (:code, :label, :desc, 'WhatsApp Grupos', 'Grupo', 1, 0, 500)
+                    ON DUPLICATE KEY UPDATE label=VALUES(label), is_active=1
+                ");
+                $stTrig->execute([
+                    ':code' => $triggerCode,
+                    ':label' => $triggerLabel,
+                    ':desc' => 'Gatilho disparado por automação de grupo WhatsApp: ' . $name,
+                ]);
+            } catch (Throwable $e) {}
+        }
+    }
+
+    if ($id > 0) {
+        $st = $pdo->prepare("
+            UPDATE whatsapp_group_automations
+               SET name = :name,
+                   description = :desc,
+                   event_type = :event_type,
+                   target_scope = :target_scope,
+                   group_ids_json = :group_ids_json,
+                   add_tags = :add_tags,
+                   remove_tags = :remove_tags,
+                   trigger_code = :trigger_code,
+                   trigger_label = :trigger_label,
+                   updated_at = NOW()
+             WHERE id = :id
+             LIMIT 1
+        ");
+        $st->execute([
+            ':name' => $name,
+            ':desc' => trim((string)($data['description'] ?? '')) ?: null,
+            ':event_type' => $eventType,
+            ':target_scope' => $targetScope,
+            ':group_ids_json' => $groupIdsJson,
+            ':add_tags' => $addTags !== '' ? $addTags : null,
+            ':remove_tags' => $removeTags !== '' ? $removeTags : null,
+            ':trigger_code' => $triggerCode !== '' ? $triggerCode : null,
+            ':trigger_label' => $triggerLabel !== '' ? $triggerLabel : null,
+            ':id' => $id,
+        ]);
+        return $id;
+    }
+
+    $st = $pdo->prepare("
+        INSERT INTO whatsapp_group_automations
+            (name, description, is_active, event_type, target_scope, group_ids_json, add_tags, remove_tags, trigger_code, trigger_label, created_at)
+        VALUES
+            (:name, :desc, 1, :event_type, :target_scope, :group_ids_json, :add_tags, :remove_tags, :trigger_code, :trigger_label, NOW())
+    ");
+    $st->execute([
+        ':name' => $name,
+        ':desc' => trim((string)($data['description'] ?? '')) ?: null,
+        ':event_type' => $eventType,
+        ':target_scope' => $targetScope,
+        ':group_ids_json' => $groupIdsJson,
+        ':add_tags' => $addTags !== '' ? $addTags : null,
+        ':remove_tags' => $removeTags !== '' ? $removeTags : null,
+        ':trigger_code' => $triggerCode !== '' ? $triggerCode : null,
+        ':trigger_label' => $triggerLabel !== '' ? $triggerLabel : null,
+    ]);
+    return (int)$pdo->lastInsertId();
+}
+
+function evolution_delete_group_automation(PDO $pdo, int $id): bool {
+    if ($id <= 0) return false;
+    evolution_ensure_tables($pdo);
+    try {
+        $pdo->prepare("DELETE FROM whatsapp_group_automations WHERE id = :id LIMIT 1")->execute([':id' => $id]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function evolution_toggle_group_automation(PDO $pdo, int $id): bool {
+    if ($id <= 0) return false;
+    evolution_ensure_tables($pdo);
+    try {
+        $pdo->prepare("UPDATE whatsapp_group_automations SET is_active = IF(is_active=1,0,1), updated_at = NOW() WHERE id = :id LIMIT 1")->execute([':id' => $id]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function evolution_process_group_automations(PDO $pdo, string $eventType, string $groupId, int $userId, array $extra = []): int {
+    if ($userId <= 0 || trim($eventType) === '' || trim($groupId) === '') return 0;
+    evolution_ensure_tables($pdo);
+
+    try {
+        $st = $pdo->prepare("SELECT * FROM whatsapp_group_automations WHERE is_active = 1 AND event_type = :evt");
+        $st->execute([':evt' => $eventType]);
+        $rules = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if (!$rules) return 0;
+
+        $executed = 0;
+        foreach ($rules as $rule) {
+            $scope = (string)($rule['target_scope'] ?? 'all');
+            $groupMatched = false;
+            if ($scope === 'all') {
+                $groupMatched = true;
+            } else {
+                $groups = json_decode((string)($rule['group_ids_json'] ?? '[]'), true) ?: [];
+                if (in_array($groupId, $groups, true)) {
+                    $groupMatched = true;
+                }
+            }
+            if (!$groupMatched) continue;
+
+            // 1. Adicionar tags
+            $addTags = trim((string)($rule['add_tags'] ?? ''));
+            if ($addTags !== '' && function_exists('adicionar_tag')) {
+                $tagList = array_filter(array_map('trim', explode(',', $addTags)));
+                foreach ($tagList as $tag) {
+                    if ($tag !== '') {
+                        try { adicionar_tag($userId, $tag, 'whatsapp_group_automation', null); } catch (Throwable $e) {}
+                    }
+                }
+            }
+
+            // 2. Remover tags
+            $removeTags = trim((string)($rule['remove_tags'] ?? ''));
+            if ($removeTags !== '' && function_exists('remover_tag')) {
+                $tagList = array_filter(array_map('trim', explode(',', $removeTags)));
+                foreach ($tagList as $tag) {
+                    if ($tag !== '') {
+                        try { remover_tag($userId, $tag, 'whatsapp_group_automation'); } catch (Throwable $e) {}
+                    }
+                }
+            }
+
+            // 3. Disparar Gatilho no Motor de Automação Principal
+            $triggerCode = strtoupper(preg_replace('/[^a-zA-Z0-9_]+/', '_', trim((string)($rule['trigger_code'] ?? ''))));
+            if ($triggerCode !== '') {
+                $triggerLabel = trim((string)($rule['trigger_label'] ?? '')) ?: ('Gatilho de Grupo: ' . $rule['name']);
+                if (function_exists('automation_triggers_ensure_schema')) {
+                    try {
+                        automation_triggers_ensure_schema($pdo);
+                        $stTrig = $pdo->prepare("
+                            INSERT INTO automation_triggers (code, label, description, category, badge, is_active, is_system, sort_order)
+                            VALUES (:code, :label, :desc, 'WhatsApp Grupos', 'Grupo', 1, 0, 500)
+                            ON DUPLICATE KEY UPDATE label=VALUES(label), is_active=1
+                        ");
+                        $stTrig->execute([
+                            ':code' => $triggerCode,
+                            ':label' => $triggerLabel,
+                            ':desc' => 'Gatilho disparado por automação de grupo WhatsApp: ' . $rule['name'],
+                        ]);
+                    } catch (Throwable $e) {}
+                }
+                if (function_exists('automation_flow_capture_event')) {
+                    try {
+                        automation_flow_capture_event($pdo, $triggerCode, $userId, array_merge($extra, [
+                            'group_id' => $groupId,
+                            'rule_id' => (int)$rule['id'],
+                            'rule_name' => $rule['name'],
+                            'event_type' => $eventType,
+                        ]));
+                    } catch (Throwable $e) {}
+                }
+            }
+
+            // Atualiza estatísticas da regra
+            $pdo->prepare("
+                UPDATE whatsapp_group_automations
+                   SET runs_count = runs_count + 1, last_run_at = NOW()
+                 WHERE id = :id LIMIT 1
+            ")->execute([':id' => (int)$rule['id']]);
+
+            $executed++;
+        }
+        return $executed;
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+

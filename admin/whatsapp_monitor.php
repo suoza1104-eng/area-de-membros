@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/evolution_api.php';
+require_once __DIR__ . '/../app/automation_catalog.php';
 
 proteger_admin();
 $pdo = getPDO();
@@ -56,7 +57,7 @@ function wh_event_label(?string $event, ?string $action = null): string {
     $event = trim((string)$event);
     $labels = [
         'WHATSAPP_GRUPO_ENTROU' => 'Entrou no grupo',
-        'WHATSAPP_GRUPO_SAIU' => 'Saiu por conta propria',
+        'WHATSAPP_GRUPO_SAIU' => 'Saiu por conta própria',
         'WHATSAPP_GRUPO_REMOVIDO_ADMIN' => 'Removido por admin',
         'WHATSAPP_GRUPO_PROMOVIDO_ADMIN' => 'Promovido a admin',
         'WHATSAPP_GRUPO_REBAIXADO_ADMIN' => 'Rebaixado de admin',
@@ -76,7 +77,7 @@ function wh_trigger_label(?string $status): string {
         'blacklist_protected_team' => 'Lista de fraude ignorada - número confiável',
         'identified_backfill' => 'Aluno identificado',
         'ignored_group' => 'Grupo ignorado',
-        'user_not_found' => 'Aluno nao encontrado',
+        'user_not_found' => 'Aluno não encontrado',
         'ignored' => 'Ignorado',
         'error' => 'Erro',
     ];
@@ -99,10 +100,35 @@ function wh_receipt_badge(array $log): string {
 $notice = '';
 $error = '';
 
+$activeTab = trim((string)($_GET['tab'] ?? 'grupos'));
+if (!in_array($activeTab, ['grupos', 'automacoes', 'fraude', 'conversas', 'payloads'], true)) {
+    $activeTab = 'grupos';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim((string)($_POST['action'] ?? ''));
 
     try {
+        if ($action === 'save_group_automation') {
+            evolution_save_group_automation($pdo, $_POST);
+            header('Location: whatsapp_monitor.php?tab=automacoes&automation_saved=1');
+            exit;
+        }
+
+        if ($action === 'toggle_group_automation') {
+            $id = (int)($_POST['id'] ?? 0);
+            evolution_toggle_group_automation($pdo, $id);
+            header('Location: whatsapp_monitor.php?tab=automacoes&automation_saved=1');
+            exit;
+        }
+
+        if ($action === 'delete_group_automation') {
+            $id = (int)($_POST['id'] ?? 0);
+            evolution_delete_group_automation($pdo, $id);
+            header('Location: whatsapp_monitor.php?tab=automacoes&automation_deleted=1');
+            exit;
+        }
+
         if ($action === 'add_blacklist_number') {
             $phone = evolution_clean_whatsapp_phone((string)($_POST['blacklist_phone'] ?? ''));
             $reason = trim((string)($_POST['blacklist_reason'] ?? ''));
@@ -120,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':phone' => $phone,
                 ':reason' => $reason !== '' ? $reason : null,
             ]);
-            header('Location: whatsapp_monitor.php?blacklist_saved=1');
+            header('Location: whatsapp_monitor.php?tab=fraude&blacklist_saved=1');
             exit;
         }
 
@@ -133,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  WHERE id = :id
                  LIMIT 1
             ")->execute([':id' => $id]);
-            header('Location: whatsapp_monitor.php?blacklist_saved=1');
+            header('Location: whatsapp_monitor.php?tab=fraude&blacklist_saved=1');
             exit;
         }
 
@@ -146,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 VALUES (:name, :phone, NOW())
                 ON DUPLICATE KEY UPDATE name=VALUES(name)
             ")->execute([':name' => $name, ':phone' => $phone]);
-            header('Location: whatsapp_monitor.php?trusted_saved=1');
+            header('Location: whatsapp_monitor.php?tab=fraude&trusted_saved=1');
             exit;
         }
 
@@ -155,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id <= 0) throw new RuntimeException('Registro de número confiável inválido.');
             $pdo->prepare("DELETE FROM whatsapp_trusted_numbers WHERE id=:id LIMIT 1")
                 ->execute([':id' => $id]);
-            header('Location: whatsapp_monitor.php?trusted_saved=1');
+            header('Location: whatsapp_monitor.php?tab=fraude&trusted_saved=1');
             exit;
         }
 
@@ -203,14 +229,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 $updated++;
             }
-            header('Location: whatsapp_monitor.php?groups_refreshed=' . $updated);
+            header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated);
             exit;
         }
 
         if ($action === 'sync_group_members') {
             $res = evolution_sync_all_group_members($pdo, 30);
             header(
-                'Location: whatsapp_monitor.php?members_synced=1'
+                'Location: whatsapp_monitor.php?tab=grupos&members_synced=1'
                 . '&processed=' . (int)($res['processed'] ?? 0)
                 . '&members=' . (int)($res['members'] ?? 0)
                 . '&matched=' . (int)($res['matched'] ?? 0)
@@ -222,10 +248,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'sync_group_members_one') {
             $groupId = trim((string)($_POST['group_id'] ?? ''));
             $instanceKey = trim((string)($_POST['instance_key'] ?? ''));
-            if ($groupId === '' || $instanceKey === '') throw new RuntimeException('Grupo ou instancia invalida.');
+            if ($groupId === '' || $instanceKey === '') throw new RuntimeException('Grupo ou instância inválida.');
             $res = evolution_sync_group_members($pdo, $instanceKey, $groupId);
             header(
-                'Location: whatsapp_monitor.php?members_synced=1'
+                'Location: whatsapp_monitor.php?tab=grupos&members_synced=1'
                 . '&processed=1'
                 . '&members=' . (int)($res['members'] ?? 0)
                 . '&matched=' . (int)($res['matched'] ?? 0)
@@ -236,40 +262,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'toggle_group_ignored') {
             $groupId = trim((string)($_POST['group_id'] ?? ''));
-            if ($groupId === '') throw new RuntimeException('Grupo invalido.');
+            if ($groupId === '') throw new RuntimeException('Grupo inválido.');
             $pdo->prepare("
                 UPDATE whatsapp_groups
                    SET is_ignored = IF(is_ignored=1,0,1),
                        last_seen_at = NOW()
-                 WHERE group_id = :gid
-                 LIMIT 1
+                  WHERE group_id = :gid
+                  LIMIT 1
             ")->execute([':gid' => $groupId]);
-            header('Location: whatsapp_monitor.php?group_scope_saved=1');
+            header('Location: whatsapp_monitor.php?tab=grupos&group_scope_saved=1');
             exit;
         }
 
         if ($action === 'update_group_turma') {
             $groupId = trim((string)($_POST['group_id'] ?? ''));
             $codigoTurma = preg_replace('/[^0-9A-Za-z_-]+/', '', (string)($_POST['codigo_turma'] ?? ''));
-            if ($groupId === '') throw new RuntimeException('Grupo invalido.');
+            if ($groupId === '') throw new RuntimeException('Grupo inválido.');
             $pdo->prepare("
                 UPDATE whatsapp_groups
                    SET codigo_turma = :codigo_turma,
                        last_seen_at = NOW()
-                 WHERE group_id = :gid
-                 LIMIT 1
+                  WHERE group_id = :gid
+                  LIMIT 1
             ")->execute([
                 ':codigo_turma' => $codigoTurma !== '' ? $codigoTurma : null,
                 ':gid' => $groupId,
             ]);
-            header('Location: whatsapp_monitor.php?group_scope_saved=1');
+            header('Location: whatsapp_monitor.php?tab=grupos&group_scope_saved=1');
             exit;
         }
 
         if ($action === 'backfill_event_users') {
             $res = evolution_backfill_unmatched_group_events($pdo, 1000);
             header(
-                'Location: whatsapp_monitor.php?backfill_done=1'
+                'Location: whatsapp_monitor.php?tab=grupos&backfill_done=1'
                 . '&processed=' . (int)($res['processed'] ?? 0)
                 . '&matched=' . (int)($res['matched'] ?? 0)
                 . '&missing=' . (int)($res['still_missing'] ?? 0)
@@ -280,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'apply_backfill_tags') {
             $res = evolution_apply_tags_to_identified_group_events($pdo, 2000);
             header(
-                'Location: whatsapp_monitor.php?backfill_tags_done=1'
+                'Location: whatsapp_monitor.php?tab=grupos&backfill_tags_done=1'
                 . '&processed=' . (int)($res['processed'] ?? 0)
                 . '&tagged=' . (int)($res['tagged'] ?? 0)
                 . '&skipped=' . (int)($res['skipped'] ?? 0)
@@ -292,15 +318,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-if (isset($_GET['saved'])) $notice = 'Configuracao da Evolution API salva.';
-if (isset($_GET['created'])) $notice = 'Instancia criada. Se o QR nao aparecer, clique em "Gerar QR".';
-if (isset($_GET['qr'])) $notice = 'QR Code solicitado. Leia com o WhatsApp do numero de teste.';
-if (isset($_GET['status'])) $notice = 'Status atualizado.';
-if (isset($_GET['deleted'])) $notice = 'Instancia removida apenas do painel local.';
-if (isset($_GET['webhook_set'])) $notice = 'Webhook de grupos configurado na Evolution API.';
+if (isset($_GET['automation_saved'])) $notice = 'Regra de automação de grupo salva com sucesso!';
+if (isset($_GET['automation_deleted'])) $notice = 'Regra de automação de grupo removida.';
+if (isset($_GET['saved'])) $notice = 'Configuração da Evolution API salva.';
+if (isset($_GET['created'])) $notice = 'Instância criada.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Lista de fraude atualizada.';
 if (isset($_GET['trusted_saved'])) $notice = 'Lista de números confiáveis atualizada.';
-if (isset($_GET['groups_refreshed'])) $notice = 'Atualizacao de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
+if (isset($_GET['groups_refreshed'])) $notice = 'Atualização de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
 if (isset($_GET['members_synced'])) {
     $notice = 'Participantes atuais sincronizados: '
         . (int)($_GET['processed'] ?? 0) . ' grupo(s), '
@@ -308,9 +332,9 @@ if (isset($_GET['members_synced'])) {
         . (int)($_GET['matched'] ?? 0) . ' aluno(s) identificado(s), '
         . (int)($_GET['failed'] ?? 0) . ' falha(s).';
 }
-if (isset($_GET['group_scope_saved'])) $notice = 'Configuracao do grupo atualizada.';
+if (isset($_GET['group_scope_saved'])) $notice = 'Configuração do grupo atualizada.';
 if (isset($_GET['backfill_done'])) {
-    $notice = 'Reprocessamento concluido: '
+    $notice = 'Reprocessamento concluído: '
         . (int)($_GET['processed'] ?? 0) . ' evento(s) analisado(s), '
         . (int)($_GET['matched'] ?? 0) . ' aluno(s) identificado(s), '
         . (int)($_GET['missing'] ?? 0) . ' ainda sem aluno.';
@@ -335,24 +359,15 @@ $payloadTrigger = trim((string)($_GET['payload_trigger'] ?? 'operational'));
 if (!in_array($payloadTrigger, ['operational', 'triggered', 'not_found', 'blacklist', 'error', 'ignored', 'all'], true)) {
     $payloadTrigger = 'operational';
 }
+
 $blacklistRows = [];
 $trustedNumbers = [];
 $groupRows = [];
-try {
-    $blacklistRows = $pdo->query("
-        SELECT *
-          FROM whatsapp_blacklist_numbers
-         ORDER BY is_active DESC, id DESC
-         LIMIT 80
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {}
-try {
-    $trustedNumbers = $pdo->query("
-        SELECT *
-          FROM whatsapp_trusted_numbers
-         ORDER BY name, id
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {}
+$groupAutomations = [];
+$directThreads = [];
+$directMessages = [];
+$rawLogs = [];
+
 try {
     $groupRows = $pdo->query("
         SELECT g.*,
@@ -360,141 +375,26 @@ try {
                (SELECT COUNT(*) FROM whatsapp_group_events ge WHERE ge.group_id = g.group_id AND ge.is_blacklisted = 1) AS total_blacklist
           FROM whatsapp_groups g
          ORDER BY g.last_seen_at DESC
-         LIMIT 40
+         LIMIT 100
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {}
-$rawLogs = [];
-try {
-    $rawWhere = [];
-    $rawParams = [];
 
-    if ($payloadScope === 'participants') {
-        $rawWhere[] = "l.event_type LIKE '%participant%'";
-    } elseif ($payloadScope === 'messages') {
-        $rawWhere[] = "l.event_type LIKE '%message%'";
-    } elseif ($payloadScope === 'presence') {
-        $rawWhere[] = "l.event_type LIKE '%presence%'";
-    }
+if ($activeTab === 'automacoes') {
+    try {
+        $groupAutomations = evolution_get_group_automations($pdo);
+    } catch (Throwable $e) {}
+}
 
-    if ($payloadTrigger === 'operational') {
-        $rawWhere[] = "COALESCE(l.trigger_status, '') NOT IN ('ignored')";
-    } elseif ($payloadTrigger === 'triggered') {
-        $rawWhere[] = "l.trigger_status IN ('triggered', 'identified_backfill')";
-    } elseif ($payloadTrigger === 'not_found') {
-        $rawWhere[] = "l.trigger_status IN ('user_not_found', 'blacklist_detected_no_user')";
-    } elseif ($payloadTrigger === 'blacklist') {
-        $rawWhere[] = "(l.trigger_status LIKE 'blacklist_detected%' OR COALESCE(ge.is_blacklisted, 0) = 1)";
-    } elseif ($payloadTrigger === 'error') {
-        $rawWhere[] = "l.trigger_status = 'error'";
-    } elseif ($payloadTrigger === 'ignored') {
-        $rawWhere[] = "l.trigger_status IN ('ignored', 'ignored_group')";
-    }
+if ($activeTab === 'fraude') {
+    try {
+        $blacklistRows = $pdo->query("SELECT * FROM whatsapp_blacklist_numbers ORDER BY is_active DESC, id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+    try {
+        $trustedNumbers = $pdo->query("SELECT * FROM whatsapp_trusted_numbers ORDER BY name, id")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+}
 
-    if ($payloadSearch !== '') {
-        $rawWhere[] = "(
-            l.participant_phone LIKE :payload_search
-            OR l.participant_number LIKE :payload_search
-            OR l.participant_id LIKE :payload_search
-            OR l.author_id LIKE :payload_search
-            OR l.event_type LIKE :payload_search
-            OR l.interpreted_event LIKE :payload_search
-            OR l.action LIKE :payload_search
-            OR l.group_id LIKE :payload_search
-            OR g.group_name LIKE :payload_search
-            OR u.nome LIKE :payload_search
-            OR u.email LIKE :payload_search
-            OR u.telefone LIKE :payload_search
-            OR bl.phone_number LIKE :payload_search
-            OR bl.reason LIKE :payload_search
-            OR l.payload_raw LIKE :payload_search
-        )";
-        $rawParams[':payload_search'] = '%' . $payloadSearch . '%';
-    }
-
-    if ($payloadBlacklist === 'detected') {
-        $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 1";
-    } elseif ($payloadBlacklist === 'active_number') {
-        $rawWhere[] = "EXISTS (
-            SELECT 1
-              FROM whatsapp_blacklist_numbers bx
-             WHERE bx.is_active = 1
-               AND (
-                    bx.phone_number = l.participant_phone
-                    OR bx.phone_number = l.participant_number
-                    OR l.payload_raw LIKE CONCAT('%', bx.phone_number, '%')
-                    OR bx.phone_number = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(u.telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')
-               )
-        )";
-    } elseif ($payloadBlacklist === 'not_detected') {
-        $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 0";
-    }
-
-    if ($payloadToken === 'ok') {
-        $rawWhere[] = "l.token_ok = 1";
-    } elseif ($payloadToken === 'fail') {
-        $rawWhere[] = "l.token_ok = 0";
-    }
-
-    if ($payloadEvent !== '') {
-        $rawWhere[] = "(l.event_type LIKE :payload_event OR l.interpreted_event LIKE :payload_event OR l.action LIKE :payload_event)";
-        $rawParams[':payload_event'] = '%' . $payloadEvent . '%';
-    }
-
-    if ($payloadGroup !== '') {
-        $rawWhere[] = "(l.group_id LIKE :payload_group OR g.group_name LIKE :payload_group)";
-        $rawParams[':payload_group'] = '%' . $payloadGroup . '%';
-    }
-
-    $rawWhereSql = $rawWhere ? ('WHERE ' . implode(' AND ', $rawWhere)) : '';
-    $rawSql = "
-        SELECT l.id, l.token_ok, l.event_type, l.instance_key, l.group_id, l.action,
-               l.participant_number, l.participant_phone, l.participant_id, l.author_id,
-               l.interpreted_event, l.user_id, l.trigger_status, l.trigger_error,
-               ge.is_blacklisted, ge.blacklist_id,
-               bl.reason AS blacklist_reason,
-               l.payload_raw, l.source_ip, l.received_at,
-               g.group_name, g.picture_url AS group_picture_url, g.is_ignored AS group_is_ignored,
-               u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
-               u.codigo_turma AS user_codigo_turma
-        FROM whatsapp_webhook_raw_logs l
-        LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
-        LEFT JOIN whatsapp_blacklist_numbers bl ON bl.id = ge.blacklist_id
-        LEFT JOIN whatsapp_groups g ON g.group_id = l.group_id
-        LEFT JOIN users u ON u.id = l.user_id
-        $rawWhereSql
-        ORDER BY l.id DESC
-        LIMIT 80
-    ";
-    $rawSt = $pdo->prepare($rawSql);
-    $rawSt->execute($rawParams);
-    $rawLogs = $rawSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {}
-
-$directThreads = [];
-$directMessages = [];
-try {
-    $directThreads = $pdo->query("
-        SELECT m.group_id AS chat_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id,
-               u.nome AS aluno_nome, COUNT(*) AS total_messages,
-               MIN(m.message_at) AS first_message_at, MAX(m.message_at) AS last_message_at,
-               MAX(m.processed_batch_id) AS last_batch_id,
-               (SELECT b.category
-                  FROM whatsapp_ai_batches b
-                 WHERE b.id = (
-                    SELECT MAX(m2.processed_batch_id)
-                      FROM whatsapp_ai_messages m2
-                     WHERE m2.group_id = m.group_id
-                       AND m2.chat_type = 'direct'
-                 )
-                 LIMIT 1) AS last_category
-          FROM whatsapp_ai_messages m
-          LEFT JOIN users u ON u.id = m.user_id
-         WHERE m.chat_type = 'direct'
-         GROUP BY m.group_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id, u.nome
-         ORDER BY last_message_at DESC
-         LIMIT 60
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {
+if ($activeTab === 'conversas') {
     try {
         $directThreads = $pdo->query("
             SELECT m.group_id AS chat_id, m.instance_key, m.sender_phone, m.sender_name, m.user_id,
@@ -508,19 +408,127 @@ try {
              ORDER BY last_message_at DESC
              LIMIT 60
         ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } catch (Throwable $ignored) {}
+    } catch (Throwable $e) {}
+    try {
+        $directMessages = $pdo->query("
+            SELECT m.*, u.nome AS aluno_nome, b.category, b.severity, b.summary
+              FROM whatsapp_ai_messages m
+              LEFT JOIN users u ON u.id = m.user_id
+              LEFT JOIN whatsapp_ai_batches b ON b.id = m.processed_batch_id
+             WHERE m.chat_type = 'direct'
+             ORDER BY m.message_at DESC, m.id DESC
+             LIMIT 100
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
 }
-try {
-    $directMessages = $pdo->query("
-        SELECT m.*, u.nome AS aluno_nome, b.category, b.severity, b.summary
-          FROM whatsapp_ai_messages m
-          LEFT JOIN users u ON u.id = m.user_id
-          LEFT JOIN whatsapp_ai_batches b ON b.id = m.processed_batch_id
-         WHERE m.chat_type = 'direct'
-         ORDER BY m.message_at DESC, m.id DESC
-         LIMIT 100
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {}
+
+if ($activeTab === 'payloads') {
+    try {
+        $rawWhere = [];
+        $rawParams = [];
+
+        if ($payloadScope === 'participants') {
+            $rawWhere[] = "l.event_type LIKE '%participant%'";
+        } elseif ($payloadScope === 'messages') {
+            $rawWhere[] = "l.event_type LIKE '%message%'";
+        } elseif ($payloadScope === 'presence') {
+            $rawWhere[] = "l.event_type LIKE '%presence%'";
+        }
+
+        if ($payloadTrigger === 'operational') {
+            $rawWhere[] = "COALESCE(l.trigger_status, '') NOT IN ('ignored')";
+        } elseif ($payloadTrigger === 'triggered') {
+            $rawWhere[] = "l.trigger_status IN ('triggered', 'identified_backfill')";
+        } elseif ($payloadTrigger === 'not_found') {
+            $rawWhere[] = "l.trigger_status IN ('user_not_found', 'blacklist_detected_no_user')";
+        } elseif ($payloadTrigger === 'blacklist') {
+            $rawWhere[] = "(l.trigger_status LIKE 'blacklist_detected%' OR COALESCE(ge.is_blacklisted, 0) = 1)";
+        } elseif ($payloadTrigger === 'error') {
+            $rawWhere[] = "l.trigger_status = 'error'";
+        } elseif ($payloadTrigger === 'ignored') {
+            $rawWhere[] = "l.trigger_status IN ('ignored', 'ignored_group')";
+        }
+
+        if ($payloadSearch !== '') {
+            $rawWhere[] = "(
+                l.participant_phone LIKE :payload_search
+                OR l.participant_number LIKE :payload_search
+                OR l.participant_id LIKE :payload_search
+                OR l.author_id LIKE :payload_search
+                OR l.event_type LIKE :payload_search
+                OR l.interpreted_event LIKE :payload_search
+                OR l.action LIKE :payload_search
+                OR l.group_id LIKE :payload_search
+                OR g.group_name LIKE :payload_search
+                OR u.nome LIKE :payload_search
+                OR u.email LIKE :payload_search
+                OR u.telefone LIKE :payload_search
+                OR bl.phone_number LIKE :payload_search
+                OR bl.reason LIKE :payload_search
+                OR l.payload_raw LIKE :payload_search
+            )";
+            $rawParams[':payload_search'] = '%' . $payloadSearch . '%';
+        }
+
+        if ($payloadBlacklist === 'detected') {
+            $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 1";
+        } elseif ($payloadBlacklist === 'active_number') {
+            $rawWhere[] = "EXISTS (
+                SELECT 1
+                  FROM whatsapp_blacklist_numbers bx
+                 WHERE bx.is_active = 1
+                   AND (
+                        bx.phone_number = l.participant_phone
+                        OR bx.phone_number = l.participant_number
+                        OR l.payload_raw LIKE CONCAT('%', bx.phone_number, '%')
+                        OR bx.phone_number = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(u.telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')
+                   )
+            )";
+        } elseif ($payloadBlacklist === 'not_detected') {
+            $rawWhere[] = "COALESCE(ge.is_blacklisted, 0) = 0";
+        }
+
+        if ($payloadToken === 'ok') {
+            $rawWhere[] = "l.token_ok = 1";
+        } elseif ($payloadToken === 'fail') {
+            $rawWhere[] = "l.token_ok = 0";
+        }
+
+        if ($payloadEvent !== '') {
+            $rawWhere[] = "(l.event_type LIKE :payload_event OR l.interpreted_event LIKE :payload_event OR l.action LIKE :payload_event)";
+            $rawParams[':payload_event'] = '%' . $payloadEvent . '%';
+        }
+
+        if ($payloadGroup !== '') {
+            $rawWhere[] = "(l.group_id LIKE :payload_group OR g.group_name LIKE :payload_group)";
+            $rawParams[':payload_group'] = '%' . $payloadGroup . '%';
+        }
+
+        $rawWhereSql = $rawWhere ? ('WHERE ' . implode(' AND ', $rawWhere)) : '';
+        $rawSql = "
+            SELECT l.id, l.token_ok, l.event_type, l.instance_key, l.group_id, l.action,
+                   l.participant_number, l.participant_phone, l.participant_id, l.author_id,
+                   l.interpreted_event, l.user_id, l.trigger_status, l.trigger_error,
+                   ge.is_blacklisted, ge.blacklist_id,
+                   bl.reason AS blacklist_reason,
+                   l.payload_raw, l.source_ip, l.received_at,
+                   g.group_name, g.picture_url AS group_picture_url, g.is_ignored AS group_is_ignored,
+                   u.nome AS user_nome, u.email AS user_email, u.telefone AS user_telefone,
+                   u.codigo_turma AS user_codigo_turma
+            FROM whatsapp_webhook_raw_logs l
+            LEFT JOIN whatsapp_group_events ge ON ge.raw_log_id = l.id
+            LEFT JOIN whatsapp_blacklist_numbers bl ON bl.id = ge.blacklist_id
+            LEFT JOIN whatsapp_groups g ON g.group_id = l.group_id
+            LEFT JOIN users u ON u.id = l.user_id
+            $rawWhereSql
+            ORDER BY l.id DESC
+            LIMIT 80
+        ";
+        $rawSt = $pdo->prepare($rawSql);
+        $rawSt->execute($rawParams);
+        $rawLogs = $rawSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {}
+}
 
 include __DIR__ . '/_header.php';
 ?>
@@ -534,25 +542,7 @@ include __DIR__ . '/_header.php';
 .wm-card { background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:var(--shadow); }
 .wm-card h2 { font-size:15px; margin:0 0 4px; }
 .wm-card-sub { font-size:12px; color:var(--muted); margin-bottom:16px; }
-.wm-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .wm-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-.wm-instance { border:1px solid var(--border); border-radius:12px; padding:14px; background:rgba(255,255,255,.025); margin-bottom:12px; }
-.wm-instance.active { border-color:rgba(250,204,21,.42); background:rgba(250,204,21,.045); }
-.wm-instance-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px; }
-.wm-name { font-size:14px; font-weight:700; }
-.wm-meta { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-all; }
-.wm-qrbox { display:grid; grid-template-columns:220px minmax(0,1fr); gap:16px; align-items:start; margin-top:12px; }
-.wm-qr { width:220px; min-height:220px; border-radius:12px; border:1px solid var(--border); background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:10px; }
-.wm-qr img, .wm-qr canvas { max-width:198px; max-height:198px; }
-.wm-kv { display:grid; grid-template-columns:120px minmax(0,1fr); gap:6px 10px; font-size:12px; }
-.wm-kv b { color:var(--muted); font-weight:600; }
-.wm-kv span { min-width:0; word-break:break-word; }
-.wm-help { font-size:12px; color:var(--muted); line-height:1.6; }
-.wm-code { font-family:monospace; background:rgba(255,255,255,.06); border:1px solid var(--border); border-radius:8px; padding:8px; font-size:11px; color:#93c5fd; max-height:110px; overflow:auto; word-break:break-all; }
-.wm-danger-note { border:1px solid rgba(245,158,11,.28); background:rgba(245,158,11,.08); color:#fcd34d; border-radius:12px; padding:10px 12px; font-size:12px; margin-bottom:14px; }
-.wm-full { margin-top:16px; }
-.wm-url-row { display:flex; gap:8px; align-items:center; }
-.wm-url-row input { font-family:monospace; font-size:12px; }
 .wm-filter-grid { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr auto; gap:8px; align-items:end; margin:12px 0 14px; }
 .wm-filter-grid .form-group { margin:0; }
 .wm-filter-grid input, .wm-filter-grid select { min-height:34px; font-size:12px; }
@@ -566,22 +556,14 @@ include __DIR__ . '/_header.php';
 .wm-group-cell > div:last-child { min-width:0; overflow:hidden; }
 .wm-ellipsis { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wm-break { overflow-wrap:anywhere; word-break:break-word; }
-.wm-log-table.payloads th:nth-child(1), .wm-log-table.payloads td:nth-child(1) { width:42px; }
-.wm-log-table.payloads th:nth-child(2), .wm-log-table.payloads td:nth-child(2) { width:112px; }
-.wm-log-table.payloads th:nth-child(3), .wm-log-table.payloads td:nth-child(3) { width:82px; }
-.wm-log-table.payloads th:nth-child(4), .wm-log-table.payloads td:nth-child(4) { width:95px; }
-.wm-log-table.payloads th:nth-child(5), .wm-log-table.payloads td:nth-child(5) { width:170px; }
-.wm-log-table.payloads th:nth-child(6), .wm-log-table.payloads td:nth-child(6) { width:220px; }
-.wm-log-table.payloads th:nth-child(7), .wm-log-table.payloads td:nth-child(7) { width:76px; }
-.wm-log-table.payloads th:nth-child(8), .wm-log-table.payloads td:nth-child(8) { width:118px; }
-.wm-log-table.payloads th:nth-child(9), .wm-log-table.payloads td:nth-child(9) { width:150px; }
-.wm-log-table.payloads th:nth-child(10), .wm-log-table.payloads td:nth-child(10) { width:90px; }
-.wm-log-table.payloads th:nth-child(11), .wm-log-table.payloads td:nth-child(11) { width:120px; }
-.wm-log-table.payloads th:nth-child(12), .wm-log-table.payloads td:nth-child(12) { width:118px; }
 .wm-group-avatar { width:34px; height:34px; border-radius:999px; overflow:hidden; flex:0 0 auto; background:rgba(255,255,255,.08); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; font-weight:700; }
 .wm-group-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+.wm-auto-box { border:1px solid var(--border); border-radius:12px; padding:16px; background:rgba(255,255,255,.02); margin-bottom:18px; }
+.wm-group-picker { max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px; background:rgba(0,0,0,.2); }
+.wm-group-opt { display:flex; align-items:center; gap:8px; font-size:12px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+.wm-group-opt:last-child { border-bottom:0; }
 @media(max-width:1100px){ .wm-filter-grid{grid-template-columns:1fr 1fr} }
-@media(max-width:1000px){ .wm-grid,.wm-qrbox{grid-template-columns:1fr}.wm-row{grid-template-columns:1fr}.wm-qr{width:100%;max-width:260px} }
+@media(max-width:1000px){ .wm-grid{grid-template-columns:1fr} }
 @media(max-width:720px){ .wm-filter-grid{grid-template-columns:1fr} }
 </style>
 
@@ -589,121 +571,54 @@ include __DIR__ . '/_header.php';
     <div class="wm-head">
         <div>
             <h1>WhatsApp Monitor</h1>
-            <p>Visão operacional de grupos, Lista de fraude, números confiáveis, conversas diretas e payloads recebidos. Conexões, funções, grupos ignorados e automações ficam em Configurações WhatsApp.</p>
+            <p>Visão operacional de grupos, automações de lançamento meteórico, Lista de fraude, números confiáveis, conversas diretas e payloads recebidos.</p>
         </div>
         <a class="btn btn-primary" href="whatsapp_config.php">Configurações WhatsApp</a>
+    </div>
+
+    <div class="am-group-nav-wrapper" style="margin-bottom:18px">
+        <nav class="am-group-nav-tabs">
+            <a href="whatsapp_monitor.php?tab=grupos" class="am-nav-item <?= $activeTab === 'grupos' ? 'active' : '' ?>">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Grupos Detectados
+            </a>
+            <a href="whatsapp_monitor.php?tab=automacoes" class="am-nav-item <?= $activeTab === 'automacoes' ? 'active' : '' ?>">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Automações de Grupos
+            </a>
+            <a href="whatsapp_monitor.php?tab=fraude" class="am-nav-item <?= $activeTab === 'fraude' ? 'active' : '' ?>">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Lista de Fraude & Confiáveis
+            </a>
+            <a href="whatsapp_monitor.php?tab=conversas" class="am-nav-item <?= $activeTab === 'conversas' ? 'active' : '' ?>">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                Conversas Diretas
+            </a>
+            <a href="whatsapp_monitor.php?tab=payloads" class="am-nav-item <?= $activeTab === 'payloads' ? 'active' : '' ?>">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                Payloads & Logs
+            </a>
+        </nav>
     </div>
 
     <?php if ($notice): ?><div class="alert alert-ok"><?= wh_h($notice) ?></div><?php endif; ?>
     <?php if ($error): ?><div class="alert alert-error"><?= wh_h($error) ?></div><?php endif; ?>
 
-    <div class="wm-grid wm-full">
-        <div class="wm-card">
-            <h2>Lista de fraude e números confiáveis</h2>
-            <div class="wm-card-sub">Cadastre números bloqueados e números protegidos. Um número confiável nunca será banido, mesmo que também conste na Lista de fraude. Remoção e alertas são definidos em Configurações WhatsApp.</div>
-
-            <h3 style="font-size:13px;margin:16px 0 10px">Lista de fraude</h3>
-            <form method="post">
-                <input type="hidden" name="action" value="add_blacklist_number">
-                <div class="form-group">
-                    <label class="form-label">Telefone</label>
-                    <input type="text" name="blacklist_phone" placeholder="5522999999999">
+    <?php if ($activeTab === 'grupos'): ?>
+        <div class="wm-card wm-full">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px">
+                <div>
+                    <h2>Grupos Detectados</h2>
+                    <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Todo grupo novo entra como considerado por padrão; marque como ignorado para o sistema não aplicar tags, Lista de fraude nem gatilhos nele.</div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Motivo</label>
-                    <input type="text" name="blacklist_reason" placeholder="Spam, teste, bloqueio manual...">
-                </div>
-                <button class="btn btn-primary" type="submit">Adicionar na Lista de fraude</button>
-            </form>
-
-            <?php if (!$blacklistRows): ?>
-                <div class="text-muted text-sm mt-3">Nenhum número na Lista de fraude ainda.</div>
-            <?php else: ?>
-                <div class="table-wrap mt-3">
-                    <table class="wm-log-table">
-                        <thead>
-                            <tr>
-                                <th>Telefone</th>
-                                <th>Status</th>
-                                <th>Motivo</th>
-                                <th>Ação</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                        <?php foreach ($blacklistRows as $b): ?>
-                            <tr>
-                                <td><?= wh_h((string)$b['phone_number']) ?></td>
-                                <td><?= (int)$b['is_active'] === 1 ? '<span class="badge badge-danger">Ativo</span>' : '<span class="badge badge-neutral">Inativo</span>' ?></td>
-                                <td><?= wh_h((string)($b['reason'] ?? '-')) ?></td>
-                                <td>
-                                    <form method="post">
-                                        <input type="hidden" name="action" value="toggle_blacklist_number">
-                                        <input type="hidden" name="blacklist_id" value="<?= (int)$b['id'] ?>">
-                                        <button class="btn btn-ghost btn-sm" type="submit"><?= (int)$b['is_active'] === 1 ? 'Desativar' : 'Ativar' ?></button>
-                                    </form>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php endif; ?>
-
-            <hr style="border:0;border-top:1px solid var(--border);margin:22px 0">
-            <h3 style="font-size:13px;margin:0 0 5px">Números confiáveis</h3>
-            <div class="wm-card-sub">Cadastre nome e telefone com DDI. Estes números ficam protegidos contra qualquer banimento automático.</div>
-            <form method="post">
-                <input type="hidden" name="action" value="add_trusted_number">
-                <div class="form-group">
-                    <label class="form-label">Nome</label>
-                    <input type="text" name="trusted_name" required placeholder="Professor, suporte, moderador...">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Telefone</label>
-                    <input type="text" name="trusted_phone" required inputmode="tel" placeholder="5522999999999">
-                </div>
-                <button class="btn btn-primary" type="submit">Adicionar número confiável</button>
-            </form>
-
-            <?php if (!$trustedNumbers): ?>
-                <div class="text-muted text-sm mt-3">Nenhum número confiável cadastrado.</div>
-            <?php else: ?>
-                <div class="table-wrap mt-3">
-                    <table class="wm-log-table">
-                        <thead>
-                            <tr>
-                                <th>Nome</th>
-                                <th>Telefone</th>
-                                <th>Ação</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                        <?php foreach ($trustedNumbers as $trusted): ?>
-                            <tr>
-                                <td><?= wh_h((string)$trusted['name']) ?></td>
-                                <td><?= wh_h((string)$trusted['phone_number']) ?></td>
-                                <td>
-                                    <form method="post" onsubmit="return confirm('Remover este número da lista confiável?')">
-                                        <input type="hidden" name="action" value="delete_trusted_number">
-                                        <input type="hidden" name="trusted_id" value="<?= (int)$trusted['id'] ?>">
-                                        <button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger)">Remover</button>
-                                    </form>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php endif; ?>
-        </div>
-
-        <div class="wm-card">
-            <h2>Grupos detectados</h2>
-            <div class="wm-card-sub">Grupos vistos nos webhooks recebidos. Todo grupo novo entra como considerado por padrão; marque como ignorado para o sistema não aplicar tags, Lista de fraude nem gatilhos nele.</div>
-            <form method="post" class="wm-actions" style="margin-bottom:12px">
-                <input type="hidden" name="action" value="refresh_group_names">
-                <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
-            </form>
+                <form method="post" class="wm-actions">
+                    <input type="hidden" name="action" value="refresh_group_names">
+                    <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
+                    <button class="btn btn-primary btn-sm" name="action" value="sync_group_members" type="submit">Sincronizar participantes atuais</button>
+                    <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
+                    <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos já identificados pelos eventos antigos?');">Aplicar tags retroativas</button>
+                </form>
+            </div>
 
             <?php if (!$groupRows): ?>
                 <div class="text-muted text-sm">Nenhum grupo detectado ainda.</div>
@@ -739,7 +654,7 @@ include __DIR__ . '/_header.php';
                                                 <div class="text-xs text-muted"><?= wh_h((string)$g['group_id']) ?></div>
                                             <?php else: ?>
                                                 <div><?= wh_h((string)$g['group_id']) ?></div>
-                                                <div class="text-xs text-muted">Nome ainda nao carregado</div>
+                                                <div class="text-xs text-muted">Nome ainda não carregado</div>
                                             <?php endif; ?>
                                         </div>
                                     </div>
@@ -765,217 +680,541 @@ include __DIR__ . '/_header.php';
                 </div>
             <?php endif; ?>
         </div>
-    </div>
 
-    <div class="wm-card wm-full">
-        <h2>Conversas diretas recebidas</h2>
-        <div class="wm-card-sub">Mensagens privadas recebidas por cada instância. O sistema aguarda 10 minutos, agrupa o pacote e envia para análise da IA.</div>
-        <?php if (!$directThreads): ?>
-            <div class="text-muted text-sm">Nenhuma mensagem direta capturada ainda. Confirme o evento MESSAGES_UPSERT no webhook das instâncias.</div>
-        <?php else: ?>
-            <div class="table-wrap">
-                <table class="wm-log-table">
-                    <thead><tr><th>Contato</th><th>Instância</th><th>Mensagens</th><th>Primeira</th><th>Última</th><th>Última análise</th></tr></thead>
-                    <tbody>
-                    <?php foreach ($directThreads as $thread): ?>
-                        <tr>
-                            <td><strong><?= wh_h((string)($thread['aluno_nome'] ?: $thread['sender_name'] ?: $thread['sender_phone'])) ?></strong><div class="text-xs text-muted"><?= wh_h((string)$thread['sender_phone']) ?></div></td>
-                            <td><?= wh_h((string)$thread['instance_key']) ?></td>
-                            <td><?= (int)$thread['total_messages'] ?></td>
-                            <td><?= wh_h((string)$thread['first_message_at']) ?></td>
-                            <td><?= wh_h((string)$thread['last_message_at']) ?></td>
-                            <td><?= wh_h((string)($thread['last_category'] ?? ($thread['last_batch_id'] ? 'Processada' : 'Aguardando janela'))) ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+    <?php elseif ($activeTab === 'automacoes'): ?>
+        <div class="wm-card wm-full">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px">
+                <div>
+                    <h2>Automações de Grupos & Lançamento Meteórico</h2>
+                    <div class="wm-card-sub">Crie automações baseadas em eventos de grupos (ex: aluno entrou no grupo X, Y ou Z). Configure a adição/remoção automática de Tags e dispare gatilhos para o Motor de Automações Principal (E-mail, WhatsApp, Push, Voz).</div>
+                </div>
+                <button class="btn btn-primary btn-sm" type="button" onclick="toggleAutomationForm(0)">+ Nova Automação de Grupo</button>
             </div>
-            <details style="margin-top:12px">
-                <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700">Ver últimas mensagens</summary>
+
+            <div id="automationFormBox" class="wm-auto-box" style="display:none">
+                <h3 id="formTitle" style="font-size:15px;margin:0 0 12px;color:#facc15">Criar Nova Automação de Grupo</h3>
+                <form method="post" id="groupAutoForm">
+                    <input type="hidden" name="action" value="save_group_automation">
+                    <input type="hidden" name="id" id="auto_id" value="0">
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                        <div class="form-group">
+                            <label class="form-label">Nome da Regra *</label>
+                            <input type="text" name="name" id="auto_name" required placeholder="Ex: Entrou no Grupo Lançamento X">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Evento do Grupo *</label>
+                            <select name="event_type" id="auto_event_type">
+                                <option value="WHATSAPP_GRUPO_ENTROU">Aluno Entrou no Grupo</option>
+                                <option value="WHATSAPP_GRUPO_SAIU">Aluno Saiu por conta própria</option>
+                                <option value="WHATSAPP_GRUPO_REMOVIDO_ADMIN">Aluno Removido por Admin</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Descrição / Observação</label>
+                        <input type="text" name="description" id="auto_description" placeholder="Ex: Adiciona tag meteorico_vip e dispara fluxo de boas-vindas">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Escopo dos Grupos *</label>
+                        <div style="display:flex;gap:16px;margin-bottom:8px">
+                            <label style="cursor:pointer;font-size:13px"><input type="radio" name="target_scope" value="all" id="scope_all" checked onclick="toggleGroupPicker(false)"> Todos os Grupos Monitorados</label>
+                            <label style="cursor:pointer;font-size:13px"><input type="radio" name="target_scope" value="specific" id="scope_specific" onclick="toggleGroupPicker(true)"> Grupos Específicos</label>
+                        </div>
+                        <div id="groupPickerBox" class="wm-group-picker" style="display:none">
+                            <?php if (!$groupRows): ?>
+                                <div class="text-muted text-xs">Nenhum grupo detectado no sistema ainda.</div>
+                            <?php else: ?>
+                                <?php foreach ($groupRows as $g): ?>
+                                    <label class="wm-group-opt">
+                                        <input type="checkbox" name="group_ids[]" value="<?= wh_h((string)$g['group_id']) ?>" class="group-chk">
+                                        <strong><?= wh_h((string)($g['group_name'] ?: $g['group_id'])) ?></strong>
+                                        <span class="text-xs text-muted">(<?= wh_h((string)$g['group_id']) ?>)</span>
+                                    </label>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+                        <div class="form-group">
+                            <label class="form-label">Ação 1: Adicionar Tag(s)</label>
+                            <input type="text" name="add_tags" id="auto_add_tags" placeholder="Ex: entrou_grupo_x, meteorico_vip (separadas por vírgula)">
+                            <div class="text-xs text-muted mt-1">Tags adicionadas ao cadastro do aluno quando o evento ocorrer.</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Ação 2: Remover Tag(s)</label>
+                            <input type="text" name="remove_tags" id="auto_remove_tags" placeholder="Ex: aguardando_grupo (separadas por vírgula)">
+                            <div class="text-xs text-muted mt-1">Tags removidas do cadastro do aluno quando o evento ocorrer.</div>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+                        <h4 style="font-size:13px;color:#60a5fa;margin:0 0 8px">⚡ Ação 3: Disparar Gatilho no Motor de Automações Principal</h4>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                            <div class="form-group">
+                                <label class="form-label">Código do Gatilho Customizado</label>
+                                <input type="text" name="trigger_code" id="auto_trigger_code" placeholder="Ex: LANCAMENTO_X (Somente letras/números/_)">
+                                <div class="text-xs text-muted mt-1">Este código ficará disponível para selecionar em qualquer fluxo no motor de automação.</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Rótulo Explicativo do Gatilho</label>
+                                <input type="text" name="trigger_label" id="auto_trigger_label" placeholder="Ex: Gatilho de Grupo: Lançamento X">
+                                <div class="text-xs text-muted mt-1">Nome exibido no catálogo de gatilhos do sistema.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:10px;margin-top:14px">
+                        <button class="btn btn-primary btn-sm" type="submit">Salvar Automação de Grupo</button>
+                        <button class="btn btn-ghost btn-sm" type="button" onclick="toggleAutomationForm(0)">Cancelar</button>
+                    </div>
+                </form>
+            </div>
+
+            <?php if (!$groupAutomations): ?>
+                <div class="text-muted text-sm" style="padding:18px 0">Nenhuma automação de grupo configurada ainda. Clique no botão acima para criar a primeira automação.</div>
+            <?php else: ?>
                 <div class="table-wrap mt-3">
                     <table class="wm-log-table">
-                        <thead><tr><th>Data</th><th>Contato</th><th>Mensagem</th><th>IA</th></tr></thead>
-                        <tbody>
-                        <?php foreach ($directMessages as $message): ?>
+                        <thead>
                             <tr>
-                                <td><?= wh_h((string)$message['message_at']) ?></td>
-                                <td><?= wh_h((string)($message['aluno_nome'] ?: $message['sender_name'] ?: $message['sender_phone'])) ?><div class="text-xs text-muted"><?= wh_h((string)$message['sender_phone']) ?></div></td>
-                                <td style="max-width:520px"><?= wh_h((string)$message['message_text']) ?></td>
-                                <td><?= wh_h((string)($message['category'] ?: ($message['processed_batch_id'] ? 'Processada' : 'Pendente'))) ?><div class="text-xs text-muted"><?= wh_h((string)($message['severity'] ?? '')) ?></div></td>
+                                <th>Regra</th>
+                                <th>Evento</th>
+                                <th>Escopo dos Grupos</th>
+                                <th>Tags a Adicionar/Remover</th>
+                                <th>Gatilho do Motor Principal</th>
+                                <th>Execuções</th>
+                                <th>Status</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($groupAutomations as $auto): ?>
+                            <?php
+                            $targetGroups = json_decode((string)($auto['group_ids_json'] ?? '[]'), true) ?: [];
+                            ?>
+                            <tr>
+                                <td>
+                                    <strong><?= wh_h((string)$auto['name']) ?></strong>
+                                    <?php if (!empty($auto['description'])): ?><div class="text-xs text-muted"><?= wh_h((string)$auto['description']) ?></div><?php endif; ?>
+                                </td>
+                                <td><span class="badge badge-neutral"><?= wh_h(wh_event_label((string)$auto['event_type'])) ?></span></td>
+                                <td>
+                                    <?php if (($auto['target_scope'] ?? 'all') === 'all'): ?>
+                                        <span class="badge badge-neutral">Todos os Grupos</span>
+                                    <?php else: ?>
+                                        <span class="badge badge-primary"><?= count($targetGroups) ?> grupo(s) específico(s)</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if (!empty($auto['add_tags'])): ?>
+                                        <div><strong class="text-xs" style="color:#4ade80">+ Add:</strong> <?= wh_h((string)$auto['add_tags']) ?></div>
+                                    <?php endif; ?>
+                                    <?php if (!empty($auto['remove_tags'])): ?>
+                                        <div><strong class="text-xs" style="color:#f87171">- Rem:</strong> <?= wh_h((string)$auto['remove_tags']) ?></div>
+                                    <?php endif; ?>
+                                    <?php if (empty($auto['add_tags']) && empty($auto['remove_tags'])): ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if (!empty($auto['trigger_code'])): ?>
+                                        <span class="code" style="color:#60a5fa;font-weight:700"><?= wh_h((string)$auto['trigger_code']) ?></span>
+                                        <?php if (!empty($auto['trigger_label'])): ?><div class="text-xs text-muted"><?= wh_h((string)$auto['trigger_label']) ?></div><?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div><?= (int)($auto['runs_count'] ?? 0) ?></div>
+                                    <?php if (!empty($auto['last_run_at'])): ?><div class="text-xs text-muted"><?= wh_h(substr((string)$auto['last_run_at'], 5, 11)) ?></div><?php endif; ?>
+                                </td>
+                                <td><?= (int)$auto['is_active'] === 1 ? '<span class="badge badge-success">Ativa</span>' : '<span class="badge badge-neutral">Inativa</span>' ?></td>
+                                <td>
+                                    <div style="display:flex;gap:6px">
+                                        <button class="btn btn-ghost btn-sm" type="button" onclick='editAutomation(<?= json_encode($auto, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>)'>Editar</button>
+                                        <form method="post" style="display:inline">
+                                            <input type="hidden" name="action" value="toggle_group_automation">
+                                            <input type="hidden" name="id" value="<?= (int)$auto['id'] ?>">
+                                            <button class="btn btn-ghost btn-sm" type="submit"><?= (int)$auto['is_active'] === 1 ? 'Pausar' : 'Ativar' ?></button>
+                                        </form>
+                                        <form method="post" style="display:inline" onsubmit="return confirm('Remover esta regra de automação de grupo?')">
+                                            <input type="hidden" name="action" value="delete_group_automation">
+                                            <input type="hidden" name="id" value="<?= (int)$auto['id'] ?>">
+                                            <button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger)">Excluir</button>
+                                        </form>
+                                    </div>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
-            </details>
-        <?php endif; ?>
-    </div>
+            <?php endif; ?>
+        </div>
 
-    <div class="wm-card wm-full">
-        <h2>Payloads recebidos</h2>
-        <div class="wm-card-sub">Ultimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>, mostrando eventos de grupo por padrao. Mensagens da IA continuam capturadas e podem ser vistas em "Todos".</div>
-        <form method="post" class="wm-actions" style="margin-bottom:12px">
-            <input type="hidden" name="action" value="refresh_group_names">
-            <button class="btn btn-ghost btn-sm" type="submit">Atualizar nomes dos grupos</button>
-            <button class="btn btn-primary btn-sm" name="action" value="sync_group_members" type="submit">Sincronizar participantes atuais</button>
-            <button class="btn btn-ghost btn-sm" name="action" value="backfill_event_users" type="submit">Reprocessar alunos antigos</button>
-            <button class="btn btn-ghost btn-sm" name="action" value="apply_backfill_tags" type="submit" onclick="return confirm('Aplicar tags nos alunos ja identificados pelos eventos antigos? Isso nao dispara Webhooks nem SuperFuncionario.');">Aplicar tags retroativas</button>
-        </form>
-        <form method="get" action="whatsapp_monitor.php#payloads" class="wm-filter-grid">
-            <div class="form-group">
-                <label class="form-label">Tipo de payload</label>
-                <select name="payload_scope">
-                    <option value="participants" <?= $payloadScope === 'participants' ? 'selected' : '' ?>>Eventos de grupo</option>
-                    <option value="messages" <?= $payloadScope === 'messages' ? 'selected' : '' ?>>Mensagens da IA</option>
-                    <option value="presence" <?= $payloadScope === 'presence' ? 'selected' : '' ?>>Presenca</option>
-                    <option value="all" <?= $payloadScope === 'all' ? 'selected' : '' ?>>Todos</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Buscar contato, aluno, telefone, grupo ou payload</label>
-                <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Lista de fraude</label>
-                <select name="payload_blacklist">
-                    <option value="" <?= $payloadBlacklist === '' ? 'selected' : '' ?>>Todos</option>
-                    <option value="detected" <?= $payloadBlacklist === 'detected' ? 'selected' : '' ?>>Detectada no evento</option>
-                    <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Número na Lista de fraude</option>
-                    <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem Lista de fraude detectada</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Gatilho</label>
-                <select name="payload_trigger">
-                    <option value="operational" <?= $payloadTrigger === 'operational' ? 'selected' : '' ?>>Operacionais</option>
-                    <option value="triggered" <?= $payloadTrigger === 'triggered' ? 'selected' : '' ?>>Acionados</option>
-                    <option value="not_found" <?= $payloadTrigger === 'not_found' ? 'selected' : '' ?>>Aluno nao encontrado</option>
-                    <option value="blacklist" <?= $payloadTrigger === 'blacklist' ? 'selected' : '' ?>>Lista de fraude</option>
-                    <option value="error" <?= $payloadTrigger === 'error' ? 'selected' : '' ?>>Erro</option>
-                    <option value="ignored" <?= $payloadTrigger === 'ignored' ? 'selected' : '' ?>>Ignorados</option>
-                    <option value="all" <?= $payloadTrigger === 'all' ? 'selected' : '' ?>>Todos</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Token</label>
-                <select name="payload_token">
-                    <option value="" <?= $payloadToken === '' ? 'selected' : '' ?>>Todos</option>
-                    <option value="ok" <?= $payloadToken === 'ok' ? 'selected' : '' ?>>OK</option>
-                    <option value="fail" <?= $payloadToken === 'fail' ? 'selected' : '' ?>>Falhou</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Evento</label>
-                <input type="text" name="payload_event" value="<?= wh_h($payloadEvent) ?>" placeholder="messages, group...">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Grupo</label>
-                <input type="text" name="payload_group" value="<?= wh_h($payloadGroup) ?>" placeholder="Nome ou ID">
-            </div>
-            <div class="wm-filter-actions">
-                <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
-                <a class="btn btn-ghost btn-sm" href="whatsapp_monitor.php#payloads">Limpar</a>
-            </div>
-        </form>
+        <script>
+        function toggleAutomationForm(show) {
+            var box = document.getElementById('automationFormBox');
+            if (show === 0) {
+                box.style.display = box.style.display === 'none' ? 'block' : 'none';
+            } else {
+                box.style.display = show ? 'block' : 'none';
+            }
+            if (box.style.display === 'none') {
+                document.getElementById('groupAutoForm').reset();
+                document.getElementById('auto_id').value = 0;
+                document.getElementById('formTitle').textContent = 'Criar Nova Automação de Grupo';
+                toggleGroupPicker(false);
+            }
+        }
+        function toggleGroupPicker(show) {
+            document.getElementById('groupPickerBox').style.display = show ? 'block' : 'none';
+        }
+        function editAutomation(data) {
+            document.getElementById('auto_id').value = data.id || 0;
+            document.getElementById('auto_name').value = data.name || '';
+            document.getElementById('auto_description').value = data.description || '';
+            document.getElementById('auto_event_type').value = data.event_type || 'WHATSAPP_GRUPO_ENTROU';
+            document.getElementById('auto_add_tags').value = data.add_tags || '';
+            document.getElementById('auto_remove_tags').value = data.remove_tags || '';
+            document.getElementById('auto_trigger_code').value = data.trigger_code || '';
+            document.getElementById('auto_trigger_label').value = data.trigger_label || '';
+            
+            var scope = data.target_scope || 'all';
+            if (scope === 'specific') {
+                document.getElementById('scope_specific').checked = true;
+                toggleGroupPicker(true);
+            } else {
+                document.getElementById('scope_all').checked = true;
+                toggleGroupPicker(false);
+            }
 
-        <?php if (!$rawLogs): ?>
-            <div class="text-muted text-sm">Nenhum payload encontrado para os filtros atuais. Ajuste a busca ou limpe os filtros.</div>
-        <?php else: ?>
-            <div class="table-wrap">
-                <table class="wm-log-table payloads">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Recebido</th>
-                            <th>Token</th>
-                            <th>Evento</th>
-                            <th>Instancia</th>
-                            <th>Grupo</th>
-                            <th>Evento</th>
-                            <th>Telefone</th>
-                            <th>Aluno</th>
-                            <th>Lista de fraude</th>
-                            <th>Gatilho</th>
-                            <th>Payload</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($rawLogs as $log): ?>
-                        <?php
-                        $phone = (string)($log['participant_phone'] ?? '');
-                        if ($phone === '') $phone = wh_phone_from_payload((string)$log['payload_raw'], (string)($log['participant_number'] ?? ''));
-                        $userName = trim((string)($log['user_nome'] ?? ''));
-                        $userId = (int)($log['user_id'] ?? 0);
-                        ?>
-                        <tr>
-                            <td><?= (int)$log['id'] ?></td>
-                            <td><?= wh_h(substr((string)$log['received_at'], 5, 11)) ?></td>
-                            <td><?= wh_receipt_badge($log) ?></td>
-                            <td class="wm-break"><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
-                            <td class="wm-break"><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
-                            <td>
-                                <div class="wm-group-cell">
-                                    <div class="wm-group-avatar">
-                                        <?php if (!empty($log['group_picture_url'])): ?>
-                                            <img src="<?= wh_h((string)$log['group_picture_url']) ?>" alt="">
-                                        <?php else: ?>
-                                            <?= wh_h(substr((string)($log['group_name'] ?: ($log['group_id'] ?? 'G')), 0, 1)) ?>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div>
-                                        <?php if (!empty($log['group_name'])): ?>
-                                                <div class="wm-ellipsis" title="<?= wh_h((string)$log['group_name']) ?>"><?= wh_h((string)$log['group_name']) ?></div>
-                                                <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+            var groupIds = [];
+            try { groupIds = JSON.parse(data.group_ids_json || '[]'); } catch(e) {}
+            var chks = document.querySelectorAll('.group-chk');
+            chks.forEach(function(chk) {
+                chk.checked = groupIds.indexOf(chk.value) !== -1;
+            });
+
+            document.getElementById('formTitle').textContent = 'Editar Automação de Grupo #' + data.id;
+            document.getElementById('automationFormBox').style.display = 'block';
+            window.scrollTo({ top: document.getElementById('automationFormBox').offsetTop - 60, behavior: 'smooth' });
+        }
+        </script>
+
+    <?php elseif ($activeTab === 'fraude'): ?>
+        <div class="wm-grid wm-full">
+            <div class="wm-card">
+                <h2>Lista de fraude e números confiáveis</h2>
+                <div class="wm-card-sub">Cadastre números bloqueados e números protegidos. Um número confiável nunca será banido, mesmo que também conste na Lista de fraude.</div>
+
+                <h3 style="font-size:13px;margin:16px 0 10px">Lista de fraude</h3>
+                <form method="post">
+                    <input type="hidden" name="action" value="add_blacklist_number">
+                    <div class="form-group">
+                        <label class="form-label">Telefone</label>
+                        <input type="text" name="blacklist_phone" placeholder="5522999999999">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Motivo</label>
+                        <input type="text" name="blacklist_reason" placeholder="Spam, teste, bloqueio manual...">
+                    </div>
+                    <button class="btn btn-primary" type="submit">Adicionar na Lista de fraude</button>
+                </form>
+
+                <?php if (!$blacklistRows): ?>
+                    <div class="text-muted text-sm mt-3">Nenhum número na Lista de fraude ainda.</div>
+                <?php else: ?>
+                    <div class="table-wrap mt-3">
+                        <table class="wm-log-table">
+                            <thead>
+                                <tr>
+                                    <th>Telefone</th>
+                                    <th>Status</th>
+                                    <th>Motivo</th>
+                                    <th>Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($blacklistRows as $b): ?>
+                                <tr>
+                                    <td><?= wh_h((string)$b['phone_number']) ?></td>
+                                    <td><?= (int)$b['is_active'] === 1 ? '<span class="badge badge-danger">Ativo</span>' : '<span class="badge badge-neutral">Inativo</span>' ?></td>
+                                    <td><?= wh_h((string)($b['reason'] ?? '-')) ?></td>
+                                    <td>
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="toggle_blacklist_number">
+                                            <input type="hidden" name="blacklist_id" value="<?= (int)$b['id'] ?>">
+                                            <button class="btn btn-ghost btn-sm" type="submit"><?= (int)$b['is_active'] === 1 ? 'Desativar' : 'Ativar' ?></button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="wm-card">
+                <h2>Números confiáveis</h2>
+                <div class="wm-card-sub">Cadastre nome e telefone com DDI. Estes números ficam protegidos contra qualquer banimento automático.</div>
+                <form method="post">
+                    <input type="hidden" name="action" value="add_trusted_number">
+                    <div class="form-group">
+                        <label class="form-label">Nome</label>
+                        <input type="text" name="trusted_name" required placeholder="Professor, suporte, moderador...">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Telefone</label>
+                        <input type="text" name="trusted_phone" required inputmode="tel" placeholder="5522999999999">
+                    </div>
+                    <button class="btn btn-primary" type="submit">Adicionar número confiável</button>
+                </form>
+
+                <?php if (!$trustedNumbers): ?>
+                    <div class="text-muted text-sm mt-3">Nenhum número confiável cadastrado.</div>
+                <?php else: ?>
+                    <div class="table-wrap mt-3">
+                        <table class="wm-log-table">
+                            <thead>
+                                <tr>
+                                    <th>Nome</th>
+                                    <th>Telefone</th>
+                                    <th>Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($trustedNumbers as $trusted): ?>
+                                <tr>
+                                    <td><?= wh_h((string)$trusted['name']) ?></td>
+                                    <td><?= wh_h((string)$trusted['phone_number']) ?></td>
+                                    <td>
+                                        <form method="post" onsubmit="return confirm('Remover este número da lista confiável?')">
+                                            <input type="hidden" name="action" value="delete_trusted_number">
+                                            <input type="hidden" name="trusted_id" value="<?= (int)$trusted['id'] ?>">
+                                            <button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger)">Remover</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+    <?php elseif ($activeTab === 'conversas'): ?>
+        <div class="wm-card wm-full">
+            <h2>Conversas diretas recebidas</h2>
+            <div class="wm-card-sub">Mensagens privadas recebidas por cada instância. O sistema aguarda 10 minutos, agrupa o pacote e envia para análise da IA.</div>
+            <?php if (!$directThreads): ?>
+                <div class="text-muted text-sm">Nenhuma mensagem direta capturada ainda. Confirme o evento MESSAGES_UPSERT no webhook das instâncias.</div>
+            <?php else: ?>
+                <div class="table-wrap">
+                    <table class="wm-log-table">
+                        <thead><tr><th>Contato</th><th>Instância</th><th>Mensagens</th><th>Primeira</th><th>Última</th><th>Última análise</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($directThreads as $thread): ?>
+                            <tr>
+                                <td><strong><?= wh_h((string)($thread['aluno_nome'] ?: $thread['sender_name'] ?: $thread['sender_phone'])) ?></strong><div class="text-xs text-muted"><?= wh_h((string)$thread['sender_phone']) ?></div></td>
+                                <td><?= wh_h((string)$thread['instance_key']) ?></td>
+                                <td><?= (int)$thread['total_messages'] ?></td>
+                                <td><?= wh_h((string)$thread['first_message_at']) ?></td>
+                                <td><?= wh_h((string)$thread['last_message_at']) ?></td>
+                                <td><?= wh_h((string)($thread['last_category'] ?? ($thread['last_batch_id'] ? 'Processada' : 'Aguardando janela'))) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <details style="margin-top:12px">
+                    <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700">Ver últimas mensagens</summary>
+                    <div class="table-wrap mt-3">
+                        <table class="wm-log-table">
+                            <thead><tr><th>Data</th><th>Contato</th><th>Mensagem</th><th>IA</th></tr></thead>
+                            <tbody>
+                            <?php foreach ($directMessages as $message): ?>
+                                <tr>
+                                    <td><?= wh_h((string)$message['message_at']) ?></td>
+                                    <td><?= wh_h((string)($message['aluno_nome'] ?: $message['sender_name'] ?: $message['sender_phone'])) ?><div class="text-xs text-muted"><?= wh_h((string)$message['sender_phone']) ?></div></td>
+                                    <td style="max-width:520px"><?= wh_h((string)$message['message_text']) ?></td>
+                                    <td><?= wh_h((string)($message['category'] ?: ($message['processed_batch_id'] ? 'Processada' : 'Pendente'))) ?><div class="text-xs text-muted"><?= wh_h((string)($message['severity'] ?? '')) ?></div></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            <?php endif; ?>
+        </div>
+
+    <?php elseif ($activeTab === 'payloads'): ?>
+        <div class="wm-card wm-full">
+            <h2>Payloads recebidos</h2>
+            <div class="wm-card-sub">Últimos 80 eventos recebidos em <span class="code">public/whatsapp_webhook.php</span>.</div>
+            <form method="get" action="whatsapp_monitor.php#payloads" class="wm-filter-grid">
+                <input type="hidden" name="tab" value="payloads">
+                <div class="form-group">
+                    <label class="form-label">Tipo de payload</label>
+                    <select name="payload_scope">
+                        <option value="participants" <?= $payloadScope === 'participants' ? 'selected' : '' ?>>Eventos de grupo</option>
+                        <option value="messages" <?= $payloadScope === 'messages' ? 'selected' : '' ?>>Mensagens da IA</option>
+                        <option value="presence" <?= $payloadScope === 'presence' ? 'selected' : '' ?>>Presença</option>
+                        <option value="all" <?= $payloadScope === 'all' ? 'selected' : '' ?>>Todos</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Buscar contato, aluno, telefone, grupo ou payload</label>
+                    <input type="text" name="payload_search" value="<?= wh_h($payloadSearch) ?>" placeholder="Nome, email, telefone, grupo, evento...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Lista de fraude</label>
+                    <select name="payload_blacklist">
+                        <option value="" <?= $payloadBlacklist === '' ? 'selected' : '' ?>>Todos</option>
+                        <option value="detected" <?= $payloadBlacklist === 'detected' ? 'selected' : '' ?>>Detectada no evento</option>
+                        <option value="active_number" <?= $payloadBlacklist === 'active_number' ? 'selected' : '' ?>>Número na Lista de fraude</option>
+                        <option value="not_detected" <?= $payloadBlacklist === 'not_detected' ? 'selected' : '' ?>>Sem Lista de fraude detectada</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Gatilho</label>
+                    <select name="payload_trigger">
+                        <option value="operational" <?= $payloadTrigger === 'operational' ? 'selected' : '' ?>>Operacionais</option>
+                        <option value="triggered" <?= $payloadTrigger === 'triggered' ? 'selected' : '' ?>>Acionados</option>
+                        <option value="not_found" <?= $payloadTrigger === 'not_found' ? 'selected' : '' ?>>Aluno não encontrado</option>
+                        <option value="blacklist" <?= $payloadTrigger === 'blacklist' ? 'selected' : '' ?>>Lista de fraude</option>
+                        <option value="error" <?= $payloadTrigger === 'error' ? 'selected' : '' ?>>Erro</option>
+                        <option value="ignored" <?= $payloadTrigger === 'ignored' ? 'selected' : '' ?>>Ignorados</option>
+                        <option value="all" <?= $payloadTrigger === 'all' ? 'selected' : '' ?>>Todos</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Token</label>
+                    <select name="payload_token">
+                        <option value="" <?= $payloadToken === '' ? 'selected' : '' ?>>Todos</option>
+                        <option value="ok" <?= $payloadToken === 'ok' ? 'selected' : '' ?>>OK</option>
+                        <option value="fail" <?= $payloadToken === 'fail' ? 'selected' : '' ?>>Falhou</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Evento</label>
+                    <input type="text" name="payload_event" value="<?= wh_h($payloadEvent) ?>" placeholder="messages, group...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Grupo</label>
+                    <input type="text" name="payload_group" value="<?= wh_h($payloadGroup) ?>" placeholder="Nome ou ID">
+                </div>
+                <div class="wm-filter-actions">
+                    <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+                    <a class="btn btn-ghost btn-sm" href="whatsapp_monitor.php?tab=payloads">Limpar</a>
+                </div>
+            </form>
+
+            <?php if (!$rawLogs): ?>
+                <div class="text-muted text-sm">Nenhum payload encontrado para os filtros atuais. Ajuste a busca ou limpe os filtros.</div>
+            <?php else: ?>
+                <div class="table-wrap">
+                    <table class="wm-log-table payloads">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Recebido</th>
+                                <th>Token</th>
+                                <th>Evento</th>
+                                <th>Instância</th>
+                                <th>Grupo</th>
+                                <th>Evento</th>
+                                <th>Telefone</th>
+                                <th>Aluno</th>
+                                <th>Lista de fraude</th>
+                                <th>Gatilho</th>
+                                <th>Payload</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($rawLogs as $log): ?>
+                            <?php
+                            $phone = (string)($log['participant_phone'] ?? '');
+                            if ($phone === '') $phone = wh_phone_from_payload((string)$log['payload_raw'], (string)($log['participant_number'] ?? ''));
+                            $userName = trim((string)($log['user_nome'] ?? ''));
+                            $userId = (int)($log['user_id'] ?? 0);
+                            ?>
+                            <tr>
+                                <td><?= (int)$log['id'] ?></td>
+                                <td><?= wh_h(substr((string)$log['received_at'], 5, 11)) ?></td>
+                                <td><?= wh_receipt_badge($log) ?></td>
+                                <td class="wm-break"><?= wh_h((string)($log['event_type'] ?? '-')) ?></td>
+                                <td class="wm-break"><?= wh_h((string)($log['instance_key'] ?? '-')) ?></td>
+                                <td>
+                                    <div class="wm-group-cell">
+                                        <div class="wm-group-avatar">
+                                            <?php if (!empty($log['group_picture_url'])): ?>
+                                                <img src="<?= wh_h((string)$log['group_picture_url']) ?>" alt="">
                                             <?php else: ?>
-                                                <div class="wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
-                                        <?php endif; ?>
-                                        <?php if ((int)($log['group_is_ignored'] ?? 0) === 1): ?>
-                                            <div class="text-xs text-muted">Grupo ignorado</div>
-                                        <?php endif; ?>
+                                                <?= wh_h(substr((string)($log['group_name'] ?: ($log['group_id'] ?? 'G')), 0, 1)) ?>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div>
+                                            <?php if (!empty($log['group_name'])): ?>
+                                                    <div class="wm-ellipsis" title="<?= wh_h((string)$log['group_name']) ?>"><?= wh_h((string)$log['group_name']) ?></div>
+                                                    <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                                <?php else: ?>
+                                                    <div class="wm-break"><?= wh_h((string)($log['group_id'] ?? '-')) ?></div>
+                                            <?php endif; ?>
+                                            <?php if ((int)($log['group_is_ignored'] ?? 0) === 1): ?>
+                                                <div class="text-xs text-muted">Grupo ignorado</div>
+                                            <?php endif; ?>
+                                        </div>
                                     </div>
-                                </div>
-                            </td>
-                            <td>
-                                <div><?= wh_h(wh_event_label((string)($log['interpreted_event'] ?? ''), (string)($log['action'] ?? ''))) ?></div>
-                                <div class="text-xs text-muted"><?= wh_h((string)($log['action'] ?? '-')) ?></div>
-                            </td>
-                            <td>
-                                <div><?= wh_h($phone ?: '-') ?></div>
-                                <?php if (!empty($log['participant_id'])): ?><div class="text-xs text-muted wm-break"><?= wh_h((string)$log['participant_id']) ?></div><?php endif; ?>
-                            </td>
-                            <td>
-                                <?php if ($userId > 0): ?>
-                                    <a href="aluno_editar.php?id=<?= $userId ?>"><?= wh_h($userName !== '' ? $userName : ('Aluno #' . $userId)) ?></a>
-                                    <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
-                                <?php else: ?>
-                                    <span class="text-muted">Nao encontrado</span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <?php if ((int)($log['is_blacklisted'] ?? 0) === 1): ?>
-                                    <span class="badge badge-danger">Detectada</span>
-                                    <div class="text-xs text-muted"><?= wh_h((string)($log['blacklist_reason'] ?? '')) ?></div>
-                                <?php else: ?>
-                                    <span class="text-muted">-</span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <div><?= wh_h(wh_trigger_label((string)($log['trigger_status'] ?? ''))) ?></div>
-                                <?php if (!empty($log['trigger_error'])): ?><div class="text-xs text-muted"><?= wh_h(substr((string)$log['trigger_error'], 0, 160)) ?></div><?php endif; ?>
-                            </td>
-                            <td>
-                                <details class="wm-payload-details">
-                                    <summary>Ver payload</summary>
-                                    <div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div>
-                                </details>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
-    </div>
+                                </td>
+                                <td>
+                                    <div><?= wh_h(wh_event_label((string)($log['interpreted_event'] ?? ''), (string)($log['action'] ?? ''))) ?></div>
+                                    <div class="text-xs text-muted"><?= wh_h((string)($log['action'] ?? '-')) ?></div>
+                                </td>
+                                <td>
+                                    <div><?= wh_h($phone ?: '-') ?></div>
+                                    <?php if (!empty($log['participant_id'])): ?><div class="text-xs text-muted wm-break"><?= wh_h((string)$log['participant_id']) ?></div><?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($userId > 0): ?>
+                                        <a href="aluno_editar.php?id=<?= $userId ?>"><?= wh_h($userName !== '' ? $userName : ('Aluno #' . $userId)) ?></a>
+                                        <div class="text-xs text-muted wm-break"><?= wh_h((string)($log['user_email'] ?? '')) ?></div>
+                                    <?php else: ?>
+                                        <span class="text-muted">Não encontrado</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ((int)($log['is_blacklisted'] ?? 0) === 1): ?>
+                                        <span class="badge badge-danger">Detectada</span>
+                                        <div class="text-xs text-muted"><?= wh_h((string)($log['blacklist_reason'] ?? '')) ?></div>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div><?= wh_h(wh_trigger_label((string)($log['trigger_status'] ?? ''))) ?></div>
+                                    <?php if (!empty($log['trigger_error'])): ?><div class="text-xs text-muted"><?= wh_h(substr((string)$log['trigger_error'], 0, 160)) ?></div><?php endif; ?>
+                                </td>
+                                <td>
+                                    <details class="wm-payload-details">
+                                        <summary>Ver payload</summary>
+                                        <div class="wm-payload"><?= wh_h(substr((string)$log['payload_raw'], 0, 2500)) ?></div>
+                                    </details>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 </div>
 
 <?php include __DIR__ . '/_footer.php'; ?>
