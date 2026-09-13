@@ -44,6 +44,42 @@ function dr_datetime_input(?string $value): string
     return $ts ? date('Y-m-d\TH:i', $ts) : '';
 }
 
+function dr_click_chart_series(PDO $pdo, ?int $redirectorId = null, int $days = 365): array
+{
+    $days = max(1, min(730, $days));
+    $start = (new DateTimeImmutable('today'))->modify('-' . ($days - 1) . ' days');
+    $end = new DateTimeImmutable('today');
+    $rowsByDate = [];
+    $params = ['start' => $start->format('Y-m-d 00:00:00')];
+    $where = 'clicked_at >= :start';
+    if ($redirectorId !== null && $redirectorId > 0) {
+        $where .= ' AND redirector_id = :rid';
+        $params['rid'] = $redirectorId;
+    }
+    $st = $pdo->prepare("
+        SELECT DATE(clicked_at) period, COUNT(*) clicks
+          FROM date_redirect_clicks
+         WHERE {$where}
+         GROUP BY DATE(clicked_at)
+         ORDER BY period ASC
+    ");
+    $st->execute($params);
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $rowsByDate[(string)$row['period']] = (int)$row['clicks'];
+    }
+
+    $series = [];
+    for ($cursor = $start; $cursor <= $end; $cursor = $cursor->modify('+1 day')) {
+        $date = $cursor->format('Y-m-d');
+        $series[] = [
+            'date' => $date,
+            'label' => $cursor->format('d/m'),
+            'clicks' => $rowsByDate[$date] ?? 0,
+        ];
+    }
+    return $series;
+}
+
 try {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         dr_check_csrf($csrf);
@@ -204,6 +240,8 @@ $redirectors = $pdo->query("
      ORDER BY r.updated_at DESC, r.id DESC
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+$chartSeries = dr_click_chart_series($pdo, $edit ? (int)$edit['id'] : null, 365);
+
 $menu = 'date_redirects';
 $page_title = 'Redirecionadores por Data';
 include __DIR__ . '/_header.php';
@@ -263,7 +301,20 @@ include __DIR__ . '/_header.php';
 .dr-trash input{display:none}
 .dr-trash:hover{filter:brightness(1.08)}
 .dr-footer-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.dr-chart-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:var(--shadow);margin-bottom:14px}
+.dr-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dr-chart-title{font-weight:800;color:var(--text);font-size:15px}
+.dr-chart-sub{color:var(--muted);font-size:12px;margin-top:3px}
+.dr-chart-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.dr-seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#0b1322}
+.dr-seg button{height:30px;padding:0 11px;border:0;border-right:1px solid var(--border);border-radius:0;background:transparent;color:var(--muted);font-size:11px;font-weight:700}
+.dr-seg button:last-child{border-right:0}
+.dr-seg button.active{background:var(--primary);color:#111827}
+.dr-chart-box{height:285px;position:relative;min-width:0}
+.dr-chart-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:var(--muted);font-size:13px;text-align:center}
+.dr-chart-box.is-empty .dr-chart-empty{display:flex}
 @media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-create,.dr-config,.dr-link-head,.dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
+@media(max-width:700px){.dr-chart-head{display:block}.dr-chart-controls{justify-content:flex-start;margin-top:12px}.dr-chart-box{height:240px}.dr-seg button{padding:0 9px}}
 </style>
 
 <div class="dr-shell">
@@ -286,6 +337,32 @@ include __DIR__ . '/_header.php';
 
   <?php if($message): ?><div class="dr-msg"><?=date_redirects_h($message)?></div><?php endif; ?>
   <?php if($error): ?><div class="dr-error"><?=date_redirects_h($error)?></div><?php endif; ?>
+
+  <section class="dr-chart-card">
+    <div class="dr-chart-head">
+      <div>
+        <div class="dr-chart-title">Cliques por data</div>
+        <div class="dr-chart-sub"><?= $edit ? 'Historico deste redirecionador.' : 'Historico consolidado de todos os redirecionadores.' ?></div>
+      </div>
+      <div class="dr-chart-controls" aria-label="Filtros do grafico de cliques">
+        <div class="dr-seg" data-dr-chart-window>
+          <button type="button" data-days="7">7d</button>
+          <button type="button" data-days="30">30d</button>
+          <button type="button" data-days="90" class="active">90d</button>
+          <button type="button" data-days="365">365d</button>
+        </div>
+        <div class="dr-seg" data-dr-chart-group>
+          <button type="button" data-group="day" class="active">Dia</button>
+          <button type="button" data-group="week">Semana</button>
+          <button type="button" data-group="month">Mes</button>
+        </div>
+      </div>
+    </div>
+    <div class="dr-chart-box" id="drClicksChartBox">
+      <canvas id="drClicksChart"></canvas>
+      <div class="dr-chart-empty">Nenhum clique registrado no periodo selecionado.</div>
+    </div>
+  </section>
 
   <?php if(!$edit): ?>
     <div class="dr-list">
@@ -464,5 +541,106 @@ if (addDateLink) {
     document.getElementById('dateLinks').appendChild(tpl.content.cloneNode(true));
   });
 }
+
+(function() {
+  const rawRows = <?= json_encode($chartSeries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+  const canvas = document.getElementById('drClicksChart');
+  const box = document.getElementById('drClicksChartBox');
+  if (!canvas || !window.Chart) return;
+
+  const state = { days: 90, group: 'day' };
+  const fmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' });
+  const fmtMonth = new Intl.DateTimeFormat('pt-BR', { month: '2-digit', year: '2-digit' });
+  const parseDate = value => {
+    const parts = String(value).split('-').map(Number);
+    return new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+  };
+  const isoDate = date => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  };
+  const startOfWeek = date => {
+    const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const day = copy.getDay() || 7;
+    copy.setDate(copy.getDate() - day + 1);
+    return copy;
+  };
+  const bucketFor = row => {
+    const date = parseDate(row.date);
+    if (state.group === 'week') {
+      const start = startOfWeek(date);
+      return { key: isoDate(start), label: fmt.format(start) };
+    }
+    if (state.group === 'month') {
+      const start = new Date(date.getFullYear(), date.getMonth(), 1);
+      return { key: isoDate(start), label: fmtMonth.format(start) };
+    }
+    return { key: row.date, label: row.label };
+  };
+  const visibleRows = () => {
+    const end = rawRows.length ? parseDate(rawRows[rawRows.length - 1].date) : new Date();
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    start.setDate(start.getDate() - state.days + 1);
+    return rawRows.filter(row => parseDate(row.date) >= start);
+  };
+  const aggregateRows = () => {
+    const buckets = new Map();
+    visibleRows().forEach(row => {
+      const bucket = bucketFor(row);
+      const current = buckets.get(bucket.key) || { label: bucket.label, clicks: 0 };
+      current.clicks += Number(row.clicks || 0);
+      buckets.set(bucket.key, current);
+    });
+    return Array.from(buckets.values());
+  };
+
+  const chart = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Cliques', data: [], backgroundColor: '#facc15', borderRadius: 6, maxBarThickness: 48 }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => 'Cliques: ' + Number(ctx.raw || 0).toLocaleString('pt-BR')
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true }, grid: { color: 'rgba(255,255,255,.04)' } },
+        y: { beginAtZero: true, ticks: { color: '#94a3b8', precision: 0 }, grid: { color: 'rgba(255,255,255,.06)' } }
+      }
+    }
+  });
+
+  function renderChart() {
+    const rows = aggregateRows();
+    const total = rows.reduce((sum, row) => sum + row.clicks, 0);
+    box.classList.toggle('is-empty', total === 0);
+    chart.data.labels = rows.map(row => row.label);
+    chart.data.datasets[0].data = rows.map(row => row.clicks);
+    chart.update();
+  }
+
+  document.querySelectorAll('[data-dr-chart-window] button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.days = Number(btn.dataset.days || 90);
+      btn.parentElement.querySelectorAll('button').forEach(item => item.classList.toggle('active', item === btn));
+      renderChart();
+    });
+  });
+  document.querySelectorAll('[data-dr-chart-group] button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.group = btn.dataset.group || 'day';
+      btn.parentElement.querySelectorAll('button').forEach(item => item.classList.toggle('active', item === btn));
+      renderChart();
+    });
+  });
+  renderChart();
+})();
 </script>
 <?php include __DIR__ . '/_footer.php'; ?>
