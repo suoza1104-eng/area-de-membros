@@ -140,7 +140,7 @@ async function registerSW(){
   await navigator.serviceWorker.ready;
   return swRegistration;
 }
-async function enablePush(){
+async function enablePush(forceRefresh = false){
   localStorage.removeItem('admin_push_disabled');
   if(!PUSH_READY)throw new Error('Firebase Push ainda não está configurado.');
   if(isIOS()&&!isStandalone())throw new Error(notificationHelp());
@@ -150,7 +150,21 @@ async function enablePush(){
   const registration=swRegistration||await registerSW();
   if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
   const messaging=firebase.messaging();
-  const token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
+
+  if(forceRefresh){
+    try{await messaging.deleteToken();}catch(e){}
+    localStorage.removeItem('admin_push_token');
+  }
+
+  let token=localStorage.getItem('admin_push_token')||'';
+  if(!token||forceRefresh){
+    try{
+      token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
+    }catch(e){
+      try{await messaging.deleteToken();}catch(err){}
+      token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
+    }
+  }
   if(!token)throw new Error('Não foi possível conectar este dispositivo.');
   const installed=isStandalone();
   const resp=await fetch('api_admin_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:'register',client_id:clientId(),token,permission:'granted',installed,platform:platform()})});
@@ -164,7 +178,7 @@ async function enablePush(){
     playSound(data.sound_key||'cash');
     registration.showNotification(data.title||'Gestão de Vendas',{body:data.body||'',icon:'../public/pwa-icon.svg',badge:'../public/pwa-icon.svg',data:{click_url:data.click_url||'vendas_analytics.php'}});
   });
-  msg('Notificações administrativas ativadas neste dispositivo.','ok');
+  if(!forceRefresh) msg('Notificações administrativas ativadas neste dispositivo.','ok');
   await loadPrefs();
 }
 async function disablePush(){
@@ -189,11 +203,21 @@ testPushBtn.onclick=async()=>{
   try{
     if(pushDisabled())throw new Error('Notificações desligadas neste dispositivo. Ligue o botão antes de testar.');
     await enablePush();
-    const token=localStorage.getItem('admin_push_token')||'';
-    const resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
-    const json=await resp.json();
+    let token=localStorage.getItem('admin_push_token')||'';
+    let resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
+    let json=await resp.json();
+    if(!resp.ok||!json.ok){
+      const errText=(json.message||'')+' '+(json.error||'');
+      if(errText.includes('NotRegistered')||errText.includes('device_not_registered')||errText.includes('UNREGISTERED')||errText.includes('NOT_FOUND')){
+        msg('Renovando chave de notificação do Firebase... Aguarde...','ok');
+        await enablePush(true);
+        token=localStorage.getItem('admin_push_token')||'';
+        resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
+        json=await resp.json();
+      }
+    }
     if(!resp.ok||!json.ok)throw new Error(json.message||'Falha ao enviar teste push.');
-    msg('Teste push enviado para este dispositivo. Confira a bandeirinha do sistema.','ok');
+    msg('Teste push enviado para este dispositivo! Confira a notificação no seu sistema.','ok');
   }catch(e){msg(e.message,'err');}
   finally{testPushBtn.disabled=false;}
 };

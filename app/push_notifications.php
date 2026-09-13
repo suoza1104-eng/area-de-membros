@@ -296,10 +296,12 @@ function push_send_to_device(PDO $pdo, array $device, int $notificationId, int $
     );
     $json = json_decode($response['body'], true);
     $accepted = $response['status'] >= 200 && $response['status'] < 300 && !empty($json['name']);
-    $errorStatus = strtoupper((string)($json['error']['details'][0]['errorCode'] ?? ''));
-    $gone = $errorStatus === 'UNREGISTERED';
+    $errorMsg = (string)($json['error']['message'] ?? $response['body'] ?? '');
+    $errorStatus = strtoupper((string)($json['error']['details'][0]['errorCode'] ?? $json['error']['status'] ?? ''));
+    $errorMsgLower = mb_strtolower($errorMsg);
+    $gone = ($errorStatus === 'UNREGISTERED' || $errorStatus === 'NOT_FOUND' || str_contains($errorMsgLower, 'notregistered') || str_contains($errorMsgLower, 'not a valid fcm') || str_contains($errorMsgLower, 'not found'));
     $status = $accepted ? 'accepted' : ($gone ? 'uninstalled' : 'failed');
-    $error = $accepted ? null : substr((string)($json['error']['message'] ?? $response['body']), 0, 500);
+    $error = $accepted ? null : substr($errorMsg, 0, 500);
 
     $pdo->prepare("UPDATE push_delivery_logs SET status=:status,fcm_message_name=:name,http_status=:http,response_body=:body,error_message=:error,sent_at=NOW() WHERE id=:id")
         ->execute(['status'=>$status,'name'=>$json['name']??null,'http'=>$response['status'],'body'=>substr($response['body'],0,65000),'error'=>$error,'id'=>$deliveryLogId]);
