@@ -724,17 +724,23 @@ include __DIR__ . '/_header.php';
                             <label style="cursor:pointer;font-size:13px"><input type="radio" name="target_scope" value="specific" id="scope_specific" onclick="toggleGroupPicker(true)"> Grupos Específicos</label>
                         </div>
                         <div id="groupPickerBox" class="wm-group-picker" style="display:none">
-                            <?php if (!$groupRows): ?>
-                                <div class="text-muted text-xs">Nenhum grupo detectado no sistema ainda.</div>
-                            <?php else: ?>
-                                <?php foreach ($groupRows as $g): ?>
-                                    <label class="wm-group-opt">
-                                        <input type="checkbox" name="group_ids[]" value="<?= wh_h((string)$g['group_id']) ?>" class="group-chk">
-                                        <strong><?= wh_h((string)($g['group_name'] ?: $g['group_id'])) ?></strong>
-                                        <span class="text-xs text-muted">(<?= wh_h((string)$g['group_id']) ?>)</span>
-                                    </label>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
+                            <div style="position:sticky;top:0;background:rgba(20,20,25,0.95);padding-bottom:6px;margin-bottom:6px;z-index:2">
+                                <input type="text" id="groupSearchInput" onkeyup="filterGroupPicker()" placeholder="🔍 Digite para buscar o grupo por nome ou ID..." style="width:100%;padding:6px 10px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.06);color:#fff;">
+                            </div>
+                            <div id="groupOptionsList">
+                                <?php if (!$groupRows): ?>
+                                    <div class="text-muted text-xs">Nenhum grupo detectado no sistema ainda.</div>
+                                <?php else: ?>
+                                    <?php foreach ($groupRows as $g): ?>
+                                        <?php $gName = (string)($g['group_name'] ?: $g['group_id']); ?>
+                                        <label class="wm-group-opt" data-search="<?= wh_h(mb_strtolower($gName . ' ' . $g['group_id'])) ?>">
+                                            <input type="checkbox" name="group_ids[]" value="<?= wh_h((string)$g['group_id']) ?>" class="group-chk">
+                                            <strong><?= wh_h($gName) ?></strong>
+                                            <span class="text-xs text-muted">(<?= wh_h((string)$g['group_id']) ?>)</span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
 
@@ -873,6 +879,22 @@ include __DIR__ . '/_header.php';
         }
         function toggleGroupPicker(show) {
             document.getElementById('groupPickerBox').style.display = show ? 'block' : 'none';
+            if (show) {
+                var sInput = document.getElementById('groupSearchInput');
+                if (sInput) { sInput.value = ''; filterGroupPicker(); }
+            }
+        }
+        function filterGroupPicker() {
+            var query = (document.getElementById('groupSearchInput').value || '').toLowerCase().trim();
+            var opts = document.querySelectorAll('#groupOptionsList .wm-group-opt');
+            opts.forEach(function(opt) {
+                var text = (opt.getAttribute('data-search') || '').toLowerCase();
+                if (query === '' || text.indexOf(query) !== -1) {
+                    opt.style.display = 'flex';
+                } else {
+                    opt.style.display = 'none';
+                }
+            });
         }
         function editAutomation(data) {
             document.getElementById('auto_id').value = data.id || 0;
