@@ -152,6 +152,10 @@ async function enablePush(forceRefresh = false){
   const messaging=firebase.messaging();
 
   if(forceRefresh){
+    try{
+      const sub=await registration.pushManager.getSubscription();
+      if(sub)await sub.unsubscribe();
+    }catch(e){}
     try{await messaging.deleteToken();}catch(e){}
     localStorage.removeItem('admin_push_token');
   }
@@ -161,6 +165,10 @@ async function enablePush(forceRefresh = false){
     try{
       token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
     }catch(e){
+      try{
+        const sub=await registration.pushManager.getSubscription();
+        if(sub)await sub.unsubscribe();
+      }catch(err){}
       try{await messaging.deleteToken();}catch(err){}
       token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
     }
@@ -208,8 +216,8 @@ testPushBtn.onclick=async()=>{
     let json=await resp.json();
     if(!resp.ok||!json.ok){
       const errText=(json.message||'')+' '+(json.error||'');
-      if(errText.includes('NotRegistered')||errText.includes('device_not_registered')||errText.includes('UNREGISTERED')||errText.includes('NOT_FOUND')){
-        msg('Renovando chave de notificação do Firebase... Aguarde...','ok');
+      if(errText.includes('NotRegistered')||errText.includes('device_not_registered')||errText.includes('UNREGISTERED')||errText.includes('NOT_FOUND')||errText.includes('push_failed')){
+        msg('Renovando chave de notificação no Firebase... Aguarde...','ok');
         await enablePush(true);
         token=localStorage.getItem('admin_push_token')||'';
         resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
