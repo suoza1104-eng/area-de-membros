@@ -75,6 +75,17 @@ let deferredPrompt=null;
 let swRegistration=null;
 
 function msg(text,type){statusEl.textContent=text;statusEl.className='admapp-status '+(type||'ok');}
+function isIOS(){return /iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
+function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
+function installHelp(){
+  if(isIOS())return 'No iPhone, abra no Safari, toque em Compartilhar e depois em Adicionar à Tela de Início. Depois abra pelo ícone criado e toque em Ativar notificações.';
+  return 'Use o menu do navegador e escolha Instalar app ou Adicionar à tela inicial. Depois abra pelo ícone criado e ative as notificações.';
+}
+function notificationHelp(){
+  if(isIOS()&&!isStandalone())return 'No iPhone, o Chrome/Safari em aba normal não libera notificações de PWA. Primeiro instale pela Tela de Início, de preferência pelo Safari, abra pelo ícone criado e então ative as notificações.';
+  if(isIOS())return 'Este navegador no iPhone ainda não expôs notificações para este app. Tente instalar/abrir pelo ícone criado via Safari e confirme que o iOS está atualizado.';
+  return 'Este navegador não expôs a API de notificações. Abra no Chrome/Edge atualizado ou instale o app e tente novamente.';
+}
 function clientId(){
   let id=localStorage.getItem('admin_push_client_id');
   if(!id){id=(crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));localStorage.setItem('admin_push_client_id',id);}
@@ -91,7 +102,7 @@ function playSound(key){
 window.adminAppPlaySound=playSound;
 
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installBtn.disabled=false;});
-installBtn.onclick=async()=>{try{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;msg('Instalação solicitada. Se o app já estiver instalado, abra pelo ícone do sistema.','ok');}else{msg('Use o menu do navegador e escolha “Instalar app” ou “Adicionar à tela inicial”.','ok');}}catch(e){msg(e.message,'err');}};
+installBtn.onclick=async()=>{try{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;msg('Instalação solicitada. Se o app já estiver instalado, abra pelo ícone do sistema.','ok');}else{msg(installHelp(),'ok');}}catch(e){msg(e.message,'err');}};
 testBtn.onclick=()=>playSound('cash');
 
 async function registerSW(){
@@ -102,7 +113,8 @@ async function registerSW(){
 }
 async function enablePush(){
   if(!PUSH_READY)throw new Error('Firebase Push ainda não está configurado.');
-  if(!('Notification'in window))throw new Error('Este navegador não oferece notificações.');
+  if(isIOS()&&!isStandalone())throw new Error(notificationHelp());
+  if(!('Notification'in window))throw new Error(notificationHelp());
   const permission=await Notification.requestPermission();
   if(permission!=='granted')throw new Error('Permissão de notificações não concedida.');
   const registration=swRegistration||await registerSW();
@@ -110,7 +122,7 @@ async function enablePush(){
   const messaging=firebase.messaging();
   const token=await messaging.getToken({vapidKey:VAPID_KEY,serviceWorkerRegistration:registration});
   if(!token)throw new Error('Não foi possível conectar este dispositivo.');
-  const installed=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+  const installed=isStandalone();
   const resp=await fetch('api_admin_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:'register',client_id:clientId(),token,permission:'granted',installed,platform:platform()})});
   const json=await resp.json();
   if(!resp.ok||!json.ok)throw new Error(json.message||'Falha ao registrar dispositivo.');
@@ -129,7 +141,7 @@ pushBtn.onclick=()=>enablePush().catch(e=>msg(e.message,'err'));
 async function heartbeat(){
   try{
     const token=localStorage.getItem('admin_push_token')||'';
-    const installed=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+    const installed=isStandalone();
     if(!token||!('Notification'in window))return;
     await fetch('api_admin_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:installed?'installed':'heartbeat',client_id:clientId(),token,permission:Notification.permission,installed,platform:platform()})});
   }catch(e){}
