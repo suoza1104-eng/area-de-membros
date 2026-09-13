@@ -44,40 +44,48 @@ function dr_datetime_input(?string $value): string
     return $ts ? date('Y-m-d\TH:i', $ts) : '';
 }
 
-function dr_click_chart_series(PDO $pdo, ?int $redirectorId = null, int $days = 365): array
+function dr_click_chart_series_map(PDO $pdo, array $redirectorIds, int $days = 365): array
 {
+    $redirectorIds = array_values(array_unique(array_filter(array_map('intval', $redirectorIds))));
+    if (!$redirectorIds) return [];
     $days = max(1, min(730, $days));
     $start = (new DateTimeImmutable('today'))->modify('-' . ($days - 1) . ' days');
     $end = new DateTimeImmutable('today');
-    $rowsByDate = [];
     $params = ['start' => $start->format('Y-m-d 00:00:00')];
-    $where = 'clicked_at >= :start';
-    if ($redirectorId !== null && $redirectorId > 0) {
-        $where .= ' AND redirector_id = :rid';
-        $params['rid'] = $redirectorId;
+    $placeholders = [];
+    foreach ($redirectorIds as $idx => $id) {
+        $key = 'rid' . $idx;
+        $placeholders[] = ':' . $key;
+        $params[$key] = $id;
     }
     $st = $pdo->prepare("
-        SELECT DATE(clicked_at) period, COUNT(*) clicks
+        SELECT redirector_id, DATE(clicked_at) period, COUNT(*) clicks
           FROM date_redirect_clicks
-         WHERE {$where}
-         GROUP BY DATE(clicked_at)
-         ORDER BY period ASC
+         WHERE clicked_at >= :start
+           AND redirector_id IN (" . implode(',', $placeholders) . ")
+         GROUP BY redirector_id, DATE(clicked_at)
+         ORDER BY redirector_id ASC, period ASC
     ");
     $st->execute($params);
+    $rowsByRedirector = [];
     foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-        $rowsByDate[(string)$row['period']] = (int)$row['clicks'];
+        $rid = (int)$row['redirector_id'];
+        $rowsByRedirector[$rid][(string)$row['period']] = (int)$row['clicks'];
     }
 
-    $series = [];
-    for ($cursor = $start; $cursor <= $end; $cursor = $cursor->modify('+1 day')) {
-        $date = $cursor->format('Y-m-d');
-        $series[] = [
-            'date' => $date,
-            'label' => $cursor->format('d/m'),
-            'clicks' => $rowsByDate[$date] ?? 0,
-        ];
+    $seriesMap = [];
+    foreach ($redirectorIds as $id) {
+        $seriesMap[(string)$id] = [];
+        for ($cursor = $start; $cursor <= $end; $cursor = $cursor->modify('+1 day')) {
+            $date = $cursor->format('Y-m-d');
+            $seriesMap[(string)$id][] = [
+                'date' => $date,
+                'label' => $cursor->format('d/m'),
+                'clicks' => $rowsByRedirector[$id][$date] ?? 0,
+            ];
+        }
     }
-    return $series;
+    return $seriesMap;
 }
 
 try {
@@ -240,7 +248,7 @@ $redirectors = $pdo->query("
      ORDER BY r.updated_at DESC, r.id DESC
 ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-$chartSeries = dr_click_chart_series($pdo, $edit ? (int)$edit['id'] : null, 365);
+$chartSeriesByRedirector = dr_click_chart_series_map($pdo, array_column($redirectors, 'id'), 365);
 
 $menu = 'date_redirects';
 $page_title = 'Redirecionadores por Data';
@@ -260,7 +268,7 @@ include __DIR__ . '/_header.php';
 .dr-shell input[type="checkbox"]{width:auto;height:auto;padding:0!important}
 .dr-create{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
 .dr-list{display:grid;gap:12px}
-.dr-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px}
+.dr-row{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px}
 .dr-row-main{display:flex;align-items:center;gap:14px;min-width:0}
 .dr-icon{width:40px;height:40px;border-radius:8px;background:var(--primary-dim);color:var(--primary);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 .dr-icon svg{width:20px;height:20px}
@@ -301,6 +309,11 @@ include __DIR__ . '/_header.php';
 .dr-trash input{display:none}
 .dr-trash:hover{filter:brightness(1.08)}
 .dr-footer-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.dr-metric-btn{white-space:nowrap}
+.dr-modal{display:none;position:fixed;inset:0;z-index:1000;background:rgba(2,6,23,.72);padding:22px;align-items:center;justify-content:center}
+.dr-modal.open{display:flex}
+.dr-modal-panel{width:min(960px,100%);max-height:min(720px,92vh);overflow:auto;background:var(--bg-card);border:1px solid var(--border-light);border-radius:8px;padding:16px;box-shadow:var(--shadow-lg)}
+.dr-modal-close{width:36px;height:36px;border-radius:8px!important;padding:0!important;display:inline-flex;align-items:center;justify-content:center}
 .dr-chart-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:var(--shadow);margin-bottom:14px}
 .dr-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
 .dr-chart-title{font-weight:800;color:var(--text);font-size:15px}
@@ -313,7 +326,7 @@ include __DIR__ . '/_header.php';
 .dr-chart-box{height:285px;position:relative;min-width:0}
 .dr-chart-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:var(--muted);font-size:13px;text-align:center}
 .dr-chart-box.is-empty .dr-chart-empty{display:flex}
-@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-create,.dr-config,.dr-link-head,.dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
+@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-metric-btn{margin-bottom:10px}.dr-create,.dr-config,.dr-link-head,.dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
 @media(max-width:700px){.dr-chart-head{display:block}.dr-chart-controls{justify-content:flex-start;margin-top:12px}.dr-chart-box{height:240px}.dr-seg button{padding:0 9px}}
 </style>
 
@@ -338,32 +351,6 @@ include __DIR__ . '/_header.php';
   <?php if($message): ?><div class="dr-msg"><?=date_redirects_h($message)?></div><?php endif; ?>
   <?php if($error): ?><div class="dr-error"><?=date_redirects_h($error)?></div><?php endif; ?>
 
-  <section class="dr-chart-card">
-    <div class="dr-chart-head">
-      <div>
-        <div class="dr-chart-title">Cliques por data</div>
-        <div class="dr-chart-sub"><?= $edit ? 'Historico deste redirecionador.' : 'Historico consolidado de todos os redirecionadores.' ?></div>
-      </div>
-      <div class="dr-chart-controls" aria-label="Filtros do grafico de cliques">
-        <div class="dr-seg" data-dr-chart-window>
-          <button type="button" data-days="7">7d</button>
-          <button type="button" data-days="30">30d</button>
-          <button type="button" data-days="90" class="active">90d</button>
-          <button type="button" data-days="365">365d</button>
-        </div>
-        <div class="dr-seg" data-dr-chart-group>
-          <button type="button" data-group="day" class="active">Dia</button>
-          <button type="button" data-group="week">Semana</button>
-          <button type="button" data-group="month">Mes</button>
-        </div>
-      </div>
-    </div>
-    <div class="dr-chart-box" id="drClicksChartBox">
-      <canvas id="drClicksChart"></canvas>
-      <div class="dr-chart-empty">Nenhum clique registrado no periodo selecionado.</div>
-    </div>
-  </section>
-
   <?php if(!$edit): ?>
     <div class="dr-list">
       <?php foreach($redirectors as $r): $publicUrl = date_redirects_public_url((string)$r['slug']); ?>
@@ -381,9 +368,11 @@ include __DIR__ . '/_header.php';
           </div>
         </div>
         <div class="dr-stat">Total de cliques <strong><?=(int)$r['clicks_total']?></strong></div>
+        <button type="button" class="btn btn-ghost dr-metric-btn" data-metrics-id="<?=(int)$r['id']?>" data-metrics-name="<?=date_redirects_h((string)$r['name'])?>" data-metrics-total="<?=(int)$r['clicks_total']?>">Metricas</button>
         <div class="dr-menu">
           <button type="button" class="btn btn-ghost dr-menu-btn">Acoes</button>
           <div class="dr-menu-panel">
+            <button type="button" data-metrics-id="<?=(int)$r['id']?>" data-metrics-name="<?=date_redirects_h((string)$r['name'])?>" data-metrics-total="<?=(int)$r['clicks_total']?>">Abrir metricas</button>
             <a href="date_redirects.php?id=<?=(int)$r['id']?>">Editar redirecionador</a>
             <button type="button" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar link geral</button>
             <a href="<?=date_redirects_h($publicUrl)?>" target="_blank">Abrir link</a>
@@ -491,6 +480,37 @@ include __DIR__ . '/_header.php';
   <?php endif; ?>
 </div>
 
+<div class="dr-modal" id="drMetricsModal" aria-hidden="true">
+  <div class="dr-modal-panel" role="dialog" aria-modal="true" aria-labelledby="drMetricsTitle">
+    <div class="dr-chart-head">
+      <div>
+        <div class="dr-chart-title" id="drMetricsTitle">Metricas</div>
+        <div class="dr-chart-sub" id="drMetricsSub">Cliques por data deste redirecionador.</div>
+      </div>
+      <div class="dr-actions">
+        <div class="dr-chart-controls" aria-label="Filtros do grafico de cliques">
+          <div class="dr-seg" data-dr-chart-window>
+            <button type="button" data-days="7">7d</button>
+            <button type="button" data-days="30">30d</button>
+            <button type="button" data-days="90" class="active">90d</button>
+            <button type="button" data-days="365">365d</button>
+          </div>
+          <div class="dr-seg" data-dr-chart-group>
+            <button type="button" data-group="day" class="active">Dia</button>
+            <button type="button" data-group="week">Semana</button>
+            <button type="button" data-group="month">Mes</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost dr-modal-close" id="drMetricsClose" aria-label="Fechar">x</button>
+      </div>
+    </div>
+    <div class="dr-chart-box" id="drClicksChartBox">
+      <canvas id="drClicksChart"></canvas>
+      <div class="dr-chart-empty">Nenhum clique registrado no periodo selecionado.</div>
+    </div>
+  </div>
+</div>
+
 <template id="dateLinkTemplate">
   <div class="dr-link-row">
     <input type="hidden" name="link_id[]" value="0">
@@ -543,10 +563,16 @@ if (addDateLink) {
 }
 
 (function() {
-  const rawRows = <?= json_encode($chartSeries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+  const seriesByRedirector = <?= json_encode($chartSeriesByRedirector, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+  let rawRows = [];
+  let activeId = null;
   const canvas = document.getElementById('drClicksChart');
   const box = document.getElementById('drClicksChartBox');
-  if (!canvas || !window.Chart) return;
+  const modal = document.getElementById('drMetricsModal');
+  const close = document.getElementById('drMetricsClose');
+  const title = document.getElementById('drMetricsTitle');
+  const sub = document.getElementById('drMetricsSub');
+  if (!canvas || !modal || !window.Chart) return;
 
   const state = { days: 90, group: 'day' };
   const fmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' });
@@ -626,21 +652,51 @@ if (addDateLink) {
     chart.update();
   }
 
+  function openMetrics(btn) {
+    activeId = String(btn.dataset.metricsId || '');
+    rawRows = seriesByRedirector[activeId] || [];
+    title.textContent = btn.dataset.metricsName || 'Metricas';
+    sub.textContent = 'Total de cliques: ' + Number(btn.dataset.metricsTotal || 0).toLocaleString('pt-BR');
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    renderChart();
+    setTimeout(() => chart.resize(), 0);
+  }
+
+  function closeMetrics() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    activeId = null;
+  }
+
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-metrics-id]');
+    if (btn) {
+      e.preventDefault();
+      openMetrics(btn);
+      return;
+    }
+    if (e.target === modal) closeMetrics();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeMetrics();
+  });
+  close.addEventListener('click', closeMetrics);
+
   document.querySelectorAll('[data-dr-chart-window] button').forEach(btn => {
     btn.addEventListener('click', () => {
       state.days = Number(btn.dataset.days || 90);
       btn.parentElement.querySelectorAll('button').forEach(item => item.classList.toggle('active', item === btn));
-      renderChart();
+      if (activeId !== null) renderChart();
     });
   });
   document.querySelectorAll('[data-dr-chart-group] button').forEach(btn => {
     btn.addEventListener('click', () => {
       state.group = btn.dataset.group || 'day';
       btn.parentElement.querySelectorAll('button').forEach(item => item.classList.toggle('active', item === btn));
-      renderChart();
+      if (activeId !== null) renderChart();
     });
   });
-  renderChart();
 })();
 </script>
 <?php include __DIR__ . '/_footer.php'; ?>
