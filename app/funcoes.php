@@ -90,10 +90,123 @@ function proteger_aluno(): void {
 }
 
 function proteger_admin(): void {
-    if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
+    if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && !admin_auth_restore_session()) {
         header('Location: ' . BASE_URL_ADMIN . '/index.php');
         exit;
     }
+}
+
+function admin_auth_ensure_remember_tokens(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS admin_remember_tokens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            admin_type VARCHAR(20) NOT NULL DEFAULT 'principal',
+            admin_id VARCHAR(80) NOT NULL DEFAULT 'admin',
+            admin_name VARCHAR(150) NULL,
+            admin_email VARCHAR(190) NULL,
+            token_hash CHAR(64) NOT NULL,
+            user_agent VARCHAR(500) NULL,
+            expires_at DATETIME NOT NULL,
+            last_used_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_admin_remember_hash (token_hash),
+            KEY idx_admin_remember_identity (admin_type, admin_id),
+            KEY idx_admin_remember_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function admin_auth_cookie_name(): string {
+    return 'am_admin_token';
+}
+
+function admin_auth_set_session(array $identity): void {
+    $_SESSION['admin_logado'] = true;
+    $_SESSION['admin_tipo'] = (string)($identity['admin_type'] ?? 'principal');
+    $_SESSION['equipe_id'] = $identity['admin_type'] === 'equipe' ? (int)($identity['admin_id'] ?? 0) : null;
+    $_SESSION['equipe_nome'] = (string)($identity['admin_name'] ?? 'Administrador');
+    $_SESSION['equipe_email'] = (string)($identity['admin_email'] ?? ADMIN_USER);
+    $_SESSION['equipe_perms'] = $identity['admin_type'] === 'equipe' ? ($identity['perms'] ?? null) : null;
+}
+
+function admin_auth_issue_remember_token(PDO $pdo, array $identity, int $days = 180): void {
+    if (headers_sent()) return;
+    admin_auth_ensure_remember_tokens($pdo);
+    $days = max(1, min(730, $days));
+    $token = bin2hex(random_bytes(32));
+    $expiresTs = time() + (86400 * $days);
+    $pdo->prepare("
+        INSERT INTO admin_remember_tokens (admin_type,admin_id,admin_name,admin_email,token_hash,user_agent,expires_at)
+        VALUES (:type,:id,:name,:email,:hash,:ua,:expires)
+    ")->execute([
+        'type' => (string)($identity['admin_type'] ?? 'principal'),
+        'id' => (string)($identity['admin_id'] ?? 'admin'),
+        'name' => (string)($identity['admin_name'] ?? 'Administrador'),
+        'email' => (string)($identity['admin_email'] ?? ADMIN_USER),
+        'hash' => hash('sha256', $token),
+        'ua' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 500) ?: null,
+        'expires' => date('Y-m-d H:i:s', $expiresTs),
+    ]);
+    setcookie(admin_auth_cookie_name(), $token, am_cookie_options($expiresTs));
+}
+
+function admin_auth_restore_session(): bool {
+    if (!empty($_SESSION['admin_logado']) && $_SESSION['admin_logado'] === true) return true;
+    $token = trim((string)($_COOKIE[admin_auth_cookie_name()] ?? ''));
+    if (!preg_match('/^[a-f0-9]{64}$/i', $token)) return false;
+    try {
+        $pdo = getPDO();
+        admin_auth_ensure_remember_tokens($pdo);
+        $hash = hash('sha256', strtolower($token));
+        $st = $pdo->prepare("SELECT * FROM admin_remember_tokens WHERE token_hash=:hash AND expires_at>NOW() LIMIT 1");
+        $st->execute(['hash'=>$hash]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row) return false;
+        $identity = [
+            'admin_type' => (string)$row['admin_type'],
+            'admin_id' => (string)$row['admin_id'],
+            'admin_name' => (string)($row['admin_name'] ?: 'Administrador'),
+            'admin_email' => (string)($row['admin_email'] ?: ADMIN_USER),
+            'perms' => null,
+        ];
+        if ($identity['admin_type'] === 'equipe') {
+            $eq = $pdo->prepare("SELECT id,nome,email,permissoes FROM admin_equipe WHERE id=:id AND ativo=1 LIMIT 1");
+            $eq->execute(['id'=>(int)$identity['admin_id']]);
+            $member = $eq->fetch(PDO::FETCH_ASSOC);
+            if (!$member) return false;
+            $identity['admin_id'] = (string)$member['id'];
+            $identity['admin_name'] = (string)$member['nome'];
+            $identity['admin_email'] = (string)$member['email'];
+            $identity['perms'] = (string)$member['permissoes'];
+        } else {
+            $identity['admin_type'] = 'principal';
+            $identity['admin_id'] = 'admin';
+            $identity['admin_name'] = 'Administrador';
+            $identity['admin_email'] = ADMIN_USER;
+        }
+        if (session_status() !== PHP_SESSION_ACTIVE && !headers_sent()) session_start();
+        if (session_status() === PHP_SESSION_ACTIVE) admin_auth_set_session($identity);
+        $expiresTs = time() + (86400 * 180);
+        $pdo->prepare("UPDATE admin_remember_tokens SET expires_at=:expires,last_used_at=NOW() WHERE token_hash=:hash")
+            ->execute(['expires'=>date('Y-m-d H:i:s', $expiresTs), 'hash'=>$hash]);
+        if (!headers_sent()) setcookie(admin_auth_cookie_name(), strtolower($token), am_cookie_options($expiresTs));
+        return true;
+    } catch (Throwable $e) {
+        @error_log('admin_auth_restore_session: ' . $e->getMessage());
+        return false;
+    }
+}
+
+function admin_auth_forget(?PDO $pdo = null): void {
+    $token = trim((string)($_COOKIE[admin_auth_cookie_name()] ?? ''));
+    if ($token !== '' && preg_match('/^[a-f0-9]{64}$/i', $token)) {
+        try {
+            $pdo = $pdo ?: getPDO();
+            admin_auth_ensure_remember_tokens($pdo);
+            $pdo->prepare("DELETE FROM admin_remember_tokens WHERE token_hash=:hash")->execute(['hash'=>hash('sha256', strtolower($token))]);
+        } catch (Throwable $e) {}
+    }
+    if (!headers_sent()) setcookie(admin_auth_cookie_name(), '', am_cookie_options(time() - 3600));
 }
 
 function redirecionar(string $url): void {

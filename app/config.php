@@ -92,9 +92,9 @@ error_reporting(E_ALL);
 if (!$isCli && session_status() === PHP_SESSION_NONE) {
     if (!headers_sent()) {
         // Aulas podem durar mais que os 24 minutos padrão do PHP. Mantém a
-        // sessão por 8 horas; o token persistente continua sendo a segunda
+        // sessão por 30 dias; o token persistente continua sendo a segunda
         // camada de recuperação caso o provedor limpe a sessão antes disso.
-        $sessionLifetime = 60 * 60 * 8;
+        $sessionLifetime = 60 * 60 * 24 * 30;
         ini_set('session.gc_maxlifetime', (string)$sessionLifetime);
         session_set_cookie_params(am_session_cookie_options($sessionLifetime));
         session_start();
@@ -129,7 +129,7 @@ if ($isLocal) {
 
 // Senha padrão do certificado (pode trocar depois)
 define('SENHA_CERTIFICADO', 'FERA2025');
-define('APP_VERSION', 'v37');
+define('APP_VERSION', 'v38');
 
 /**
  * Credenciais do ADMIN (login da área administrativa)

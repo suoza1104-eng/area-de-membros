@@ -1,25 +1,31 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../app/config.php';
+require_once __DIR__ . '/../app/funcoes.php';
+
+if (isset($_GET['logout'])) {
+    admin_auth_forget();
+    $_SESSION = [];
+    if (session_status() === PHP_SESSION_ACTIVE) session_destroy();
+    header('Location: ' . BASE_URL_ADMIN . '/index.php');
+    exit;
+}
 
 // ========================
 // 1) LOGIN DO ADMIN
 // ========================
-if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
+if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && !admin_auth_restore_session()) {
     $erro = '';
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user = trim($_POST['usuario'] ?? '');
         $pass = trim($_POST['senha']   ?? '');
+        $remember = !empty($_POST['lembrar']);
 
         if ($user === ADMIN_USER && $pass === ADMIN_PASS) {
-            $_SESSION['admin_logado'] = true;
-            $_SESSION['admin_tipo']   = 'principal';
-            $_SESSION['equipe_id']    = null;
-            $_SESSION['equipe_nome']  = 'Administrador';
-            $_SESSION['equipe_email'] = $user;
-            $_SESSION['equipe_perms'] = null;
+            $identity = ['admin_type'=>'principal','admin_id'=>'admin','admin_name'=>'Administrador','admin_email'=>$user,'perms'=>null];
+            admin_auth_set_session($identity);
+            if ($remember) admin_auth_issue_remember_token(getPDO(), $identity);
             header('Location: ' . BASE_URL_ADMIN . '/index.php');
             exit;
         }
@@ -31,12 +37,9 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             $st->execute([':e' => $user]);
             $membro = $st->fetch(PDO::FETCH_ASSOC);
             if ($membro && password_verify($pass, (string)($membro['senha_hash'] ?? ''))) {
-                $_SESSION['admin_logado'] = true;
-                $_SESSION['admin_tipo']   = 'equipe';
-                $_SESSION['equipe_id']    = (int)$membro['id'];
-                $_SESSION['equipe_nome']  = $membro['nome'];
-                $_SESSION['equipe_email'] = $membro['email'];
-                $_SESSION['equipe_perms'] = $membro['permissoes'];
+                $identity = ['admin_type'=>'equipe','admin_id'=>(string)$membro['id'],'admin_name'=>(string)$membro['nome'],'admin_email'=>(string)$membro['email'],'perms'=>(string)$membro['permissoes']];
+                admin_auth_set_session($identity);
+                if ($remember) admin_auth_issue_remember_token($pdo_l, $identity);
                 header('Location: ' . BASE_URL_ADMIN . '/index.php');
                 exit;
             }
@@ -164,22 +167,17 @@ if (empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) {
             <label for="senha">Senha</label>
             <input type="password" id="senha" name="senha" required>
 
+            <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:12px;color:#94a3b8;margin:0 0 14px">
+                <input type="checkbox" name="lembrar" value="1" checked style="width:auto;margin:0;accent-color:#facc15">
+                Manter conectado neste dispositivo
+            </label>
+
             <button type="submit">Entrar</button>
         </form>
     </div>
     </body>
     </html>
     <?php
-    exit;
-}
-
-// ========================
-// 2) LOGOUT
-// ========================
-if (isset($_GET['logout'])) {
-    $_SESSION['admin_logado'] = false;
-    session_destroy();
-    header('Location: ' . BASE_URL_ADMIN . '/index.php');
     exit;
 }
 
