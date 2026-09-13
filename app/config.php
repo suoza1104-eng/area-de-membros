@@ -129,7 +129,7 @@ if ($isLocal) {
 
 // Senha padrão do certificado (pode trocar depois)
 define('SENHA_CERTIFICADO', 'FERA2025');
-define('APP_VERSION', 'v30');
+define('APP_VERSION', 'v31');
 
 /**
  * Credenciais do ADMIN (login da área administrativa)
