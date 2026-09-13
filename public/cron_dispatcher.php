@@ -62,6 +62,7 @@ try {
     // também solicitar fluxos_push diretamente.
     if ($taskKey === 'agendamentos_retorno') {
         $result['companion_lives_turma'] = cron_manager_execute($pdo, 'lives_turma', $source, false);
+        $result['companion_disparos_manuais'] = cron_manager_execute($pdo, 'disparos_manuais', $source, false);
         $result['companion_whatsapp_grupos'] = cron_manager_execute($pdo, 'whatsapp_grupos', $source, false);
         $result['companion_whatsapp_status'] = cron_manager_execute($pdo, 'whatsapp_status', $source, false);
         $result['companion_fluxos_push'] = cron_manager_execute($pdo, 'fluxos_push', $source, false);

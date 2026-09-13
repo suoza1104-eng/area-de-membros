@@ -58,7 +58,7 @@ foreach ([
     'horario_ativo TINYINT(1) NOT NULL DEFAULT 0',
     'horario_inicio TIME NULL',
     'horario_fim TIME NULL',
-    "dias_semana VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5,6,7'",
+    "dias_semana VARCHAR(20) NOT NULL DEFAULT '0,1,2,3,4,5,6'",
 ] as $col) {
     try { $pdo->exec("ALTER TABLE disparos ADD COLUMN $col"); } catch (Throwable $e) {}
 }
@@ -615,7 +615,8 @@ if ($acao !== '') {
         $ini = $toMin($disparo['horario_inicio'] ?? null, 0);
         $fim = $toMin($disparo['horario_fim'] ?? null, 1439);
 
-        return $hmAtual >= $ini && $hmAtual <= $fim;
+        if ($ini <= $fim) return $hmAtual >= $ini && $hmAtual <= $fim;
+        return $hmAtual >= $ini || $hmAtual <= $fim;
     }
 
     function dpExecutarDisparoBatch(PDO $pdo, int $id, int $offset, bool $reset): array {
@@ -820,7 +821,11 @@ if ($acao !== '') {
             $horario_ativo = (int)($_POST['horario_ativo'] ?? 0);
             $horario_inicio = !empty($_POST['horario_inicio']) ? $_POST['horario_inicio'] : null;
             $horario_fim   = !empty($_POST['horario_fim'])    ? $_POST['horario_fim']    : null;
-            $dias_semana   = preg_replace('/[^0-9,]/', '', $_POST['dias_semana'] ?? '1,2,3,4,5,6,7');
+            $dias_semana   = preg_replace('/[^0-9,]/', '', $_POST['dias_semana'] ?? '0,1,2,3,4,5,6');
+            if ($horario_ativo === 1) {
+                if (!$horario_inicio || !$horario_fim) { echo json_encode(['ok'=>false,'msg'=>'Informe a janela de horario do disparo.']); exit; }
+                if ($dias_semana === '') { echo json_encode(['ok'=>false,'msg'=>'Selecione ao menos um dia da semana para a janela de disparo.']); exit; }
+            }
 
             if ($nome === '') { echo json_encode(['ok' => false, 'msg' => 'Nome obrigatório']); exit; }
 
@@ -852,8 +857,8 @@ if ($acao !== '') {
             $row->execute([':id'=>$id]);
             $row = $row->fetch(PDO::FETCH_ASSOC);
             if (!$row) { echo json_encode(['ok' => false, 'msg' => 'Não encontrado']); exit; }
-            $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, filtros_json, acoes_json, status) VALUES (:nome,:tipo,:ag,:iv,:fj,:aj,'rascunho')");
-            $st->execute([':nome'=>'[Cópia] '.$row['nome'],':tipo'=>$row['tipo'],':ag'=>$row['agendado_em'],':iv'=>$row['intervalo_seg'],':fj'=>$row['filtros_json'],':aj'=>$row['acoes_json']]);
+            $st = $pdo->prepare("INSERT INTO disparos (nome, tipo, agendado_em, intervalo_ms, batch_size, filtros_json, acoes_json, status, horario_ativo, horario_inicio, horario_fim, dias_semana) VALUES (:nome,:tipo,:ag,:iv,:bs,:fj,:aj,'rascunho',:ha,:hi,:hf,:ds)");
+            $st->execute([':nome'=>'[Cópia] '.$row['nome'],':tipo'=>$row['tipo'],':ag'=>$row['agendado_em'],':iv'=>(int)($row['intervalo_ms'] ?? $row['intervalo_seg'] ?? 0),':bs'=>(int)($row['batch_size'] ?? 1),':fj'=>$row['filtros_json'],':aj'=>$row['acoes_json'],':ha'=>(int)($row['horario_ativo'] ?? 0),':hi'=>$row['horario_inicio'] ?? null,':hf'=>$row['horario_fim'] ?? null,':ds'=>$row['dias_semana'] ?? '0,1,2,3,4,5,6']);
             echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]);
             exit;
 
@@ -880,7 +885,7 @@ if ($acao !== '') {
         // Listar
         case 'listar':
             try {
-                $rows = $pdo->query("SELECT id, nome, status, tipo, agendado_em, total_enviados, total_erros, criado_em FROM disparos ORDER BY criado_em DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
+                $rows = $pdo->query("SELECT id, nome, status, tipo, agendado_em, total_enviados, total_erros, criado_em, horario_ativo, horario_inicio, horario_fim, dias_semana FROM disparos ORDER BY criado_em DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
                 echo json_encode(['ok'=>true,'data'=>$rows]);
             } catch (Throwable $e) {
                 echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);
@@ -952,6 +957,11 @@ if ($acao !== '') {
                 $row->execute([':id'=>$id]);
                 $row = $row->fetch(PDO::FETCH_ASSOC);
                 if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
+                if (!dpDisparoDentroDoHorario($row)) {
+                    $pdo->prepare("UPDATE disparos SET status='aguardando' WHERE id=:id AND status IN ('executando','aguardando','rascunho')")->execute([':id'=>$id]);
+                    echo json_encode(['ok'=>true,'waiting'=>true,'processados'=>0,'enviados'=>0,'erros'=>0,'done'=>false,'next_offset'=>$offset,'msg'=>'Fora da janela de horario. O disparo aguardara o proximo horario permitido.']);
+                    exit;
+                }
 
                 $limit   = max(1, min(500, (int)($row['batch_size'] ?? 1)));
                 $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
@@ -1528,9 +1538,12 @@ require_once __DIR__ . '/_header.php';
             <input type="checkbox" id="dpHorarioAtivo" onchange="dpToggleHorario()">
             <span class="toggle-slider"></span>
           </label>
-          <span style="font-size:13px;font-weight:600">Restringir horário de envio</span>
+          <span style="font-size:13px;font-weight:600">Usar janela de horário</span>
         </div>
         <div class="horario-wrap" id="dpHorarioWrap" style="display:none">
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">
+            Quando ativo, o disparo roda apenas dentro da janela. Fora dela, fica aguardando e o cron retoma automaticamente no próximo horário permitido.
+          </div>
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:center">
             <div style="flex:1">
               <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">De</label>
@@ -1538,7 +1551,7 @@ require_once __DIR__ . '/_header.php';
             </div>
             <div style="flex:1">
               <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Até</label>
-              <input type="time" id="dpHorarioFim" value="21:00" style="width:100%;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:13px">
+              <input type="time" id="dpHorarioFim" value="18:00" style="width:100%;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:13px">
             </div>
           </div>
           <div>
@@ -1702,6 +1715,7 @@ async function dpCarregarLista() {
     cont.innerHTML = j.data.map(d => {
         const meta = [
             `<span>${d.tipo === 'agendado' ? '📅 ' + dpFmtDate(d.agendado_em) : '⚡ Instantâneo'}</span>`,
+            parseInt(d.horario_ativo || 0) ? `<span>Janela ${dpFmtHorario(d)}</span>` : '',
             `<span>Enviados: ${d.total_enviados}</span>`,
             d.total_erros > 0 ? `<span style="color:#f87171">Erros: ${d.total_erros}</span>` : '',
             `<span>${dpFmtDate(d.criado_em)}</span>`,
@@ -1807,7 +1821,7 @@ function dpNovoDisparo() {
     document.getElementById('dpBatchSize').value = 1;
     document.getElementById('dpHorarioAtivo').checked = false;
     document.getElementById('dpHorarioInicio').value = '08:00';
-    document.getElementById('dpHorarioFim').value = '21:00';
+    document.getElementById('dpHorarioFim').value = '18:00';
     document.querySelectorAll('.dp-dia').forEach(cb => cb.checked = true);
     document.getElementById('dpFiltrosInc').innerHTML = '';
     document.getElementById('dpFiltrosExc').innerHTML = '';
@@ -1834,7 +1848,7 @@ async function dpEditarDisparo(id) {
     document.getElementById('dpBatchSize').value = d.batch_size || 1;
     document.getElementById('dpHorarioAtivo').checked = parseInt(d.horario_ativo || 0) === 1;
     document.getElementById('dpHorarioInicio').value = d.horario_inicio ? d.horario_inicio.slice(0,5) : '08:00';
-    document.getElementById('dpHorarioFim').value    = d.horario_fim    ? d.horario_fim.slice(0,5)    : '21:00';
+    document.getElementById('dpHorarioFim').value    = d.horario_fim    ? d.horario_fim.slice(0,5)    : '18:00';
     const dias = (d.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
     document.querySelectorAll('.dp-dia').forEach(cb => { cb.checked = dias.includes(parseInt(cb.value)); });
     document.getElementById('dpFormTitle').textContent = 'Editar: ' + d.nome;
@@ -2223,7 +2237,7 @@ function dpDentroDoHorario(disparo) {
     const hm   = now.getHours() * 60 + now.getMinutes();
     const ini  = dpHmToMin(disparo.horario_inicio || '00:00');
     const fim  = dpHmToMin(disparo.horario_fim    || '23:59');
-    return hm >= ini && hm <= fim;
+    return ini <= fim ? (hm >= ini && hm <= fim) : (hm >= ini || hm <= fim);
 }
 
 function dpHmToMin(hm) {
@@ -2310,6 +2324,16 @@ async function dpIniciarDisparo(id, opts) {
             document.getElementById('dpProgressPause').style.display = 'none';
             document.getElementById('dpProgressAbort').style.display = 'none';
             document.getElementById('dpProgressClose').style.display = '';
+            break;
+        }
+        if (j.waiting) {
+            dpExecutando = false;
+            document.getElementById('dpProgressTitle').textContent = 'Aguardando horário';
+            document.getElementById('dpProgressSub').textContent = j.msg || 'Fora da janela de envio. O cron retomará no próximo horário permitido.';
+            document.getElementById('dpProgressPause').style.display = 'none';
+            document.getElementById('dpProgressAbort').style.display = 'none';
+            document.getElementById('dpProgressClose').style.display = '';
+            dpCarregarLista();
             break;
         }
         if (j.total !== null && j.total !== undefined) totalGeral = j.total;
@@ -2544,6 +2568,15 @@ function dpFmtDate(dt) {
     if (!dt) return '';
     const d = new Date(dt.replace(' ','T'));
     return d.toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+function dpFmtHorario(d) {
+    const ini = (d.horario_inicio || '08:00').slice(0,5);
+    const fim = (d.horario_fim || '18:00').slice(0,5);
+    const nomes = ['Dom','Seg','Ter','Qua','Qui','Sex','Sab'];
+    const dias = String(d.dias_semana || '0,1,2,3,4,5,6').split(',').map(v => parseInt(v, 10)).filter(v => !Number.isNaN(v));
+    const labelDias = dias.length >= 7 ? 'todos os dias' : dias.map(v => nomes[v] || (v === 7 ? 'Dom' : '')).filter(Boolean).join('/');
+    return `${ini}-${fim}${labelDias ? ' ' + labelDias : ''}`;
 }
 </script>
 

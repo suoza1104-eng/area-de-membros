@@ -47,6 +47,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 300,
         ],
+        'disparos_manuais' => [
+            'label' => 'Disparos manuais',
+            'description' => 'Processa disparos administrativos agendados ou aguardando janela de horario.',
+            'script' => __DIR__ . '/../cron/processar_disparos.php',
+            'interval' => 1,
+            'timeout' => 180,
+        ],
         'metricas_negocio' => [
             'label' => 'Metricas do negocio',
             'description' => 'Sincroniza Meta Ads, reconcilia vendas Hotmart e recalcula atribuicoes.',
