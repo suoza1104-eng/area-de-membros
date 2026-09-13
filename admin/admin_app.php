@@ -27,7 +27,7 @@ include __DIR__ . '/_header.php';
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
 <?php endif; ?>
 <style>
-.admapp{display:grid;gap:14px}.admapp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.admapp-title h1{margin:0;color:var(--text);font-size:24px}.admapp-title p{margin:5px 0 0;color:var(--muted);font-size:12px}.admapp-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px}.admapp-install{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;background:linear-gradient(135deg,rgba(250,204,21,.12),rgba(56,189,248,.06));border-color:rgba(250,204,21,.28)}.admapp-kicker{display:inline-flex;padding:4px 8px;border:1px solid rgba(250,204,21,.25);border-radius:999px;color:var(--primary);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.admapp-install h2{margin:10px 0 6px;font-size:19px;color:var(--text)}.admapp-install p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}.admapp-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.admapp-btn{height:38px;border:1px solid var(--border);border-radius:9px;padding:0 13px;background:var(--bg);color:var(--text);font-size:12px;font-weight:750;cursor:pointer}.admapp-btn.primary{border-color:rgba(250,204,21,.45);background:var(--primary);color:#1b1601}.admapp-btn:disabled{opacity:.55;cursor:not-allowed}.admapp-status{display:none;margin-top:10px;padding:9px 11px;border-radius:9px;font-size:11px}.admapp-status.ok{display:block;background:rgba(34,197,94,.1);color:#86efac}.admapp-status.err{display:block;background:rgba(239,68,68,.1);color:#fca5a5}.admapp-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:14px}.admapp-events{display:grid;gap:9px}.admapp-event{display:grid;grid-template-columns:minmax(150px,1fr) 120px 120px minmax(130px,.8fr) auto;gap:8px;align-items:end;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(15,23,42,.42)}.admapp-event strong{display:block;color:var(--text);font-size:13px}.admapp-event span{display:block;margin-top:3px;color:var(--muted);font-size:10px}.admapp-event label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.admapp-event input,.admapp-event select{width:100%;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px;font-size:11px}.admapp-switch{display:flex;align-items:center;gap:8px;color:var(--text);font-size:11px}.admapp-switch input{width:auto;height:auto;accent-color:var(--primary)}.admapp-device{padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);margin-top:8px}.admapp-device strong{font-size:12px;color:var(--text)}.admapp-device p{margin:3px 0 0;color:var(--muted);font-size:10px}.admapp-note{color:var(--muted);font-size:11px;line-height:1.55}.admapp-list-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:8px}@media(max-width:980px){.admapp-grid,.admapp-install{grid-template-columns:1fr}.admapp-actions{justify-content:flex-start}.admapp-event{grid-template-columns:1fr 1fr}.admapp-event .admapp-event-main{grid-column:1/-1}}@media(max-width:560px){.admapp-event{grid-template-columns:1fr}}
+.admapp{display:grid;gap:14px}.admapp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.admapp-title h1{margin:0;color:var(--text);font-size:24px}.admapp-title p{margin:5px 0 0;color:var(--muted);font-size:12px}.admapp-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px}.admapp-install{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;background:linear-gradient(135deg,rgba(250,204,21,.12),rgba(56,189,248,.06));border-color:rgba(250,204,21,.28)}.admapp-kicker{display:inline-flex;padding:4px 8px;border:1px solid rgba(250,204,21,.25);border-radius:999px;color:var(--primary);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.admapp-install h2{margin:10px 0 6px;font-size:19px;color:var(--text)}.admapp-install p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}.admapp-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.admapp-btn{height:38px;border:1px solid var(--border);border-radius:9px;padding:0 13px;background:var(--bg);color:var(--text);font-size:12px;font-weight:750;cursor:pointer}.admapp-btn.primary{border-color:rgba(250,204,21,.45);background:var(--primary);color:#1b1601}.admapp-btn:disabled{opacity:.55;cursor:not-allowed}.admapp-toggle{min-width:154px;text-align:left}.admapp-toggle.on{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.14);color:#86efac}.admapp-toggle.off{border-color:rgba(148,163,184,.24);background:rgba(15,23,42,.72);color:#cbd5e1}.admapp-toggle::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:#94a3b8;margin-right:7px}.admapp-toggle.on::before{background:#22c55e}.admapp-status{display:none;margin-top:10px;padding:9px 11px;border-radius:9px;font-size:11px}.admapp-status.ok{display:block;background:rgba(34,197,94,.1);color:#86efac}.admapp-status.err{display:block;background:rgba(239,68,68,.1);color:#fca5a5}.admapp-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:14px}.admapp-events{display:grid;gap:9px}.admapp-event{display:grid;grid-template-columns:minmax(150px,1fr) 120px 120px minmax(130px,.8fr) auto;gap:8px;align-items:end;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(15,23,42,.42)}.admapp-event strong{display:block;color:var(--text);font-size:13px}.admapp-event span{display:block;margin-top:3px;color:var(--muted);font-size:10px}.admapp-event label{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.admapp-event input,.admapp-event select{width:100%;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:0 9px;font-size:11px}.admapp-switch{display:flex;align-items:center;gap:8px;color:var(--text);font-size:11px}.admapp-switch input{width:auto;height:auto;accent-color:var(--primary)}.admapp-device{padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg);margin-top:8px}.admapp-device strong{font-size:12px;color:var(--text)}.admapp-device p{margin:3px 0 0;color:var(--muted);font-size:10px}.admapp-note{color:var(--muted);font-size:11px;line-height:1.55}.admapp-list-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:8px}@media(max-width:980px){.admapp-grid,.admapp-install{grid-template-columns:1fr}.admapp-actions{justify-content:flex-start}.admapp-event{grid-template-columns:1fr 1fr}.admapp-event .admapp-event-main{grid-column:1/-1}}@media(max-width:560px){.admapp-event{grid-template-columns:1fr}}
 </style>
 
 <div class="admapp">
@@ -47,7 +47,7 @@ include __DIR__ . '/_header.php';
     </div>
     <div class="admapp-actions">
       <button class="admapp-btn primary" id="admInstallBtn" type="button">Instalar app</button>
-      <button class="admapp-btn" id="admEnablePushBtn" type="button">Ativar notificações</button>
+      <button class="admapp-btn admapp-toggle off" id="admEnablePushBtn" type="button">Notificações desligadas</button>
       <button class="admapp-btn" id="admTestPushBtn" type="button">Testar push</button>
       <button class="admapp-btn" id="admTestSoundBtn" type="button">Testar som</button>
     </div>
@@ -85,6 +85,15 @@ let deferredPrompt=null;
 let swRegistration=null;
 
 function msg(text,type){statusEl.textContent=text;statusEl.className='admapp-status '+(type||'ok');}
+function pushDisabled(){return localStorage.getItem('admin_push_disabled')==='1';}
+function pushEnabled(){return !pushDisabled()&&localStorage.getItem('admin_push_token')&&('Notification'in window)&&Notification.permission==='granted';}
+function refreshPushToggle(){
+  const on=pushEnabled();
+  pushBtn.classList.toggle('on',!!on);
+  pushBtn.classList.toggle('off',!on);
+  pushBtn.textContent=on?'Notificações ligadas':'Notificações desligadas';
+  pushBtn.title=on?'Clique para desligar notificações neste dispositivo':'Clique para ligar notificações neste dispositivo';
+}
 function isIOS(){return /iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
 function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
 function installHelp(){
@@ -132,6 +141,7 @@ async function registerSW(){
   return swRegistration;
 }
 async function enablePush(){
+  localStorage.removeItem('admin_push_disabled');
   if(!PUSH_READY)throw new Error('Firebase Push ainda não está configurado.');
   if(isIOS()&&!isStandalone())throw new Error(notificationHelp());
   if(!('Notification'in window))throw new Error(notificationHelp());
@@ -147,6 +157,7 @@ async function enablePush(){
   const json=await resp.json();
   if(!resp.ok||!json.ok)throw new Error(json.message||'Falha ao registrar dispositivo.');
   localStorage.setItem('admin_push_token',token);
+  refreshPushToggle();
   messaging.onMessage(payload=>{
     const data=payload&&payload.data?payload.data:{};
     if(data.channel&&data.channel!=='admin')return;
@@ -156,10 +167,27 @@ async function enablePush(){
   msg('Notificações administrativas ativadas neste dispositivo.','ok');
   await loadPrefs();
 }
-pushBtn.onclick=()=>enablePush().catch(e=>msg(e.message,'err'));
+async function disablePush(){
+  const token=localStorage.getItem('admin_push_token')||'';
+  const permission=('Notification'in window)?Notification.permission:'default';
+  localStorage.setItem('admin_push_disabled','1');
+  refreshPushToggle();
+  await fetch('api_admin_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:'disable',client_id:clientId(),token,permission,installed:isStandalone(),platform:platform()})});
+  msg('Notificações desligadas para este dispositivo.','ok');
+  await loadPrefs();
+}
+pushBtn.onclick=async()=>{
+  pushBtn.disabled=true;
+  try{
+    if(pushEnabled())await disablePush();
+    else await enablePush();
+  }catch(e){msg(e.message,'err');refreshPushToggle();}
+  finally{pushBtn.disabled=false;}
+};
 testPushBtn.onclick=async()=>{
   testPushBtn.disabled=true;
   try{
+    if(pushDisabled())throw new Error('Notificações desligadas neste dispositivo. Ligue o botão antes de testar.');
     await enablePush();
     const token=localStorage.getItem('admin_push_token')||'';
     const resp=await fetch('api_admin_push_test.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({client_id:clientId(),token})});
@@ -174,7 +202,7 @@ async function heartbeat(){
   try{
     const token=localStorage.getItem('admin_push_token')||'';
     const installed=isStandalone();
-    if(!token||!('Notification'in window))return;
+    if(pushDisabled()||!token||!('Notification'in window))return;
     await fetch('api_admin_push_device.php',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({action:installed?'installed':'heartbeat',client_id:clientId(),token,permission:Notification.permission,installed,platform:platform()})});
   }catch(e){}
 }
@@ -214,6 +242,7 @@ document.addEventListener('click',async e=>{
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 registerSW().then(()=>heartbeat()).catch(e=>msg(e.message,'err'));
+refreshPushToggle();
 loadPrefs().catch(e=>msg(e.message,'err'));
 setInterval(heartbeat,60000);
 })();
