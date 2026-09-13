@@ -130,30 +130,36 @@ function admin_app_money_cents(int $cents): string
     return 'R$ ' . number_format($cents / 100, 2, ',', '.');
 }
 
+function admin_app_short_text(string $value, int $limit): string
+{
+    $value = trim(preg_replace('/\s+/', ' ', $value) ?? '');
+    if ($value === '' || mb_strlen($value) <= $limit) return $value;
+    return rtrim(mb_substr($value, 0, max(1, $limit - 1))) . '…';
+}
+
 function admin_app_notification_text(string $eventCode, array $payload): array
 {
-    $buyer = trim((string)($payload['buyer_name'] ?? $payload['comprador_nome'] ?? ''));
     $product = trim((string)($payload['product_name'] ?? $payload['produto_nome'] ?? ''));
     $grossCents = (int)($payload['gross_amount_cents'] ?? round(((float)($payload['valor_bruto'] ?? 0)) * 100));
     $netCents = (int)($payload['net_amount_cents'] ?? round(((float)($payload['valor_liquido'] ?? 0)) * 100));
     $value = $netCents > 0 ? $netCents : $grossCents;
     $gateway = strtoupper((string)($payload['provider'] ?? $payload['gateway'] ?? ''));
-    $productPart = $product !== '' ? ' - ' . $product : '';
-    $buyerPart = $buyer !== '' ? $buyer : 'Novo comprador';
+    $gatewayPart = $gateway !== '' ? ' - ' . admin_app_short_text($gateway, 16) : '';
+    $productPart = $product !== '' ? admin_app_short_text($product, 92) : 'Curso nao informado';
 
     if ($eventCode === 'PAGAMENTO_APROVADO') {
-        return ['Venda aprovada: ' . admin_app_money_cents($value), $buyerPart . $productPart . ($gateway !== '' ? ' [' . $gateway . ']' : '')];
+        return ['Venda ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
     }
     if ($eventCode === 'PAGAMENTO_REEMBOLSADO') {
-        return ['Reembolso registrado', $buyerPart . $productPart];
+        return ['Reembolso ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
     }
     if ($eventCode === 'PAGAMENTO_CHARGEBACK') {
-        return ['Chargeback registrado', $buyerPart . $productPart];
+        return ['Chargeback ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
     }
     if ($eventCode === 'PAGAMENTO_CANCELADO') {
-        return ['Pagamento cancelado', $buyerPart . $productPart];
+        return ['Cancelado ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
     }
-    return ['Evento de pagamento', $buyerPart . $productPart];
+    return ['Pagamento ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
 }
 
 function admin_app_send_to_device(PDO $pdo, array $device, int $notificationId, int $deliveryLogId, string $title, string $body, string $clickUrl, string $eventCode, string $soundKey): array
