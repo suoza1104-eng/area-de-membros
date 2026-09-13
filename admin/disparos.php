@@ -1,67 +1,24 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
+require_once __DIR__ . '/../app/disparos_engine.php';
 
 session_start();
 if (empty($_SESSION['admin_logado'])) {
     header('Location: login.php'); exit;
 }
 // Este arquivo so LE a sessao (auth acima) e nunca grava em $_SESSION.
-// Liberamos o lock imediatamente: sem isso, um disparo em lote
-// (executar_batch, com cURL por aluno) segura o lock por minutos e
-// congela TODA a area admin para o mesmo navegador.
+// Liberamos o lock imediatamente para nao travar o resto do admin no mesmo
+// navegador enquanto esta tela fica aberta monitorando o progresso.
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
 
-// ── Garantir tabelas ──────────────────────────────────────────────────────────
-$pdo->exec("CREATE TABLE IF NOT EXISTS disparos (
-    id              INT AUTO_INCREMENT PRIMARY KEY,
-    nome            VARCHAR(200) NOT NULL,
-    status          ENUM('rascunho','aguardando','executando','pausado','concluido','erro') NOT NULL DEFAULT 'rascunho',
-    tipo            ENUM('instantaneo','agendado') NOT NULL DEFAULT 'instantaneo',
-    agendado_em     DATETIME NULL,
-    intervalo_seg   INT UNSIGNED NOT NULL DEFAULT 0,
-    filtros_json    MEDIUMTEXT NULL,
-    acoes_json      MEDIUMTEXT NULL,
-    batch_size      INT UNSIGNED NOT NULL DEFAULT 1,
-    total_enviados  INT UNSIGNED NOT NULL DEFAULT 0,
-    total_erros     INT UNSIGNED NOT NULL DEFAULT 0,
-    criado_em       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    atualizado_em   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS disparo_execucoes (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    disparo_id  INT NOT NULL,
-    user_id     INT NOT NULL,
-    status      ENUM('ok','erro') NOT NULL DEFAULT 'ok',
-    resposta    TEXT NULL,
-    executado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX (disparo_id),
-    INDEX (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS user_tags_sistema (
-    id         INT AUTO_INCREMENT PRIMARY KEY,
-    user_id    INT NOT NULL,
-    tag        VARCHAR(200) NOT NULL,
-    criado_em  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_user_tag (user_id, tag),
-    INDEX (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-// Migração de colunas — cada ALTER ignorado se coluna já existir
-foreach ([
-    'intervalo_ms INT UNSIGNED NOT NULL DEFAULT 0',
-    'batch_size INT UNSIGNED NOT NULL DEFAULT 1',
-    'horario_ativo TINYINT(1) NOT NULL DEFAULT 0',
-    'horario_inicio TIME NULL',
-    'horario_fim TIME NULL',
-    "dias_semana VARCHAR(20) NOT NULL DEFAULT '0,1,2,3,4,5,6'",
-] as $col) {
-    try { $pdo->exec("ALTER TABLE disparos ADD COLUMN $col"); } catch (Throwable $e) {}
-}
+// O schema e o envio de fato sao compartilhados com o motor usado pelo cron
+// (app/disparos_engine.php). Esta tela apenas cria/arma campanhas e monitora
+// o progresso — quem processa os lotes e envia de verdade e' sempre o cron
+// `disparos_manuais`, mesmo que esta pagina seja fechada logo em seguida.
+disparos_engine_ensure_schema($pdo);
 
 // ── AJAX handlers ─────────────────────────────────────────────────────────────
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
@@ -77,32 +34,6 @@ if ($acao !== '') {
             catch (Throwable $e) { $cache[$t] = false; }
         }
         return $cache[$t];
-    }
-
-    function dpGerarMagicLink(PDO $pdo, int $userId, int $ttlDays = 30): string {
-        if ($userId <= 0) return '';
-        try {
-            $pdo->exec("
-                CREATE TABLE IF NOT EXISTS magic_links (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id     INT NOT NULL,
-                    token       VARCHAR(64) NOT NULL,
-                    expires_at  DATETIME NOT NULL,
-                    one_shot    TINYINT(1) NOT NULL DEFAULT 0,
-                    used_at     DATETIME NULL,
-                    created_at  DATETIME NOT NULL DEFAULT NOW(),
-                    UNIQUE KEY uk_ml_token (token),
-                    INDEX idx_ml_user (user_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            ");
-            $token = bin2hex(random_bytes(32));
-            $exp = date('Y-m-d H:i:s', time() + 86400 * max(1, $ttlDays));
-            $pdo->prepare("INSERT INTO magic_links (user_id, token, expires_at, one_shot) VALUES (:uid, :tok, :exp, 0)")
-                ->execute([':uid' => $userId, ':tok' => $token, ':exp' => $exp]);
-            return rtrim((string)BASE_URL, '/') . '/login.php?am=' . $token;
-        } catch (Throwable $e) {
-            return '';
-        }
     }
 
     // Helper: constrói WHERE de audiência a partir de filtros_json
@@ -284,468 +215,8 @@ if ($acao !== '') {
         return ['where' => $where, 'params' => $params];
     }
 
-    function dpUsuarioValor(array $usuario, string $chave): string {
-        if ($chave === 'magic_link') {
-            global $pdo;
-            $uid = (int)($usuario['id'] ?? 0);
-            return ($uid > 0 && $pdo instanceof PDO) ? dpGerarMagicLink($pdo, $uid, 30) : '';
-        }
-
-        $map = [
-            'turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
-            'codigo_turma' => $usuario['ultima_turma'] ?? ($usuario['codigo_turma'] ?? ''),
-            'data_live' => $usuario['turma_live_at'] ?? ($usuario['user_data_live'] ?? ($usuario['data_live'] ?? '')),
-            'live' => $usuario['turma_live_at'] ?? ($usuario['user_data_live'] ?? ($usuario['data_live'] ?? '')),
-        ];
-        $valor = array_key_exists($chave, $map) ? $map[$chave] : ($usuario[$chave] ?? '');
-        if (is_array($valor) || is_object($valor)) return json_encode($valor, JSON_UNESCAPED_UNICODE);
-        return (string)$valor;
-    }
-
-    function dpResolverValorAcao(array $usuario, string $valor, array $acoes = []): string {
-        $valor = trim($valor);
-        if ($valor === '') return '';
-        if (strpos($valor, 'literal:') === 0) return substr($valor, 8);
-        if (strpos($valor, 'user.') === 0) return dpUsuarioValor($usuario, substr($valor, 5));
-        if (strpos($valor, 'users.') === 0) return dpUsuarioValor($usuario, substr($valor, 6));
-        if (strpos($valor, 'extra.') === 0) return dpUsuarioValor($usuario, substr($valor, 6));
-        if ($valor === 'evento') return dpEventoDisparo($acoes);
-        if ($valor === 'timestamp') return date('c');
-        $valor = str_replace(['{{evento}}', '{{ timestamp }}', '{{timestamp}}'], [dpEventoDisparo($acoes), date('c'), date('c')], $valor);
-        return preg_replace_callback('/\{\{\s*(user|users|extra)\.([a-zA-Z0-9_]+)\s*\}\}/', function($m) use ($usuario) {
-            return dpUsuarioValor($usuario, $m[2]);
-        }, $valor);
-    }
-
-    function dpNormalizarDataManyChat(string $valor): string {
-        $valor = trim($valor);
-        if ($valor === '') return '';
-
-        $tz = new DateTimeZone('America/Sao_Paulo');
-        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/', $valor)) {
-            return $valor;
-        }
-
-        $formatos = [
-            'd/m/Y H:i:s',
-            'd/m/Y H:i',
-            'd/m/Y',
-            'Y-m-d H:i:s',
-            'Y-m-d H:i',
-            'Y-m-d',
-            'Y-m-d\TH:i:s',
-            'Y-m-d\TH:i',
-        ];
-        foreach ($formatos as $fmt) {
-            $dt = DateTimeImmutable::createFromFormat('!' . $fmt, $valor, $tz);
-            $errors = DateTimeImmutable::getLastErrors();
-            if ($dt instanceof DateTimeImmutable && (($errors['warning_count'] ?? 0) + ($errors['error_count'] ?? 0)) === 0) {
-                return $dt->format('Y-m-d\TH:i:sP');
-            }
-        }
-        return $valor;
-    }
-
-    function dpValorCampoManyChat(string $campo, string $valor): string {
-        if (preg_match('/(^|_)(data|date|inicio|fim|start|end)(_|$)/i', $campo)) {
-            return dpNormalizarDataManyChat($valor);
-        }
-        return $valor;
-    }
-
-    function dpEventoDisparo(array $acoes): string {
-        foreach ($acoes as $a) {
-            if (!is_array($a)) continue;
-            if (($a['tipo'] ?? '') === 'evento' && trim((string)($a['valor'] ?? '')) !== '') {
-                return mb_substr(trim((string)$a['valor']), 0, 120);
-            }
-        }
-        return 'DISPARO_MANUAL';
-    }
-
-    function dpProviderDisparo(array $acoes): string {
-        foreach ($acoes as $a) {
-            if (!is_array($a)) continue;
-            if (($a['tipo'] ?? '') === 'provider') {
-                $provider = strtolower(trim((string)($a['valor'] ?? '')));
-                if (in_array($provider, ['sf', 'superfuncionario', 'manychat', 'webhook'], true)) {
-                    return $provider === 'superfuncionario' ? 'sf' : $provider;
-                }
-            }
-        }
-        return 'sf';
-    }
-
-    function dpExtraDisparo(array $usuario, array $acoes, string $evento): array {
-        return [
-            'origem' => 'disparo_manual',
-            'evento' => $evento,
-            'turma' => dpUsuarioValor($usuario, 'turma'),
-            'codigo_turma' => dpUsuarioValor($usuario, 'codigo_turma'),
-            'data_live' => dpUsuarioValor($usuario, 'data_live'),
-            'acoes' => $acoes,
-        ];
-    }
-
-    function enviarManyChatManual(array $usuario, array $acoes, PDO $pdo): array {
-        $mcAcoes = array_values(array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true)));
-        if (!$mcAcoes) return ['ok' => false, 'msg' => 'Nenhuma acao ManyChat manual foi montada'];
-
-        require_once __DIR__ . '/../app/webhook_dispatcher.php';
-        require_once __DIR__ . '/../app/manychat_dispatcher.php';
-
-        $evento = dpEventoDisparo($acoes);
-        $cfg = mc_get_config($pdo);
-        if ((int)$cfg['is_enabled'] !== 1 || trim((string)$cfg['token']) === '') {
-            return ['ok' => false, 'msg' => 'ManyChat desabilitado ou sem token'];
-        }
-
-        $userRow = mc_get_user_row($pdo, $usuario);
-        $subscriberId = mc_get_or_create_subscriber($pdo, $cfg, $evento, null, $userRow);
-        if ($subscriberId === '') {
-            return ['ok' => false, 'msg' => 'ManyChat: subscriber nao encontrado/criado'];
-        }
-
-        $extra = dpExtraDisparo($usuario, $acoes, $evento);
-        $logContext = [
-            'origem' => 'disparo_manual',
-            'user' => [
-                'id' => $userRow['id'] ?? null,
-                'nome' => $userRow['nome'] ?? null,
-                'email' => $userRow['email'] ?? null,
-                'telefone' => $userRow['telefone'] ?? null,
-            ],
-            'extra' => $extra,
-        ];
-
-        $ok = false;
-        $results = [];
-        foreach ($mcAcoes as $a) {
-            $tipo = (string)($a['tipo'] ?? '');
-            if ($tipo === 'tag_sf') {
-                $tag = trim((string)($a['valor'] ?? ''));
-                if ($tag === '') continue;
-                $res = mc_api($pdo, $cfg, $evento, null, 'add_tag_manual', 'POST', '/fb/subscriber/addTagByName', [
-                    'subscriber_id' => $subscriberId,
-                    'tag_name' => $tag,
-                ], $subscriberId, $logContext);
-                $ok = $ok || (bool)$res['ok'];
-                $results[] = ['acao' => 'tag', 'valor' => $tag, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
-            } elseif ($tipo === 'flow') {
-                foreach (array_filter(array_map('trim', explode(',', (string)($a['valor'] ?? '')))) as $flowNs) {
-                    $res = mc_api($pdo, $cfg, $evento, null, 'send_flow_manual', 'POST', '/fb/sending/sendFlow', [
-                        'subscriber_id' => $subscriberId,
-                        'flow_ns' => $flowNs,
-                    ], $subscriberId, $logContext);
-                    $ok = $ok || (bool)$res['ok'];
-                    $results[] = ['acao' => 'flow', 'valor' => $flowNs, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
-                }
-            } elseif ($tipo === 'custom_field') {
-                $campo = trim((string)($a['campo'] ?? ''));
-                if ($campo === '') continue;
-                $valorBruto = dpResolverValorAcao($userRow, (string)($a['valor'] ?? ''), $acoes);
-                $field = function_exists('mc_prepare_custom_field')
-                    ? mc_prepare_custom_field((string)($a['valor'] ?? ''), $campo, $valorBruto)
-                    : ['field_name' => $campo, 'field_value' => dpValorCampoManyChat($campo, $valorBruto)];
-                $body = [
-                    'subscriber_id' => $subscriberId,
-                    'field_value' => $field['field_value'],
-                ];
-                if (!empty($field['field_id'])) {
-                    $body['field_id'] = (int)$field['field_id'];
-                    $path = '/fb/subscriber/setCustomField';
-                } else {
-                    $body['field_name'] = (string)($field['field_name'] ?? $campo);
-                    $path = '/fb/subscriber/setCustomFieldByName';
-                }
-                $res = mc_api($pdo, $cfg, $evento, null, 'set_custom_field_manual', 'POST', $path, $body, $subscriberId, $logContext);
-                $ok = $ok || (bool)$res['ok'];
-                $results[] = ['acao' => 'custom_field', 'campo' => $campo, 'ok' => (bool)$res['ok'], 'http_status' => $res['http_status'] ?? null];
-            }
-        }
-
-        return [
-            'ok' => $ok,
-            'msg' => json_encode(['provider' => 'manychat', 'subscriber_id' => $subscriberId, 'results' => $results], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        ];
-    }
-
-    function dpEnviarProvider(array $usuario, array $acoes, PDO $pdo): array {
-        $provider = dpProviderDisparo($acoes);
-        if ($provider === 'sf' && array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true))) {
-            return enviarSF($usuario, $acoes, $pdo);
-        }
-        if ($provider === 'manychat' && array_filter($acoes, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow', 'tag_sf', 'custom_field'], true))) {
-            return enviarManyChatManual($usuario, $acoes, $pdo);
-        }
-
-        $uid = (int)($usuario['id'] ?? 0);
-        if ($uid > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
-            return ['ok' => false, 'msg' => 'Aluno bloqueado para disparos'];
-        }
-
-        $evento = dpEventoDisparo($acoes);
-        $extra = dpExtraDisparo($usuario, $acoes, $evento);
-        try {
-            if ($provider === 'sf') {
-                require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
-                $ok = sf_disparar_evento($pdo, $evento, $usuario, $extra);
-                return ['ok' => $ok, 'msg' => $ok ? 'SF: evento disparado' : 'SF: nenhuma regra ativa aceitou o evento'];
-            }
-            if ($provider === 'manychat') {
-                require_once __DIR__ . '/../app/webhook_dispatcher.php';
-                require_once __DIR__ . '/../app/manychat_dispatcher.php';
-                $ok = mc_disparar_evento($pdo, $evento, $usuario, $extra);
-                return ['ok' => $ok, 'msg' => $ok ? 'ManyChat: evento disparado' : 'ManyChat: nenhuma regra ativa aceitou o evento'];
-            }
-            require_once __DIR__ . '/../app/webhook_dispatcher.php';
-            disparar_evento_webhooks($pdo, $evento, $usuario, $extra);
-            return ['ok' => true, 'msg' => 'Webhook: evento disparado'];
-        } catch (Throwable $e) {
-            return ['ok' => false, 'msg' => $provider . ': ' . $e->getMessage()];
-        }
-    }
-
-    // Helper: envia via SF
-    function enviarSF(array $usuario, array $acoes, PDO $pdo): array {
-        $uid = (int)($usuario['id'] ?? 0);
-        if ($uid > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
-            return ['ok' => false, 'msg' => 'Aluno bloqueado para disparos'];
-        }
-
-        try {
-            $cfg = $pdo->query("SELECT * FROM superfuncionario_config ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-        } catch (Throwable $e) { $cfg = null; }
-
-        if (!$cfg || empty($cfg['is_enabled'])) return ['ok' => false, 'msg' => 'SF desabilitado'];
-        if (empty($cfg['base_url']) || empty($cfg['token'])) return ['ok' => false, 'msg' => 'SF sem config'];
-
-        $sfAcoes = [];
-        foreach ($acoes as $a) {
-            if ($a['tipo'] === 'flow' && !empty($a['valor'])) {
-                foreach (array_filter(array_map('trim', explode(',', (string)$a['valor']))) as $fid) {
-                    if (ctype_digit($fid)) {
-                        $sfAcoes[] = ['action' => 'send_flow', 'flow_id' => (int)$fid];
-                    }
-                }
-            } elseif ($a['tipo'] === 'tag_sf' && !empty($a['valor'])) {
-                $sfAcoes[] = ['action' => 'add_tag', 'tag_name' => $a['valor']];
-            } elseif ($a['tipo'] === 'custom_field' && !empty($a['campo'])) {
-                $sfAcoes[] = [
-                    'action' => 'set_field_value',
-                    'field_name' => trim((string)$a['campo']),
-                    'value' => dpResolverValorAcao($usuario, (string)($a['valor'] ?? ''), $acoes),
-                ];
-            }
-        }
-        if (empty($sfAcoes)) return ['ok' => false, 'msg' => 'Nenhuma acao SF valida foi montada'];
-
-        $payloadArr = [
-            'email'      => $usuario['email'] ?? '',
-            'phone'      => $usuario['telefone'] ?? '',
-            'first_name' => $usuario['nome'] ?? '',
-            'actions'    => $sfAcoes,
-        ];
-        $payload = json_encode($payloadArr, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        $endpoint = trim((string)($cfg['default_endpoint'] ?? ''));
-        if ($endpoint === '') $endpoint = '/api/contacts';
-        $url = rtrim($cfg['base_url'], '/') . '/' . ltrim($endpoint, '/');
-        $headerMode = strtolower((string)($cfg['header_mode'] ?? 'x-access-token'));
-        $authHeader = ($headerMode === 'bearer')
-            ? 'Authorization: Bearer ' . $cfg['token']
-            : 'X-ACCESS-TOKEN: ' . $cfg['token'];
-
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $payload,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT        => (int)($cfg['timeout_seconds'] ?? 10),
-            CURLOPT_NOSIGNAL       => 1,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', $authHeader],
-        ]);
-        $resp = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr = curl_error($ch);
-        curl_close($ch);
-
-        $respText = $resp === false ? '' : (string)$resp;
-        $respJson = json_decode(trim($respText), true);
-        $apiSuccess = is_array($respJson) && array_key_exists('success', $respJson) ? (bool)$respJson['success'] : null;
-        $ok = $code >= 200 && $code < 300 && $apiSuccess !== false;
-        $msg = json_encode([
-            'http_status' => (int)$code,
-            'api_success' => $apiSuccess,
-            'request' => $payloadArr,
-            'response' => is_array($respJson) ? $respJson : $respText,
-            'curl_error' => $curlErr ?: null,
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if (!$ok && trim((string)$msg) === '') $msg = 'HTTP ' . (int)$code . ' sem resposta';
-        return ['ok' => $ok, 'msg' => $msg];
-    }
-
-    // Helper: aplica tags do sistema
-    function aplicarTagSistema(int $userId, array $acoes, PDO $pdo): void {
-        foreach ($acoes as $a) {
-            if ($a['tipo'] === 'tag_sistema' && !empty($a['valor'])) {
-                try {
-                    $pdo->prepare("INSERT IGNORE INTO user_tags_sistema (user_id, tag, criado_em) VALUES (:uid, :tag, NOW())")
-                        ->execute([':uid' => $userId, ':tag' => $a['valor']]);
-                } catch (Throwable $e) {}
-            }
-        }
-    }
-
-    function dpDisparoDentroDoHorario(array $disparo): bool {
-        if ((int)($disparo['horario_ativo'] ?? 0) !== 1) return true;
-
-        $dow = (int)date('w'); // 0=domingo
-        $dias = array_filter(array_map('trim', explode(',', (string)($disparo['dias_semana'] ?? '0,1,2,3,4,5,6'))), 'strlen');
-        $diasInt = array_map('intval', $dias);
-        if (!in_array($dow, $diasInt, true) && !($dow === 0 && in_array(7, $diasInt, true))) return false;
-
-        $hmAtual = ((int)date('H')) * 60 + (int)date('i');
-        $toMin = static function (?string $hm, int $fallback): int {
-            if (!$hm || !preg_match('/^(\d{1,2}):(\d{2})/', $hm, $m)) return $fallback;
-            return ((int)$m[1]) * 60 + (int)$m[2];
-        };
-        $ini = $toMin($disparo['horario_inicio'] ?? null, 0);
-        $fim = $toMin($disparo['horario_fim'] ?? null, 1439);
-
-        if ($ini <= $fim) return $hmAtual >= $ini && $hmAtual <= $fim;
-        return $hmAtual >= $ini || $hmAtual <= $fim;
-    }
-
-    function dpExecutarDisparoBatch(PDO $pdo, int $id, int $offset, bool $reset): array {
-        $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
-        $row->execute([':id'=>$id]);
-        $row = $row->fetch(PDO::FETCH_ASSOC);
-        if (!$row) return ['ok'=>false,'msg'=>'Disparo nao encontrado'];
-
-        $limit   = max(1, min(500, (int)($row['batch_size'] ?? 1)));
-        $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
-        $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
-
-        if ($reset) {
-            $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
-            $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
-            $offset = 0;
-        } else {
-            $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
-        }
-
-        $aw = buildAudienceWhere($filtros, $pdo);
-        $totalGeral = null;
-        if ($offset === 0) {
-            $stCnt = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
-            $stCnt->execute($aw['params']);
-            $totalGeral = (int)$stCnt->fetchColumn();
-        }
-
-        $stUsers = $pdo->prepare(
-            "SELECT u.*,
-                    u.codigo_turma,
-                    u.data_live AS user_data_live,
-                    u.turma_live_at,
-                    (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
-                    (SELECT t.data_live
-                       FROM turmas t
-                      WHERE t.codigo = (SELECT il3.codigo_turma FROM inscricao_logs il3 WHERE il3.user_id = u.id ORDER BY il3.created_at DESC LIMIT 1)
-                      LIMIT 1) AS data_live
-             FROM users u
-             WHERE {$aw['where']}
-               AND NOT EXISTS (
-                   SELECT 1
-                     FROM disparo_execucoes de_done
-                    WHERE de_done.disparo_id = :dp_disparo_id
-                      AND de_done.user_id = u.id
-               )
-             ORDER BY u.id ASC
-             LIMIT $limit"
-        );
-        $stUserParams = $aw['params'];
-        $stUserParams[':dp_disparo_id'] = $id;
-        $stUsers->execute($stUserParams);
-        $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
-
-        $enviados = 0;
-        $erros    = 0;
-        foreach ($userList as $usr) {
-            $r = dpEnviarProvider($usr, $acoes, $pdo);
-            aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
-            $status = $r['ok'] ? 'ok' : 'erro';
-            $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
-                ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,5000)]);
-            if ($r['ok']) $enviados++; else $erros++;
-        }
-
-        $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
-            ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
-
-        $done = count($userList) < $limit;
-        if ($done) {
-            $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
-        }
-
-        return [
-            'ok'          => true,
-            'processados' => count($userList),
-            'enviados'    => $enviados,
-            'erros'       => $erros,
-            'done'        => $done,
-            'next_offset' => $offset + count($userList),
-            'total'       => $totalGeral,
-        ];
-    }
-
-    function dpFinalizarRespostaBackground(array $payload): void {
-        $body = json_encode($payload, JSON_UNESCAPED_UNICODE);
-        if (!headers_sent()) {
-            header('Content-Length: ' . strlen($body));
-            header('Connection: close');
-        }
-        echo $body;
-        if (function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
-            return;
-        }
-        while (ob_get_level() > 0) @ob_end_flush();
-        @flush();
-    }
-
-    function dpProcessarDisparoBackground(PDO $pdo, int $id, bool $reset): void {
-        ignore_user_abort(true);
-        @set_time_limit(0);
-
-        $offset = 0;
-        $primeiroLote = true;
-
-        while (true) {
-            $st = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
-            $st->execute([':id'=>$id]);
-            $row = $st->fetch(PDO::FETCH_ASSOC);
-            if (!$row || ($row['status'] ?? '') !== 'executando') break;
-
-            if (!dpDisparoDentroDoHorario($row)) {
-                $pdo->prepare("UPDATE disparos SET status='aguardando' WHERE id=:id AND status='executando'")->execute([':id'=>$id]);
-                break;
-            }
-
-            if (!$primeiroLote) {
-                $offset = (int)($row['total_enviados'] ?? 0) + (int)($row['total_erros'] ?? 0);
-            }
-
-            $res = dpExecutarDisparoBatch($pdo, $id, $offset, $reset && $primeiroLote);
-            if (empty($res['ok']) || !empty($res['done'])) break;
-
-            $primeiroLote = false;
-            $intervaloMs = max(0, min(60000, (int)($row['intervalo_ms'] ?? 0)));
-            if ($intervaloMs > 0) usleep($intervaloMs * 1000);
-        }
-    }
+    // Envio de fato (audiencia -> provider -> tags) e feito por app/disparos_engine.php,
+    // usado tanto pelo cron quanto pelas acoes abaixo. Nao ha mais um sender proprio aqui.
 
     switch ($acao) {
 
@@ -939,106 +410,57 @@ if ($acao !== '') {
             }
             exit;
 
-        // Inicia execucao no servidor e deixa rodando mesmo se a tela fechar.
-        case 'executar_background':
-            echo json_encode([
-                'ok' => false,
-                'msg' => 'Execucao em segundo plano desativada nesta hospedagem. Use o disparo progressivo da tela.',
-            ], JSON_UNESCAPED_UNICODE);
+        // Arma a campanha para o cron `disparos_manuais` processar (ver app/disparos_engine.php).
+        // Nao envia nada diretamente aqui: quem manda as mensagens de fato e' sempre o cron,
+        // por isso o disparo continua rodando ate' o fim mesmo que esta pagina seja fechada
+        // logo em seguida.
+        case 'iniciar':
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id <= 0) { echo json_encode(['ok'=>false,'msg'=>'Disparo invalido']); exit; }
+            $row = $pdo->prepare("SELECT status, total_enviados, total_erros FROM disparos WHERE id = :id");
+            $row->execute([':id'=>$id]);
+            $row = $row->fetch(PDO::FETCH_ASSOC);
+            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
+
+            // "status=aguardando" tambem acontece com uma campanha em andamento que so'
+            // esta fora da janela de horario (o cron marca assim e retoma sozinho depois)
+            // — nunca decidir "inicio novo" so' pelo status, ou clicar em "Disparar" de novo
+            // apagaria o progresso ja enviado e reenviaria a mensagem pra quem ja recebeu.
+            $jaTemProgresso = ((int)($row['total_enviados'] ?? 0) + (int)($row['total_erros'] ?? 0)) > 0;
+            $resume = !empty($_POST['resume']) || $row['status'] === 'pausado' || $jaTemProgresso;
+            if ($resume) {
+                $pdo->prepare("UPDATE disparos SET status='aguardando', proximo_lote_em=NULL WHERE id=:id")->execute([':id'=>$id]);
+            } else {
+                $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
+                $pdo->prepare("UPDATE disparos SET status='aguardando', total_enviados=0, total_erros=0, proximo_lote_em=NULL WHERE id=:id")->execute([':id'=>$id]);
+            }
+            echo json_encode(['ok'=>true]);
             exit;
 
-        // Executar lote de um disparo (compatibilidade com chamadas antigas)
+        // Mantidas apenas por compatibilidade com paginas antigas que possam estar
+        // em cache no navegador: nao enviam nada diretamente (isso evitaria disparo
+        // duplicado se o cron ja estiver processando a mesma campanha ao mesmo tempo).
+        // Elas so' garantem que a campanha esteja armada e devolvem o estado atual.
+        case 'executar_background':
         case 'executar_batch':
-            try {
-                $id     = (int)($_POST['id'] ?? 0);
-                $offset = (int)($_POST['offset'] ?? 0);
-
-                $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
-                $row->execute([':id'=>$id]);
-                $row = $row->fetch(PDO::FETCH_ASSOC);
-                if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
-                if (!dpDisparoDentroDoHorario($row)) {
-                    $pdo->prepare("UPDATE disparos SET status='aguardando' WHERE id=:id AND status IN ('executando','aguardando','rascunho')")->execute([':id'=>$id]);
-                    echo json_encode(['ok'=>true,'waiting'=>true,'processados'=>0,'enviados'=>0,'erros'=>0,'done'=>false,'next_offset'=>$offset,'msg'=>'Fora da janela de horario. O disparo aguardara o proximo horario permitido.']);
-                    exit;
-                }
-
-                $limit   = max(1, min(500, (int)($row['batch_size'] ?? 1)));
-                $filtros = json_decode($row['filtros_json'] ?? '{}', true) ?: [];
-                $acoes   = json_decode($row['acoes_json']   ?? '[]', true) ?: [];
-
-                if ($offset === 0) {
-                    $pdo->prepare("DELETE FROM disparo_execucoes WHERE disparo_id=:id")->execute([':id'=>$id]);
-                    $pdo->prepare("UPDATE disparos SET status='executando', total_enviados=0, total_erros=0 WHERE id=:id")->execute([':id'=>$id]);
-                } else {
-                    $pdo->prepare("UPDATE disparos SET status='executando' WHERE id=:id")->execute([':id'=>$id]);
-                }
-
-                $aw = buildAudienceWhere($filtros, $pdo);
-                $totalGeral = null;
-                if ($offset === 0) {
-                    $stCnt = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
-                    $stCnt->execute($aw['params']);
-                    $totalGeral = (int)$stCnt->fetchColumn();
-                }
-
-                $stUsers = $pdo->prepare(
-                    "SELECT u.*,
-                            u.codigo_turma,
-                            u.data_live AS user_data_live,
-                            u.turma_live_at,
-                            (SELECT il2.codigo_turma FROM inscricao_logs il2 WHERE il2.user_id = u.id ORDER BY il2.created_at DESC LIMIT 1) AS ultima_turma,
-                            (SELECT t.data_live
-                               FROM turmas t
-                              WHERE t.codigo = (SELECT il3.codigo_turma FROM inscricao_logs il3 WHERE il3.user_id = u.id ORDER BY il3.created_at DESC LIMIT 1)
-                              LIMIT 1) AS data_live
-                     FROM users u
-                     WHERE {$aw['where']}
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM disparo_execucoes de_done
-                            WHERE de_done.disparo_id = :dp_disparo_id
-                              AND de_done.user_id = u.id
-                       )
-                     ORDER BY u.id ASC
-                     LIMIT $limit"
-                );
-                $stUserParams = $aw['params'];
-                $stUserParams[':dp_disparo_id'] = $id;
-                $stUsers->execute($stUserParams);
-                $userList = $stUsers->fetchAll(PDO::FETCH_ASSOC);
-
-                $enviados = 0;
-                $erros    = 0;
-                foreach ($userList as $usr) {
-                    $r = dpEnviarProvider($usr, $acoes, $pdo);
-                    aplicarTagSistema((int)$usr['id'], $acoes, $pdo);
-                    $status = $r['ok'] ? 'ok' : 'erro';
-                    $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id, user_id, status, resposta) VALUES (:did,:uid,:st,:resp)")
-                        ->execute([':did'=>$id,':uid'=>$usr['id'],':st'=>$status,':resp'=>substr($r['msg'],0,5000)]);
-                    if ($r['ok']) $enviados++; else $erros++;
-                }
-
-                $pdo->prepare("UPDATE disparos SET total_enviados = total_enviados + :e, total_erros = total_erros + :er WHERE id = :id")
-                    ->execute([':e'=>$enviados,':er'=>$erros,':id'=>$id]);
-
-                $done = count($userList) < $limit;
-                if ($done) {
-                    $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute([':id'=>$id]);
-                }
-
-                echo json_encode([
-                    'ok'          => true,
-                    'processados' => count($userList),
-                    'enviados'    => $enviados,
-                    'erros'       => $erros,
-                    'done'        => $done,
-                    'next_offset' => $offset + count($userList),
-                    'total'       => $totalGeral,
-                ]);
-            } catch (Throwable $e) {
-                echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
+            $id     = (int)($_POST['id'] ?? 0);
+            $offset = (int)($_POST['offset'] ?? 0);
+            $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
+            $row->execute([':id'=>$id]);
+            $row = $row->fetch(PDO::FETCH_ASSOC);
+            if (!$row) { echo json_encode(['ok'=>false,'msg'=>'Disparo não encontrado']); exit; }
+            if (in_array($row['status'], ['rascunho','pausado'], true)) {
+                $pdo->prepare("UPDATE disparos SET status='aguardando', proximo_lote_em=NULL WHERE id=:id")->execute([':id'=>$id]);
             }
+            echo json_encode([
+                'ok'          => true,
+                'processados' => 0,
+                'enviados'    => (int)($row['total_enviados'] ?? 0),
+                'erros'       => (int)($row['total_erros'] ?? 0),
+                'done'        => $row['status'] === 'concluido',
+                'next_offset' => $offset,
+                'msg'         => 'Este disparo agora e processado pelo servidor (cron), nao mais pelo navegador. Atualize a pagina para ver o progresso.',
+            ]);
             exit;
 
         default:
@@ -2227,147 +1649,16 @@ async function dpSalvarExecutar() {
     }
 }
 
-// ── Janela de horário ─────────────────────────────────────────────────────────
-function dpDentroDoHorario(disparo) {
-    if (!parseInt(disparo.horario_ativo || 0)) return true;
-    const now  = new Date();
-    const dow  = now.getDay(); // 0=dom
-    const dias = (disparo.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
-    if (!dias.includes(dow)) return false;
-    const hm   = now.getHours() * 60 + now.getMinutes();
-    const ini  = dpHmToMin(disparo.horario_inicio || '00:00');
-    const fim  = dpHmToMin(disparo.horario_fim    || '23:59');
-    return ini <= fim ? (hm >= ini && hm <= fim) : (hm >= ini || hm <= fim);
-}
-
-function dpHmToMin(hm) {
-    const [h, m] = hm.split(':').map(Number);
-    return h * 60 + (m || 0);
-}
-
-function dpProximoHorario(disparo) {
-    const ini = disparo.horario_inicio || '08:00';
-    const dias = (disparo.dias_semana || '0,1,2,3,4,5,6').split(',').map(Number);
-    const now  = new Date();
-    for (let i = 0; i < 8; i++) {
-        const d = new Date(now);
-        d.setDate(d.getDate() + i);
-        if (dias.includes(d.getDay())) return `${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()]} às ${ini}`;
-    }
-    return ini;
-}
+// A janela de horario (dias/horario_inicio/horario_fim) e' checada sempre no
+// servidor (disparos_engine_within_window, compartilhada com o cron) — nao ha
+// necessidade de duplicar essa regra aqui no navegador.
 
 // ── Execução progressiva ──────────────────────────────────────────────────────
+// Inicia (ou retoma) uma campanha e sai. Quem de fato manda as mensagens, lote a
+// lote, e' sempre o cron `disparos_manuais` no servidor (app/disparos_engine.php) —
+// esta funcao so arma a campanha e fica monitorando o progresso. Por isso o disparo
+// continua ate' o fim mesmo que esta aba seja fechada logo em seguida.
 async function dpIniciarDisparo(id, opts) {
-    opts = opts || {};
-    // Buscar dados do disparo para verificar janela de horário
-    let disparo = {};
-    try {
-        const r = await fetch(`disparos.php?acao=get&id=${id}`);
-        const j = await r.json();
-        if (j.ok) disparo = j.data;
-    } catch(e) {}
-
-    const startOffset = (opts.resume || disparo.status === 'pausado')
-        ? Math.max(0, parseInt(disparo.total_enviados || 0) + parseInt(disparo.total_erros || 0))
-        : 0;
-
-    dpFecharForm();
-    dpExecutando = true;
-    dpExecState = {id, offset:startOffset, totalEnv:parseInt(disparo.total_enviados || 0), totalErr:parseInt(disparo.total_erros || 0), totalGeral:null};
-    document.getElementById('dpProgressTitle').textContent = 'Disparando…';
-    document.getElementById('dpProgressSub').textContent   = 'Preparando…';
-    document.getElementById('dpProgressBar').style.width   = '0%';
-    document.getElementById('dpStatEnv').textContent = dpExecState.totalEnv;
-    document.getElementById('dpStatErr').textContent = dpExecState.totalErr;
-    document.getElementById('dpStatTot').textContent = '—';
-    document.getElementById('dpProgressPause').style.display = '';
-    document.getElementById('dpProgressAbort').style.display = '';
-    document.getElementById('dpProgressClose').style.display = 'none';
-    document.getElementById('dpProgressModal').classList.add('visible');
-
-    let offset = startOffset;
-    let totalEnv = dpExecState.totalEnv, totalErr = dpExecState.totalErr, totalGeral = null;
-    const intervaloMs = Math.max(0, parseInt(disparo.intervalo_ms || 0));
-
-    while (dpExecutando) {
-        // Verificar janela de horário antes de cada lote
-        if (!dpDentroDoHorario(disparo)) {
-            const prox = dpProximoHorario(disparo);
-            document.getElementById('dpProgressTitle').textContent = 'Aguardando horário…';
-            document.getElementById('dpProgressSub').textContent   = `Fora da faixa de envio. Próximo: ${prox}`;
-            // Aguardar 60s e tentar novamente
-            await new Promise(res => setTimeout(res, 60000));
-            if (!dpExecutando) break;
-            continue;
-        }
-
-        const fd = new FormData();
-        fd.append('acao',   'executar_batch');
-        fd.append('id',     id);
-        fd.append('offset', offset);
-        let j;
-        try {
-            document.getElementById('dpProgressTitle').textContent = 'Executando…';
-            const r = await fetch('disparos.php', {method:'POST', body:fd});
-            j = await r.json();
-        } catch (e) {
-            document.getElementById('dpProgressSub').textContent = 'Erro de rede: ' + e.message;
-            document.getElementById('dpProgressPause').style.display = 'none';
-            document.getElementById('dpProgressAbort').style.display = 'none';
-            document.getElementById('dpProgressClose').style.display = '';
-            break;
-        }
-        if (!j.ok) {
-            document.getElementById('dpProgressTitle').textContent = 'Erro';
-            document.getElementById('dpProgressSub').textContent = j.msg || 'Erro desconhecido';
-            document.getElementById('dpProgressPause').style.display = 'none';
-            document.getElementById('dpProgressAbort').style.display = 'none';
-            document.getElementById('dpProgressClose').style.display = '';
-            break;
-        }
-        if (j.waiting) {
-            dpExecutando = false;
-            document.getElementById('dpProgressTitle').textContent = 'Aguardando horário';
-            document.getElementById('dpProgressSub').textContent = j.msg || 'Fora da janela de envio. O cron retomará no próximo horário permitido.';
-            document.getElementById('dpProgressPause').style.display = 'none';
-            document.getElementById('dpProgressAbort').style.display = 'none';
-            document.getElementById('dpProgressClose').style.display = '';
-            dpCarregarLista();
-            break;
-        }
-        if (j.total !== null && j.total !== undefined) totalGeral = j.total;
-        totalEnv += j.enviados;
-        totalErr += j.erros;
-        offset    = j.next_offset;
-        dpExecState = {id, offset, totalEnv, totalErr, totalGeral};
-
-        document.getElementById('dpStatEnv').textContent = totalEnv;
-        document.getElementById('dpStatErr').textContent = totalErr;
-        if (totalGeral !== null) {
-            document.getElementById('dpStatTot').textContent = totalGeral;
-            const pct = totalGeral > 0 ? Math.min(100, Math.round(offset / totalGeral * 100)) : 100;
-            document.getElementById('dpProgressBar').style.width = pct + '%';
-            document.getElementById('dpProgressSub').textContent = `${offset} / ${totalGeral} processados`;
-        }
-
-        if (j.done) {
-            dpExecutando = false;
-            document.getElementById('dpProgressTitle').textContent = 'Concluído!';
-            document.getElementById('dpProgressSub').textContent   = `${totalEnv} enviados, ${totalErr} erros`;
-            document.getElementById('dpProgressBar').style.width   = '100%';
-            document.getElementById('dpProgressPause').style.display = 'none';
-            document.getElementById('dpProgressAbort').style.display = 'none';
-            document.getElementById('dpProgressClose').style.display = '';
-            dpExecState = {id, offset, totalEnv, totalErr, totalGeral, done:true};
-            dpCarregarLista();
-            break;
-        }
-        if (intervaloMs > 0) await new Promise(res => setTimeout(res, intervaloMs));
-    }
-}
-
-async function dpIniciarDisparoBackgroundDesativado(id, opts) {
     opts = opts || {};
     let disparo = {};
     try {
@@ -2383,8 +1674,8 @@ async function dpIniciarDisparoBackgroundDesativado(id, opts) {
     dpFecharForm();
     dpExecutando = true;
     dpExecState = {id, offset:ok + er, totalEnv:ok, totalErr:er, totalGeral:null, status:'executando'};
-    document.getElementById('dpProgressTitle').textContent = 'Executando em segundo plano';
-    document.getElementById('dpProgressSub').textContent   = 'Iniciando no servidor...';
+    document.getElementById('dpProgressTitle').textContent = 'Iniciando…';
+    document.getElementById('dpProgressSub').textContent   = 'Armando disparo no servidor...';
     document.getElementById('dpProgressBar').style.width   = '0%';
     document.getElementById('dpStatEnv').textContent = ok;
     document.getElementById('dpStatErr').textContent = er;
@@ -2397,7 +1688,7 @@ async function dpIniciarDisparoBackgroundDesativado(id, opts) {
     if (dpMonitorTimer) clearInterval(dpMonitorTimer);
 
     const fd = new FormData();
-    fd.append('acao', 'executar_background');
+    fd.append('acao', 'iniciar');
     fd.append('id', id);
     fd.append('resume', resume ? '1' : '0');
 
@@ -2415,6 +1706,8 @@ async function dpIniciarDisparoBackgroundDesativado(id, opts) {
         return;
     }
 
+    document.getElementById('dpProgressTitle').textContent = 'Executando em segundo plano';
+    document.getElementById('dpProgressSub').textContent   = 'O servidor processa este disparo mesmo se voce fechar a tela.';
     await dpAtualizarProgressoDisparo(id);
     dpMonitorTimer = setInterval(() => dpAtualizarProgressoDisparo(id), 2500);
 }

@@ -48,9 +48,27 @@ function disparos_engine_ensure_schema(PDO $pdo): void
         'horario_inicio TIME NULL',
         'horario_fim TIME NULL',
         "dias_semana VARCHAR(20) NOT NULL DEFAULT '0,1,2,3,4,5,6'",
+        'proximo_lote_em DATETIME NULL',
     ] as $col) {
         try { $pdo->exec("ALTER TABLE disparos ADD COLUMN $col"); } catch (Throwable $e) {}
     }
+
+    // Um envio so pode existir uma vez por (disparo,aluno). Sem essa constraint, dois
+    // processos rodando ao mesmo tempo para a mesma campanha podiam mandar a mesma
+    // mensagem duas vezes para o mesmo aluno (a checagem NOT EXISTS sozinha nao
+    // protege contra corrida entre processos concorrentes).
+    try {
+        $pdo->exec("
+            DELETE t1 FROM disparo_execucoes t1
+            INNER JOIN disparo_execucoes t2
+                    ON t1.disparo_id = t2.disparo_id
+                   AND t1.user_id = t2.user_id
+                   AND t1.id > t2.id
+        ");
+    } catch (Throwable $e) {}
+    try {
+        $pdo->exec("ALTER TABLE disparo_execucoes ADD UNIQUE KEY uk_disparo_user (disparo_id, user_id)");
+    } catch (Throwable $e) {}
 }
 
 function disparos_engine_table_exists(PDO $pdo, string $table): bool
@@ -424,17 +442,44 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
     $rows = $users->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $sent = 0; $errors = 0;
     foreach ($rows as $user) {
-        $result = disparos_engine_send($pdo, $user, $actions);
-        disparos_engine_apply_tags($pdo, (int)$user['id'], $actions);
-        $status = !empty($result['ok']) ? 'ok' : 'erro';
-        $pdo->prepare("INSERT INTO disparo_execucoes (disparo_id,user_id,status,resposta) VALUES (:d,:u,:s,:r)")
-            ->execute(['d'=>$campaignId, 'u'=>(int)$user['id'], 's'=>$status, 'r'=>mb_substr((string)($result['msg'] ?? ''), 0, 5000)]);
-        if ($status === 'ok') $sent++; else $errors++;
+        // disparos_engine_send() ja' captura falha do provedor (API fora do ar, timeout,
+        // etc.) e devolve ok=false — mas um problema inesperado aqui (ex.: soluco pontual
+        // de banco na hora de gravar) nao pode derrubar o restante do lote nem travar os
+        // proximos alunos. Se algo assim acontecer, nenhuma linha e' gravada para este
+        // aluno e ele e' automaticamente tentado de novo no proximo tick do cron.
+        try {
+            $result = disparos_engine_send($pdo, $user, $actions);
+            disparos_engine_apply_tags($pdo, (int)$user['id'], $actions);
+            $status = !empty($result['ok']) ? 'ok' : 'erro';
+            // INSERT IGNORE + a UNIQUE KEY em (disparo_id,user_id) garantem que, mesmo se
+            // dois processos tentarem processar esta campanha ao mesmo tempo, o mesmo
+            // aluno nunca e' contado/enviado duas vezes: quem chega depois so' descarta.
+            $insert = $pdo->prepare("INSERT IGNORE INTO disparo_execucoes (disparo_id,user_id,status,resposta) VALUES (:d,:u,:s,:r)");
+            $insert->execute(['d'=>$campaignId, 'u'=>(int)$user['id'], 's'=>$status, 'r'=>mb_substr((string)($result['msg'] ?? ''), 0, 5000)]);
+            if ($insert->rowCount() === 0) continue;
+            if ($status === 'ok') $sent++; else $errors++;
+        } catch (Throwable $e) {
+            error_log('disparos_engine_execute_batch: falha inesperada no aluno ' . (int)($user['id'] ?? 0) . ' da campanha ' . $campaignId . ': ' . $e->getMessage());
+            continue;
+        }
     }
     $pdo->prepare("UPDATE disparos SET total_enviados=total_enviados+:sent,total_erros=total_erros+:errors WHERE id=:id")
         ->execute(['sent'=>$sent, 'errors'=>$errors, 'id'=>$campaignId]);
     $done = count($rows) < $limit;
-    if ($done) $pdo->prepare("UPDATE disparos SET status='concluido' WHERE id=:id")->execute(['id'=>$campaignId]);
+    if ($done) {
+        $pdo->prepare("UPDATE disparos SET status='concluido', proximo_lote_em=NULL WHERE id=:id")->execute(['id'=>$campaignId]);
+    } else {
+        // Respeita o ritmo configurado na campanha (ex.: "1 por minuto") mesmo depois
+        // que a tela foi fechada: o proximo tick do cron so processa este disparo de
+        // novo quando proximo_lote_em tiver passado.
+        $waitSeconds = (int)ceil(max(0, (int)($campaign['intervalo_ms'] ?? 0)) / 1000);
+        if ($waitSeconds > 0) {
+            $pdo->prepare("UPDATE disparos SET proximo_lote_em=DATE_ADD(NOW(), INTERVAL :s SECOND) WHERE id=:id")
+                ->execute(['s'=>$waitSeconds, 'id'=>$campaignId]);
+        } else {
+            $pdo->prepare("UPDATE disparos SET proximo_lote_em=NULL WHERE id=:id")->execute(['id'=>$campaignId]);
+        }
+    }
     return ['ok'=>true, 'processados'=>count($rows), 'enviados'=>$sent, 'erros'=>$errors, 'done'=>$done];
 }
 
@@ -448,6 +493,7 @@ function disparos_engine_process_due(PDO $pdo, int $maxSeconds = 45, int $maxBat
           FROM disparos
          WHERE status IN ('aguardando','executando')
            AND (tipo <> 'agendado' OR agendado_em IS NULL OR agendado_em <= NOW())
+           AND (proximo_lote_em IS NULL OR proximo_lote_em <= NOW())
          ORDER BY FIELD(status,'executando','aguardando'), COALESCE(agendado_em,criado_em), id
          LIMIT 20
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -461,15 +507,25 @@ function disparos_engine_process_due(PDO $pdo, int $maxSeconds = 45, int $maxBat
             $stats['waiting']++;
             continue;
         }
-        $res = disparos_engine_execute_batch($pdo, (int)$campaign['id'], $maxBatchSize);
+        // Uma campanha com problema (ex.: filtro salvo invalido) nao pode travar as
+        // demais: se disparos_engine_execute_batch() explodir, registra o erro e segue
+        // para a proxima campanha devida neste mesmo tick, em vez de abortar tudo.
+        try {
+            $res = disparos_engine_execute_batch($pdo, (int)$campaign['id'], $maxBatchSize);
+        } catch (Throwable $e) {
+            error_log('disparos_engine_process_due: falha na campanha ' . (int)$campaign['id'] . ': ' . $e->getMessage());
+            $stats['errors']++;
+            continue;
+        }
         $stats['batches']++;
         if (!empty($res['waiting'])) $stats['waiting']++;
         $stats['processed'] += (int)($res['processados'] ?? 0);
         $stats['sent'] += (int)($res['enviados'] ?? 0);
         $stats['errors'] += (int)($res['erros'] ?? 0);
         if (!empty($res['done'])) $stats['completed']++;
-        $intervalMs = max(0, min(60000, (int)($campaign['intervalo_ms'] ?? 0)));
-        if ($intervalMs > 0 && time() - $started < $maxSeconds) usleep($intervalMs * 1000);
+        // O ritmo de cada campanha (intervalo_ms) ja e' respeitado via proximo_lote_em
+        // (gravado em disparos_engine_execute_batch) e pelo proprio filtro do $due
+        // acima — nao ha necessidade de pausar aqui antes de olhar a proxima campanha.
     }
     return $stats;
 }
