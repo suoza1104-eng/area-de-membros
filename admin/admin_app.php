@@ -11,7 +11,14 @@ admin_app_ensure_schema($pdo);
 $firebaseConfig = push_public_config();
 $vapidKey = push_vapid_key();
 $pushReady = $firebaseConfig['apiKey'] !== '' && $firebaseConfig['projectId'] !== '' && $vapidKey !== '';
-$admin_extra_head = '<link rel="manifest" href="admin_manifest.php">' . "\n" . '<meta name="theme-color" content="#facc15">';
+$adminAppVersion = rawurlencode((string)(defined('APP_VERSION') ? APP_VERSION : 'v1'));
+$admin_extra_head = '<link rel="manifest" href="admin_manifest.php?v=' . $adminAppVersion . '">' . "\n"
+    . '<meta name="theme-color" content="#facc15">' . "\n"
+    . '<meta name="apple-mobile-web-app-capable" content="yes">' . "\n"
+    . '<meta name="apple-mobile-web-app-title" content="Vendas Admin">' . "\n"
+    . '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">' . "\n"
+    . '<link rel="apple-touch-icon" href="../public/pwa-icon-192.png?v=' . $adminAppVersion . '">' . "\n"
+    . '<link rel="icon" href="../public/pwa-icon.svg?v=' . $adminAppVersion . '">';
 
 include __DIR__ . '/_header.php';
 ?>
@@ -33,7 +40,7 @@ include __DIR__ . '/_header.php';
 
   <section class="admapp-card admapp-install">
     <div>
-      <span class="admapp-kicker">Instalador</span>
+      <span class="admapp-kicker" id="admInstallBadge">Instalador</span>
       <h2>Gestão de Vendas no seu dispositivo</h2>
       <p>Use o botão de instalar do navegador e depois habilite as notificações. O app fica separado da área do aluno e abre direto no painel administrativo.</p>
       <div class="admapp-status" id="admAppStatus"></div>
@@ -68,6 +75,7 @@ const PUSH_READY = <?= $pushReady ? 'true' : 'false' ?>;
 const FIREBASE_CONFIG = <?= json_encode($firebaseConfig, JSON_UNESCAPED_SLASHES) ?>;
 const VAPID_KEY = <?= json_encode($vapidKey) ?>;
 const statusEl=document.getElementById('admAppStatus');
+const installBadge=document.getElementById('admInstallBadge');
 const installBtn=document.getElementById('admInstallBtn');
 const pushBtn=document.getElementById('admEnablePushBtn');
 const testBtn=document.getElementById('admTestSoundBtn');
@@ -86,6 +94,15 @@ function notificationHelp(){
   if(isIOS())return 'Este navegador no iPhone ainda não expôs notificações para este app. Tente instalar/abrir pelo ícone criado via Safari e confirme que o iOS está atualizado.';
   return 'Este navegador não expôs a API de notificações. Abra no Chrome/Edge atualizado ou instale o app e tente novamente.';
 }
+function refreshInstallState(){
+  if(isStandalone()){
+    installBadge.textContent='App instalado';
+    installBtn.textContent='App instalado';
+    installBtn.disabled=true;
+    return;
+  }
+  installBadge.textContent='Instalador';
+}
 function clientId(){
   let id=localStorage.getItem('admin_push_client_id');
   if(!id){id=(crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));localStorage.setItem('admin_push_client_id',id);}
@@ -103,6 +120,7 @@ window.adminAppPlaySound=playSound;
 
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installBtn.disabled=false;});
 installBtn.onclick=async()=>{try{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;msg('Instalação solicitada. Se o app já estiver instalado, abra pelo ícone do sistema.','ok');}else{msg(installHelp(),'ok');}}catch(e){msg(e.message,'err');}};
+refreshInstallState();
 testBtn.onclick=()=>playSound('cash');
 
 async function registerSW(){

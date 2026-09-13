@@ -20,6 +20,7 @@ echo json_encode([
     'background_color' => $background,
     'theme_color' => $theme,
     'icons' => [
+        ['src' => '../public/pwa-icon-192.png', 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any maskable'],
         ['src' => '../public/pwa-icon.svg', 'sizes' => 'any', 'type' => 'image/svg+xml', 'purpose' => 'any maskable'],
     ],
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
