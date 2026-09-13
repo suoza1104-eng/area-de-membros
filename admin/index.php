@@ -3377,7 +3377,12 @@ body.dash-chart-fullscreen {
         <p style="font-size:13px;color:var(--muted);text-align:center;padding:42px 0">Nenhum bloqueio ativado no filtro atual.</p>
     <?php endif; ?>
 </div>
+</div>
+</details>
 
+<details class="dash-collapsible">
+<summary><span>Comparativo por turma</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel mb-4">
     <div class="panel-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span>Comparativo por turma<?= empty($barTurmaData) ? ' <span style="font-size:11px;color:var(--muted);font-weight:400">(sem dados — verifique se há turmas com inscritos no período)</span>' : '' ?></span>
@@ -3408,9 +3413,14 @@ body.dash-chart-fullscreen {
     </div>
     <canvas id="chartBarTurmas" style="max-height:380px"></canvas>
 </div>
+</div>
+</details>
 
 <!-- TABLE: Detalhamento das aulas -->
 <?php if ($funil): ?>
+<details class="dash-collapsible">
+<summary><span>Detalhamento por aula</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel">
     <div class="panel-title">Detalhamento por aula</div>
     <div class="table-wrap">
@@ -3444,6 +3454,8 @@ body.dash-chart-fullscreen {
         </table>
     </div>
 </div>
+</div>
+</details>
 <?php endif; ?>
 
 <script>
@@ -4827,6 +4839,9 @@ body.dash-chart-fullscreen {
 <?php endif; ?>
 
 <?php if ($rankingRows): ?>
+<details class="dash-collapsible">
+<summary><span>Ranking de inscrições</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel rk-panel" id="rkpanel-insc" style="margin-top:0">
     <div class="panel-title" style="margin-bottom:14px">
         <span style="display:flex;align-items:center;gap:8px">
@@ -5002,6 +5017,8 @@ body.dash-chart-fullscreen {
     </div>
     <?php endif; ?>
 </div>
+</div>
+</details>
 <?php endif; ?>
 
 <?php if ($groupRankingRows): ?>
@@ -5023,6 +5040,9 @@ $grEventLabel = static function (string $event): string {
     }
 };
 ?>
+<details class="dash-collapsible">
+<summary><span>Ranking de entradas em grupos</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="panel rk-panel" id="rkpanel-grupos" style="margin-top:16px">
     <div class="panel-title" style="margin-bottom:14px">
         <span style="display:flex;align-items:center;gap:8px">
@@ -5161,8 +5181,13 @@ $grEventLabel = static function (string $event): string {
     </table>
     </div>
 </div>
+</div>
+</details>
 <?php endif; ?>
 
+<details class="dash-collapsible">
+<summary><span>Indicadores de e-mail</span><span class="dash-chevron">▶</span></summary>
+<div class="dash-section-body">
 <div class="card mb-4">
     <div class="d-flex align-center justify-between mb-3">
         <div><div class="card-title">Indicadores de e-mail</div><div class="text-xs text-muted">Entregabilidade e engajamento registrados pelo Amazon SES.</div></div>
@@ -5174,6 +5199,8 @@ $grEventLabel = static function (string $event): string {
         <?php endforeach; ?>
     </div>
 </div>
+</div>
+</details>
 
 <script>
 function rkToggle(i) {
@@ -5197,6 +5224,16 @@ function rkToggleList(key) {
     if (!panel) return;
     panel.classList.toggle('expanded');
 }
+// Seções recolhíveis do dashboard: só troca o ícone da seta. O conteúdo
+// já foi todo calculado no carregamento da página (nada é buscado via
+// AJAX aqui) — isto é so' organizacao visual, para nao mostrar os ~20
+// paineis todos abertos de uma vez.
+document.addEventListener('toggle', function (e) {
+    var det = e.target;
+    if (!det.classList || !det.classList.contains('dash-collapsible')) return;
+    var chevron = det.querySelector(':scope > summary .dash-chevron');
+    if (chevron) chevron.textContent = det.open ? '▼' : '▶';
+}, true);
 </script>
 
 <?php include __DIR__ . '/_footer.php'; ?>
