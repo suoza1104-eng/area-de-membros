@@ -170,6 +170,7 @@ function __esc(string $v): string {
 <meta charset="utf-8">
 <title><?= __esc($pageTitle) ?> — Admin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<?php if (!empty($admin_extra_head)) echo $admin_extra_head . "\n"; ?>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
@@ -1174,6 +1175,13 @@ button:not([class]):hover { filter: brightness(1.07); }
       <span class="tb-title"><?= __esc($pageTitle) ?></span>
     </div>
     <div id="topbar-right">
+      <a href="admin_app.php" class="tb-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="5" y="2" width="14" height="20" rx="2"/>
+          <path d="M12 18h.01"/>
+        </svg>
+        App admin
+      </a>
       <a href="../public/trilha.php" class="tb-btn" target="_blank">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/automation_catalog.php';
+require_once __DIR__ . '/admin_app_notifications.php';
 
 function payment_events_ensure_schema(PDO $pdo): void
 {
@@ -397,6 +398,13 @@ function payment_event_register(PDO $pdo, array $data): array
             if ($userId <= 0) {
                 if (function_exists('_disparar_webhooks_sync')) {
                     _disparar_webhooks_sync($eventCode, null, $extra + ['_skip_automation_capture' => true]);
+                }
+            }
+            if ($isNew) {
+                try {
+                    admin_app_notify_event($pdo, $eventCode, $extra);
+                } catch (Throwable $e) {
+                    @error_log('admin_app_notify_event: ' . $e->getMessage());
                 }
             }
             $pdo->prepare("UPDATE student_payment_events SET triggered_at=NOW(),trigger_count=trigger_count+1 WHERE id=:id")
