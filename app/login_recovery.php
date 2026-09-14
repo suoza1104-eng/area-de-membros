@@ -69,6 +69,34 @@ function login_recovery_format_phone(string $phone): string {
     return $phone;
 }
 
+function login_recovery_phone_candidates(string $phone): array {
+    $digits = preg_replace('/\D+/', '', $phone) ?: '';
+    if ($digits === '') return [];
+
+    $locals = [$digits];
+    if (str_starts_with($digits, '55') && (strlen($digits) === 12 || strlen($digits) === 13)) {
+        $locals[] = substr($digits, 2);
+    }
+
+    foreach ($locals as $local) {
+        if (strlen($local) === 10) {
+            $locals[] = substr($local, 0, 2) . '9' . substr($local, 2);
+        } elseif (strlen($local) === 11 && substr($local, 2, 1) === '9') {
+            $locals[] = substr($local, 0, 2) . substr($local, 3);
+        }
+    }
+
+    $candidates = [];
+    foreach ($locals as $local) {
+        if ($local === '') continue;
+        $candidates[] = $local;
+        if (!str_starts_with($local, '55') && (strlen($local) === 10 || strlen($local) === 11)) {
+            $candidates[] = '55' . $local;
+        }
+    }
+    return array_values(array_unique($candidates));
+}
+
 function login_recovery_auto_register(PDO $pdo, string $email, string $nome, string $telefone): array {
     login_recovery_ensure_schema($pdo);
     
@@ -89,7 +117,7 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
     }
     
     // 1. Verificar se usuário já existe por email
-    $stU = $pdo->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
+    $stU = $pdo->prepare("SELECT * FROM users WHERE LOWER(email) = :email LIMIT 1");
     $stU->execute([':email' => $cleanEmail]);
     $user = $stU->fetch(PDO::FETCH_ASSOC);
     
@@ -113,15 +141,7 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
         }
     } else {
         // 2. Verificar se usuário existe por match de telefone (exato, com/sem 55)
-        $phoneCandidates = [$digitsTel];
-        if (strlen($digitsTel) === 10 || strlen($digitsTel) === 11) {
-            if (!str_starts_with($digitsTel, '55')) {
-                $phoneCandidates[] = '55' . $digitsTel;
-            }
-        }
-        if (str_starts_with($digitsTel, '55') && (strlen($digitsTel) === 12 || strlen($digitsTel) === 13)) {
-            $phoneCandidates[] = substr($digitsTel, 2);
-        }
+        $phoneCandidates = login_recovery_phone_candidates($digitsTel);
 
         $userTel = null;
         foreach ($phoneCandidates as $cand) {
@@ -141,27 +161,43 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
         
         if ($userTel) {
             $userId = (int)$userTel['id'];
-            // Usuário existente encontrado pelo telefone -> Atualiza email, nome e telefone sem duplicar registro
-            $pdo->prepare("UPDATE users SET email = :email, nome = COALESCE(NULLIF(:nome, ''), nome), telefone = :tel WHERE id = :id")
-                ->execute([':email' => $cleanEmail, ':nome' => $cleanNome, ':tel' => $cleanTel, ':id' => $userId]);
+            // Usuario existente encontrado pelo telefone -> atualiza nome/telefone sem trocar e-mail por possivel typo.
+            $pdo->prepare("UPDATE users SET nome = COALESCE(NULLIF(:nome, ''), nome), telefone = :tel WHERE id = :id")
+                ->execute([':nome' => $cleanNome, ':tel' => $cleanTel, ':id' => $userId]);
         } else {
             // Nenhum match por e-mail ou telefone -> Criar novo usuário no banco de dados
             $defaultPassword = bin2hex(random_bytes(6));
             $hash = password_hash($defaultPassword, PASSWORD_DEFAULT);
             $criadoEm = date('Y-m-d H:i:s');
             
-            $ins = $pdo->prepare("
-                INSERT INTO users (nome, email, telefone, senha_hash, criado_em, created_at, status)
-                VALUES (:nome, :email, :tel, :hash, :criado, :created, 'ativo')
-            ");
-            $ins->execute([
+            $cols = ['nome', 'email', 'telefone', 'senha_hash'];
+            $holders = [':nome', ':email', ':tel', ':hash'];
+            $params = [
                 ':nome' => $cleanNome,
                 ':email' => $cleanEmail,
                 ':tel' => $cleanTel,
                 ':hash' => $hash,
-                ':criado' => $criadoEm,
-                ':created' => $criadoEm,
-            ]);
+            ];
+
+            if (function_exists('enrollment_column_exists') && enrollment_column_exists($pdo, 'users', 'criado_em')) {
+                $cols[] = 'criado_em';
+                $holders[] = ':criado';
+                $params[':criado'] = $criadoEm;
+            }
+            if (function_exists('enrollment_column_exists') && enrollment_column_exists($pdo, 'users', 'created_at')) {
+                $cols[] = 'created_at';
+                $holders[] = ':created';
+                $params[':created'] = $criadoEm;
+            }
+            if (function_exists('enrollment_column_exists') && enrollment_column_exists($pdo, 'users', 'status')) {
+                $cols[] = 'status';
+                $holders[] = ':status';
+                $params[':status'] = 'ativo';
+            }
+
+            $quotedCols = array_map(static fn($col) => '`' . $col . '`', $cols);
+            $ins = $pdo->prepare('INSERT INTO users (' . implode(', ', $quotedCols) . ') VALUES (' . implode(', ', $holders) . ')');
+            $ins->execute($params);
             $userId = (int)$pdo->lastInsertId();
         }
     }
@@ -218,4 +254,3 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
         'message' => 'Acesso liberado com sucesso!'
     ];
 }
-

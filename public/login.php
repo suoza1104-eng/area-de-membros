@@ -14,8 +14,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ajax_
     $email = (string)($_POST['email'] ?? '');
     $nome = (string)($_POST['nome'] ?? '');
     $telefone = (string)($_POST['telefone'] ?? '');
-    
-    $res = login_recovery_auto_register($pdo, $email, $nome, $telefone);
+
+    try {
+        $res = login_recovery_auto_register($pdo, $email, $nome, $telefone);
+    } catch (Throwable $e) {
+        @error_log('login_recovery_auto_register: ' . $e->getMessage());
+        $res = [
+            'ok' => false,
+            'message' => 'Nao foi possivel liberar seu acesso agora. Fale com o suporte.'
+        ];
+    }
     echo json_encode($res, JSON_UNESCAPED_UNICODE);
     exit;
 }
