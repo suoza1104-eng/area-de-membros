@@ -247,6 +247,20 @@ function am_touch_login(PDO $pdo, int $userId, string $method = 'password', stri
     } catch (Throwable $e) { login_dbg('touch_login ERRO: ' . $e->getMessage()); }
 }
 
+function am_sync_email_cookie(PDO $pdo, int $userId): void {
+    if ($userId <= 0) return;
+    try {
+        $st = $pdo->prepare("SELECT email FROM users WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $userId]);
+        $email = strtolower(trim((string)($st->fetchColumn() ?: '')));
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) return;
+        setcookie('am_email', '', am_host_cookie_options(time() - 3600, false));
+        setcookie('am_email', $email, am_cookie_options(time() + 60 * 60 * 24 * AM_TOKEN_DAYS, false));
+    } catch (Throwable $e) {
+        login_dbg('sync_email_cookie fail: ' . $e->getMessage());
+    }
+}
+
 function am_token_table(PDO $pdo): void {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS remember_tokens (
@@ -329,6 +343,7 @@ if (!empty($_GET['am'])) {
                 catch (Throwable $e) { login_dbg('touch_login fail: ' . $e->getMessage()); }
                 try { am_set_token($pdo, $uid); }
                 catch (Throwable $e) { login_dbg('set_token fail: ' . $e->getMessage()); }
+                am_sync_email_cookie($pdo, $uid);
                 login_dbg('magic link OK, redirect uid=' . $uid);
                 header('Location: ' . am_resolve_next());
                 exit;
@@ -358,6 +373,7 @@ if (empty($_SESSION['aluno_id']) && !empty($_COOKIE['am_token'])) {
             $_SESSION['aluno_id'] = (int)$tokRow['user_id'];
             am_set_token($pdo, (int)$tokRow['user_id']); // renova
             am_touch_login($pdo, (int)$tokRow['user_id'], 'remember_token');
+            am_sync_email_cookie($pdo, (int)$tokRow['user_id']);
             header('Location: ' . am_resolve_next());
             exit;
         } else {
