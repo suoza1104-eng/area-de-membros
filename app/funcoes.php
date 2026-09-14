@@ -237,9 +237,26 @@ function buscar_usuario_por_id(int $id): ?array {
 function user_dispatch_ensure_columns(PDO $pdo): void {
     static $done = false;
     if ($done) return;
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN bloquear TINYINT(1) NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN bloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN desbloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+
+    $columnExists = static function(PDO $pdo, string $col): bool {
+        try {
+            $st = $pdo->prepare("SHOW COLUMNS FROM users LIKE :c");
+            $st->execute([':c' => $col]);
+            return (bool)$st->fetch();
+        } catch (Throwable $e) {
+            return false;
+        }
+    };
+
+    if (!$columnExists($pdo, 'bloquear')) {
+        try { $pdo->exec("ALTER TABLE users ADD COLUMN bloquear TINYINT(1) NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
+    }
+    if (!$columnExists($pdo, 'bloqueado_em')) {
+        try { $pdo->exec("ALTER TABLE users ADD COLUMN bloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+    }
+    if (!$columnExists($pdo, 'desbloqueado_em')) {
+        try { $pdo->exec("ALTER TABLE users ADD COLUMN desbloqueado_em DATETIME NULL"); } catch (Throwable $e) {}
+    }
     try {
         $pdo->exec("
             UPDATE users u

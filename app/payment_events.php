@@ -400,7 +400,20 @@ function payment_event_register(PDO $pdo, array $data): array
                     _disparar_webhooks_sync($eventCode, null, $extra + ['_skip_automation_capture' => true]);
                 }
             }
-            if ($isNew) {
+            $shouldNotifyAdmin = $isNew;
+            if (!$shouldNotifyAdmin && ($eventCode === 'PAGAMENTO_APROVADO' || $genericEvent === 'PAGAMENTO_APROVADO')) {
+                try {
+                    $txPattern = '%' . $transactionCode . '%';
+                    $checkNotif = $pdo->prepare("SELECT id FROM admin_push_notifications WHERE event_code = 'PAGAMENTO_APROVADO' AND payload_json LIKE :tx LIMIT 1");
+                    $checkNotif->execute([':tx' => $txPattern]);
+                    if (!$checkNotif->fetchColumn()) {
+                        $shouldNotifyAdmin = true;
+                    }
+                } catch (Throwable $e) {
+                    $shouldNotifyAdmin = true;
+                }
+            }
+            if ($shouldNotifyAdmin) {
                 try {
                     admin_app_notify_event($pdo, $eventCode, $extra);
                 } catch (Throwable $e) {

@@ -6,6 +6,7 @@ require_once __DIR__ . '/funcoes.php';
 function mql_ensure_schema(PDO $pdo): void {
     static $done = false;
     if ($done) return;
+    if ($pdo->inTransaction()) return;
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS meta_qualified_datasets (

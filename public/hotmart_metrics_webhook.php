@@ -5,6 +5,7 @@ require_once __DIR__ . '/../app/metrics.php';
 require_once __DIR__ . '/../app/integration_hub.php';
 require_once __DIR__ . '/../app/course_access.php';
 require_once __DIR__ . '/../app/payment_events.php';
+require_once __DIR__ . '/../app/meta_qualified_leads.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -129,8 +130,12 @@ $payload = json_decode($raw, true);
 if (!is_array($payload)) hmw_reply(400, ['ok' => false, 'message' => 'JSON inválido']);
 
 $pdo = getPDO();
+user_dispatch_ensure_columns($pdo);
 metrics_ensure_schema($pdo);
 hub_ensure_schema($pdo);
+course_access_ensure_schema($pdo);
+payment_events_ensure_schema($pdo);
+if (function_exists('mql_ensure_schema')) mql_ensure_schema($pdo);
 
 $eventId = (string)($payload['id'] ?? hash('sha256', $raw));
 $event = (string)($payload['event'] ?? '');
@@ -147,7 +152,7 @@ if ($transaction === '') {
         $stmt = $pdo->prepare("INSERT INTO hotmart_webhook_events (event_id,event_name,transaction_code,process_status,process_message,payload_json,received_at,processed_at) VALUES (:id,:event,NULL,'success','Evento sem transação armazenado',:payload,NOW(),NOW()) ON DUPLICATE KEY UPDATE event_name=VALUES(event_name),process_status='success',process_message='Reprocessado sem transação',payload_json=VALUES(payload_json),processed_at=NOW()");
         $stmt->execute(['id' => $eventId, 'event' => $event, 'payload' => $raw]);
         $hubResult = hub_ingest_hotmart($pdo, $payload);
-        $pdo->commit();
+        if ($pdo->inTransaction()) $pdo->commit();
         hmw_reply(200, ['ok' => true, 'event' => $event, 'transaction' => null, 'stored' => true, 'hub_deliveries' => $hubResult['deliveries'], 'dispatched' => false]);
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -198,8 +203,11 @@ $sale = hotmart_build_sale_data_from_array([
     'raw_payload_json' => $raw,
 ], $matched);
 
+$hubResult = ['deliveries' => 0];
+$lifetimeAttempt = ['granted' => false];
+
 try {
-    $pdo->beginTransaction();
+    if (!$pdo->inTransaction()) $pdo->beginTransaction();
     hotmart_upsert_sale_live($pdo, $sale);
     hotmart_upsert_sale_legacy($pdo, $sale);
 
@@ -214,53 +222,54 @@ try {
 
     $hubResult = hub_ingest_hotmart($pdo, $payload);
     $lifetimeAttempt = hmw_try_grant_lifetime($pdo, $product, $offer, $txPrefixed, $status, $event, $email, $phoneRaw, $matched);
-    $pdo->commit();
-
-    $paymentEventStatus = hmw_payment_event_status($status);
-    $paymentEvent = payment_event_register($pdo, [
-        'provider' => 'hotmart',
-        'normalized_status' => $paymentEventStatus,
-        'transaction_code' => $txPrefixed,
-        'provider_transaction_id' => $transaction,
-        'provider_status' => (string)($purchase['status'] ?? $event),
-        'payment_method' => $payment ?: null,
-        'currency' => (string)($sale['currency'] ?? 'BRL'),
-        'gross_amount_cents' => hmw_cents($gross),
-        'net_amount_cents' => hmw_cents($net),
-        'fee_amount_cents' => max(0, hmw_cents($gross - $producer)),
-        'installments' => $installments ?: null,
-        'product_name' => (string)($product['name'] ?? ''),
-        'product_code' => (string)($product['id'] ?? ''),
-        'checkout_id' => (string)($offer['code'] ?? ''),
-        'checkout_url' => payment_event_first_value($payload, ['checkout_url', 'payment_url', 'url']),
-        'buyer_name' => (string)($buyer['name'] ?? ''),
-        'buyer_email' => $email,
-        'buyer_phone' => $phoneRaw,
-        'buyer_document' => payment_event_first_value($buyer, ['document', 'document_number', 'cpf', 'cnpj']),
-        'user_id' => (int)($sale['matched_user_id'] ?? 0),
-        'raw_payload' => $payload,
-        'metadata' => [
-            'source' => 'hotmart_webhook',
-            'event' => $event,
-            'event_id' => $eventId,
-            'match_method' => (string)($sale['match_method'] ?? 'none'),
-            'lifetime_attempt' => $lifetimeAttempt,
-        ],
-        'occurred_at' => $sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: date('Y-m-d H:i:s'),
-    ]);
-
-    hmw_reply(200, [
-        'ok' => true,
-        'transaction' => $txPrefixed,
-        'status' => $status,
-        'match_method' => $sale['match_method'],
-        'hub_deliveries' => $hubResult['deliveries'],
-        'dispatched' => ((int)($paymentEvent['triggered'] ?? 0)) > 0,
-        'payment_event' => $paymentEvent,
-        'lifetime_granted' => !empty($lifetimeAttempt['granted'])
-    ]);
+    if ($pdo->inTransaction()) $pdo->commit();
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     app_log('Falha no webhook de metricas Hotmart', ['event_id' => $eventId, 'transaction' => $transaction, 'error' => $e->getMessage()]);
-    hmw_reply(500, ['ok' => false, 'message' => 'Falha ao processar evento']);
 }
+
+$payment = (string)($purchase['payment']['type'] ?? '');
+$installments = (int)($purchase['payment']['installments_number'] ?? 0);
+$paymentEventStatus = hmw_payment_event_status($status);
+$paymentEvent = payment_event_register($pdo, [
+    'provider' => 'hotmart',
+    'normalized_status' => $paymentEventStatus,
+    'transaction_code' => $txPrefixed,
+    'provider_transaction_id' => $transaction,
+    'provider_status' => (string)($purchase['status'] ?? $event),
+    'payment_method' => $payment ?: null,
+    'currency' => (string)($sale['currency'] ?? 'BRL'),
+    'gross_amount_cents' => hmw_cents($gross),
+    'net_amount_cents' => hmw_cents($net),
+    'fee_amount_cents' => max(0, hmw_cents($gross - $producer)),
+    'installments' => $installments ?: null,
+    'product_name' => (string)($product['name'] ?? ''),
+    'product_code' => (string)($product['id'] ?? ''),
+    'checkout_id' => (string)($offer['code'] ?? ''),
+    'checkout_url' => payment_event_first_value($payload, ['checkout_url', 'payment_url', 'url']),
+    'buyer_name' => (string)($buyer['name'] ?? ''),
+    'buyer_email' => $email,
+    'buyer_phone' => $phoneRaw,
+    'buyer_document' => payment_event_first_value($buyer, ['document', 'document_number', 'cpf', 'cnpj']),
+    'user_id' => (int)($sale['matched_user_id'] ?? 0),
+    'raw_payload' => $payload,
+    'metadata' => [
+        'source' => 'hotmart_webhook',
+        'event' => $event,
+        'event_id' => $eventId,
+        'match_method' => (string)($sale['match_method'] ?? 'none'),
+        'lifetime_attempt' => $lifetimeAttempt,
+    ],
+    'occurred_at' => $sale['payment_confirmed_at'] ?: $sale['transaction_date'] ?: date('Y-m-d H:i:s'),
+]);
+
+hmw_reply(200, [
+    'ok' => true,
+    'transaction' => $txPrefixed,
+    'status' => $status,
+    'match_method' => $sale['match_method'],
+    'hub_deliveries' => $hubResult['deliveries'],
+    'dispatched' => ((int)($paymentEvent['triggered'] ?? 0)) > 0,
+    'payment_event' => $paymentEvent,
+    'lifetime_granted' => !empty($lifetimeAttempt['granted'])
+]);
