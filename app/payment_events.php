@@ -387,8 +387,19 @@ function payment_event_register(PDO $pdo, array $data): array
         // payload inteiro), entao reavaliar poderia duplicar o disparo de
         // fluxos sem filtro de produto.
         $isEnrichment = !$isNew && $existingHadNoProduct && $incomingHasProduct;
+        $isUnnotifiedApprovedSale = false;
+        if (!$isNew && ($eventCode === 'PAGAMENTO_APROVADO' || $genericEvent === 'PAGAMENTO_APROVADO')) {
+            try {
+                $txPattern = '%' . $transactionCode . '%';
+                $checkNotif = $pdo->prepare("SELECT id FROM admin_push_notifications WHERE event_code = 'PAGAMENTO_APROVADO' AND payload_json LIKE :tx LIMIT 1");
+                $checkNotif->execute([':tx' => $txPattern]);
+                if (!$checkNotif->fetchColumn()) {
+                    $isUnnotifiedApprovedSale = true;
+                }
+            } catch (Throwable $e) {}
+        }
 
-        if (($isNew || $isEnrichment) && !$alreadyTriggeredBusiness && $eventId > 0) {
+        if (($isNew || $isEnrichment || $isUnnotifiedApprovedSale) && !$alreadyTriggeredBusiness && $eventId > 0) {
             $extra = payment_event_trigger_payload($data, $metadata, $eventId, $provider, $status, $eventCode, $transactionCode);
             if (function_exists('capturar_fluxos_automacao')) {
                 capturar_fluxos_automacao($eventCode, $userId > 0 ? $userId : null, $extra);
@@ -400,7 +411,7 @@ function payment_event_register(PDO $pdo, array $data): array
                     _disparar_webhooks_sync($eventCode, null, $extra + ['_skip_automation_capture' => true]);
                 }
             }
-            $shouldNotifyAdmin = $isNew;
+            $shouldNotifyAdmin = $isNew || $isUnnotifiedApprovedSale;
             if (!$shouldNotifyAdmin && ($eventCode === 'PAGAMENTO_APROVADO' || $genericEvent === 'PAGAMENTO_APROVADO')) {
                 try {
                     $txPattern = '%' . $transactionCode . '%';
