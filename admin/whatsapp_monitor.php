@@ -192,15 +192,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         SELECT instance_key FROM whatsapp_groups
                         UNION
                         SELECT instance_key FROM whatsapp_webhook_raw_logs
+                        UNION
+                        SELECT instance_key FROM whatsapp_instances
+                         WHERE is_enabled = 1
+                           AND UPPER(status) = 'CONNECTED'
                   ) x
                  WHERE instance_key IS NOT NULL
                    AND instance_key <> ''
-                 LIMIT 20
+                 LIMIT 50
             ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $updated = 0;
+            $syncedInstances = 0;
             foreach ($instanceRows as $instRow) {
-                $updated += evolution_sync_groups_for_instance($pdo, (string)($instRow['instance_key'] ?? ''));
+                $instanceKey = (string)($instRow['instance_key'] ?? '');
+                if ($instanceKey === '') continue;
+                $updated += evolution_sync_groups_for_instance($pdo, $instanceKey);
+                $syncedInstances++;
             }
 
             $rows = $pdo->query("
@@ -229,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 $updated++;
             }
-            header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated);
+            header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated . '&instances_synced=' . $syncedInstances);
             exit;
         }
 
@@ -324,7 +332,11 @@ if (isset($_GET['saved'])) $notice = 'Configuração da Evolution API salva.';
 if (isset($_GET['created'])) $notice = 'Instância criada.';
 if (isset($_GET['blacklist_saved'])) $notice = 'Lista de fraude atualizada.';
 if (isset($_GET['trusted_saved'])) $notice = 'Lista de números confiáveis atualizada.';
-if (isset($_GET['groups_refreshed'])) $notice = 'Atualização de nomes de grupos solicitada para ' . (int)$_GET['groups_refreshed'] . ' grupo(s).';
+if (isset($_GET['groups_refreshed'])) {
+    $notice = 'Atualização de grupos concluída: '
+        . (int)($_GET['groups_refreshed'] ?? 0) . ' grupo(s), '
+        . (int)($_GET['instances_synced'] ?? 0) . ' instância(s) consultada(s).';
+}
 if (isset($_GET['members_synced'])) {
     $notice = 'Participantes atuais sincronizados: '
         . (int)($_GET['processed'] ?? 0) . ' grupo(s), '
@@ -688,7 +700,13 @@ include __DIR__ . '/_header.php';
                     <h2>Automações de Grupos & Lançamento Meteórico</h2>
                     <div class="wm-card-sub">Crie automações baseadas em eventos de grupos (ex: aluno entrou no grupo X, Y ou Z). Configure a adição/remoção automática de Tags e dispare gatilhos para o Motor de Automações Principal (E-mail, WhatsApp, Push, Voz).</div>
                 </div>
-                <button class="btn btn-primary btn-sm" type="button" onclick="toggleAutomationForm(0)">+ Nova Automação de Grupo</button>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                    <form method="post" style="margin:0">
+                        <input type="hidden" name="action" value="refresh_group_names">
+                        <button class="btn btn-ghost btn-sm" type="submit">Atualizar grupos</button>
+                    </form>
+                    <button class="btn btn-primary btn-sm" type="button" onclick="toggleAutomationForm(0)">+ Nova Automação de Grupo</button>
+                </div>
             </div>
 
             <div id="automationFormBox" class="wm-auto-box" style="display:none">
