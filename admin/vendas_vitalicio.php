@@ -176,7 +176,12 @@ if ($mode === 'lifetime') {
     ];
     // Indicadores comerciais contam somente liberacoes originadas de pagamento real.
     // Concessoes manuais e inscricoes vitalicias administrativas permanecem fora daqui.
-    $where = ["cla.granted_at BETWEEN :ini AND :fim", "cla.is_paid = 1"];
+    // Filtra pela data REAL do pagamento (v_sales_master), nao por quando o acesso foi
+    // liberado no sistema (cla.granted_at) — reconciliacao/backfill atrasada pode gravar
+    // o acesso dias depois da compra, e usar granted_at faz vendas antigas "pularem" pro
+    // dia do processamento em vez do dia em que realmente aconteceram.
+    $dateColumn = $salesViewReady ? "COALESCE(vsm.sale_date, cla.granted_at)" : "cla.granted_at";
+    $where = ["{$dateColumn} BETWEEN :ini AND :fim", "cla.is_paid = 1"];
     if ($q !== '') {
         $where[] = "(cla.offer_code LIKE :q OR cla.transaction_code LIKE :q OR cla.turma_codigo LIKE :q OR u.nome LIKE :q OR u.email LIKE :q)";
         $params[':q'] = '%' . $q . '%';
@@ -324,7 +329,11 @@ foreach ($rows as $row) {
     $net = (float)($row['dashboard_net'] ?? 0);
     $totalGross += $gross;
     $totalNet += $net;
-    $day = substr((string)($row['granted_at'] ?? ''), 0, 10) ?: 'Sem data';
+    // Usa a data real do pagamento (v_sales_master) quando existe. cla.granted_at e'
+    // quando o acesso foi liberado no sistema — se houver atraso no processamento
+    // (ex.: reconciliacao atrasada), varias vendas de dias diferentes podem ganhar
+    // acesso no mesmo lote, criando um pico falso num unico dia no grafico.
+    $day = substr((string)($row['sale_at'] ?: $row['granted_at'] ?? ''), 0, 10) ?: 'Sem data';
     if (!isset($daily[$day])) $daily[$day] = ['date' => $day, 'qtd' => 0, 'gross' => 0.0, 'net' => 0.0];
     $daily[$day]['qtd']++;
     $daily[$day]['gross'] += $gross;
@@ -493,7 +502,12 @@ require_once __DIR__ . '/_header.php';
       <?php endif; ?>
       <?php foreach ($rows as $row): ?>
         <tr>
-          <td><?= vv_h(vv_date_br((string)($row['granted_at'] ?? ''))) ?></td>
+          <td>
+            <?= vv_h(vv_date_br((string)($row['sale_at'] ?: $row['granted_at'] ?? ''))) ?>
+            <?php if (!empty($row['sale_at']) && substr((string)$row['sale_at'], 0, 16) !== substr((string)$row['granted_at'], 0, 16)): ?>
+              <div class="vv-muted">Liberado em: <?= vv_h(vv_date_br((string)$row['granted_at'])) ?></div>
+            <?php endif; ?>
+          </td>
           <td>
             <strong><?= vv_h((string)($row['aluno_nome'] ?? '-')) ?></strong>
             <div class="vv-muted"><?= vv_h((string)($row['aluno_email'] ?? '')) ?></div>
