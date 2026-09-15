@@ -127,6 +127,22 @@ function vv_payload_value(array $payload, array $paths): ?float {
     return null;
 }
 
+// Cursos maiores que concedem acesso vitalicio como bonus da propria compra (o aluno
+// paga o curso completo, nao o desbloqueio avulso de R$24,90). O acesso e' legitimo,
+// mas a venda em si e' de outro produto — nao deve contar nas metricas desta tela,
+// senao um curso de R$478 aparece misturado com desbloqueios de R$24,90 e distorce
+// tudo (bruto, ticket medio, vendas por turma). Atualizar esta lista sempre que um
+// novo curso passar a conceder o vitalicio como bonus.
+const VV_BONUS_GRANT_PRODUCTS = [
+    'Formação Eletricista Residencial de Alto Nível',
+    'Curso Completo de Quadros Elétricos',
+];
+
+function vv_is_bonus_grant_product(?string $productName): bool {
+    if (!$productName) return false;
+    return in_array(trim($productName), VV_BONUS_GRANT_PRODUCTS, true);
+}
+
 $today = new DateTimeImmutable('today');
 $defaultStart = $today->modify('-29 days')->format('Y-m-d');
 $ini = trim((string)($_GET['ini'] ?? $defaultStart));
@@ -195,11 +211,20 @@ if ($mode === 'lifetime') {
     $st = $pdo->prepare($sql);
     $st->execute($params);
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    $rows = array_values(array_filter($rows, static fn(array $r): bool => !vv_is_bonus_grant_product($r['product_name'] ?? null)));
 
+    // Status que contam como pagamento confirmado (mesmo vocabulario aceito no modo
+    // "Hotmart por produto/preco" logo abaixo). O acesso vitalicio ja foi liberado
+    // (cla.is_paid=1) independente disso, mas a cobranca pode ter sido estornada
+    // (chargeback/reembolso) ou ainda estar pendente depois que o acesso foi dado —
+    // nesses casos a venda continua aparecendo na lista, so' sem contar como receita.
+    $approvedStatuses = ['Aprovado', 'Completo', 'APPROVED', 'COMPLETE', 'PAID'];
     foreach ($rows as &$row) {
-        $gross = isset($row['gross_revenue']) ? (float)$row['gross_revenue'] : 0.0;
-        $net = isset($row['producer_net']) ? (float)$row['producer_net'] : 0.0;
-        if ($gross <= 0 && !empty($row['payload_json'])) {
+        $saleStatus = trim((string)($row['sale_status'] ?? ''));
+        $statusConfirmed = $saleStatus === '' || in_array($saleStatus, $approvedStatuses, true);
+        $gross = ($statusConfirmed && isset($row['gross_revenue'])) ? (float)$row['gross_revenue'] : 0.0;
+        $net = ($statusConfirmed && isset($row['producer_net'])) ? (float)$row['producer_net'] : 0.0;
+        if ($statusConfirmed && $gross <= 0 && !empty($row['payload_json'])) {
             $payload = json_decode((string)$row['payload_json'], true);
             if (is_array($payload)) {
                 $payloadGross = vv_payload_value($payload, [
