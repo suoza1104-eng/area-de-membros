@@ -186,6 +186,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'refresh_group_names') {
+            $ajax = (string)($_POST['ajax'] ?? '') === '1'
+                || strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'fetch';
+            $beforeGroups = 0;
+            try {
+                $beforeGroups = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_groups")->fetchColumn();
+            } catch (Throwable $e) {}
+
             $instanceRows = $pdo->query("
                 SELECT DISTINCT instance_key
                   FROM (
@@ -204,11 +211,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $updated = 0;
             $syncedInstances = 0;
+            $instanceResults = [];
             foreach ($instanceRows as $instRow) {
                 $instanceKey = (string)($instRow['instance_key'] ?? '');
                 if ($instanceKey === '') continue;
-                $updated += evolution_sync_groups_for_instance($pdo, $instanceKey);
+                $synced = evolution_sync_groups_for_instance($pdo, $instanceKey);
+                $updated += $synced;
                 $syncedInstances++;
+                $instanceResults[] = ['instance_key' => $instanceKey, 'groups' => $synced];
             }
 
             $rows = $pdo->query("
@@ -237,6 +247,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 $updated++;
             }
+
+            $afterGroups = $beforeGroups;
+            try {
+                $afterGroups = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_groups")->fetchColumn();
+            } catch (Throwable $e) {}
+            $newGroups = max(0, $afterGroups - $beforeGroups);
+
+            if ($ajax) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'ok' => true,
+                    'groups_refreshed' => $updated,
+                    'instances_synced' => $syncedInstances,
+                    'new_groups' => $newGroups,
+                    'total_groups' => $afterGroups,
+                    'instances' => $instanceResults,
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                exit;
+            }
+
             header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated . '&instances_synced=' . $syncedInstances);
             exit;
         }
@@ -322,6 +352,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
     } catch (Throwable $e) {
+        if ((string)($_POST['ajax'] ?? '') === '1'
+            || strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'fetch') {
+            header('Content-Type: application/json; charset=utf-8');
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
         $error = $e->getMessage();
     }
 }
@@ -701,13 +738,14 @@ include __DIR__ . '/_header.php';
                     <div class="wm-card-sub">Crie automações baseadas em eventos de grupos (ex: aluno entrou no grupo X, Y ou Z). Configure a adição/remoção automática de Tags e dispare gatilhos para o Motor de Automações Principal (E-mail, WhatsApp, Push, Voz).</div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-                    <form method="post" style="margin:0">
+                    <form method="post" style="margin:0" id="refreshGroupsForm">
                         <input type="hidden" name="action" value="refresh_group_names">
-                        <button class="btn btn-ghost btn-sm" type="submit">Atualizar grupos</button>
+                        <button class="btn btn-ghost btn-sm" type="submit" id="refreshGroupsBtn">Atualizar grupos</button>
                     </form>
                     <button class="btn btn-primary btn-sm" type="button" onclick="toggleAutomationForm(0)">+ Nova Automação de Grupo</button>
                 </div>
             </div>
+            <div id="refreshGroupsStatus" class="wm-card-sub" style="display:none;margin:-6px 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,0.04)"></div>
 
             <div id="automationFormBox" class="wm-auto-box" style="display:none">
                 <h3 id="formTitle" style="font-size:15px;margin:0 0 12px;color:#facc15">Criar Nova Automação de Grupo</h3>
@@ -881,6 +919,69 @@ include __DIR__ . '/_header.php';
         </div>
 
         <script>
+        (function(){
+            var form = document.getElementById('refreshGroupsForm');
+            var btn = document.getElementById('refreshGroupsBtn');
+            var status = document.getElementById('refreshGroupsStatus');
+            if (!form || !btn || !status || !window.fetch || !window.FormData) return;
+
+            function showStatus(html, color) {
+                status.style.display = 'block';
+                status.style.color = color || '#cbd5e1';
+                status.innerHTML = html;
+            }
+
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var original = btn.textContent;
+                var body = new FormData(form);
+                body.append('ajax', '1');
+
+                btn.disabled = true;
+                btn.textContent = 'Atualizando...';
+                showStatus('Consultando instâncias conectadas e atualizando a lista de grupos...', '#facc15');
+
+                fetch(window.location.href, {
+                    method: 'POST',
+                    headers: {'X-Requested-With': 'fetch'},
+                    body: body
+                })
+                .then(function(res) {
+                    return res.json().then(function(data) {
+                        if (!res.ok || !data.ok) {
+                            throw new Error((data && data.error) ? data.error : 'Falha ao atualizar grupos.');
+                        }
+                        return data;
+                    });
+                })
+                .then(function(data) {
+                    var instances = data.instances || [];
+                    var detail = instances.length
+                        ? '<div style="margin-top:6px;font-size:12px;color:#94a3b8">' + instances.map(function(row) {
+                            return (row.instance_key || '-') + ': ' + (parseInt(row.groups || 0, 10)) + ' grupo(s)';
+                        }).join(' · ') + '</div>'
+                        : '';
+                    showStatus(
+                        'Atualização concluída: <strong>' + (parseInt(data.groups_refreshed || 0, 10)) + '</strong> grupo(s) sincronizado(s), ' +
+                        '<strong>' + (parseInt(data.new_groups || 0, 10)) + '</strong> novo(s), ' +
+                        '<strong>' + (parseInt(data.instances_synced || 0, 10)) + '</strong> instância(s) consultada(s). ' +
+                        'Total conhecido: <strong>' + (parseInt(data.total_groups || 0, 10)) + '</strong>.' + detail,
+                        '#86efac'
+                    );
+                    if (parseInt(data.new_groups || 0, 10) > 0) {
+                        setTimeout(function(){ window.location.reload(); }, 1200);
+                    }
+                })
+                .catch(function(err) {
+                    showStatus('Erro ao atualizar grupos: ' + (err && err.message ? err.message : 'tente novamente.'), '#fca5a5');
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                    btn.textContent = original;
+                });
+            });
+        })();
+
         function toggleAutomationForm(show) {
             var box = document.getElementById('automationFormBox');
             if (show === 0) {
