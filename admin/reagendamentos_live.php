@@ -757,6 +757,13 @@ $exprOferta = $liveEventsReady ? $eventExpr('oferta') : '0';
 $exprCliqueCompra = $liveEventsReady ? $eventExpr('compra') : '0';
 $salesMasterReady = rl_table_exists($pdo, 'v_sales_master');
 $approvedSalesStatusSql = "LOWER(COALESCE(s.status,'')) IN ('approved','completed','paid','aprovado','concluído')";
+// users.telefone guarda formato internacional ("+5511999999999") e v_sales_master.buyer_phone
+// guarda formatos variados (sem "+", por vezes com DDD duplicado) — comparar as strings exatas
+// nunca bate, entao o telefone nunca contribuia nenhum casamento (so' o e-mail funcionava).
+// Normalizando para os ultimos 11 digitos dos dois lados, o telefone passa a casar de verdade.
+$phoneDigitsExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(%s,''),'+',''),' ',''),'-',''),'(',''),')',''),'.','')";
+$uPhoneNorm = 'RIGHT(' . sprintf($phoneDigitsExpr, 'u.telefone') . ', 11)';
+$sPhoneNorm = 'RIGHT(' . sprintf($phoneDigitsExpr, 's.buyer_phone') . ', 11)';
 $exprCompraCurso = $salesMasterReady
     ? "EXISTS (
         SELECT 1
@@ -764,7 +771,7 @@ $exprCompraCurso = $salesMasterReady
         WHERE (
             (u.email IS NOT NULL AND u.email <> '' AND LOWER(s.buyer_email) COLLATE utf8mb4_unicode_ci = LOWER(u.email) COLLATE utf8mb4_unicode_ci)
             OR
-            (u.telefone IS NOT NULL AND u.telefone <> '' AND s.buyer_phone IS NOT NULL AND s.buyer_phone <> '' AND LOWER(s.buyer_phone) COLLATE utf8mb4_unicode_ci = LOWER(u.telefone) COLLATE utf8mb4_unicode_ci)
+            (u.telefone IS NOT NULL AND u.telefone <> '' AND s.buyer_phone IS NOT NULL AND s.buyer_phone <> '' AND {$uPhoneNorm} COLLATE utf8mb4_unicode_ci = {$sPhoneNorm} COLLATE utf8mb4_unicode_ci)
         )
           AND $approvedSalesStatusSql
           AND s.sale_date IS NOT NULL
