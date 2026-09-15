@@ -235,6 +235,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $syncedInstances++;
                 $instanceResults[] = ['instance_key' => $instanceKey, 'groups' => $synced];
             }
+            $messageBackfill = evolution_backfill_recent_message_groups($pdo, $ajax ? 80 : 150);
+            $updated += (int)($messageBackfill['groups'] ?? 0);
 
             if (!$ajax && $activeTab === 'grupos') {
                 $rows = $pdo->query("
@@ -283,11 +285,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'new_groups' => $newGroups,
                     'total_groups' => $afterGroups,
                     'instances' => $instanceResults,
+                    'message_backfill' => $messageBackfill,
                 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 exit;
             }
 
-            header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated . '&instances_synced=' . $syncedInstances);
+            header('Location: whatsapp_monitor.php?tab=' . $activeTab . '&groups_refreshed=' . $updated . '&instances_synced=' . $syncedInstances . '&message_groups=' . (int)($messageBackfill['groups'] ?? 0));
             exit;
         }
 
@@ -392,7 +395,8 @@ if (isset($_GET['trusted_saved'])) $notice = 'Lista de números confiáveis atua
 if (isset($_GET['groups_refreshed'])) {
     $notice = 'Atualização de grupos concluída: '
         . (int)($_GET['groups_refreshed'] ?? 0) . ' grupo(s), '
-        . (int)($_GET['instances_synced'] ?? 0) . ' instância(s) consultada(s).';
+        . (int)($_GET['instances_synced'] ?? 0) . ' instância(s) consultada(s), '
+        . (int)($_GET['message_groups'] ?? 0) . ' grupo(s) recuperado(s) por mensagens recentes.';
 }
 if (isset($_GET['members_synced'])) {
     $notice = 'Participantes atuais sincronizados: '
@@ -976,16 +980,20 @@ include __DIR__ . '/_header.php';
                 })
                 .then(function(data) {
                     var instances = data.instances || [];
+                    var backfill = data.message_backfill || {};
                     var detail = instances.length
                         ? '<div style="margin-top:6px;font-size:12px;color:#94a3b8">' + instances.map(function(row) {
                             return (row.instance_key || '-') + ': ' + (parseInt(row.groups || 0, 10)) + ' grupo(s)';
-                        }).join(' · ') + '</div>'
+                        }).join(' | ') + '</div>'
                         : '';
+                    var messageDetail = '<div style="margin-top:6px;font-size:12px;color:#94a3b8">Mensagens recentes: ' +
+                        (parseInt(backfill.checked || 0, 10)) + ' log(s) verificado(s), ' +
+                        (parseInt(backfill.groups || 0, 10)) + ' grupo(s) recuperado(s).</div>';
                     showStatus(
                         'Atualização concluída: <strong>' + (parseInt(data.groups_refreshed || 0, 10)) + '</strong> grupo(s) sincronizado(s), ' +
                         '<strong>' + (parseInt(data.new_groups || 0, 10)) + '</strong> novo(s), ' +
                         '<strong>' + (parseInt(data.instances_synced || 0, 10)) + '</strong> instância(s) consultada(s). ' +
-                        'Total conhecido: <strong>' + (parseInt(data.total_groups || 0, 10)) + '</strong>.' + detail,
+                        'Total conhecido: <strong>' + (parseInt(data.total_groups || 0, 10)) + '</strong>.' + detail + messageDetail,
                         '#86efac'
                     );
                     if (parseInt(data.new_groups || 0, 10) > 0) {

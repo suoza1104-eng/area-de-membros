@@ -815,7 +815,27 @@ function evolution_extract_raw_event_fields(array $payload): array {
     $data = $payload['data'] ?? [];
     if (!is_array($data)) $data = [];
 
-    $groupId = (string)($data['id'] ?? $data['groupId'] ?? $data['remoteJid'] ?? $data['jid'] ?? $payload['groupId'] ?? '');
+    $groupIdCandidates = [
+        $data['id'] ?? null,
+        $data['groupId'] ?? null,
+        $data['remoteJid'] ?? null,
+        $data['jid'] ?? null,
+        $data['key']['remoteJid'] ?? null,
+        $data['message']['key']['remoteJid'] ?? null,
+        $payload['groupId'] ?? null,
+        $payload['key']['remoteJid'] ?? null,
+    ];
+    $groupId = '';
+    foreach ($groupIdCandidates as $candidate) {
+        if (!is_scalar($candidate)) continue;
+        $candidate = trim((string)$candidate);
+        if ($candidate === '') continue;
+        if (str_contains($candidate, '@g.us')) {
+            $groupId = $candidate;
+            break;
+        }
+        if ($groupId === '') $groupId = $candidate;
+    }
     $action = (string)($data['action'] ?? $payload['action'] ?? '');
 
     $participant = '';
@@ -852,6 +872,12 @@ function evolution_extract_raw_event_fields(array $payload): array {
     }
     if ($participant === '') {
         $participant = (string)($data['participant'] ?? $data['phoneNumber'] ?? $data['number'] ?? $payload['participant'] ?? '');
+    }
+    if ($participant === '') {
+        $keyParticipant = $data['key']['participant'] ?? $data['message']['key']['participant'] ?? null;
+        if (is_scalar($keyParticipant)) {
+            $participant = (string)$keyParticipant;
+        }
     }
     if ($participantPhone === '') {
         $participantPhone = $participant;
@@ -1468,6 +1494,70 @@ function evolution_sync_groups_for_instance(PDO $pdo, string $instanceKey): int 
     }
 
     return $updated;
+}
+
+function evolution_backfill_recent_message_groups(PDO $pdo, int $limit = 80): array {
+    $limit = max(1, min(200, $limit));
+    $checked = 0;
+    $found = 0;
+    $updatedLogs = 0;
+    $groups = [];
+
+    try {
+        $rows = $pdo->query("
+            SELECT id, payload_raw
+              FROM whatsapp_webhook_raw_logs
+             WHERE received_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+               AND event_type = 'messages.upsert'
+               AND (group_id IS NULL OR group_id = '')
+             ORDER BY id DESC
+             LIMIT {$limit}
+        ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return ['checked' => 0, 'found' => 0, 'updated_logs' => 0, 'groups' => 0, 'error' => $e->getMessage()];
+    }
+
+    foreach ($rows as $row) {
+        $checked++;
+        $payload = json_decode((string)($row['payload_raw'] ?? ''), true);
+        if (!is_array($payload)) continue;
+
+        $fields = evolution_extract_raw_event_fields($payload);
+        $groupId = trim((string)($fields['group_id'] ?? ''));
+        $instanceKey = trim((string)($fields['instance_key'] ?? ''));
+        if ($groupId === '' || !str_contains($groupId, '@g.us')) continue;
+
+        $found++;
+        try {
+            $st = $pdo->prepare("
+                UPDATE whatsapp_webhook_raw_logs
+                   SET group_id = :gid,
+                       instance_key = COALESCE(:inst, instance_key)
+                 WHERE id = :id
+                 LIMIT 1
+            ");
+            $st->execute([
+                ':gid' => $groupId,
+                ':inst' => $instanceKey !== '' ? $instanceKey : null,
+                ':id' => (int)$row['id'],
+            ]);
+            $updatedLogs++;
+        } catch (Throwable $e) {}
+
+        $key = $groupId . '|' . $instanceKey;
+        $groups[$key] = ['group_id' => $groupId, 'instance_key' => $instanceKey];
+    }
+
+    foreach ($groups as $group) {
+        evolution_upsert_group($pdo, $group);
+    }
+
+    return [
+        'checked' => $checked,
+        'found' => $found,
+        'updated_logs' => $updatedLogs,
+        'groups' => count($groups),
+    ];
 }
 
 function evolution_sync_group_members(PDO $pdo, string $instanceKey, string $groupId): array {
