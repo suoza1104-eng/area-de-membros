@@ -140,7 +140,12 @@ $daily = [];
 $totalSales = 0;
 $totalGross = 0.0;
 $totalNet = 0.0;
-$hotmartReady = vv_table_has_columns($pdo, 'hotmart_sales', [
+// v_sales_master e' a view unificada de vendas (Hotmart, Pagar.me, DOM) usada em todo
+// o resto do sistema (ex.: vendas_analytics.php) — usamos a mesma fonte aqui em vez de
+// uma tabela "hotmart_sales" que nunca existiu neste banco (o nome real e'
+// hotmart_sales_live), o que fazia todo venda vitalicia aparecer com R$ 0,00.
+$salesViewReady = vv_table_exists($pdo, 'v_sales_master');
+$hotmartReady = vv_table_has_columns($pdo, 'hotmart_sales_live', [
     'transaction_code', 'status', 'product_name', 'price_name', 'currency',
     'gross_revenue', 'net_revenue', 'producer_net', 'transaction_date',
     'matched_user_id', 'price_code', 'buyer_name', 'buyer_email',
@@ -161,9 +166,14 @@ if ($mode === 'lifetime') {
         $params[':q'] = '%' . $q . '%';
     }
 
-    $joinHotmart = $hotmartReady ? "LEFT JOIN hotmart_sales hs ON hs.transaction_code = cla.transaction_code" : "";
-    $selectHotmart = $hotmartReady
-        ? "hs.status AS sale_status, hs.product_name, hs.price_name, hs.currency, hs.gross_revenue, hs.net_revenue, hs.producer_net, hs.transaction_date AS sale_at,"
+    // course_lifetime_access.transaction_code usa collation diferente de v_sales_master
+    // (utf8mb4_general_ci vs utf8mb4_unicode_ci) — sem o COLLATE explicito o MySQL recusa
+    // a comparacao (erro 1267) em vez de simplesmente nao casar a linha.
+    $joinSales = $salesViewReady
+        ? "LEFT JOIN v_sales_master vsm ON vsm.transaction_code COLLATE utf8mb4_unicode_ci = cla.transaction_code COLLATE utf8mb4_unicode_ci"
+        : "";
+    $selectSales = $salesViewReady
+        ? "vsm.status AS sale_status, vsm.product_name, NULL AS price_name, NULL AS currency, vsm.gross_revenue, vsm.net_revenue, vsm.producer_net, vsm.sale_date AS sale_at,"
         : "NULL AS sale_status, NULL AS product_name, NULL AS price_name, NULL AS currency, NULL AS gross_revenue, NULL AS net_revenue, NULL AS producer_net, NULL AS sale_at,";
 
     $sql = "
@@ -173,11 +183,11 @@ if ($mode === 'lifetime') {
             u.nome AS aluno_nome, u.email AS aluno_email, u.telefone AS aluno_telefone,
             u.created_at AS lead_created_at,
             u.utm_source, u.utm_medium, u.utm_campaign, u.utm_term, u.utm_content,
-            $selectHotmart
+            $selectSales
             'course_lifetime_access' AS origem
         FROM course_lifetime_access cla
         LEFT JOIN users u ON u.id = cla.user_id
-        $joinHotmart
+        $joinSales
         WHERE " . implode(' AND ', $where) . "
         ORDER BY cla.granted_at DESC, cla.id DESC
         LIMIT 1000
@@ -198,10 +208,20 @@ if ($mode === 'lifetime') {
                     'data.purchase.original_offer_price.value',
                     'data.purchase.offer.price.value',
                     'purchase.price.value',
-                    'price',
                     'valor',
                 ]);
-                if ($payloadGross !== null) $gross = $payloadGross;
+                if ($payloadGross !== null) {
+                    $gross = $payloadGross;
+                } elseif (isset($payload['amount']) && is_numeric($payload['amount'])) {
+                    // Payload de charge do Pagar.me (ex.: transaction_code "pagarme:ch_...",
+                    // que nao tem par exato em v_sales_master, indexada pelo id do pedido
+                    // "or_..."): "amount" vem em centavos.
+                    $gross = ((float)$payload['amount']) / 100;
+                } elseif (isset($payload['price']) && is_numeric($payload['price'])) {
+                    // Payload do Firepay/DOM Pagamentos (transaction_code "firepay:..."):
+                    // "price" tambem vem em centavos.
+                    $gross = ((float)$payload['price']) / 100;
+                }
             }
         }
         $row['dashboard_gross'] = $gross;
@@ -239,8 +259,8 @@ if ($mode === 'lifetime') {
             COALESCE(NULLIF(s.utm_campaign,''),u.utm_campaign) AS utm_campaign,
             COALESCE(NULLIF(s.utm_term,''),u.utm_term) AS utm_term,
             COALESCE(NULLIF(s.utm_content,''),u.utm_content) AS utm_content,
-            'hotmart_sales' AS origem
-        FROM hotmart_sales s
+            'hotmart_sales_live' AS origem
+        FROM hotmart_sales_live s
         LEFT JOIN users u ON u.id = s.matched_user_id
         WHERE " . implode(' AND ', $where) . "
         ORDER BY s.transaction_date DESC, s.id DESC
