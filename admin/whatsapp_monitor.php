@@ -188,6 +188,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'refresh_group_names') {
             $ajax = (string)($_POST['ajax'] ?? '') === '1'
                 || strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'fetch';
+            $lockAcquired = false;
+            if ($ajax) {
+                try {
+                    $lockAcquired = (int)$pdo->query("SELECT GET_LOCK('whatsapp_group_refresh', 1)")->fetchColumn() === 1;
+                } catch (Throwable $e) {}
+                if (!$lockAcquired) {
+                    header('Content-Type: application/json; charset=utf-8');
+                    http_response_code(409);
+                    echo json_encode([
+                        'ok' => false,
+                        'error' => 'Ja existe uma atualizacao de grupos em andamento. Aguarde alguns segundos e tente novamente.',
+                    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    exit;
+                }
+            }
             $beforeGroups = 0;
             try {
                 $beforeGroups = (int)$pdo->query("SELECT COUNT(*) FROM whatsapp_groups")->fetchColumn();
@@ -221,31 +236,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $instanceResults[] = ['instance_key' => $instanceKey, 'groups' => $synced];
             }
 
-            $rows = $pdo->query("
-                SELECT group_id, instance_key
-                  FROM (
-                        SELECT group_id, instance_key FROM whatsapp_groups
-                        UNION
-                        SELECT group_id, instance_key FROM whatsapp_webhook_raw_logs
-                  ) x
-                 WHERE group_id IS NOT NULL
-                   AND group_id <> ''
-                   AND instance_key IS NOT NULL
-                   AND instance_key <> ''
-                 ORDER BY group_id DESC
-                 LIMIT 120
-            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if (!$ajax && $activeTab === 'grupos') {
+                $rows = $pdo->query("
+                    SELECT group_id, instance_key
+                      FROM (
+                            SELECT group_id, instance_key FROM whatsapp_groups
+                            UNION
+                            SELECT group_id, instance_key FROM whatsapp_webhook_raw_logs
+                      ) x
+                     WHERE group_id IS NOT NULL
+                       AND group_id <> ''
+                       AND instance_key IS NOT NULL
+                       AND instance_key <> ''
+                     ORDER BY group_id DESC
+                     LIMIT 120
+                ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-            foreach ($rows as $row) {
-                evolution_upsert_group($pdo, [
-                    'group_id' => $row['group_id'] ?? '',
-                    'instance_key' => $row['instance_key'] ?? '',
-                ]);
-                evolution_refresh_group_name_if_needed($pdo, [
-                    'group_id' => $row['group_id'] ?? '',
-                    'instance_key' => $row['instance_key'] ?? '',
-                ]);
-                $updated++;
+                foreach ($rows as $row) {
+                    evolution_upsert_group($pdo, [
+                        'group_id' => $row['group_id'] ?? '',
+                        'instance_key' => $row['instance_key'] ?? '',
+                    ]);
+                    evolution_refresh_group_name_if_needed($pdo, [
+                        'group_id' => $row['group_id'] ?? '',
+                        'instance_key' => $row['instance_key'] ?? '',
+                    ]);
+                    $updated++;
+                }
             }
 
             $afterGroups = $beforeGroups;
@@ -256,6 +273,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($ajax) {
                 header('Content-Type: application/json; charset=utf-8');
+                if ($lockAcquired) {
+                    try { $pdo->query("SELECT RELEASE_LOCK('whatsapp_group_refresh')"); } catch (Throwable $e) {}
+                }
                 echo json_encode([
                     'ok' => true,
                     'groups_refreshed' => $updated,
