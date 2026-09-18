@@ -269,6 +269,13 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
 
     // Regra por evento (mesmo esquema dos Webhooks)
     $rules = sf_get_rules_for_event($pdo, $evento);
+    if (!empty($extra['_integration_rule']) && is_array($extra['_integration_rule'])) {
+        $inlineRule = $extra['_integration_rule'];
+        if (($inlineRule['evento'] ?? $evento) === $evento) {
+            $inlineRule['id'] = 0;
+            $rules[] = $inlineRule;
+        }
+    }
     if (!$rules) return false;
 
     // payload base (para uso em placeholders / debug)
