@@ -159,11 +159,12 @@ if (!is_array($layout)) $layout = ['front' => [], 'back' => []];
 $templates = $pdo->query("SELECT t.*, (SELECT COUNT(*) FROM individual_certificate_issues i WHERE i.template_id=t.id AND i.status='generated') generated_count FROM individual_certificate_templates t WHERE status<>'deleted' ORDER BY updated_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $stats = $pdo->query("
     SELECT
-      (SELECT COUNT(*) FROM individual_certificate_templates WHERE status<>'deleted') templates,
-      (SELECT COUNT(*) FROM individual_certificate_issues WHERE status='generated') generated,
-      (SELECT COUNT(*) FROM individual_certificate_logs WHERE level='error') errors,
-      (SELECT COUNT(*) FROM individual_certificate_logs WHERE event='password_error') password_errors
+      (SELECT COUNT(*) FROM individual_certificate_templates WHERE status<>'deleted') AS total_templates,
+      (SELECT COUNT(*) FROM individual_certificate_issues WHERE status='generated') AS total_generated,
+      (SELECT COUNT(*) FROM individual_certificate_logs WHERE level='error') AS total_errors,
+      (SELECT COUNT(*) FROM individual_certificate_logs WHERE event='password_error') AS total_password_errors
 ")->fetch(PDO::FETCH_ASSOC) ?: [];
+$stats += ['total_templates' => 0, 'total_generated' => 0, 'total_errors' => 0, 'total_password_errors' => 0];
 $daily = $pdo->query("SELECT DATE(created_at) d, SUM(status='generated') ok, SUM(status='error') err, COUNT(*) total FROM individual_certificate_issues WHERE created_at>=DATE_SUB(CURDATE(), INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $logs = $pdo->query("SELECT l.*,t.name template_name FROM individual_certificate_logs l LEFT JOIN individual_certificate_templates t ON t.id=l.template_id ORDER BY l.id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $dailyMax = 1;
@@ -189,10 +190,10 @@ include __DIR__ . '/_header.php';
 
   <section id="overview" class="ci-card">
     <div class="ci-kpis">
-      <div class="ci-card ci-kpi"><span class="ci-muted">Criados</span><strong><?= (int)$stats['templates'] ?></strong></div>
-      <div class="ci-card ci-kpi"><span class="ci-muted">Gerados</span><strong><?= (int)$stats['generated'] ?></strong></div>
-      <div class="ci-card ci-kpi"><span class="ci-muted">Erros</span><strong><?= (int)$stats['errors'] ?></strong></div>
-      <div class="ci-card ci-kpi"><span class="ci-muted">Senha errada</span><strong><?= (int)$stats['password_errors'] ?></strong></div>
+      <div class="ci-card ci-kpi"><span class="ci-muted">Criados</span><strong><?= (int)$stats['total_templates'] ?></strong></div>
+      <div class="ci-card ci-kpi"><span class="ci-muted">Gerados</span><strong><?= (int)$stats['total_generated'] ?></strong></div>
+      <div class="ci-card ci-kpi"><span class="ci-muted">Erros</span><strong><?= (int)$stats['total_errors'] ?></strong></div>
+      <div class="ci-card ci-kpi"><span class="ci-muted">Senha errada</span><strong><?= (int)$stats['total_password_errors'] ?></strong></div>
     </div>
     <div class="ci-card"><h3>Certificados gerados por dia</h3><div class="ci-bars"><?php foreach($daily as $d): $h=max(5,round(((int)$d['total']/$dailyMax)*145)); ?><div class="ci-bar" style="height:<?= $h ?>px"><span><?= (int)$d['total'] ?></span></div><?php endforeach; ?></div></div>
   </section>
