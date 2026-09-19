@@ -359,6 +359,24 @@ if ($acao !== '') {
             $row = $pdo->prepare("SELECT * FROM disparos WHERE id = :id");
             $row->execute([':id'=>$id]);
             $row = $row->fetch(PDO::FETCH_ASSOC);
+            if ($row) {
+                try {
+                    $filtrosResumo = json_decode((string)($row['filtros_json'] ?? '{}'), true) ?: [];
+                    $awResumo = buildAudienceWhere($filtrosResumo, $pdo);
+                    $stAud = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$awResumo['where']}");
+                    $stAud->execute($awResumo['params']);
+                    $row['audiencia_total'] = (int)$stAud->fetchColumn();
+
+                    $paramsRest = $awResumo['params'];
+                    $paramsRest[':campaign'] = $id;
+                    $stRest = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$awResumo['where']} AND NOT EXISTS (SELECT 1 FROM disparo_execucoes de_done WHERE de_done.disparo_id=:campaign AND de_done.user_id=u.id)");
+                    $stRest->execute($paramsRest);
+                    $row['restante'] = (int)$stRest->fetchColumn();
+                } catch (Throwable $e) {
+                    $row['audiencia_total'] = null;
+                    $row['restante'] = null;
+                }
+            }
             echo $row ? json_encode(['ok'=>true,'data'=>$row]) : json_encode(['ok'=>false]);
             exit;
 
@@ -1769,8 +1787,10 @@ async function dpAtualizarProgressoDisparo(id) {
     const er = parseInt(d.total_erros || 0);
     const processed = ok + er;
     const resumo = await dpBuscarResumoDisparo(id);
-    const totalAud = resumo.audiencia_total !== null && resumo.audiencia_total !== undefined ? parseInt(resumo.audiencia_total || 0) : null;
-    const restante = resumo.restante !== null && resumo.restante !== undefined ? parseInt(resumo.restante || 0) : null;
+    const totalOrigem = resumo.audiencia_total !== null && resumo.audiencia_total !== undefined ? resumo.audiencia_total : d.audiencia_total;
+    const restanteOrigem = resumo.restante !== null && resumo.restante !== undefined ? resumo.restante : d.restante;
+    const totalAud = totalOrigem !== null && totalOrigem !== undefined ? parseInt(totalOrigem || 0) : null;
+    const restante = restanteOrigem !== null && restanteOrigem !== undefined ? parseInt(restanteOrigem || 0) : null;
     const doneAud = totalAud !== null && restante !== null ? Math.max(0, totalAud - restante) : processed;
     const pct = totalAud && totalAud > 0 ? Math.min(100, Math.round((doneAud / totalAud) * 100)) : null;
     const st = d.status || 'executando';
@@ -1864,8 +1884,10 @@ async function dpMostrarStatus(id) {
     const er = parseInt(d.total_erros || 0);
     const processed = ok + er;
     const resumo = await dpBuscarResumoDisparo(id);
-    const totalAud = resumo.audiencia_total !== null && resumo.audiencia_total !== undefined ? parseInt(resumo.audiencia_total || 0) : null;
-    const restante = resumo.restante !== null && resumo.restante !== undefined ? parseInt(resumo.restante || 0) : null;
+    const totalOrigem = resumo.audiencia_total !== null && resumo.audiencia_total !== undefined ? resumo.audiencia_total : d.audiencia_total;
+    const restanteOrigem = resumo.restante !== null && resumo.restante !== undefined ? resumo.restante : d.restante;
+    const totalAud = totalOrigem !== null && totalOrigem !== undefined ? parseInt(totalOrigem || 0) : null;
+    const restante = restanteOrigem !== null && restanteOrigem !== undefined ? parseInt(restanteOrigem || 0) : null;
     const doneAud = totalAud !== null && restante !== null ? Math.max(0, totalAud - restante) : processed;
     const pct = totalAud && totalAud > 0 ? Math.min(100, Math.round((doneAud / totalAud) * 100)) : null;
     document.getElementById('dpProgressTitle').textContent = 'Status do disparo';
