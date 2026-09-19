@@ -852,7 +852,7 @@ button:not([class]):hover { filter: brightness(1.07); }
       }
     }
     $isAreaMembrosActive = in_array(basename($_SERVER['PHP_SELF']), [
-      'aulas.php', 'turmas.php', 'cursos_recomendados.php', 'certificado_config.php'
+      'aulas.php', 'turmas.php', 'cursos_recomendados.php', 'certificado_config.php', 'certificados_individuais.php'
     ], true);
     $canSeeAreaMembros = !empty($__sbV['aulas']) || !empty($__sbV['turmas']) || !empty($__sbV['cursos']) || !empty($__sbV['certificado']);
     ?>
@@ -1207,7 +1207,8 @@ button:not([class]):hover { filter: brightness(1.07); }
     'aulas.php',
     'turmas.php',
     'cursos_recomendados.php',
-    'certificado_config.php'
+    'certificado_config.php',
+    'certificados_individuais.php'
   ];
   $alunosGroup = [
     'alunos.php',
@@ -1314,6 +1315,14 @@ button:not([class]):hover { filter: brightness(1.07); }
           <path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>
         </svg>
         Certificado
+      </a>
+      <a href="certificados_individuais.php" class="am-nav-item <?= $currentScript === 'certificados_individuais.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 4h16v14H4z"/>
+          <path d="M8 8h8M8 12h5"/>
+          <path d="M16 18l2 3 2-3"/>
+        </svg>
+        Certificados Individuais
       </a>
       <?php endif; ?>
     </nav>
