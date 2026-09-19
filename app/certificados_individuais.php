@@ -2,10 +2,6 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/../vendor/dompdf/autoload.inc.php';
-
-use Dompdf\Dompdf;
-use Dompdf\Options;
 
 function ci_ensure_schema(PDO $pdo): void
 {
@@ -206,6 +202,12 @@ function ci_qr_data_uri(string $data, int $size): string
 
 function ci_generate_pdf(PDO $pdo, array $template, array $issue): string
 {
+    $autoload = __DIR__ . '/../vendor/dompdf/autoload.inc.php';
+    if (!is_file($autoload)) {
+        throw new RuntimeException('Biblioteca Dompdf nao encontrada no servidor.');
+    }
+    require_once $autoload;
+
     $layout = json_decode((string)($template['layout_json'] ?? ''), true);
     if (!is_array($layout)) $layout = ['front' => [], 'back' => []];
     $baseUrl = ci_upload_base_url();
@@ -268,9 +270,9 @@ function ci_generate_pdf(PDO $pdo, array $template, array $issue): string
     </body></html>
     <?php
     $html = ob_get_clean();
-    $options = new Options();
+    $options = new \Dompdf\Options();
     $options->set('isRemoteEnabled', true);
-    $dompdf = new Dompdf($options);
+    $dompdf = new \Dompdf\Dompdf($options);
     $dompdf->loadHtml($html);
     $dompdf->setPaper('A4', 'landscape');
     $dompdf->render();
@@ -281,4 +283,3 @@ function ci_generate_pdf(PDO $pdo, array $template, array $issue): string
     file_put_contents($dir . '/' . $file, $dompdf->output());
     return preg_replace('#/public$#', '', rtrim(BASE_URL, '/')) . '/uploads/certificados_individuais_pdf/' . $file;
 }
-
