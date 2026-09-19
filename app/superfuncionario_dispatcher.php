@@ -153,6 +153,16 @@ function sf_get_rules_for_event(PDO $pdo, string $evento): array
     return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
+function sf_payload_get_path($value, array $path): ?string
+{
+    foreach ($path as $key) {
+        if (!is_array($value) || !array_key_exists($key, $value)) return null;
+        $value = $value[$key];
+    }
+    if ($value === null) return null;
+    return is_scalar($value) ? (string)$value : json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 /** -----------------------------
  *  Resolver valores (source -> value)
  *  Suporta:
@@ -190,24 +200,24 @@ function sf_resolve_source(PDO $pdo, string $source, array $userRow, array $extr
     $source = trim($source);
     if ($source === '') return null;
 
-    // dot notation
-    $parts = explode('.', $source, 2);
-    if (count($parts) === 2) {
-        [$root, $key] = $parts;
+    // dot notation, inclusive caminhos aninhados como extra.push_flow.node_id
+    $parts = explode('.', $source);
+    if (count($parts) >= 2) {
+        $root = array_shift($parts);
         $root = strtolower(trim($root));
-        $key = trim($key);
+        $path = array_map('trim', $parts);
 
         if ($root === 'user') {
-            return isset($userRow[$key]) ? (string)$userRow[$key] : null;
+            return sf_payload_get_path($userRow, $path);
         }
         if ($root === 'users') {
-            return isset($userRow[$key]) ? (string)$userRow[$key] : null;
+            return sf_payload_get_path($userRow, $path);
         }
         if ($root === 'extra') {
-            return isset($extra[$key]) ? (is_scalar($extra[$key]) ? (string)$extra[$key] : json_encode($extra[$key])) : null;
+            return sf_payload_get_path($extra, $path);
         }
         if ($root === 'payload') {
-            return isset($payload[$key]) ? (is_scalar($payload[$key]) ? (string)$payload[$key] : json_encode($payload[$key])) : null;
+            return sf_payload_get_path($payload, $path);
         }
     }
 
@@ -230,6 +240,16 @@ function sf_resolve_source(PDO $pdo, string $source, array $userRow, array $extr
  * ------------------------------*/
 function sf_http_post_json(string $url, array $headers, array $body, int $timeoutSeconds): array
 {
+    if (!function_exists('curl_init')) {
+        return [
+            'ok' => false,
+            'http_status' => 0,
+            'error' => 'Extensao PHP cURL indisponivel.',
+            'response' => '',
+            'request_json' => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ];
+    }
+
     $ch = curl_init($url);
     $payload = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -264,8 +284,14 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
 function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
     $cfg = sf_get_config($pdo);
-    if ((int)$cfg['is_enabled'] !== 1) return false;
-    if ($cfg['token'] === '') return false;
+    if ((int)$cfg['is_enabled'] !== 1) {
+        sf_log($pdo, $evento, null, false, null, 'SuperFuncionario desativado nas configuracoes.', ['user' => $user, 'extra' => $extra], '');
+        return false;
+    }
+    if ($cfg['token'] === '') {
+        sf_log($pdo, $evento, null, false, null, 'Token do SuperFuncionario nao configurado.', ['user' => $user, 'extra' => $extra], '');
+        return false;
+    }
 
     // Regra por evento (mesmo esquema dos Webhooks)
     $rules = sf_get_rules_for_event($pdo, $evento);
@@ -276,7 +302,10 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             $rules[] = $inlineRule;
         }
     }
-    if (!$rules) return false;
+    if (!$rules) {
+        sf_log($pdo, $evento, null, false, null, 'Nenhuma regra ativa ou regra inline encontrada para o evento.', ['user' => $user, 'extra' => $extra], '');
+        return false;
+    }
 
     // payload base (para uso em placeholders / debug)
     $payload = [
@@ -299,22 +328,23 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
     foreach ($rules as $rule) {
         $ruleId = (int)($rule['id'] ?? 0);
 
+        try {
         $tags = [];
         $flows = [];
         $fields = [];
 
-        // tags (1 por linha)
+        // tags (1 por linha ou separadas por virgula)
         $tagsText = (string)($rule['tags_text'] ?? '');
-        foreach (preg_split('/\R+/', $tagsText) as $t) {
+        foreach (preg_split('/[\r\n,]+/', $tagsText) ?: [] as $t) {
             $t = trim($t);
             if ($t !== '') $tags[] = $t;
         }
 
-        // flows (csv)
+        // flows (csv). Mantem IDs grandes como string em ambientes 32-bit.
         $flowsText = (string)($rule['flows_text'] ?? '');
-        foreach (explode(',', $flowsText) as $f) {
+        foreach (preg_split('/[\r\n,]+/', $flowsText) ?: [] as $f) {
             $f = trim($f);
-            if ($f !== '' && ctype_digit($f)) $flows[] = (int)$f;
+            if ($f !== '' && ctype_digit($f)) $flows[] = (PHP_INT_SIZE >= 8 ? (int)$f : $f);
         }
 
         // fields mapping
@@ -326,12 +356,18 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
         }
 
         foreach ($pairs as $p) {
+            $mode = (string)($p['sourceMode'] ?? 'variable');
             $src = trim((string)($p['source'] ?? ''));
             $dst = trim((string)($p['dest'] ?? ''));
-            if ($src === '' || $dst === '') continue;
+            if ($dst === '') continue;
 
-            $val = sf_resolve_source($pdo, $src, $userRow, $extra, $payload);
-            if ($val === null) continue;
+            if ($mode === 'fixed') {
+                $val = (string)($p['fixedValue'] ?? $src);
+            } else {
+                if ($src === '') continue;
+                $val = sf_resolve_source($pdo, $src, $userRow, $extra, $payload);
+                if ($val === null) continue;
+            }
 
             $fields[] = ['field_name' => $dst, 'value' => $val];
         }
@@ -388,6 +424,11 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             continue;
         }
 
+        if (!$actions) {
+            sf_log($pdo, $evento, $ruleId, false, null, 'Regra sem tag, campo personalizado ou flow_id para disparar.', ['payload' => $payload, 'body' => $body], '');
+            continue;
+        }
+
         // headers
         $headers = [];
         if ($cfg['header_mode'] === 'bearer') {
@@ -409,6 +450,9 @@ function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra 
             json_decode((string)$res['request_json'], true) ?: ['raw' => (string)$res['request_json']],
             (string)($res['response'] ?? '')
         );
+        } catch (Throwable $e) {
+            sf_log($pdo, $evento, $ruleId, false, null, 'Erro interno no dispatcher SuperFuncionario: ' . $e->getMessage(), ['payload' => $payload, 'rule' => $rule], '');
+        }
     }
 
     return $sentOk;
