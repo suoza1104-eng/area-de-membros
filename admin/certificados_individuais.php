@@ -166,6 +166,10 @@ $stats = $pdo->query("
 ")->fetch(PDO::FETCH_ASSOC) ?: [];
 $daily = $pdo->query("SELECT DATE(created_at) d, SUM(status='generated') ok, SUM(status='error') err, COUNT(*) total FROM individual_certificate_issues WHERE created_at>=DATE_SUB(CURDATE(), INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $logs = $pdo->query("SELECT l.*,t.name template_name FROM individual_certificate_logs l LEFT JOIN individual_certificate_templates t ON t.id=l.template_id ORDER BY l.id DESC LIMIT 80")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$dailyMax = 1;
+foreach ($daily as $dailyRow) {
+    $dailyMax = max($dailyMax, (int)($dailyRow['total'] ?? 0));
+}
 $imgBase = ci_upload_base_url();
 $frontUrl = !empty($edit['front_image']) ? $imgBase . '/' . $edit['front_image'] : '';
 $backUrl = !empty($edit['back_image']) ? $imgBase . '/' . $edit['back_image'] : '';
@@ -190,7 +194,7 @@ include __DIR__ . '/_header.php';
       <div class="ci-card ci-kpi"><span class="ci-muted">Erros</span><strong><?= (int)$stats['errors'] ?></strong></div>
       <div class="ci-card ci-kpi"><span class="ci-muted">Senha errada</span><strong><?= (int)$stats['password_errors'] ?></strong></div>
     </div>
-    <div class="ci-card"><h3>Certificados gerados por dia</h3><div class="ci-bars"><?php $max=max(1,...array_map(fn($r)=>(int)$r['total'],$daily?:[['total'=>1]])); foreach($daily as $d): $h=max(5,round(((int)$d['total']/$max)*145)); ?><div class="ci-bar" style="height:<?= $h ?>px"><span><?= (int)$d['total'] ?></span></div><?php endforeach; ?></div></div>
+    <div class="ci-card"><h3>Certificados gerados por dia</h3><div class="ci-bars"><?php foreach($daily as $d): $h=max(5,round(((int)$d['total']/$dailyMax)*145)); ?><div class="ci-bar" style="height:<?= $h ?>px"><span><?= (int)$d['total'] ?></span></div><?php endforeach; ?></div></div>
   </section>
 
   <section id="editor" class="ci-grid">

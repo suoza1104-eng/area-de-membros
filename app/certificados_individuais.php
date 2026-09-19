@@ -84,7 +84,7 @@ function ci_log(PDO $pdo, ?int $templateId, ?int $issueId, string $level, string
             'issue_id' => $issueId ?: null,
             'level' => $level,
             'event' => $event,
-            'message' => mb_substr($message, 0, 500),
+            'message' => function_exists('mb_substr') ? mb_substr($message, 0, 500) : substr($message, 0, 500),
             'context' => $context ? json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
             'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
         ]);

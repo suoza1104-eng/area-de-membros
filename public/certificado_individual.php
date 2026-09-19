@@ -44,7 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $passwordRequired = !empty($cfg['require_password']);
     $passwordOk = !$passwordRequired;
 
-    if ($name === '' || mb_strlen($name) < 3) $errors[] = 'Informe seu nome completo.';
+    $nameLength = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
+    if ($name === '' || $nameLength < 3) $errors[] = 'Informe seu nome completo.';
     if (!empty($cfg['collect_email']) && ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL))) $errors[] = 'Informe um email valido.';
     if (!empty($cfg['collect_phone']) && $phone === '') $errors[] = 'Informe seu telefone.';
     if ($passwordRequired) {
