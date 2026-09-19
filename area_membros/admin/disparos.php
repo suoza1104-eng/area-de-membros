@@ -12,6 +12,10 @@ if (empty($_SESSION['admin_logado'])) {
 // congela TODA a area admin para o mesmo navegador.
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 $pdo = getPDO();
 
 // ── Garantir tabelas ──────────────────────────────────────────────────────────
@@ -947,7 +951,7 @@ if ($acao !== '') {
 
                 $aw = buildAudienceWhere($filtros, $pdo);
                 $totalGeral = null;
-                if ($offset === 0) {
+                if ($offset === 0 || $progressiveUi) {
                     $stCnt = $pdo->prepare("SELECT COUNT(*) FROM users u WHERE {$aw['where']}");
                     $stCnt->execute($aw['params']);
                     $totalGeral = (int)$stCnt->fetchColumn();
@@ -2068,24 +2072,37 @@ async function dpIniciarDisparo(id, opts) {
     const startOffset = (opts.resume || disparo.status === 'pausado' || jaTemProgresso)
         ? Math.max(0, parseInt(disparo.total_enviados || 0) + parseInt(disparo.total_erros || 0))
         : 0;
+    const resumoInicial = await dpBuscarResumoDisparo(id);
+    const totalInicial = resumoInicial.audiencia_total !== null && resumoInicial.audiencia_total !== undefined
+        ? parseInt(resumoInicial.audiencia_total || 0)
+        : null;
+    const restanteInicial = resumoInicial.restante !== null && resumoInicial.restante !== undefined
+        ? parseInt(resumoInicial.restante || 0)
+        : null;
+    const doneInicial = totalInicial !== null && restanteInicial !== null
+        ? Math.max(0, totalInicial - restanteInicial)
+        : startOffset;
 
     dpFecharForm();
     dpExecutando = true;
-    dpExecState = {id, offset:startOffset, totalEnv:parseInt(disparo.total_enviados || 0), totalErr:parseInt(disparo.total_erros || 0), totalGeral:null};
+    dpExecState = {id, offset:startOffset, totalEnv:parseInt(disparo.total_enviados || 0), totalErr:parseInt(disparo.total_erros || 0), totalGeral:totalInicial, restante:restanteInicial};
     document.getElementById('dpProgressTitle').textContent = 'Disparando…';
     document.getElementById('dpProgressSub').textContent   = 'Preparando…';
-    document.getElementById('dpProgressBar').style.width   = '0%';
+    document.getElementById('dpProgressSub').textContent   = totalInicial !== null ? `${doneInicial} / ${totalInicial} processados` : document.getElementById('dpProgressSub').textContent;
+    document.getElementById('dpProgressBar').style.width   = totalInicial && totalInicial > 0 ? Math.min(100, Math.round(doneInicial / totalInicial * 100)) + '%' : '0%';
     document.getElementById('dpStatEnv').textContent = dpExecState.totalEnv;
     document.getElementById('dpStatErr').textContent = dpExecState.totalErr;
     document.getElementById('dpStatTot').textContent = '—';
     document.getElementById('dpStatRest').textContent = '—';
+    document.getElementById('dpStatTot').textContent = totalInicial !== null ? totalInicial : document.getElementById('dpStatTot').textContent;
+    document.getElementById('dpStatRest').textContent = restanteInicial !== null ? restanteInicial : document.getElementById('dpStatRest').textContent;
     document.getElementById('dpProgressPause').style.display = '';
     document.getElementById('dpProgressAbort').style.display = '';
     document.getElementById('dpProgressClose').style.display = 'none';
     document.getElementById('dpProgressModal').classList.add('visible');
 
     let offset = startOffset;
-    let totalEnv = dpExecState.totalEnv, totalErr = dpExecState.totalErr, totalGeral = null;
+    let totalEnv = dpExecState.totalEnv, totalErr = dpExecState.totalErr, totalGeral = totalInicial;
     const intervaloMs = Math.max(0, parseInt(disparo.intervalo_ms || 0));
 
     while (dpExecutando) {
@@ -2108,7 +2125,7 @@ async function dpIniciarDisparo(id, opts) {
         let j;
         try {
             document.getElementById('dpProgressTitle').textContent = 'Executando…';
-            const r = await fetch('disparos.php', {method:'POST', body:fd});
+            const r = await fetch('disparos.php', {method:'POST', body:fd, cache:'no-store'});
             j = await r.json();
         } catch (e) {
             document.getElementById('dpProgressSub').textContent = 'Erro de rede: ' + e.message;

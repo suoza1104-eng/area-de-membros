@@ -12,6 +12,10 @@ if (empty($_SESSION['admin_logado'])) {
 // navegador enquanto esta tela fica aberta monitorando o progresso.
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 $pdo = getPDO();
 
 // O schema e o envio de fato sao compartilhados com o motor usado pelo cron
