@@ -1789,8 +1789,8 @@ async function dpAtualizarProgressoDisparo(id) {
         document.getElementById('dpProgressTitle').textContent = 'Concluido!';
         document.getElementById('dpProgressSub').textContent = `${ok} enviados, ${er} erros`;
     } else if (st === 'aguardando') {
-        document.getElementById('dpProgressTitle').textContent = 'Aguardando horario';
-        document.getElementById('dpProgressSub').textContent = `${processed} processados. O disparo continuara quando for retomado.`;
+        document.getElementById('dpProgressTitle').textContent = parseInt(d.horario_ativo || 0) ? 'Aguardando horario' : 'Aguardando processamento';
+        document.getElementById('dpProgressSub').textContent = totalAud !== null ? `${processed} processados de ${totalAud}` : `${processed} processados`;
     } else if (st === 'pausado') {
         document.getElementById('dpProgressTitle').textContent = 'Pausado';
     } else if (st === 'erro') {

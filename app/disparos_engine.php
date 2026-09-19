@@ -446,7 +446,9 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
     $users->execute($params);
     $rows = $users->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $sent = 0; $errors = 0;
-    foreach ($rows as $user) {
+    $waitMs = disparos_engine_wait_ms($campaign);
+    $rowCount = count($rows);
+    foreach ($rows as $idx => $user) {
         // disparos_engine_send() ja' captura falha do provedor (API fora do ar, timeout,
         // etc.) e devolve ok=false — mas um problema inesperado aqui (ex.: soluco pontual
         // de banco na hora de gravar) nao pode derrubar o restante do lote nem travar os
@@ -466,6 +468,9 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
         } catch (Throwable $e) {
             error_log('disparos_engine_execute_batch: falha inesperada no aluno ' . (int)($user['id'] ?? 0) . ' da campanha ' . $campaignId . ': ' . $e->getMessage());
             continue;
+        }
+        if ($waitMs > 0 && $idx < $rowCount - 1) {
+            usleep($waitMs * 1000);
         }
     }
     $pdo->prepare("UPDATE disparos SET total_enviados=total_enviados+:sent,total_erros=total_erros+:errors WHERE id=:id")
