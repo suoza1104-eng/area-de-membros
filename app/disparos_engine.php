@@ -408,6 +408,11 @@ function disparos_engine_within_window(array $campaign, ?DateTimeImmutable $now 
     return $cur >= $start || $cur <= $end;
 }
 
+function disparos_engine_wait_ms(array $campaign): int
+{
+    return max(0, (int)($campaign['intervalo_ms'] ?? 0));
+}
+
 function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchSize = 25): array
 {
     $st = $pdo->prepare('SELECT * FROM disparos WHERE id=:id LIMIT 1');
@@ -472,7 +477,7 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
         // Respeita o ritmo configurado na campanha (ex.: "1 por minuto") mesmo depois
         // que a tela foi fechada: o proximo tick do cron so processa este disparo de
         // novo quando proximo_lote_em tiver passado.
-        $waitSeconds = (int)ceil(max(0, (int)($campaign['intervalo_ms'] ?? 0)) / 1000);
+        $waitSeconds = (int)ceil(disparos_engine_wait_ms($campaign) / 1000);
         if ($waitSeconds > 0) {
             $pdo->prepare("UPDATE disparos SET proximo_lote_em=DATE_ADD(NOW(), INTERVAL :s SECOND) WHERE id=:id")
                 ->execute(['s'=>$waitSeconds, 'id'=>$campaignId]);
@@ -480,13 +485,13 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
             $pdo->prepare("UPDATE disparos SET proximo_lote_em=NULL WHERE id=:id")->execute(['id'=>$campaignId]);
         }
     }
-    return ['ok'=>true, 'processados'=>count($rows), 'enviados'=>$sent, 'erros'=>$errors, 'done'=>$done];
+    return ['ok'=>true, 'processados'=>count($rows), 'enviados'=>$sent, 'erros'=>$errors, 'done'=>$done, 'wait_ms'=>disparos_engine_wait_ms($campaign)];
 }
 
 function disparos_engine_process_due(PDO $pdo, int $maxSeconds = 45, int $maxBatchSize = 25): array
 {
     disparos_engine_ensure_schema($pdo);
-    $started = time();
+    $started = microtime(true);
     $stats = ['campaigns'=>0, 'batches'=>0, 'processed'=>0, 'sent'=>0, 'errors'=>0, 'waiting'=>0, 'completed'=>0];
     $due = $pdo->query("
         SELECT *
@@ -498,7 +503,7 @@ function disparos_engine_process_due(PDO $pdo, int $maxSeconds = 45, int $maxBat
          LIMIT 20
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     foreach ($due as $campaign) {
-        if (time() - $started >= $maxSeconds) break;
+        if (microtime(true) - $started >= $maxSeconds) break;
         $stats['campaigns']++;
         if (!disparos_engine_within_window($campaign)) {
             if (($campaign['status'] ?? '') === 'executando') {
@@ -510,19 +515,34 @@ function disparos_engine_process_due(PDO $pdo, int $maxSeconds = 45, int $maxBat
         // Uma campanha com problema (ex.: filtro salvo invalido) nao pode travar as
         // demais: se disparos_engine_execute_batch() explodir, registra o erro e segue
         // para a proxima campanha devida neste mesmo tick, em vez de abortar tudo.
-        try {
-            $res = disparos_engine_execute_batch($pdo, (int)$campaign['id'], $maxBatchSize);
-        } catch (Throwable $e) {
-            error_log('disparos_engine_process_due: falha na campanha ' . (int)$campaign['id'] . ': ' . $e->getMessage());
-            $stats['errors']++;
-            continue;
-        }
-        $stats['batches']++;
-        if (!empty($res['waiting'])) $stats['waiting']++;
-        $stats['processed'] += (int)($res['processados'] ?? 0);
-        $stats['sent'] += (int)($res['enviados'] ?? 0);
-        $stats['errors'] += (int)($res['erros'] ?? 0);
-        if (!empty($res['done'])) $stats['completed']++;
+        do {
+            try {
+                $res = disparos_engine_execute_batch($pdo, (int)$campaign['id'], $maxBatchSize);
+            } catch (Throwable $e) {
+                error_log('disparos_engine_process_due: falha na campanha ' . (int)$campaign['id'] . ': ' . $e->getMessage());
+                $stats['errors']++;
+                continue 2;
+            }
+            $stats['batches']++;
+            if (!empty($res['waiting'])) $stats['waiting']++;
+            $stats['processed'] += (int)($res['processados'] ?? 0);
+            $stats['sent'] += (int)($res['enviados'] ?? 0);
+            $stats['errors'] += (int)($res['erros'] ?? 0);
+            if (!empty($res['done'])) {
+                $stats['completed']++;
+                break;
+            }
+            if (!empty($res['waiting'])) break;
+
+            $waitMs = max(0, (int)($res['wait_ms'] ?? 0));
+            $elapsed = microtime(true) - $started;
+            if ($elapsed >= $maxSeconds) break;
+            if ($waitMs > 0) {
+                $sleepSeconds = $waitMs / 1000;
+                if ($elapsed + $sleepSeconds >= $maxSeconds) break;
+                usleep($waitMs * 1000);
+            }
+        } while (microtime(true) - $started < $maxSeconds);
         // O ritmo de cada campanha (intervalo_ms) ja e' respeitado via proximo_lote_em
         // (gravado em disparos_engine_execute_batch) e pelo proprio filtro do $due
         // acima — nao ha necessidade de pausar aqui antes de olhar a proxima campanha.
