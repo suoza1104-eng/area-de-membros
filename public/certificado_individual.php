@@ -50,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!empty($cfg['collect_phone']) && $phone === '') $errors[] = 'Informe seu telefone.';
     if ($passwordRequired) {
         $hash = (string)($template['password_hash'] ?? '');
-        $passwordOk = $hash !== '' && password_verify($password, $hash);
+        $passwordOk = ci_password_verify_case_insensitive($password, $hash);
         if (!$passwordOk) $errors[] = trim((string)($template['error_message'] ?? 'Senha incorreta. Confira e tente novamente.'));
     }
 
@@ -137,12 +137,29 @@ body{margin:0;min-height:100vh;background:#07101f;color:#e2e8f0;font-family:Inte
         <form method="post">
             <div class="field"><label>Nome completo</label><input name="full_name" required autocomplete="name" value="<?= cip_h((string)($_POST['full_name'] ?? '')) ?>"></div>
             <?php if (!empty($cfg['collect_email'])): ?><div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" value="<?= cip_h((string)($_POST['email'] ?? '')) ?>"></div><?php endif; ?>
-            <?php if (!empty($cfg['collect_phone'])): ?><div class="field"><label>Telefone</label><input name="phone" autocomplete="tel" value="<?= cip_h((string)($_POST['phone'] ?? '')) ?>"></div><?php endif; ?>
-            <?php if (!empty($cfg['require_password'])): ?><div class="field"><label>Senha</label><input name="password" type="password" autocomplete="off" required></div><?php endif; ?>
+            <?php if (!empty($cfg['collect_phone'])): ?><div class="field"><label>Telefone</label><input name="phone" id="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="15" placeholder="(00) 00000-0000" value="<?= cip_h((string)($_POST['phone'] ?? '')) ?>"></div><?php endif; ?>
+            <?php if (!empty($cfg['require_password'])): ?><div class="field"><label>Senha</label><input name="password" type="text" autocomplete="off" required></div><?php endif; ?>
             <button type="submit">Gerar certificado</button>
         </form>
     <?php endif; ?>
 </section>
 </main>
+<script>
+(function () {
+    var phone = document.getElementById('phone');
+    if (!phone) return;
+    function maskPhone() {
+        var d = (phone.value || '').replace(/\D+/g, '').slice(0, 11);
+        var out = d;
+        if (d.length > 10) out = '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+        else if (d.length > 6) out = '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
+        else if (d.length > 2) out = '(' + d.slice(0, 2) + ') ' + d.slice(2);
+        else if (d.length > 0) out = '(' + d;
+        phone.value = out;
+    }
+    phone.addEventListener('input', maskPhone);
+    maskPhone();
+})();
+</script>
 </body>
 </html>

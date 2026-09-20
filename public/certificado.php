@@ -234,7 +234,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $senhaEsperada = $senhaFixa !== '' ? $senhaFixa : (defined('SENHA_CERTIFICADO') ? SENHA_CERTIFICADO : '');
         }
 
-        if (!$certificadoSemSenha && !$senhaOkNaSessao && ($senhaInformada === '' || ($senhaEsperada !== '' && $senhaInformada !== $senhaEsperada) || $senhaEsperada === '')) {
+        $senhaInformadaNorm = function_exists('mb_strtolower') ? mb_strtolower($senhaInformada, 'UTF-8') : strtolower($senhaInformada);
+        $senhaEsperadaNorm = function_exists('mb_strtolower') ? mb_strtolower($senhaEsperada, 'UTF-8') : strtolower($senhaEsperada);
+
+        if (!$certificadoSemSenha && !$senhaOkNaSessao && ($senhaInformada === '' || ($senhaEsperada !== '' && !hash_equals($senhaEsperadaNorm, $senhaInformadaNorm)) || $senhaEsperada === '')) {
             $erroSenha    = true;
             $etapa        = 'erro';
             $mensagemErro = $errorHtml;
@@ -480,14 +483,14 @@ function normalizar_video_url(string $url): string {
             text-transform: uppercase; letter-spacing: .07em;
             color: var(--muted); margin-bottom: 6px;
         }
-        input[type="password"] {
+        input[type="password"], input[type="text"] {
             width: 100%; padding: 10px 13px;
             border-radius: var(--r); border: 1px solid var(--border);
             background: rgba(7,16,31,.8); color: var(--text);
             font-size: 14px; font-family: var(--font);
             outline: none; transition: border-color .15s, box-shadow .15s;
         }
-        input[type="password"]:focus {
+        input[type="password"]:focus, input[type="text"]:focus {
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(250,204,21,.1);
         }
@@ -678,7 +681,7 @@ function normalizar_video_url(string $url): string {
                 <?php else: ?>
                 <div class="form-group">
                     <label class="form-label" for="senha_certificado">Senha do certificado</label>
-                    <input type="password" id="senha_certificado" name="senha_certificado" autocomplete="off" placeholder="Digite a senha recebida">
+                    <input type="text" id="senha_certificado" name="senha_certificado" autocomplete="off" placeholder="Digite a senha recebida">
                 </div>
                 <?php endif; ?>
                 <button type="submit" class="btn-submit" id="btnEmitir">

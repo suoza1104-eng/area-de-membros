@@ -189,6 +189,26 @@ function ci_code(): string
     return bin2hex(random_bytes(8)) . '-' . bin2hex(random_bytes(4));
 }
 
+function ci_password_normalize(string $password): string
+{
+    $password = trim($password);
+    return function_exists('mb_strtolower') ? mb_strtolower($password, 'UTF-8') : strtolower($password);
+}
+
+function ci_password_verify_case_insensitive(string $password, string $hash): bool
+{
+    if ($hash === '') return false;
+    $variants = [
+        trim($password),
+        ci_password_normalize($password),
+        function_exists('mb_strtoupper') ? mb_strtoupper(trim($password), 'UTF-8') : strtoupper(trim($password)),
+    ];
+    foreach (array_unique($variants) as $candidate) {
+        if ($candidate !== '' && password_verify($candidate, $hash)) return true;
+    }
+    return false;
+}
+
 function ci_qr_data_uri(string $data, int $size): string
 {
     if (!function_exists('curl_init')) return '';

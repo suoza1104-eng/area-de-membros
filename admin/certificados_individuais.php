@@ -79,7 +79,7 @@ try {
             ];
             if ($password !== '') {
                 $passwordSql = ', password_hash=:password_hash';
-                $params['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
+                $params['password_hash'] = password_hash(ci_password_normalize($password), PASSWORD_DEFAULT);
             }
             if ($id > 0 && $current) {
                 $params['id'] = $id;
@@ -94,7 +94,7 @@ try {
                 ci_log($pdo, $id, null, 'info', 'template_updated', 'Certificado atualizado', ['name' => $name]);
                 $msg = 'Certificado atualizado.';
             } else {
-                $params['password_hash'] = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : null;
+                $params['password_hash'] = $password !== '' ? password_hash(ci_password_normalize($password), PASSWORD_DEFAULT) : null;
                 $pdo->prepare("
                     INSERT INTO individual_certificate_templates
                     (name,description,slug,status,front_image,back_image,illustration_image,layout_json,form_config_json,password_hash,action_mode,redirect_url,button_label,success_message,error_message)
