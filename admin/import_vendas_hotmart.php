@@ -293,7 +293,14 @@ function hmri_sale_from_csv_row(PDO $sourcePdo, array $row, array $map, array $h
     $buyerEmail = trim((string)hotmart_pick($row, $map, ['emaildoacompradora','emaildocomprador','emailcomprador','email'], ''));
     $buyerPhoneRaw = trim((string)hotmart_pick($row, $map, ['telefonedocomprador','telefonecomprador','telefone','celular'], ''));
     $buyerPhoneNorm = normalize_phone_value($buyerPhoneRaw);
-    $gross = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentobrutosemimpostos','valordavenda','valorbruto','valor','fullprice','grossrevenue'], '0'));
+    // gross_revenue tem que bater com o que o webhook grava (purchase.full_price,
+    // que e' o total efetivamente cobrado do comprador, juros de parcelamento
+    // inclusos) — no relatorio da Hotmart isso e' "Valor de compra com impostos",
+    // NAO "Faturamento bruto (sem impostos)" (que exclui os juros/taxas locais e
+    // por isso e' sempre menor). Sem essa prioridade, TODA venda parcelada batia
+    // como "divergente" em gross_revenue na conciliacao, encolhendo o bruto real
+    // de quase todas as vendas se o usuario clicasse em Autorizar e atualizar.
+    $gross = hotmart_parse_decimal(hotmart_pick($row, $map, ['valordecompracomimpostos','faturamentobrutosemimpostos','valordavenda','valorbruto','valor','fullprice','grossrevenue'], '0'));
     $net = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentoliquido','valorliquido','receitaliquida','netrevenue'], (string)$gross));
     $producer = hotmart_parse_decimal(hotmart_pick($row, $map, ['faturamentoliquidodoaprodutora','faturamentoliquidodoprodutor','valordoprodutor','produtorneto','producernet'], (string)$net));
 
