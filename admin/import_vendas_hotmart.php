@@ -301,7 +301,13 @@ function hmri_sale_from_csv_row(PDO $sourcePdo, array $row, array $map, array $h
         'webhook_event' => 'CSV_RECONCILE',
         'webhook_event_id' => 'csv:' . md5($fileName . '|' . $lineNo . '|' . $tx),
         'transaction_code' => $tx,
-        'status' => hotmart_pick($row, $map, ['statusdatransacao','statusdacompra','status','situacao'], 'Aprovado'),
+        // hotmart_upsert_sale_live() grava $saleData['status'] direto em
+        // hotmart_sales_live.status sem renormalizar (so' hotmart_upsert_sales_master
+        // renormaliza, e so' para hotmart_sales/v_sales_master). Sem isso aqui, a
+        // conciliacao gravava o texto cru do relatorio ("Aprovado"/"Completo") em
+        // hotmart_sales_live, divergindo do enum (APPROVED/PENDING/...) que o
+        // webhook sempre grava la.
+        'status' => hotmart_normalize_status_enum((string)hotmart_pick($row, $map, ['statusdatransacao','statusdacompra','status','situacao'], 'Aprovado')),
         'transaction_date' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datadatransacao','datadacompra','datadepedido','data'], '')) ?: date('Y-m-d H:i:s'),
         'payment_confirmed_at' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['confirmacaodopagamento','datadeconfirmacao','pagamentoconfirmadoem','paymentconfirmedat'], '')),
         'refund_or_chargeback_at' => hotmart_parse_datetime_value(hotmart_pick($row, $map, ['datareembolso','datachargeback'], '')),
@@ -419,26 +425,50 @@ function hmri_enrich_sales_matches(PDO $pdo, array &$sales): void
 
 function hmri_read_csv_sales(PDO $sourcePdo, string $filePath, string $fileName): array
 {
-    $fh0 = fopen($filePath, 'r');
-    if (!$fh0) {
-        throw new RuntimeException('Nao foi possivel abrir ' . $fileName);
-    }
-    $firstLine = (string)fgets($fh0);
-    fclose($fh0);
-    $separator = hotmart_guess_separator($firstLine);
+    // A Hotmart exporta o relatorio de vendas atual como pacote OOXML real (zip),
+    // mas o arquivo baixado ainda vem com extensao ".xls". Esta funcao e' o
+    // caminho realmente usado para uploads de Hotmart (hmri_load_sales_from_batch
+    // so' chama hmri_read_gateway_sales/hmri_read_assoc_table para dom/pagarme),
+    // entao precisa da mesma deteccao por assinatura de arquivo (nao so' extensao)
+    // que ja existe em hmri_read_assoc_table — senao o zip binario e' lido como
+    // texto CSV linha a linha e vira centenas de "erros de leitura" com 0 vendas.
+    $signature = (string)@file_get_contents($filePath, false, null, 0, 4);
+    $isZipPackage = $signature === "PK\x03\x04";
 
-    $fh = fopen($filePath, 'r');
-    if (!$fh) {
-        throw new RuntimeException('Nao foi possivel ler ' . $fileName);
+    if ($isZipPackage) {
+        $parsed = hmri_read_xlsx_rows($filePath, $fileName);
+        $headers = array_map('strval', array_shift($parsed) ?: []);
+        if (!$headers) {
+            throw new RuntimeException('Arquivo sem cabecalho: ' . $fileName);
+        }
+        if (isset($headers[0])) {
+            $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string)$headers[0]);
+        }
+        $rowsIterator = $parsed;
+    } else {
+        $fh0 = fopen($filePath, 'r');
+        if (!$fh0) {
+            throw new RuntimeException('Nao foi possivel abrir ' . $fileName);
+        }
+        $firstLine = (string)fgets($fh0);
+        fclose($fh0);
+        $separator = hotmart_guess_separator($firstLine);
+
+        $fh = fopen($filePath, 'r');
+        if (!$fh) {
+            throw new RuntimeException('Nao foi possivel ler ' . $fileName);
+        }
+        $headers = fgetcsv($fh, 0, $separator, '"', '\\');
+        if (!$headers) {
+            fclose($fh);
+            throw new RuntimeException('CSV sem cabecalho: ' . $fileName);
+        }
+        if (isset($headers[0])) {
+            $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string)$headers[0]);
+        }
+        $rowsIterator = null;
     }
-    $headers = fgetcsv($fh, 0, $separator, '"', '\\');
-    if (!$headers) {
-        fclose($fh);
-        throw new RuntimeException('CSV sem cabecalho: ' . $fileName);
-    }
-    if (isset($headers[0])) {
-        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string)$headers[0]);
-    }
+
     $map = [];
     foreach ($headers as $i => $header) {
         $map[hotmart_normalize_header((string)$header)] = $i;
@@ -447,10 +477,11 @@ function hmri_read_csv_sales(PDO $sourcePdo, string $filePath, string $fileName)
     $sales = [];
     $errors = [];
     $lineNo = 1;
-    while (($row = fgetcsv($fh, 0, $separator, '"', '\\')) !== false) {
+
+    $processRow = function (array $row) use ($sourcePdo, $map, $headers, $fileName, &$lineNo, &$sales, &$errors): void {
         $lineNo++;
         if (!$row || count(array_filter($row, static fn($v): bool => trim((string)$v) !== '')) === 0) {
-            continue;
+            return;
         }
         try {
             $sale = hmri_sale_from_csv_row($sourcePdo, $row, $map, $headers, $fileName, $lineNo);
@@ -459,8 +490,19 @@ function hmri_read_csv_sales(PDO $sourcePdo, string $filePath, string $fileName)
         } catch (Throwable $e) {
             $errors[] = ['file' => $fileName, 'line' => $lineNo, 'error' => $e->getMessage()];
         }
+    };
+
+    if ($isZipPackage) {
+        foreach ($rowsIterator as $row) {
+            $processRow($row);
+        }
+    } else {
+        while (($row = fgetcsv($fh, 0, $separator, '"', '\\')) !== false) {
+            $processRow($row);
+        }
+        fclose($fh);
     }
-    fclose($fh);
+
     return ['sales' => $sales, 'errors' => $errors];
 }
 
@@ -656,7 +698,19 @@ function hmri_read_xlsx_rows(string $filePath, string $fileName): array
 function hmri_read_assoc_table(string $filePath, string $fileName): array
 {
     $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-    if ($ext === 'csv' || $ext === 'xls') {
+    // A Hotmart exporta o relatorio de vendas atual como um pacote OOXML real
+    // (zip com xl/worksheets/...), mas o nome do arquivo baixado continua com
+    // extensao ".xls" (formato antigo). Confiar so' na extensao faz esse .xls
+    // "novo" ser lido como texto CSV bruto — o conteudo binario do zip vira
+    // centenas de linhas ilegiveis (era assim que geravam os 666 "erros de
+    // leitura" e 0 transacoes reconhecidas). Por isso conferimos a assinatura
+    // do arquivo (zip local file header "PK\x03\x04") antes de decidir o
+    // parser, em vez de confiar cegamente na extensao declarada.
+    $signature = (string)@file_get_contents($filePath, false, null, 0, 4);
+    $isZipPackage = $signature === "PK\x03\x04";
+    if ($isZipPackage) {
+        $parsed = hmri_read_xlsx_rows($filePath, $fileName);
+    } elseif ($ext === 'csv' || $ext === 'xls') {
         $raw = (string)file_get_contents($filePath);
         if (str_starts_with($raw, "\xEF\xBB\xBF")) $raw = substr($raw, 3);
         $firstLine = strtok($raw, "\r\n") ?: '';
@@ -1049,7 +1103,16 @@ function hmri_sales_date_range(array $sales): array
     $min = null;
     $max = null;
     foreach ($sales as $sale) {
-        $raw = (string)($sale['payment_confirmed_at'] ?? $sale['transaction_date'] ?? '');
+        // Usamos so' transaction_date (data original da compra) para definir o
+        // periodo "autoritativo" do arquivo. payment_confirmed_at NAO serve pra
+        // isso: boleto/parcelamento pode confirmar dias/semanas depois, entao um
+        // arquivo de "vendas de agosto" (por transaction_date) pode ter linhas
+        // com payment_confirmed_at ja em setembro. Usar payment_confirmed_at aqui
+        // alargava a janela de comparacao para alem do periodo real do arquivo e
+        // fazia hmri_load_missing_in_file() marcar vendas legitimas de fora do
+        // periodo (ex: venda de julho confirmada em agosto, ou venda real de
+        // setembro) como "ausentes na planilha" e cancela-las por engano.
+        $raw = (string)($sale['transaction_date'] ?? '');
         if ($raw === '') continue;
         $ts = strtotime($raw);
         if (!$ts) continue;
@@ -1067,12 +1130,18 @@ function hmri_load_missing_in_file(PDO $pdo, string $provider, array $sales): ar
     $keys = array_fill_keys(array_keys($sales), true);
     $missing = [];
     if ($provider === 'hotmart') {
+        // So' comparamos contra vendas hoje marcadas como APPROVED/APROVADO. Um
+        // relatorio de vendas da Hotmart nao lista reembolsos/chargebacks (so'
+        // aprovadas/completas), entao incluir REFUNDED/CHARGEBACK aqui fazia TODA
+        // venda ja reembolsada ou contestada no periodo ser marcada "ausente na
+        // planilha" e virar CANCELED por hmri_mark_missing_in_file() — apagando o
+        // status real (reembolsado/contestado) sem nenhum motivo legitimo.
         $stmt = $pdo->prepare("SELECT *, transaction_code AS tx_key
             FROM hotmart_sales_live
-            WHERE DATE(COALESCE(payment_confirmed_at, transaction_date, updated_at)) BETWEEN :start AND :end
+            WHERE DATE(COALESCE(transaction_date, payment_confirmed_at, updated_at)) BETWEEN :start AND :end
               AND COALESCE(excluded_from_financials,0)=0
               AND COALESCE(NULLIF(sales_channel,''), 'hotmart') = 'hotmart'
-              AND UPPER(COALESCE(status,'')) IN ('APPROVED','APROVADO','REFUNDED','REEMBOLSADO','CHARGEBACK')");
+              AND UPPER(COALESCE(status,'')) IN ('APPROVED','APROVADO')");
         $stmt->execute(['start'=>$start, 'end'=>$end]);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $tx = (string)$row['tx_key'];
@@ -1080,12 +1149,16 @@ function hmri_load_missing_in_file(PDO $pdo, string $provider, array $sales): ar
         }
         return $missing;
     }
+    // Mesmo raciocinio do ramo hotmart acima: so' APPROVED entra na checagem de
+    // "ausente na planilha", e a janela de datas usa first_received_at (data
+    // original) antes de last_received_at (que pode ter sido atualizado bem
+    // depois da venda), pra nao alargar o periodo comparado.
     $stmt = $pdo->prepare("SELECT *, external_transaction_id AS tx_key
         FROM payment_sales
         WHERE provider=:provider
-          AND DATE(COALESCE(last_received_at, first_received_at, updated_at)) BETWEEN :start AND :end
+          AND DATE(COALESCE(first_received_at, last_received_at, updated_at)) BETWEEN :start AND :end
           AND COALESCE(excluded_from_financials,0)=0
-          AND normalized_status IN ('APPROVED','REFUNDED','CHARGEBACK')");
+          AND normalized_status = 'APPROVED'");
     $stmt->execute(['provider'=>$provider, 'start'=>$start, 'end'=>$end]);
     while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $tx = (string)$row['tx_key'];

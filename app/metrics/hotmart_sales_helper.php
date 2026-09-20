@@ -13,6 +13,23 @@ function hotmart_get_existing_sale(PDO $pdo, string $transactionCode): ?array
     return $row ?: null;
 }
 
+function hotmart_normalize_status_enum(string $rawStatus): string
+{
+    $v = strtoupper(trim($rawStatus));
+    // 'COMPLETE' (sem D) e' exatamente o que hmw_status() grava para o evento
+    // PURCHASE_COMPLETE da Hotmart (fim da garantia, venda ja confirmada e paga —
+    // nao "talvez pendente"). 'APROVADO'/'COMPLETO' sao os textos em portugues do
+    // relatorio de vendas exportado pela Hotmart (usado na conciliacao manual).
+    // Unica funcao de normalizacao de status usada tanto pelo webhook quanto pela
+    // conciliacao via CSV/XLSX, para as duas gravarem o mesmo enum em
+    // hotmart_sales_live/hotmart_sales e nao divergirem de novo no futuro.
+    if (in_array($v, ['APPROVED', 'APROVADO', 'COMPLETE', 'COMPLETO', 'COMPLETED', 'PAID', 'DISPAROU', 'OK'], true)) return 'APPROVED';
+    if (in_array($v, ['REFUNDED', 'REEMBOLSADO', 'REFUND'], true)) return 'REFUNDED';
+    if (in_array($v, ['CHARGEBACK', 'CONTESTADO', 'RECLAMADO'], true)) return 'CHARGEBACK';
+    if (in_array($v, ['CANCELED', 'CANCELADO', 'FAILED', 'EXPIRED'], true)) return 'CANCELED';
+    return 'PENDING';
+}
+
 function hotmart_upsert_sales_master(PDO $pdo, array $saleData): void
 {
     $tx = (string)($saleData['transaction_code'] ?? '');
@@ -25,19 +42,7 @@ function hotmart_upsert_sales_master(PDO $pdo, array $saleData): void
     // qualquer chamador, nao so hotmart_upsert_sale_live()).
     if (strpos($tx, 'dom:') === 0 || strpos($tx, 'pagarme:') === 0) return;
 
-    $rawStatus = (string)($saleData['status'] ?? 'PENDING');
-    $v = strtoupper(trim($rawStatus));
-    // 'COMPLETE' (sem D) e' exatamente o que hmw_status() grava para o evento
-    // PURCHASE_COMPLETE da Hotmart (fim da garantia, venda ja confirmada e paga —
-    // nao "talvez pendente"). Essa lista so tinha 'COMPLETO'/'COMPLETED', entao
-    // toda venda que passava pra "Completa" na Hotmart caia no else e virava
-    // PENDING aqui, escondendo receita real ja recebida dos relatorios financeiros
-    // (v_sales_master e' construida a partir de hotmart_sales, nao hotmart_sales_live).
-    if (in_array($v, ['APPROVED', 'APROVADO', 'COMPLETE', 'COMPLETO', 'COMPLETED', 'PAID', 'DISPAROU', 'OK'], true)) $stEnum = 'APPROVED';
-    elseif (in_array($v, ['REFUNDED', 'REEMBOLSADO', 'REFUND'], true)) $stEnum = 'REFUNDED';
-    elseif (in_array($v, ['CHARGEBACK', 'CONTESTADO', 'RECLAMADO'], true)) $stEnum = 'CHARGEBACK';
-    elseif (in_array($v, ['CANCELED', 'CANCELADO', 'FAILED', 'EXPIRED'], true)) $stEnum = 'CANCELED';
-    else $stEnum = 'PENDING';
+    $stEnum = hotmart_normalize_status_enum((string)($saleData['status'] ?? 'PENDING'));
 
     $gross = (float)($saleData['gross_revenue'] ?? 0);
     $prod = (float)($saleData['producer_net'] ?? $saleData['net_revenue'] ?? $gross);
