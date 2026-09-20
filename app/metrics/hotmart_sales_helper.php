@@ -27,7 +27,13 @@ function hotmart_upsert_sales_master(PDO $pdo, array $saleData): void
 
     $rawStatus = (string)($saleData['status'] ?? 'PENDING');
     $v = strtoupper(trim($rawStatus));
-    if (in_array($v, ['APPROVED', 'APROVADO', 'COMPLETO', 'COMPLETED', 'PAID', 'DISPAROU', 'OK'], true)) $stEnum = 'APPROVED';
+    // 'COMPLETE' (sem D) e' exatamente o que hmw_status() grava para o evento
+    // PURCHASE_COMPLETE da Hotmart (fim da garantia, venda ja confirmada e paga —
+    // nao "talvez pendente"). Essa lista so tinha 'COMPLETO'/'COMPLETED', entao
+    // toda venda que passava pra "Completa" na Hotmart caia no else e virava
+    // PENDING aqui, escondendo receita real ja recebida dos relatorios financeiros
+    // (v_sales_master e' construida a partir de hotmart_sales, nao hotmart_sales_live).
+    if (in_array($v, ['APPROVED', 'APROVADO', 'COMPLETE', 'COMPLETO', 'COMPLETED', 'PAID', 'DISPAROU', 'OK'], true)) $stEnum = 'APPROVED';
     elseif (in_array($v, ['REFUNDED', 'REEMBOLSADO', 'REFUND'], true)) $stEnum = 'REFUNDED';
     elseif (in_array($v, ['CHARGEBACK', 'CONTESTADO', 'RECLAMADO'], true)) $stEnum = 'CHARGEBACK';
     elseif (in_array($v, ['CANCELED', 'CANCELADO', 'FAILED', 'EXPIRED'], true)) $stEnum = 'CANCELED';
