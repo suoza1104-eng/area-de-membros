@@ -64,10 +64,25 @@ function hmw_cents(float $value): int {
     return (int)round($value * 100);
 }
 
-function hmw_payment_event_status(string $status): string {
+function hmw_payment_event_status(string $status, string $event = ''): string {
     $status = strtoupper(trim($status));
-    if (in_array($status, ['COMPLETE', 'COMPLETED', 'APPROVED', 'PAID'], true)) return 'APPROVED';
-    return $status;
+    $event = strtoupper(trim($event));
+
+    // PURCHASE_APPROVED e' o unico evento da Hotmart que significa "pagamento
+    // aprovado" de fato. PURCHASE_COMPLETE/PURCHASE_COMPLETED significa "fluxo de
+    // compra concluido" (ex.: checkout de um parcelamento fechado) e NAO garante
+    // que o dinheiro foi confirmado — por isso hmw_status() grava esse evento como
+    // 'COMPLETE' no ledger, mas aqui ele nao pode virar APROVADO sozinho. Sem essa
+    // distincao, um reprocessamento tardio de PURCHASE_COMPLETE (a Hotmart pode
+    // reentregar o mesmo evento dias/semanas depois) disparava PAGAMENTO_APROVADO
+    // — e a automacao/push de "compra aprovada" — para vendas que continuavam
+    // PENDING no ledger financeiro (confirmado por auditoria: 49/49 casos com
+    // hotmart_sales_live.status='PENDING' na madrugada de varios dias seguidos).
+    if ($event === 'PURCHASE_APPROVED') return 'APPROVED';
+    if (in_array($status, ['APPROVED', 'PAID'], true)) return 'APPROVED';
+    if (in_array($status, ['REFUNDED', 'CHARGEBACK', 'CANCELED', 'PENDING'], true)) return $status;
+    if (in_array($status, ['COMPLETE', 'COMPLETED'], true)) return 'PENDING';
+    return $status ?: 'PENDING';
 }
 
 function hmw_offer_candidates(array $product, array $offer): array {
@@ -230,7 +245,7 @@ try {
 
 $payment = (string)($purchase['payment']['type'] ?? '');
 $installments = (int)($purchase['payment']['installments_number'] ?? 0);
-$paymentEventStatus = hmw_payment_event_status($status);
+$paymentEventStatus = hmw_payment_event_status($status, $event);
 $paymentEvent = payment_event_register($pdo, [
     'provider' => 'hotmart',
     'normalized_status' => $paymentEventStatus,
