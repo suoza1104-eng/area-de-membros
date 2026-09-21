@@ -40,15 +40,30 @@ function hmw_status(string $event, string $status): string {
 }
 
 function hmw_producer_net(array $commissions): float {
-    $total = 0.0;
+    // Somava as comissoes de source PRODUCER e COPRODUCER, mas essas sao
+    // valores de DESTINATARIOS DIFERENTES da mesma venda (quando ha coproducao,
+    // o "bolo" e' dividido entre o produtor e o coprodutor) — nao partes que se
+    // somam para achar o que ESTA conta recebeu. Isso dobrava net_revenue e
+    // producer_net (ambos setados para esse total) toda vez que um webhook
+    // chegava para uma venda com coprodutor, revertendo silenciosamente
+    // qualquer conciliacao correta feita via planilha (que grava so' a fatia
+    // real dessa conta, ex: "Faturamento liquido do(a) Produtor(a)" do
+    // relatorio Hotmart). Confirmado comparando com o relatorio real: a fatia
+    // do produtor era exatamente metade do total PRODUCER+COPRODUCER somado.
+    // Agora prioriza a fatia do papel PRODUCER (que e' o que esta conta recebe
+    // na grande maioria das vendas) e so' cai para COPRODUCER se nao houver
+    // entrada PRODUCER (venda em que esta conta e' coprodutora de outro produto).
     foreach ($commissions as $commission) {
-        $source = strtoupper((string)($commission['source'] ?? ''));
-        if ($source === 'PRODUCER' || $source === 'COPRODUCER' || strpos($source, 'PRODUCER') !== false) {
-            $val = (float)($commission['value'] ?? $commission['commission']['value'] ?? 0);
-            $total += $val;
+        if (strtoupper((string)($commission['source'] ?? '')) === 'PRODUCER') {
+            return (float)($commission['value'] ?? $commission['commission']['value'] ?? 0);
         }
     }
-    return $total;
+    foreach ($commissions as $commission) {
+        if (strtoupper((string)($commission['source'] ?? '')) === 'COPRODUCER') {
+            return (float)($commission['value'] ?? $commission['commission']['value'] ?? 0);
+        }
+    }
+    return 0.0;
 }
 
 function hmw_money_at(array $data, array $path): float {
