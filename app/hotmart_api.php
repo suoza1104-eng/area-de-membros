@@ -103,22 +103,37 @@ function hotmart_sync_sales_api(PDO $pdo, int $days = 7): array
     $items = $salesFetch['items'];
 
     // Buscar comissões reais do produtor via API de Comissões
+    //
+    // O `strpos($src, 'PRODUCER') !== false` casava tanto 'PRODUCER' quanto
+    // 'COPRODUCER' (que CONTEM a substring "PRODUCER"), e o loop SOMAVA as
+    // duas — mas sao fatias de destinatarios DIFERENTES da mesma venda
+    // (quando ha coproducao, o "bolo" e dividido entre produtor e
+    // coprodutor), nao partes que se somam para achar o que esta conta
+    // recebe. Esse cron roda a cada 15min via cron_managed_tasks
+    // ('hotmart_sync') e sobrescrevia hotmart_sales.producer_net com o
+    // dobro do valor real toda vez que rodava, desfazendo silenciosamente
+    // qualquer conciliacao correta feita via planilha. Mesma classe de bug
+    // de hmw_producer_net() em public/hotmart_metrics_webhook.php — agora
+    // prioriza a fatia do papel PRODUCER e so cai para COPRODUCER se nao
+    // houver entrada PRODUCER.
     $commMap = [];
     $commUrl = "https://developers.hotmart.com/payments/api/v1/sales/commissions?start_date={$startDateMs}&end_date={$endDateMs}&max_results=100";
     $commItems = hotmart_api_fetch_all_pages($commUrl, $token)['items'];
     foreach ($commItems as $itC) {
         $tCode = trim((string)($itC['transaction'] ?? ''));
         if ($tCode === '') continue;
-        $prodVal = 0.0;
         $comms = is_array($itC['commissions'] ?? null) ? $itC['commissions'] : [];
+        $prodVal = 0.0;
+        $coprodVal = 0.0;
         foreach ($comms as $cm) {
             $src = strtoupper(trim((string)($cm['source'] ?? '')));
-            if ($src === 'PRODUCER' || strpos($src, 'PRODUCER') !== false) {
-                $prodVal += (float)($cm['commission']['value'] ?? $cm['value'] ?? 0);
-            }
+            $val = (float)($cm['commission']['value'] ?? $cm['value'] ?? 0);
+            if ($src === 'PRODUCER') $prodVal = $val;
+            elseif ($src === 'COPRODUCER') $coprodVal = $val;
         }
-        if ($prodVal > 0) {
-            $commMap[$tCode] = $prodVal;
+        $chosen = $prodVal > 0 ? $prodVal : $coprodVal;
+        if ($chosen > 0) {
+            $commMap[$tCode] = $chosen;
         }
     }
 
