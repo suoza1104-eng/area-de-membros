@@ -163,6 +163,47 @@ function wh_digits_only(?string $value): string
     return preg_replace('/\D+/', '', (string)$value) ?: '';
 }
 
+// DDDs validos no Brasil (nunca existiram 20,23,25,26,29,30,36,39,etc).
+function wh_valid_br_ddd(string $ddd): bool
+{
+    static $valid = ['11','12','13','14','15','16','17','18','19','21','22','24','27','28',
+        '31','32','33','34','35','37','38','41','42','43','44','45','46','47','48','49',
+        '51','53','54','55','61','62','63','64','65','66','67','68','69',
+        '71','73','74','75','77','79','81','82','83','84','85','86','87','88','89',
+        '91','92','93','94','95','96','97','98','99'];
+    return in_array($ddd, $valid, true);
+}
+
+/**
+ * Normaliza um candidato de telefone pra E.164-ish BR (55+DDD+numero), ou
+ * retorna '' se nao der pra confiar nele. A Hotmart manda checkout_phone_code
+ * (o DDD) e checkout_phone (que JA vem com o DDD incluso) separados — nosso
+ * codigo concatenava os dois direto (hotmart_metrics_webhook.php), duplicando
+ * o DDD (ex: "11"+"11988040587" = "1111988040587"). Isso normalmente nao
+ * quebra o disparo porque o numero real ainda esta la dentro, so' com um
+ * prefixo redundante — mas quando o comprador digita o DDD errado no
+ * checkout da Hotmart (ex: "29" em vez de "42"), a duplicacao produz um
+ * numero de 13 digitos que PARECE valido pelo tamanho mas tem DDD inexistente
+ * — e nenhuma normalizacao consegue adivinhar o DDD certo a partir dai.
+ * Por isso valida o DDD e rejeita (retorna '') em vez de mandar lixo pro
+ * BotConversa; wh_botconversa_phone() cai pro proximo candidato (telefone
+ * cadastrado do usuario) quando isso acontece.
+ */
+function wh_normalize_br_candidate(string $raw): string
+{
+    $phone = wh_digits_only($raw);
+    if ($phone === '') return '';
+    if (strlen($phone) === 13 && substr($phone, 0, 2) === substr($phone, 2, 2)) {
+        $phone = substr($phone, 2);
+    }
+    if (strlen($phone) > 11 && substr($phone, 0, 2) === '55') {
+        $phone = substr($phone, -11);
+    }
+    if (strlen($phone) !== 10 && strlen($phone) !== 11) return '';
+    if (!wh_valid_br_ddd(substr($phone, 0, 2))) return '';
+    return '55' . $phone;
+}
+
 function wh_botconversa_phone(array $payload): string
 {
     $candidates = [
@@ -172,10 +213,9 @@ function wh_botconversa_phone(array $payload): string
         $payload['telefone'] ?? null,
     ];
     foreach ($candidates as $candidate) {
-        $phone = wh_digits_only(is_scalar($candidate) ? (string)$candidate : '');
-        if ($phone === '') continue;
-        if (strlen($phone) === 10 || strlen($phone) === 11) $phone = '55' . $phone;
-        if (strlen($phone) >= 12 && strlen($phone) <= 13) return $phone;
+        if (!is_scalar($candidate)) continue;
+        $phone = wh_normalize_br_candidate((string)$candidate);
+        if ($phone !== '') return $phone;
     }
     return '';
 }

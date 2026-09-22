@@ -193,7 +193,15 @@ if ($transaction === '') {
 
 $txPrefixed = strpos($transaction, 'hotmart:') === 0 ? $transaction : 'hotmart:' . $transaction;
 $email = normalize_email_value($buyer['email'] ?? '');
-$phoneRaw = trim((string)($buyer['checkout_phone_code'] ?? '') . (string)($buyer['checkout_phone'] ?? ''));
+// checkout_phone da Hotmart ja vem com o DDD incluso (ex: "11988040587"),
+// checkout_phone_code repete so' o DDD de novo (nao e' o codigo do pais) —
+// concatenar os dois duplicava o DDD (ex: "1111988040587"). So' concatena
+// quando checkout_phone realmente NAO comeca com o mesmo DDD.
+$checkoutPhoneCode = trim((string)($buyer['checkout_phone_code'] ?? ''));
+$checkoutPhone = trim((string)($buyer['checkout_phone'] ?? ''));
+$phoneRaw = ($checkoutPhoneCode !== '' && strpos($checkoutPhone, $checkoutPhoneCode) === 0)
+    ? $checkoutPhone
+    : ($checkoutPhoneCode . $checkoutPhone);
 $phone = normalize_phone_value($phoneRaw);
 
 $matched = hotmart_find_matching_user($pdo, $email, $phone);
