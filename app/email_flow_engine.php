@@ -154,6 +154,65 @@ function email_flow_number_match(float $actual, string $op, float $wanted): bool
     };
 }
 
+function email_flow_payment_gateway_norm(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') return '';
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+    if (is_string($ascii) && $ascii !== '') $value = $ascii;
+    $value = strtolower($value);
+    $value = preg_replace('/[^a-z0-9]+/', '', $value) ?: $value;
+    return $value;
+}
+
+function email_flow_latest_payment_gateway(PDO $pdo, int $userId, array $user): string
+{
+    $email = trim((string)($user['email'] ?? ''));
+    $params = ['u' => $userId];
+    $where = 'matched_user_id=:u';
+    if ($email !== '') {
+        $where = '(' . $where . ' OR LOWER(TRIM(buyer_email))=LOWER(TRIM(:email)))';
+        $params['email'] = $email;
+    }
+    $parts = [];
+    if (email_flow_table_exists($pdo, 'payment_sales')) {
+        $parts[] = "
+            SELECT id,provider,payment_gateway,COALESCE(last_received_at, first_received_at, created_at) occurred_at
+              FROM payment_sales
+             WHERE {$where}
+               AND normalized_status='APPROVED'
+        ";
+    }
+    if (email_flow_table_exists($pdo, 'student_payment_events')) {
+        $eventWhere = str_replace('matched_user_id', 'user_id', $where);
+        $parts[] = "
+            SELECT id,provider,NULL payment_gateway,COALESCE(last_seen_at, first_seen_at, created_at) occurred_at
+              FROM student_payment_events
+             WHERE {$eventWhere}
+               AND normalized_status='APPROVED'
+        ";
+    }
+    if (email_flow_table_exists($pdo, 'hotmart_sales_live')) {
+        $hotmartWhere = $where;
+        $parts[] = "
+            SELECT id,'hotmart' provider,NULL payment_gateway,COALESCE(payment_confirmed_at, transaction_date, imported_at, updated_at) occurred_at
+              FROM hotmart_sales_live
+             WHERE {$hotmartWhere}
+               AND status='APPROVED'
+        ";
+    }
+    if (!$parts) return '';
+    try {
+        $sql = 'SELECT provider,payment_gateway FROM (' . implode(' UNION ALL ', $parts) . ') latest_payment ORDER BY occurred_at DESC, id DESC LIMIT 1';
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        return trim((string)($row['payment_gateway'] ?? '')) ?: trim((string)($row['provider'] ?? ''));
+    } catch (Throwable $e) {
+        return '';
+    }
+}
+
 function email_flow_course_progress(PDO $pdo, int $userId): array
 {
     $out = ['done' => 0, 'required' => 0, 'percent' => 0];
@@ -217,6 +276,9 @@ function email_flow_rule(PDO $pdo, array $r, int $userId, array $user): bool
             : str_contains(mb_strtolower((string)($user['email'] ?? '')), mb_strtolower($value));
     } elseif ($field === 'marketing_eligible') {
         $match = !email_is_suppressed($pdo, (string)($user['email'] ?? ''));
+    } elseif ($field === 'payment_gateway') {
+        $latestGateway = email_flow_latest_payment_gateway($pdo, $userId, $user);
+        $match = $value !== '' && email_flow_payment_gateway_norm($latestGateway) === email_flow_payment_gateway_norm($value);
     } elseif (in_array($field, ['course_progress_pct', 'lessons_completed_count', 'completed_trail'], true)) {
         $progress = email_flow_course_progress($pdo, $userId);
         if ($field === 'course_progress_pct') {
