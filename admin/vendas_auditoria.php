@@ -1,5 +1,9 @@
 <?php
 declare(strict_types=1);
+$__auditoriaJsonAction = (($_GET['action'] ?? '') === 'sale_detail');
+if ($__auditoriaJsonAction) {
+    ob_start();
+}
 $menu = 'vendas_analytics';
 require_once __DIR__ . '/_header.php';
 
@@ -13,7 +17,169 @@ $status   = trim($_GET['status'] ?? 'all');
 $product  = trim($_GET['product'] ?? '');
 $page     = max(1, (int)($_GET['page'] ?? 1));
 $export   = trim($_GET['export'] ?? '');
+$action   = trim($_GET['action'] ?? '');
 $perPage  = 50;
+
+function va_h(string $v): string {
+    return htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+}
+
+function va_table_exists(PDO $pdo, string $table): bool {
+    try {
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table');
+        $stmt->execute(['table' => $table]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function va_decode_json_payload(?string $json) {
+    $json = trim((string)$json);
+    if ($json === '') return null;
+    $decoded = json_decode($json, true);
+    return json_last_error() === JSON_ERROR_NONE ? $decoded : $json;
+}
+
+function va_rows(PDO $pdo, string $sql, array $params): array {
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function va_first(PDO $pdo, string $sql, array $params): ?array {
+    $rows = va_rows($pdo, $sql, $params);
+    return $rows[0] ?? null;
+}
+
+function va_normalized_tx_variants(string $transaction): array {
+    $transaction = trim($transaction);
+    $variants = [$transaction];
+    foreach (['hotmart:', 'pagarme:', 'dom:', 'firepay:'] as $prefix) {
+        if (str_starts_with(strtolower($transaction), $prefix)) {
+            $variants[] = substr($transaction, strlen($prefix));
+        }
+    }
+    $variants = array_values(array_unique(array_filter($variants, static fn($v) => trim((string)$v) !== '')));
+    return $variants ?: [$transaction];
+}
+
+function va_in_clause(array $values, string $prefix, array &$params): string {
+    $keys = [];
+    foreach (array_values($values) as $i => $value) {
+        $key = ':' . $prefix . $i;
+        $keys[] = $key;
+        $params[$key] = $value;
+    }
+    return implode(',', $keys);
+}
+
+if ($action === 'sale_detail') {
+    if (ob_get_length() !== false) {
+        ob_clean();
+    }
+    header('Content-Type: application/json; charset=UTF-8');
+    $detailProvider = strtolower(trim((string)($_GET['provider'] ?? '')));
+    $detailTx = trim((string)($_GET['transaction'] ?? ''));
+
+    if ($detailTx === '') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'message' => 'Transacao nao informada.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    $variants = va_normalized_tx_variants($detailTx);
+    $variantParams = [];
+    $variantSql = va_in_clause($variants, 'tx', $variantParams);
+    $masterParams = $variantParams;
+    $masterWhere = "s.transaction_code IN ({$variantSql})";
+    if ($detailProvider !== '' && $detailProvider !== 'all') {
+        $masterWhere .= ' AND s.provider = :provider';
+        $masterParams[':provider'] = $detailProvider;
+    }
+
+    $master = va_first($pdo, "SELECT s.* FROM v_sales_master s WHERE {$masterWhere} ORDER BY s.sale_date DESC, s.id DESC LIMIT 1", $masterParams);
+    $providerForLookup = strtolower((string)($master['provider'] ?? $detailProvider));
+    $txForLookup = (string)($master['transaction_code'] ?? $detailTx);
+    $lookupVariants = va_normalized_tx_variants($txForLookup);
+    $lookupParams = [];
+    $lookupSql = va_in_clause($lookupVariants, 'lk', $lookupParams);
+
+    $payload = [
+        'resumo_normalizado' => $master ?: ['transaction_code' => $detailTx, 'provider' => $detailProvider],
+        'origens' => [],
+    ];
+
+    if (va_table_exists($pdo, 'hotmart_sales_live')) {
+        $ledgerParams = $lookupParams;
+        $ledgerWhere = "transaction_code IN ({$lookupSql})";
+        if ($providerForLookup !== '') {
+            $ledgerWhere .= " AND COALESCE(NULLIF(sales_channel,''),'hotmart') = :ledger_provider";
+            $ledgerParams[':ledger_provider'] = $providerForLookup;
+        }
+        $ledger = va_first($pdo, "SELECT * FROM hotmart_sales_live WHERE {$ledgerWhere} ORDER BY updated_at DESC, id DESC LIMIT 1", $ledgerParams)
+            ?: va_first($pdo, "SELECT * FROM hotmart_sales_live WHERE transaction_code IN ({$lookupSql}) ORDER BY updated_at DESC, id DESC LIMIT 1", $lookupParams);
+        if ($ledger) {
+            $payload['origens']['ledger_vendas'] = $ledger;
+            if (array_key_exists('raw_payload_json', $ledger)) {
+                $payload['origens']['payload_ledger'] = va_decode_json_payload((string)$ledger['raw_payload_json']);
+            }
+        }
+    }
+
+    if (va_table_exists($pdo, 'payment_sales')) {
+        $payParams = $lookupParams;
+        $payWhere = "external_transaction_id IN ({$lookupSql})";
+        if ($providerForLookup !== '') {
+            $payWhere .= ' AND provider = :pay_provider';
+            $payParams[':pay_provider'] = $providerForLookup;
+        }
+        $paymentSale = va_first($pdo, "SELECT * FROM payment_sales WHERE {$payWhere} ORDER BY last_received_at DESC, id DESC LIMIT 1", $payParams)
+            ?: va_first($pdo, "SELECT * FROM payment_sales WHERE external_transaction_id IN ({$lookupSql}) ORDER BY last_received_at DESC, id DESC LIMIT 1", $lookupParams);
+        if ($paymentSale) {
+            $payload['origens']['payment_sales'] = $paymentSale;
+            if (array_key_exists('raw_payload_json', $paymentSale)) {
+                $payload['origens']['payload_payment_sales'] = va_decode_json_payload((string)$paymentSale['raw_payload_json']);
+            }
+        }
+    }
+
+    $eventTables = [
+        'hotmart' => 'hotmart_webhook_events',
+        'pagarme' => 'pagarme_webhook_events',
+        'dom' => 'dom_webhook_events',
+        'firepay' => 'firepay_webhook_events',
+    ];
+    foreach ($eventTables as $eventProvider => $eventTable) {
+        if ($providerForLookup !== '' && $providerForLookup !== $eventProvider) continue;
+        if (!va_table_exists($pdo, $eventTable)) continue;
+
+        if ($eventProvider === 'hotmart') {
+            $events = va_rows($pdo, "SELECT * FROM {$eventTable} WHERE transaction_code IN ({$lookupSql}) ORDER BY received_at DESC, id DESC LIMIT 10", $lookupParams);
+        } else {
+            $events = va_rows($pdo, "SELECT * FROM {$eventTable} WHERE external_transaction_id IN ({$lookupSql}) ORDER BY received_at DESC, id DESC LIMIT 10", $lookupParams);
+        }
+        if ($events) {
+            foreach ($events as &$eventRow) {
+                if (array_key_exists('payload_json', $eventRow)) {
+                    $eventRow['payload_json_decoded'] = va_decode_json_payload((string)$eventRow['payload_json']);
+                }
+            }
+            unset($eventRow);
+            $payload['origens']['eventos_' . $eventProvider] = $events;
+        }
+    }
+
+    echo json_encode(['ok' => true, 'data' => $payload], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    if (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    exit;
+}
 
 // Calcular datas do período
 $today = date('Y-m-d');
@@ -270,6 +436,8 @@ function va_provider_badge(string $provider): string {
 .aud-table th { background: #0f172a; color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .06em; padding: 12px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
 .aud-table td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .aud-table tr:hover td { background: rgba(255,255,255,0.02); }
+.aud-sale-row { cursor: pointer; }
+.aud-sale-row:focus-visible td { outline: 2px solid rgba(96,165,250,0.85); outline-offset: -2px; }
 
 .buyer-info strong { display: block; color: #f8fafc; font-size: 13px; }
 .buyer-info span { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
@@ -294,6 +462,35 @@ function va_provider_badge(string $provider): string {
 .aud-page-links { display: flex; gap: 6px; }
 .aud-page-links a, .aud-page-links span { padding: 6px 12px; border: 1px solid var(--border); border-radius: 7px; text-decoration: none; color: var(--text); }
 .aud-page-links .active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+.aud-modal[hidden] { display: none; }
+.aud-modal { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 22px; }
+.aud-modal-backdrop { position: absolute; inset: 0; background: rgba(2,6,23,0.78); backdrop-filter: blur(4px); }
+.aud-modal-panel { position: relative; width: min(1180px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; background: #070b12; border: 1px solid rgba(96,165,250,0.25); border-radius: 12px; box-shadow: 0 24px 80px rgba(0,0,0,0.55); }
+.aud-modal-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; padding: 18px 20px; border-bottom: 1px solid var(--border); background: #0f172a; }
+.aud-modal-title { min-width: 0; }
+.aud-modal-title small { display: block; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; margin-bottom: 4px; }
+.aud-modal-title strong { display: block; color: #f8fafc; font-size: 18px; overflow-wrap: anywhere; }
+.aud-modal-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.aud-icon-btn { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--border); background: rgba(15,23,42,0.8); color: #cbd5e1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.aud-icon-btn:hover { color: #fff; border-color: rgba(96,165,250,0.5); background: rgba(59,130,246,0.16); }
+.aud-modal-body { overflow: auto; padding: 16px 20px 20px; }
+.aud-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.aud-detail-kv { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: rgba(15,23,42,0.42); min-width: 0; }
+.aud-detail-kv small { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.aud-detail-kv strong { color: #f8fafc; font-size: 12px; overflow-wrap: anywhere; }
+.aud-detail-section { margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: rgba(2,6,23,0.35); }
+.aud-detail-section > summary { list-style: none; display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; cursor: pointer; color: #e2e8f0; font-weight: 750; background: rgba(15,23,42,0.72); }
+.aud-detail-section > summary::-webkit-details-marker { display: none; }
+.aud-detail-section > summary span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.aud-json-tree { padding: 10px 14px 14px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; color: #cbd5e1; }
+.aud-json-row { display: grid; grid-template-columns: minmax(180px, 34%) minmax(0, 1fr); gap: 12px; padding: 5px 0; border-bottom: 1px solid rgba(148,163,184,0.08); }
+.aud-json-key { color: #93c5fd; overflow-wrap: anywhere; }
+.aud-json-value { color: #e5e7eb; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aud-json-type { color: #64748b; }
+.aud-modal-empty { color: var(--muted); padding: 26px; text-align: center; }
+@media (max-width: 900px) { .aud-detail-grid { grid-template-columns: 1fr 1fr; } .aud-json-row { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 600px) { .aud-modal { padding: 10px; } .aud-modal-head { flex-direction: column; } .aud-detail-grid { grid-template-columns: 1fr; } }
 </style>
 
 <div class="aud-container">
@@ -442,7 +639,7 @@ function va_provider_badge(string $provider): string {
           </tr>
         <?php else: ?>
           <?php foreach ($sales as $s): ?>
-            <tr>
+            <tr class="aud-sale-row" tabindex="0" role="button" aria-label="Abrir payload da venda <?= htmlspecialchars((string)$s['transaction_code']) ?>" data-provider="<?= htmlspecialchars((string)$s['provider']) ?>" data-transaction="<?= htmlspecialchars((string)$s['transaction_code']) ?>">
               <td>
                 <strong style="color: #f1f5f9; font-size: 12px; display:block;">
                   <?= date('d/m/Y H:i', strtotime((string)$s['sale_date'])) ?>
@@ -529,5 +726,154 @@ function va_provider_badge(string $provider): string {
 
 </div>
 
-<?php require_once __DIR__ . '/_footer.php'; ?>
+<div class="aud-modal" id="audSaleModal" hidden aria-hidden="true">
+  <div class="aud-modal-backdrop" data-aud-close></div>
+  <section class="aud-modal-panel" role="dialog" aria-modal="true" aria-labelledby="audSaleModalTitle">
+    <header class="aud-modal-head">
+      <div class="aud-modal-title">
+        <small>Detalhamento do payload recebido</small>
+        <strong id="audSaleModalTitle">Venda</strong>
+      </div>
+      <div class="aud-modal-actions">
+        <button type="button" class="aud-icon-btn" id="audCopyPayload" title="Copiar JSON completo" aria-label="Copiar JSON completo"><i class="ph ph-copy"></i></button>
+        <button type="button" class="aud-icon-btn" data-aud-close title="Fechar" aria-label="Fechar"><i class="ph ph-x"></i></button>
+      </div>
+    </header>
+    <div class="aud-modal-body" id="audSaleModalBody">
+      <div class="aud-modal-empty">Carregando...</div>
+    </div>
+  </section>
+</div>
 
+<script>
+(function(){
+  const modal = document.getElementById('audSaleModal');
+  const title = document.getElementById('audSaleModalTitle');
+  const body = document.getElementById('audSaleModalBody');
+  const copyBtn = document.getElementById('audCopyPayload');
+  let currentPayload = null;
+
+  function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+  }
+
+  function scalar(value) {
+    if (value === null) return '<span class="aud-json-type">null</span>';
+    if (value === true || value === false) return '<span class="aud-json-type">' + value + '</span>';
+    if (typeof value === 'number') return '<span class="aud-json-type">' + value + '</span>';
+    if (typeof value === 'string' && value.trim() === '') return '<span class="aud-json-type">(vazio)</span>';
+    return esc(value);
+  }
+
+  function typeLabel(value) {
+    if (Array.isArray(value)) return 'array[' + value.length + ']';
+    if (value && typeof value === 'object') return 'objeto';
+    if (value === null) return 'null';
+    return typeof value;
+  }
+
+  function rowsFrom(value, path, depth) {
+    const pad = Math.min(depth * 16, 160);
+    if (Array.isArray(value)) {
+      if (!value.length) return '<div class="aud-json-row"><div class="aud-json-key" style="padding-left:' + pad + 'px">' + esc(path) + '</div><div class="aud-json-value"><span class="aud-json-type">array vazio</span></div></div>';
+      return value.map((item, idx) => rowsFrom(item, path + '[' + idx + ']', depth + 1)).join('');
+    }
+    if (value && typeof value === 'object') {
+      const keys = Object.keys(value);
+      if (!keys.length) return '<div class="aud-json-row"><div class="aud-json-key" style="padding-left:' + pad + 'px">' + esc(path) + '</div><div class="aud-json-value"><span class="aud-json-type">objeto vazio</span></div></div>';
+      return keys.map(key => rowsFrom(value[key], path ? path + '.' + key : key, depth + 1)).join('');
+    }
+    return '<div class="aud-json-row"><div class="aud-json-key" style="padding-left:' + pad + 'px">' + esc(path || 'valor') + '</div><div class="aud-json-value">' + scalar(value) + '</div></div>';
+  }
+
+  function section(label, value, open) {
+    if (value === undefined || value === null || value === '') return '';
+    return '<details class="aud-detail-section" ' + (open ? 'open' : '') + '><summary>' + esc(label) + '<span>' + esc(typeLabel(value)) + '</span></summary><div class="aud-json-tree">' + rowsFrom(value, '', 0) + '</div></details>';
+  }
+
+  function summaryGrid(master) {
+    const items = [
+      ['Gateway', master.provider],
+      ['Transacao', master.transaction_code],
+      ['Status', master.status],
+      ['Data da venda', master.sale_date],
+      ['Comprador', master.buyer_name],
+      ['Email', master.buyer_email],
+      ['Telefone', master.buyer_phone],
+      ['Produto', master.product_name],
+    ];
+    return '<div class="aud-detail-grid">' + items.map(([k,v]) => '<div class="aud-detail-kv"><small>' + esc(k) + '</small><strong>' + scalar(v ?? '-') + '</strong></div>').join('') + '</div>';
+  }
+
+  function openModal() {
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  async function loadDetail(row) {
+    const provider = row.dataset.provider || '';
+    const transaction = row.dataset.transaction || '';
+    title.textContent = transaction || 'Venda';
+    body.innerHTML = '<div class="aud-modal-empty">Carregando payload...</div>';
+    currentPayload = null;
+    openModal();
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('action', 'sale_detail');
+    url.searchParams.set('provider', provider);
+    url.searchParams.set('transaction', transaction);
+    url.searchParams.delete('export');
+
+    try {
+      const res = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.message || 'Falha ao carregar payload.');
+      currentPayload = json.data;
+      const master = currentPayload.resumo_normalizado || {};
+      title.textContent = (master.provider ? String(master.provider).toUpperCase() + ' - ' : '') + (master.transaction_code || transaction);
+      const origins = currentPayload.origens || {};
+      body.innerHTML = summaryGrid(master)
+        + section('Dados normalizados da venda', master, true)
+        + Object.keys(origins).map(key => section(key, origins[key], key.indexOf('payload') !== -1)).join('');
+      if (!Object.keys(origins).length) {
+        body.innerHTML += '<div class="aud-modal-empty">Nenhum payload bruto encontrado nas tabelas de origem para esta transacao.</div>';
+      }
+    } catch (err) {
+      body.innerHTML = '<div class="aud-modal-empty">Nao foi possivel carregar o detalhe: ' + esc(err.message || err) + '</div>';
+    }
+  }
+
+  document.querySelectorAll('.aud-sale-row').forEach(row => {
+    row.addEventListener('click', event => {
+      if (event.target.closest('a,button,input,select,textarea')) return;
+      loadDetail(row);
+    });
+    row.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        loadDetail(row);
+      }
+    });
+  });
+
+  modal.querySelectorAll('[data-aud-close]').forEach(el => el.addEventListener('click', closeModal));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !modal.hidden) closeModal();
+  });
+  copyBtn.addEventListener('click', async () => {
+    if (!currentPayload || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(JSON.stringify(currentPayload, null, 2));
+    copyBtn.innerHTML = '<i class="ph ph-check"></i>';
+    window.setTimeout(() => { copyBtn.innerHTML = '<i class="ph ph-copy"></i>'; }, 1200);
+  });
+})();
+</script>
+
+<?php require_once __DIR__ . '/_footer.php'; ?>
