@@ -1,3 +1,18 @@
-# Intentionally empty.
 # Do not add ModSecurity directives here; HostGator returns HTTP 500 when
 # SecRuleEngine/SecFilterEngine overrides are not allowed in .htaccess.
+#
+# Bloqueia acesso HTTP direto a pastas internas (nunca deveriam ser servidas
+# ao navegador). Sem isso, scripts como cron/processar_hotmart_sync.php podiam
+# ser disparados por qualquer um via GET, fora do agendamento real (que roda
+# via CLI/deploy.sh, nunca via HTTP) — achado ao testar o ambiente novo no
+# VPS: um bot indexou o subdominio minutos depois do certificado SSL sair e
+# ja tinha acionado varios desses scripts por HTTP. Sem ancora em ^/ pra
+# funcionar tanto na raiz (VPS) quanto em /area_membros/ (HostGator).
+RedirectMatch 404 /\.git/
+RedirectMatch 404 /scripts/
+RedirectMatch 404 /reports/
+RedirectMatch 404 /infra/
+RedirectMatch 404 /docs/
+RedirectMatch 404 /vendor/
+RedirectMatch 404 /firepay_relay_data/
+RedirectMatch 404 /cron/
