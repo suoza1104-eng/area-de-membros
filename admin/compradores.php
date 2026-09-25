@@ -15,6 +15,102 @@ if (!function_exists('am_h')) {
     }
 }
 
+function comp_status_label(?string $status): string {
+    $status = strtoupper(trim((string)$status));
+    $labels = [
+        'APPROVED' => 'Aprovada',
+        'COMPLETE' => 'Completa',
+        'COMPLETED' => 'Completa',
+        'PAID' => 'Paga',
+        'PENDING' => 'Pendente',
+        'PROCESSING' => 'Processando',
+        'CAPTURE' => 'Em captura',
+        'REVISION_PAID' => 'Em revisao',
+        'CANCELED' => 'Cancelada',
+        'CANCELLED' => 'Cancelada',
+        'REFUNDED' => 'Reembolsada',
+        'REFUNDED_REQUEST' => 'Pedido de reembolso',
+        'REFUND_REQUESTED' => 'Pedido de reembolso',
+        'PENDING_REFUND' => 'Reembolso pendente',
+        'CHARGEBACK' => 'Chargeback',
+        'DISPUTE' => 'Disputa',
+        'DISPUTE_PENDING' => 'Disputa pendente',
+        'IN_MEDIATION' => 'Em mediacao',
+        'FAILED' => 'Falhou',
+        'EXPIRED' => 'Expirada',
+    ];
+    if ($status === '') return 'Pendente';
+    return $labels[$status] ?? mb_convert_case(str_replace('_', ' ', strtolower($status)), MB_CASE_TITLE, 'UTF-8');
+}
+
+function comp_payment_method_label(?string $method): string {
+    $method = trim((string)$method);
+    $key = strtolower(str_replace(['-', ' '], '_', $method));
+    $labels = [
+        'pix' => 'PIX',
+        'credit_card' => 'Cartao de credito',
+        'creditcard' => 'Cartao de credito',
+        'card' => 'Cartao',
+        'cartao' => 'Cartao',
+        'cartao_credito' => 'Cartao de credito',
+        'boleto' => 'Boleto',
+        'bank_slip' => 'Boleto',
+        'debit_card' => 'Cartao de debito',
+        'debitcard' => 'Cartao de debito',
+        'paypal' => 'PayPal',
+    ];
+    if ($method === '') return 'Pagamento nao informado';
+    return $labels[$key] ?? mb_convert_case(str_replace('_', ' ', $method), MB_CASE_TITLE, 'UTF-8');
+}
+
+function comp_date_label($value): string {
+    $value = trim((string)$value);
+    if ($value === '') return '-';
+    $ts = strtotime($value);
+    return $ts ? date('d/m/Y H:i', $ts) : $value;
+}
+
+function comp_first_non_empty(array $values): string {
+    foreach ($values as $value) {
+        $value = trim((string)$value);
+        if ($value !== '') return $value;
+    }
+    return '';
+}
+
+function comp_sales_columns(PDO $pdo): array {
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM v_sales_master")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        return array_map('strval', $cols);
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function comp_optional_sales_select(array $availableCols): string {
+    $optionalCols = [
+        'product_code',
+        'external_product_id',
+        'price_name',
+        'payment_gateway',
+        'provider_account_id',
+        'sale_origin',
+        'sales_channel',
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_term',
+        'utm_content',
+        'refund_or_chargeback_at',
+        'currency',
+    ];
+    $select = [];
+    foreach ($optionalCols as $col) {
+        $select[] = in_array($col, $availableCols, true) ? "s.`{$col}`" : "NULL AS `{$col}`";
+    }
+    return implode(",\n                      ", $select);
+}
+
 // --- FILTROS E PARÂMETROS ---
 $q        = trim($_GET['q'] ?? '');
 $preset   = trim($_GET['period'] ?? 'all');
@@ -109,6 +205,8 @@ if ($q !== '') {
 }
 
 $whereSql = $whereClauses ? ('WHERE ' . implode(' AND ', $whereClauses)) : '';
+$salesAvailableCols = comp_sales_columns($pdo);
+$optionalSalesSelect = comp_optional_sales_select($salesAvailableCols);
 
 // Helper para formatar fone para WhatsApp
 function comp_clean_phone(?string $phone): string {
@@ -130,6 +228,7 @@ if ($export === 'csv') {
     $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                       s.product_name, s.payment_method, s.installments,
                       s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
+                      {$optionalSalesSelect},
                       u.id AS user_id, u.created_at AS user_created_at
                FROM v_sales_master s
                LEFT JOIN users u ON (u.email = s.buyer_email AND s.buyer_email IS NOT NULL AND s.buyer_email != '')
@@ -160,8 +259,10 @@ if ($export === 'csv') {
     $output = fopen('php://output', 'w');
     fputcsv($output, [
         'ID Venda', 'Plataforma', 'Codigo Transacao', 'Status Compra', 'Data Venda',
-        'Produto', 'Metodo Pagamento', 'Parcelas', 'Nome Comprador',
-        'Email Comprador', 'Telefone', 'CPF/Documento', 'Status Area Membros', 'ID Aluno'
+        'Data Confirmacao', 'Produto', 'Codigo Produto', 'Oferta', 'Metodo Pagamento', 'Parcelas',
+        'Gateway', 'Conta Gateway', 'Canal', 'Origem Venda', 'UTM Source', 'UTM Medium',
+        'UTM Campaign', 'UTM Term', 'UTM Content', 'Data Reembolso/Disputa',
+        'Nome Comprador', 'Email Comprador', 'Telefone', 'CPF/Documento', 'Status Area Membros', 'ID Aluno'
     ]);
 
     foreach ($rows as $r) {
@@ -173,11 +274,24 @@ if ($export === 'csv') {
             $r['id'],
             strtoupper((string)$r['provider']),
             $r['transaction_code'],
-            strtoupper((string)$r['status']),
+            comp_status_label((string)$r['status']),
             $r['sale_date'],
+            $r['payment_confirmed_at'],
             $r['product_name'],
-            $r['payment_method'],
+            comp_first_non_empty([$r['product_code'] ?? '', $r['external_product_id'] ?? '']),
+            $r['price_name'] ?? '',
+            comp_payment_method_label((string)($r['payment_method'] ?? '')),
             $r['installments'] ?: 1,
+            $r['payment_gateway'] ?? '',
+            $r['provider_account_id'] ?? '',
+            $r['sales_channel'] ?? '',
+            $r['sale_origin'] ?? '',
+            $r['utm_source'] ?? '',
+            $r['utm_medium'] ?? '',
+            $r['utm_campaign'] ?? '',
+            $r['utm_term'] ?? '',
+            $r['utm_content'] ?? '',
+            $r['refund_or_chargeback_at'] ?? '',
             $r['buyer_name'],
             $r['buyer_email'],
             $r['buyer_phone'],
@@ -243,7 +357,8 @@ try {
 // CONSULTA PRINCIPAL DAS VENDAS (RÁPIDA)
 $salesSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                     s.product_name, s.payment_method, s.installments,
-                    s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document
+                    s.buyer_name, s.buyer_email, s.buyer_phone, s.buyer_document,
+                    {$optionalSalesSelect}
              FROM v_sales_master s
              {$whereSql}
              ORDER BY s.sale_date DESC, s.id DESC
@@ -339,6 +454,12 @@ require_once __DIR__ . '/_header.php';
 .comp-page-links { display: flex; gap: 6px; }
 .comp-page-links a, .comp-page-links span { padding: 6px 12px; border: 1px solid var(--border); border-radius: 7px; text-decoration: none; color: var(--text); }
 .comp-page-links .active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.comp-mini-list { display: grid; gap: 3px; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.comp-mini-list div { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
+.comp-mini-list b { color: #94a3b8; font-weight: 700; white-space: nowrap; }
+.comp-mini-list span { color: #cbd5e1; overflow-wrap: anywhere; }
+.comp-mini-list .muted span { color: var(--muted); }
+.comp-tag { display: inline-flex; max-width: 100%; padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,0.03); color: #cbd5e1; font-size: 10px; font-weight: 650; overflow-wrap: anywhere; }
 </style>
 
 <div class="comp-container">
@@ -483,7 +604,7 @@ require_once __DIR__ . '/_header.php';
           <th>Produto / Curso</th>
           <th>Plataforma / Transação</th>
           <th>Data Compra</th>
-          <th>Forma de Pagamento</th>
+          <th>Dados da Compra</th>
           <th>Status da Compra</th>
         </tr>
       </thead>
@@ -498,6 +619,17 @@ require_once __DIR__ . '/_header.php';
           <?php foreach ($sales as $idx => $s): 
               $stUpper = strtoupper((string)$s['status']);
               $waPhone = comp_clean_phone($s['buyer_phone']);
+              $installments = (int)($s['installments'] ?? 0);
+              $installments = $installments > 0 ? $installments : 1;
+              $productCode = comp_first_non_empty([$s['product_code'] ?? '', $s['external_product_id'] ?? '']);
+              $origin = comp_first_non_empty([$s['sales_channel'] ?? '', $s['sale_origin'] ?? '']);
+              $utmParts = array_filter([
+                  trim((string)($s['utm_source'] ?? '')),
+                  trim((string)($s['utm_medium'] ?? '')),
+                  trim((string)($s['utm_campaign'] ?? '')),
+                  trim((string)($s['utm_term'] ?? '')),
+                  trim((string)($s['utm_content'] ?? '')),
+              ], static fn($v) => $v !== '');
           ?>
             <tr>
               <td style="color: var(--muted); font-weight: 600;">
@@ -526,6 +658,14 @@ require_once __DIR__ . '/_header.php';
               </td>
               <td>
                 <strong style="color: #e2e8f0; font-size: 12px;"><?= am_h($s['product_name'] ?: 'Curso/Produto') ?></strong>
+                <div class="comp-mini-list">
+                  <?php if ($productCode !== ''): ?>
+                    <div><b>Codigo:</b><span><?= am_h($productCode) ?></span></div>
+                  <?php endif; ?>
+                  <?php if (!empty($s['price_name'])): ?>
+                    <div><b>Oferta:</b><span><?= am_h($s['price_name']) ?></span></div>
+                  <?php endif; ?>
+                </div>
               </td>
               <td>
                 <span style="display: block; font-weight: 700; font-size: 11px; color: #60a5fa; text-transform: uppercase;">
@@ -534,31 +674,55 @@ require_once __DIR__ . '/_header.php';
                 <span style="font-family: monospace; font-size: 10px; color: var(--muted); display: block;">
                   <?= am_h($s['transaction_code']) ?>
                 </span>
+                <div class="comp-mini-list">
+                  <div><b>ID venda:</b><span><?= (int)$s['id'] ?></span></div>
+                  <?php if (!empty($s['payment_gateway'])): ?>
+                    <div><b>Gateway:</b><span><?= am_h($s['payment_gateway']) ?></span></div>
+                  <?php endif; ?>
+                  <?php if (!empty($s['provider_account_id'])): ?>
+                    <div><b>Conta:</b><span><?= am_h($s['provider_account_id']) ?></span></div>
+                  <?php endif; ?>
+                  <?php if ($origin !== ''): ?>
+                    <div><b>Origem:</b><span><?= am_h($origin) ?></span></div>
+                  <?php endif; ?>
+                  <?php if (!empty($utmParts)): ?>
+                    <div><b>UTM:</b><span><?= am_h(implode(' / ', $utmParts)) ?></span></div>
+                  <?php endif; ?>
+                </div>
               </td>
               <td>
                 <span style="white-space: nowrap; color: #cbd5e1;">
-                  <?= $s['sale_date'] ? date('d/m/Y H:i', strtotime($s['sale_date'])) : '-' ?>
+                  <?= comp_date_label($s['sale_date'] ?? '') ?>
                 </span>
+                <div class="comp-mini-list">
+                  <div class="<?= empty($s['payment_confirmed_at']) ? 'muted' : '' ?>"><b>Confirmacao:</b><span><?= !empty($s['payment_confirmed_at']) ? am_h(comp_date_label($s['payment_confirmed_at'])) : 'Aguardando' ?></span></div>
+                  <?php if (!empty($s['refund_or_chargeback_at'])): ?>
+                    <div><b>Reembolso/disputa:</b><span><?= am_h(comp_date_label($s['refund_or_chargeback_at'])) ?></span></div>
+                  <?php endif; ?>
+                </div>
               </td>
               <td>
                 <span style="color: #e2e8f0; font-size: 11px; font-weight: 600;">
-                  <?= am_h($s['payment_method'] ?: 'Cartão / PIX') ?>
-                  <?php if ((int)($s['installments'] ?? 0) > 1): ?>
-                    <small style="color: var(--muted);">(<?= (int)$s['installments'] ?>x)</small>
-                  <?php endif; ?>
+                  <?= am_h(comp_payment_method_label($s['payment_method'] ?? '')) ?>
                 </span>
+                <div class="comp-mini-list">
+                  <div><b>Parcelas:</b><span><?= $installments ?>x</span></div>
+                  <?php if (!empty($s['currency'])): ?>
+                    <div><b>Moeda:</b><span><?= am_h($s['currency']) ?></span></div>
+                  <?php endif; ?>
+                </div>
               </td>
               <td>
                 <?php if ($stUpper === 'APPROVED' || $stUpper === 'COMPLETE'): ?>
-                  <span class="badge-status bs-approved">🟢 Aprovada</span>
+                  <span class="badge-status bs-approved">🟢 <?= am_h(comp_status_label($stUpper)) ?></span>
                 <?php elseif ($stUpper === 'REFUNDED'): ?>
-                  <span class="badge-status bs-refunded">🔴 Reembolsada</span>
+                  <span class="badge-status bs-refunded">🔴 <?= am_h(comp_status_label($stUpper)) ?></span>
                 <?php elseif (in_array($stUpper, ['REFUNDED_REQUEST', 'REFUND_REQUESTED'], true)): ?>
-                  <span class="badge-status bs-refund-req">⚠️ Pedido Reembolso</span>
+                  <span class="badge-status bs-refund-req">⚠️ <?= am_h(comp_status_label($stUpper)) ?></span>
                 <?php elseif ($stUpper === 'CHARGEBACK' || $stUpper === 'DISPUTE'): ?>
-                  <span class="badge-status bs-dispute">⛔ Chargeback</span>
+                  <span class="badge-status bs-dispute">⛔ <?= am_h(comp_status_label($stUpper)) ?></span>
                 <?php else: ?>
-                  <span class="badge-status bs-pending">🟡 <?= am_h($stUpper ?: 'Pendente') ?></span>
+                  <span class="badge-status bs-pending">🟡 <?= am_h(comp_status_label($stUpper)) ?></span>
                 <?php endif; ?>
               </td>
             </tr>
