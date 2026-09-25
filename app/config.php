@@ -102,27 +102,54 @@ if (!$isCli && session_status() === PHP_SESSION_NONE) {
 }
 
 /**
- * Sempre usa o BANCO REMOTO (HostGator),
- * mas troca apenas as URLs (BASE_URL) conforme o host.
+ * Credenciais de banco: lidas de .env (fora do Git, ver .gitignore) quando
+ * presente; senão cai no valor hardcoded do ambiente de producao atual
+ * (HostGator) para nao quebrar o deploy existente antes da migracao
+ * completa dele tambem. Ambientes novos (VPS) devem sempre ter .env.
  */
+function am_env(string $key, ?string $default = null): ?string {
+    $value = getenv($key);
+    return ($value !== false && $value !== '') ? $value : $default;
+}
 
-// Dados do banco remoto
-define('DB_HOST', '108.167.132.40');
-define('DB_NAME', 'prof2543_area_membros');
-define('DB_USER', 'prof2543_area_membros');
-define('DB_PASS', 'Emerson00*');
+$envFile = __DIR__ . '/../.env';
+if (is_file($envFile)) {
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#' || !str_contains($line, '=')) continue;
+        [$k, $v] = array_map('trim', explode('=', $line, 2));
+        $v = trim($v, "\"'");
+        if ($k !== '' && getenv($k) === false) putenv("$k=$v");
+    }
+}
 
-// Descobre se está rodando local (VS) ou no servidor
-$host    = $_SERVER['HTTP_HOST'] ?? '';
-$isLocal = (strpos($host, 'localhost') !== false);
+// Descobre em qual ambiente esta rodando
+$host       = $_SERVER['HTTP_HOST'] ?? '';
+$isLocal    = (strpos($host, 'localhost') !== false);
+$is4eGestao = in_array($host, ['4egestao.professoremersonleite.site', 'www.4egestao.professoremersonleite.site'], true);
 
-// URLs base da aplicação
 if ($isLocal) {
-    // Quando estiver testando no VS / localhost
+    // Testando no VS Code / localhost
+    define('DB_HOST', am_env('DB_HOST', 'localhost'));
+    define('DB_NAME', am_env('DB_NAME', 'area_membros'));
+    define('DB_USER', am_env('DB_USER', 'root'));
+    define('DB_PASS', am_env('DB_PASS', ''));
     define('BASE_URL',       'http://localhost/area_membros/public');
     define('BASE_URL_ADMIN', 'http://localhost/area_membros/admin');
+} elseif ($is4eGestao) {
+    // Novo ambiente no VPS (banco local, mais rapido)
+    define('DB_HOST', am_env('DB_HOST', 'localhost'));
+    define('DB_NAME', am_env('DB_NAME', 'professoremerson_areamembros'));
+    define('DB_USER', am_env('DB_USER', 'professoremerson_amuser'));
+    define('DB_PASS', am_env('DB_PASS', ''));
+    define('BASE_URL',       'https://4egestao.professoremersonleite.site/public');
+    define('BASE_URL_ADMIN', 'https://4egestao.professoremersonleite.site/admin');
 } else {
-    // Quando estiver no seu domínio
+    // Producao atual (HostGator) — banco remoto, ate o corte (Fase 3)
+    define('DB_HOST', am_env('DB_HOST', '108.167.132.40'));
+    define('DB_NAME', am_env('DB_NAME', 'prof2543_area_membros'));
+    define('DB_USER', am_env('DB_USER', 'prof2543_area_membros'));
+    define('DB_PASS', am_env('DB_PASS', 'Emerson00*'));
     define('BASE_URL',       'https://professoremersonleite.com/area_membros/public');
     define('BASE_URL_ADMIN', 'https://professoremersonleite.com/area_membros/admin');
 }

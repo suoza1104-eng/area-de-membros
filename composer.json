@@ -1,0 +1,8 @@
+{
+    "name": "professoremersonleite/area-membros",
+    "description": "Area de membros",
+    "require": {
+        "php": ">=8.1",
+        "dompdf/dompdf": "^3.1"
+    }
+}
