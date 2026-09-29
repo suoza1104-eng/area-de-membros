@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/config.php';
 require_once __DIR__ . '/../app/disparos_engine.php';
+require_once __DIR__ . '/../app/automation_flows.php';
 
 session_start();
 if (empty($_SESSION['admin_logado'])) {
@@ -23,6 +24,7 @@ $pdo = getPDO();
 // o progresso — quem processa os lotes e envia de verdade e' sempre o cron
 // `disparos_manuais`, mesmo que esta pagina seja fechada logo em seguida.
 disparos_engine_ensure_schema($pdo);
+automation_flows_ensure_schema($pdo);
 
 // ── AJAX handlers ─────────────────────────────────────────────────────────────
 $acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
@@ -542,6 +544,18 @@ try {
     ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
 } catch (Throwable $e) {}
 
+$automationFlows = [];
+try {
+    $automationFlows = $pdo->query("
+        SELECT f.id, f.name, v.version_number
+          FROM automation_flows f
+          JOIN automation_flow_versions v ON v.id = f.current_version_id
+         WHERE f.status = 'active'
+           AND f.current_version_id IS NOT NULL
+         ORDER BY f.name ASC
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {}
+
 $eventosDisparo = [];
 $eventosPorCanal = ['sf' => [], 'manychat' => [], 'webhook' => []];
 foreach ([
@@ -978,10 +992,11 @@ require_once __DIR__ . '/_header.php';
           <option value="sf">SF</option>
           <option value="manychat">ManyChat</option>
           <option value="webhook">Webhook</option>
+          <option value="automation">Automacao</option>
         </select>
       </div>
 
-      <div class="form-row">
+      <div class="form-row" id="dpEventoWrap">
         <label>Evento do disparo</label>
         <input type="text" id="dpEvento" list="dpEventoSugestoes" value="DISPARO_MANUAL" placeholder="DISPARO_MANUAL">
         <datalist id="dpEventoSugestoes">
@@ -1141,6 +1156,7 @@ const TURMAS = <?= json_encode($turmas) ?>;
 const TAGS_SF = <?= json_encode(array_values($tagsSf), JSON_UNESCAPED_UNICODE) ?>;
 const TAGS_SISTEMA = <?= json_encode(array_values($tagsSistema), JSON_UNESCAPED_UNICODE) ?>;
 const EVENTOS_POR_CANAL = <?= json_encode($eventosPorCanal, JSON_UNESCAPED_UNICODE) ?>;
+const AUTOMATION_FLOWS = <?= json_encode($automationFlows, JSON_UNESCAPED_UNICODE) ?>;
 let dpLogica = 'AND';
 let dpPreviewTimer = null;
 let dpPreviewContatosOpen = false;
@@ -1152,6 +1168,7 @@ let dpMonitorTimer = null;
 document.addEventListener('DOMContentLoaded', () => {
     dpCarregarLista();
     dpToggleTipo();
+    dpAtualizarEventoPadrao(true);
     // Marcar todos dias por padrão
     document.querySelectorAll('.dp-dia').forEach(cb => cb.checked = true);
 });
@@ -1303,6 +1320,7 @@ function dpNovoDisparo() {
     document.getElementById('dpFormPanel').style.display = '';
     dpToggleTipo();
     dpToggleHorario();
+    dpAtualizarEventoPadrao(true);
     dpAtualizarPreview();
 }
 
@@ -1342,6 +1360,7 @@ async function dpEditarDisparo(id) {
     (filtros.inclusao || []).forEach(f => dpAddFiltroInc(f));
     (filtros.exclusao || []).forEach(f => dpAddFiltroExc(f));
     acoes.filter(a => !a || !['provider', 'evento'].includes(a.tipo)).forEach(a => dpAddAcao(a));
+    dpAtualizarEventoPadrao(false);
     dpAtualizarPreview();
 }
 
@@ -1363,6 +1382,15 @@ function dpToggleHorario() {
 function dpAtualizarEventoPadrao(force = false) {
     const provider = document.getElementById('dpProvider').value || 'sf';
     const evento = document.getElementById('dpEvento');
+    const eventoWrap = document.getElementById('dpEventoWrap');
+    if (provider === 'automation') {
+        evento.value = 'DISPARO_FLUXO_MANUAL';
+        if (eventoWrap) eventoWrap.style.display = 'none';
+        dpAtualizarAcoesPorCanal();
+        dpEnsureAutomationFlowAction();
+        return;
+    }
+    if (eventoWrap) eventoWrap.style.display = '';
     const sugestoes = EVENTOS_POR_CANAL[provider] || [];
     if (sugestoes.length && (force || !evento.value.trim() || evento.value.trim() === 'DISPARO_MANUAL')) {
         evento.value = sugestoes[0];
@@ -1425,6 +1453,10 @@ const ACAO_TIPOS_POR_CANAL = {
     webhook: [
         {v:'tag_sistema',l:'Inserir tag sistema'},
     ],
+    automation: [
+        {v:'automation_flow',l:'Entrar em fluxo'},
+        {v:'tag_sistema',l:'Inserir tag sistema'},
+    ],
 };
 
 function dpAcaoTipos() {
@@ -1455,6 +1487,21 @@ function dpBuildTagSelect(tipo, valor) {
         + `<option value="">${emptyText}</option>`
         + options
         + '</select>';
+}
+
+function dpBuildAutomationFlowSelect(valor) {
+    const atual = String(valor || '');
+    const opts = AUTOMATION_FLOWS.map(f => {
+        const id = String(f.id || '');
+        const label = `${f.name || ('Fluxo #' + id)}${f.version_number ? ' - v' + f.version_number : ''}`;
+        return `<option value="${dpEsc(id)}"${atual===id?' selected':''}>${dpEsc(label)}</option>`;
+    }).join('');
+    const extra = atual && !AUTOMATION_FLOWS.some(f => String(f.id || '') === atual)
+        ? `<option value="${dpEsc(atual)}" selected>Fluxo #${dpEsc(atual)}</option>`
+        : '';
+    const empty = AUTOMATION_FLOWS.length ? '-- selecione o fluxo --' : 'Nenhum fluxo publicado';
+    return '<select class="acao-valor" style="flex:1;background:var(--input-bg,#1e1e2e);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:13px">'
+        + `<option value="">${empty}</option>` + extra + opts + '</select>';
 }
 
 function dpBuildValueInput(tipo, valor) {
@@ -1524,6 +1571,9 @@ function dpUsarCampoValor(valor) {
 
 function dpBuildAcaoInputs(tipo, data) {
     const valor = data ? (data.valor || '') : '';
+    if (tipo === 'automation_flow') {
+        return dpBuildAutomationFlowSelect(valor);
+    }
     if (tipo === 'custom_field') {
         const campo = data ? (data.campo || '') : '';
         const provider = document.getElementById('dpProvider')?.value || 'sf';
@@ -1557,13 +1607,26 @@ function dpAtualizarAcoesPorCanal() {
         if (!select) return;
         const previous = select.value;
         const next = tipos.some(t => t.v === previous) ? previous : tipos[0].v;
+        const data = {
+            tipo: previous,
+            valor: row.querySelector('.acao-valor')?.value || '',
+            campo: row.querySelector('.acao-campo')?.value || '',
+        };
         select.innerHTML = tipos.map(t => `<option value="${t.v}"${next===t.v?' selected':''}>${t.l}</option>`).join('');
         select.value = next;
-        row.querySelector('.acao-inputs').innerHTML = dpBuildAcaoInputs(next, {});
+        row.querySelector('.acao-inputs').innerHTML = dpBuildAcaoInputs(next, next === previous ? data : {});
     });
 }
 
 // ── Preview badge + contatos ──────────────────────────────────────────────────
+function dpEnsureAutomationFlowAction() {
+    if ((document.getElementById('dpProvider')?.value || '') !== 'automation') return;
+    const rows = Array.from(document.querySelectorAll('#dpAcoes .acao-row'));
+    if (!rows.some(row => row.querySelector('select')?.value === 'automation_flow')) {
+        dpAddAcao({tipo:'automation_flow', valor:''});
+    }
+}
+
 function dpAtualizarPreview() {
     clearTimeout(dpPreviewTimer);
     dpPreviewTimer = setTimeout(async () => {
@@ -1659,6 +1722,11 @@ function dpColetarDias() {
 async function dpSalvar(retornaId) {
     const nome = document.getElementById('dpNome').value.trim();
     if (!nome) { alert('Informe um nome para o disparo'); return null; }
+    const acoes = dpColetarAcoes();
+    if ((document.getElementById('dpProvider').value || '') === 'automation' && !acoes.some(a => a.tipo === 'automation_flow' && String(a.valor || '').trim() !== '')) {
+        alert('Selecione um fluxo de automacao para este disparo.');
+        return null;
+    }
 
     const fd = new FormData();
     fd.append('acao',           'salvar');
@@ -1669,7 +1737,7 @@ async function dpSalvar(retornaId) {
     fd.append('intervalo_ms',   document.getElementById('dpIntervaloMs').value);
     fd.append('batch_size',     document.getElementById('dpBatchSize').value);
     fd.append('filtros_json',   JSON.stringify(dpColetarFiltros()));
-    fd.append('acoes_json',     JSON.stringify(dpColetarAcoes()));
+    fd.append('acoes_json',     JSON.stringify(acoes));
     fd.append('horario_ativo',  document.getElementById('dpHorarioAtivo').checked ? 1 : 0);
     fd.append('horario_inicio', document.getElementById('dpHorarioInicio').value);
     fd.append('horario_fim',    document.getElementById('dpHorarioFim').value);

@@ -465,6 +465,92 @@ function automation_flow_capture_event(PDO $pdo, string $event, int $userId, arr
     }
 }
 
+function automation_flow_start_manual_run(PDO $pdo, int $flowId, int $userId, array $extra = []): array
+{
+    if ($flowId <= 0 || $userId <= 0) {
+        throw new InvalidArgumentException('Fluxo ou aluno invalido.');
+    }
+    automation_flows_ensure_schema($pdo);
+    $st = $pdo->prepare("
+        SELECT f.id flow_id, f.name flow_name, f.current_version_id, v.version_number, v.graph_json
+          FROM automation_flows f
+          JOIN automation_flow_versions v ON v.id = f.current_version_id
+         WHERE f.id = :id
+           AND f.status = 'active'
+           AND f.current_version_id IS NOT NULL
+         LIMIT 1
+    ");
+    $st->execute(['id' => $flowId]);
+    $flow = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$flow) {
+        throw new RuntimeException('Fluxo ativo/publicado nao encontrado.');
+    }
+
+    $graph = json_decode((string)$flow['graph_json'], true) ?: [];
+    $trigger = null;
+    foreach (($graph['nodes'] ?? []) as $node) {
+        if (($node['type'] ?? '') === 'trigger') {
+            $trigger = $node;
+            break;
+        }
+    }
+    if (!$trigger) {
+        throw new RuntimeException('Fluxo sem gatilho inicial.');
+    }
+
+    $versionId = (int)$flow['current_version_id'];
+    $event = 'DISPARO_FLUXO_MANUAL';
+    $extra = ['origem' => 'disparo_manual_fluxo'] + $extra;
+    $extra['automation_flow_id'] = $flowId;
+    $extra['automation_version_id'] = $versionId;
+    $extra['automation_flow_name'] = (string)$flow['flow_name'];
+    $extra['event_id'] = 'disparo-fluxo-' . (int)($extra['disparo_id'] ?? 0) . '-' . $userId . '-' . $flowId . '-' . $versionId;
+    $payload = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    $source = hash('sha256', 'manual-flow|' . (int)($extra['disparo_id'] ?? 0) . '|' . $userId . '|' . $flowId . '|' . $versionId);
+
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("
+            INSERT INTO automation_flow_events(event_code,user_id,source_key,payload_json,matched_flows)
+            VALUES(:e,:u,:s,:p,1)
+            ON DUPLICATE KEY UPDATE payload_json=VALUES(payload_json), matched_flows=1
+        ")->execute(['e' => $event, 'u' => $userId, 's' => $source, 'p' => $payload]);
+        $eventSt = $pdo->prepare('SELECT id FROM automation_flow_events WHERE source_key = :s LIMIT 1');
+        $eventSt->execute(['s' => $source]);
+        $eventId = (int)$eventSt->fetchColumn();
+        if ($eventId <= 0) {
+            throw new RuntimeException('Nao foi possivel registrar o evento do fluxo.');
+        }
+
+        $pdo->prepare("
+            INSERT IGNORE INTO automation_flow_runs(flow_id,version_id,event_id,user_id,status)
+            VALUES(:f,:v,:e,:u,'running')
+        ")->execute(['f' => $flowId, 'v' => $versionId, 'e' => $eventId, 'u' => $userId]);
+        $runSt = $pdo->prepare('SELECT id FROM automation_flow_runs WHERE flow_id=:f AND version_id=:v AND event_id=:e LIMIT 1');
+        $runSt->execute(['f' => $flowId, 'v' => $versionId, 'e' => $eventId]);
+        $runId = (int)$runSt->fetchColumn();
+        if ($runId <= 0) {
+            throw new RuntimeException('Nao foi possivel iniciar a execucao do fluxo.');
+        }
+
+        $input = json_encode(['event_code' => $event, 'event_id' => $eventId, 'disparo_id' => (int)($extra['disparo_id'] ?? 0)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $pdo->prepare("
+            INSERT IGNORE INTO automation_flow_jobs(run_id,node_id,channel,status,available_at,input_json)
+            VALUES(:r,:n,:c,'queued',NOW(),:i)
+        ")->execute([
+            'r' => $runId,
+            'n' => (string)$trigger['id'],
+            'c' => automation_flow_job_channel($trigger),
+            'i' => $input,
+        ]);
+        $pdo->commit();
+        return ['event_id' => $eventId, 'run_id' => $runId, 'flow_id' => $flowId, 'version_id' => $versionId];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
 function automation_flow_next(array $graph, string $nodeId, string $handle = 'default'): ?string
 {
     foreach ($graph['edges'] ?? [] as $edge) if (($edge['source'] ?? '') === $nodeId && ($edge['sourceHandle'] ?? 'default') === $handle) return (string)$edge['target'];

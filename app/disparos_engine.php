@@ -192,7 +192,7 @@ function disparos_engine_provider(array $actions): string
     foreach ($actions as $action) {
         if (is_array($action) && ($action['tipo'] ?? '') === 'provider') {
             $provider = strtolower(trim((string)($action['valor'] ?? '')));
-            if (in_array($provider, ['sf', 'superfuncionario', 'manychat', 'webhook'], true)) return $provider === 'superfuncionario' ? 'sf' : $provider;
+            if (in_array($provider, ['sf', 'superfuncionario', 'manychat', 'webhook', 'automation'], true)) return $provider === 'superfuncionario' ? 'sf' : $provider;
         }
     }
     return 'sf';
@@ -346,7 +346,7 @@ function disparos_engine_manychat_manual(PDO $pdo, array $user, array $actions):
     return ['ok'=>$ok, 'msg'=>json_encode(['provider'=>'manychat', 'subscriber_id'=>$subscriberId, 'results'=>$results], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
 }
 
-function disparos_engine_send(PDO $pdo, array $user, array $actions): array
+function disparos_engine_send(PDO $pdo, array $user, array $actions, int $campaignId = 0): array
 {
     $uid = (int)($user['id'] ?? 0);
     if ($uid > 0 && function_exists('usuario_bloqueado_disparos') && usuario_bloqueado_disparos($pdo, $uid)) {
@@ -355,8 +355,33 @@ function disparos_engine_send(PDO $pdo, array $user, array $actions): array
     $provider = disparos_engine_provider($actions);
     $event = disparos_engine_event($actions);
     $extra = disparos_engine_extra($pdo, $user, $actions, $event);
+    if ($campaignId > 0) $extra['disparo_id'] = $campaignId;
     try {
         $hasManualActions = (bool)array_filter($actions, static fn($a) => is_array($a) && in_array(($a['tipo'] ?? ''), ['flow','tag_sf','custom_field'], true));
+        if ($provider === 'automation') {
+            require_once __DIR__ . '/automation_flows.php';
+            $flowIds = [];
+            foreach ($actions as $action) {
+                if (!is_array($action) || ($action['tipo'] ?? '') !== 'automation_flow') continue;
+                foreach (array_filter(array_map('trim', explode(',', (string)($action['valor'] ?? '')))) as $flowId) {
+                    if (ctype_digit($flowId) && (int)$flowId > 0) $flowIds[] = (int)$flowId;
+                }
+            }
+            $flowIds = array_values(array_unique($flowIds));
+            if (!$flowIds) return ['ok'=>false, 'msg'=>'Nenhum fluxo de automacao selecionado'];
+            $results = [];
+            $ok = false;
+            foreach ($flowIds as $flowId) {
+                try {
+                    $started = automation_flow_start_manual_run($pdo, $flowId, $uid, $extra);
+                    $results[] = ['flow_id'=>$flowId, 'ok'=>true, 'run_id'=>$started['run_id'] ?? null, 'version_id'=>$started['version_id'] ?? null];
+                    $ok = true;
+                } catch (Throwable $e) {
+                    $results[] = ['flow_id'=>$flowId, 'ok'=>false, 'error'=>$e->getMessage()];
+                }
+            }
+            return ['ok'=>$ok, 'msg'=>json_encode(['provider'=>'automation', 'results'=>$results], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+        }
         if ($provider === 'sf' && $hasManualActions) return disparos_engine_sf_manual($pdo, $user, $actions);
         if ($provider === 'manychat' && $hasManualActions) return disparos_engine_manychat_manual($pdo, $user, $actions);
         if ($provider === 'sf') {
@@ -455,7 +480,7 @@ function disparos_engine_execute_batch(PDO $pdo, int $campaignId, int $maxBatchS
         // proximos alunos. Se algo assim acontecer, nenhuma linha e' gravada para este
         // aluno e ele e' automaticamente tentado de novo no proximo tick do cron.
         try {
-            $result = disparos_engine_send($pdo, $user, $actions);
+            $result = disparos_engine_send($pdo, $user, $actions, $campaignId);
             disparos_engine_apply_tags($pdo, (int)$user['id'], $actions);
             $status = !empty($result['ok']) ? 'ok' : 'erro';
             // INSERT IGNORE + a UNIQUE KEY em (disparo_id,user_id) garantem que, mesmo se
