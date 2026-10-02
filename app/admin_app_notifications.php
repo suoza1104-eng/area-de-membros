@@ -45,6 +45,7 @@ function admin_app_ensure_schema(PDO $pdo): void
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_push_notifications (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        source_key CHAR(64) NULL,
         event_code VARCHAR(80) NOT NULL,
         title VARCHAR(160) NOT NULL,
         body VARCHAR(600) NOT NULL,
@@ -55,8 +56,15 @@ function admin_app_ensure_schema(PDO $pdo): void
         failed_count INT NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         finished_at DATETIME NULL,
+        UNIQUE KEY uk_admin_push_source (source_key),
         KEY idx_admin_push_notification_event (event_code, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    foreach ([
+        "ALTER TABLE admin_push_notifications ADD COLUMN source_key CHAR(64) NULL AFTER id",
+        "ALTER TABLE admin_push_notifications ADD UNIQUE KEY uk_admin_push_source (source_key)",
+    ] as $migration) {
+        try { $pdo->exec($migration); } catch (Throwable $e) {}
+    }
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_push_delivery_logs (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -169,6 +177,20 @@ function admin_app_notification_text(string $eventCode, array $payload): array
     return ['Pagamento ' . admin_app_money_cents($value) . $gatewayPart, $productPart];
 }
 
+function admin_app_notification_source_key(string $eventCode, array $payload): ?string
+{
+    if (!str_starts_with($eventCode, 'PAGAMENTO_')) return null;
+
+    $transaction = trim((string)($payload['transaction_code'] ?? $payload['transacao_id'] ?? ''));
+    if ($transaction === '') {
+        $transaction = trim((string)($payload['provider_transaction_id'] ?? $payload['payment_event_id'] ?? ''));
+    }
+    if ($transaction === '') return null;
+
+    $provider = strtolower(trim((string)($payload['provider'] ?? $payload['gateway'] ?? '')));
+    return hash('sha256', 'admin_push|' . strtoupper($eventCode) . '|' . $provider . '|' . strtolower($transaction));
+}
+
 function admin_app_send_to_device(PDO $pdo, array $device, int $notificationId, int $deliveryLogId, string $title, string $body, string $clickUrl, string $eventCode, string $soundKey): array
 {
     $projectId = trim((string)(push_public_config()['projectId'] ?? ''));
@@ -229,6 +251,7 @@ function admin_app_notify_event(PDO $pdo, string $eventCode, array $payload): ar
         ? (rtrim(BASE_URL_ADMIN, '/') . '/whatsapp_config.php')
         : (rtrim(BASE_URL_ADMIN, '/') . '/vendas_auditoria.php');
     $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    $sourceKey = admin_app_notification_source_key($eventCode, $payload);
 
     $devices = $pdo->query("SELECT * FROM admin_push_devices WHERE status='active' AND notification_permission='granted' AND token IS NOT NULL AND token<>'' ORDER BY last_seen_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $eligible = [];
@@ -243,8 +266,11 @@ function admin_app_notify_event(PDO $pdo, string $eventCode, array $payload): ar
     }
     if (!$eligible) return ['ok'=>true, 'targets'=>0];
 
-    $pdo->prepare("INSERT INTO admin_push_notifications (event_code,title,body,click_url,payload_json,total_targets) VALUES (:event,:title,:body,:click,:payload,:total)")
-        ->execute(['event'=>$eventCode, 'title'=>$title, 'body'=>$body, 'click'=>$clickUrl, 'payload'=>$payloadJson, 'total'=>count($eligible)]);
+    $insertNotification = $pdo->prepare("INSERT IGNORE INTO admin_push_notifications (source_key,event_code,title,body,click_url,payload_json,total_targets) VALUES (:source,:event,:title,:body,:click,:payload,:total)");
+    $insertNotification->execute(['source'=>$sourceKey, 'event'=>$eventCode, 'title'=>$title, 'body'=>$body, 'click'=>$clickUrl, 'payload'=>$payloadJson, 'total'=>count($eligible)]);
+    if ($sourceKey !== null && $insertNotification->rowCount() !== 1) {
+        return ['ok'=>true, 'targets'=>0, 'duplicate'=>true, 'source_key'=>$sourceKey];
+    }
     $notificationId = (int)$pdo->lastInsertId();
     $accepted = 0;
     $failed = 0;
