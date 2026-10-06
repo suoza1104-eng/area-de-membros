@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/payment_events.php';
 require_once __DIR__ . '/../app/evolution_api.php';
+require_once __DIR__ . '/../app/student_api.php';
 
 proteger_admin();
 $pdo = getPDO();
@@ -44,10 +45,14 @@ function int_filter_base(string $alias, string $dateCol, array &$params, string 
 }
 
 $tab = (string)($_GET['tab'] ?? 'logs');
-if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','whatsapp','meta','logs'], true)) $tab = 'logs';
+if (!in_array($tab, ['overview','webhooks','hub','superfuncionario','manychat','whatsapp','meta','api','logs'], true)) $tab = 'logs';
 
 $msgOk = '';
 $msgError = '';
+$apiNewKey = '';
+$apiTestEmail = '';
+$apiTestPhone = '';
+$apiTestResult = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
@@ -172,6 +177,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msgOk = "Integração Meta excluída com sucesso.";
         } catch (Throwable $e) {
             $msgError = "Erro ao excluir integração: " . $e->getMessage();
+        }
+    } elseif ($action === 'api_create_key') {
+        try {
+            $created = student_api_create_key(
+                $pdo,
+                (string)($_POST['api_name'] ?? ''),
+                isset($_POST['api_scope_financial']),
+                (int)($_POST['api_rate'] ?? 60),
+                (string)($_POST['api_notes'] ?? ''),
+                (string)($_SESSION['equipe_nome'] ?? $_SESSION['equipe_email'] ?? 'admin')
+            );
+            $apiNewKey = $created['key'];
+            $msgOk = 'Chave criada. Copie agora: ela não será exibida novamente.';
+        } catch (Throwable $e) {
+            $msgError = 'Erro ao criar chave: ' . $e->getMessage();
+        }
+    } elseif (in_array($action, ['api_revoke_key', 'api_activate_key', 'api_delete_key'], true)) {
+        try {
+            $keyId = (int)($_POST['api_key_id'] ?? 0);
+            if ($action === 'api_delete_key') {
+                student_api_delete_key($pdo, $keyId);
+                $msgOk = 'Chave excluída.';
+            } else {
+                student_api_set_key_status($pdo, $keyId, $action === 'api_revoke_key' ? 'revoked' : 'active');
+                $msgOk = $action === 'api_revoke_key' ? 'Chave revogada: a plataforma perdeu o acesso.' : 'Chave reativada.';
+            }
+        } catch (Throwable $e) {
+            $msgError = 'Erro ao atualizar chave: ' . $e->getMessage();
+        }
+    } elseif ($action === 'api_test_lookup') {
+        try {
+            student_api_ensure_schema($pdo);
+            $apiTestEmail = trim((string)($_POST['api_test_email'] ?? ''));
+            $apiTestPhone = trim((string)($_POST['api_test_phone'] ?? ''));
+            if ($apiTestEmail === '' && $apiTestPhone === '') throw new InvalidArgumentException('Informe e-mail ou telefone.');
+            $apiTestResult = student_api_lookup($pdo, $apiTestEmail, $apiTestPhone, true);
+        } catch (Throwable $e) {
+            $msgError = 'Erro no teste: ' . $e->getMessage();
         }
     } elseif ($action === 'save_evolution') {
         try {
@@ -421,7 +464,7 @@ include __DIR__ . '/_header.php';
   </div>
 
   <nav class="int-tabs">
-    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','whatsapp'=>'WhatsApp (Evolution API)','meta'=>'META (Anúncios)','logs'=>'Logs'] as $key => $label): ?>
+    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','whatsapp'=>'WhatsApp (Evolution API)','meta'=>'META (Anúncios)','api'=>'Chaves API','logs'=>'Logs'] as $key => $label): ?>
       <a class="<?= $tab === $key ? 'active' : '' ?>" href="integracoes.php?tab=<?= int_h($key) ?>"><?= int_h($label) ?></a>
     <?php endforeach; ?>
   </nav>
@@ -443,9 +486,12 @@ include __DIR__ . '/_header.php';
         <a class="int-btn" href="integracoes.php?tab=manychat">ManyChat</a>
         <a class="int-btn" href="integracoes.php?tab=whatsapp">WhatsApp (Evolution API)</a>
         <a class="int-btn" href="integracoes.php?tab=meta">META (Anúncios)</a>
+        <a class="int-btn" href="integracoes.php?tab=api">Chaves API</a>
         <a class="int-btn primary" href="integracoes.php?tab=logs">Logs</a>
       </div>
     </div>
+  <?php elseif ($tab === 'api'): ?>
+    <?php include __DIR__ . '/_integracoes_api.php'; ?>
   <?php elseif ($tab === 'whatsapp'): ?>
     <?php if (!empty($msgOk)): ?>
       <div class="int-panel" style="border-color:#22c55e;color:#86efac;background:rgba(34,197,94,0.1);font-weight:600;padding:12px 16px;margin-bottom:16px;">
