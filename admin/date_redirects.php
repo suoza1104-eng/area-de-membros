@@ -348,8 +348,8 @@ include __DIR__ . '/_header.php';
 .dr-public-url{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;min-width:0;margin-top:10px}
 .dr-public-url code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .dr-link-table{display:grid;gap:8px}
-.dr-link-head,.dr-link-row{display:grid;grid-template-columns:54px minmax(220px,1fr) 210px 52px;gap:10px;align-items:center}
-.dr-link-table.is-link .dr-link-head,.dr-link-table.is-link .dr-link-row{grid-template-columns:54px minmax(220px,320px) minmax(260px,1fr) 52px}
+.dr-link-head,.dr-link-row{display:grid;grid-template-columns:54px minmax(220px,1fr) 210px 92px;gap:10px;align-items:center}
+.dr-link-table.is-link .dr-link-head,.dr-link-table.is-link .dr-link-row{grid-template-columns:54px minmax(220px,320px) minmax(260px,1fr) 92px}
 .dr-link-head{padding:0 8px 2px;color:var(--muted);font-size:10px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}
 .dr-link-row{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.025)}
 .dr-link-row.is-delete{opacity:.48;border-color:rgba(239,68,68,.35);background:var(--danger-dim)}
@@ -357,10 +357,13 @@ include __DIR__ . '/_header.php';
 .dr-link-label strong{display:block;color:var(--text);font-size:12px}
 .dr-link-public{display:flex;align-items:center;gap:7px;margin-top:7px;min-width:0;color:var(--muted);font-size:11px}
 .dr-link-public code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
-.dr-trash{width:36px;height:36px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:var(--danger)!important;color:white!important;border:0!important;padding:0!important}
-.dr-trash svg{width:16px;height:16px}
+.dr-link-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.dr-icon-btn,.dr-trash{width:36px;height:36px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;border:0!important;padding:0!important}
+.dr-icon-btn{background:var(--bg-hover)!important;color:var(--text)!important}
+.dr-trash{background:var(--danger)!important;color:white!important}
+.dr-icon-btn svg,.dr-trash svg{width:16px;height:16px}
 .dr-trash input{display:none}
-.dr-trash:hover{filter:brightness(1.08)}
+.dr-trash:hover,.dr-icon-btn:hover{filter:brightness(1.08)}
 .dr-footer-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .dr-metric-btn{white-space:nowrap}
 .dr-modal{display:none;position:fixed;inset:0;z-index:1000;background:rgba(2,6,23,.72);padding:22px;align-items:center;justify-content:center}
@@ -379,7 +382,7 @@ include __DIR__ . '/_header.php';
 .dr-chart-box{height:285px;position:relative;min-width:0}
 .dr-chart-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:var(--muted);font-size:13px;text-align:center}
 .dr-chart-box.is-empty .dr-chart-empty{display:flex}
-@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-metric-btn{margin-bottom:10px}.dr-create,.dr-config,.dr-link-head,.dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-trash{width:100%}}
+@media(max-width:900px){.dr-head,.dr-row{display:block}.dr-stat{text-align:left;margin:12px 0}.dr-metric-btn{margin-bottom:10px}.dr-create,.dr-config,.dr-link-head,.dr-link-row,.dr-link-table.is-link .dr-link-row{grid-template-columns:1fr}.dr-link-head{display:none}.dr-editor-head{display:block}.dr-footer-actions{justify-content:flex-start}.dr-link-actions{justify-content:flex-start}.dr-trash,.dr-icon-btn{width:42px}}
 @media(max-width:700px){.dr-chart-head{display:block}.dr-chart-controls{justify-content:flex-start;margin-top:12px}.dr-chart-box{height:240px}.dr-seg button{padding:0 9px}}
 </style>
 
@@ -530,7 +533,7 @@ include __DIR__ . '/_header.php';
           <input type="hidden" name="action" value="save_links">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
           <div class="dr-link-table <?=$isLinkType?'is-link':''?>">
-            <div class="dr-link-head"><span>Link</span><span><?=$isLinkType?'Slug publico':'URL'?></span><span><?=$isLinkType?'URL de destino':'A partir de'?></span><span>Excluir</span></div>
+            <div class="dr-link-head"><span>Link</span><span><?=$isLinkType?'Slug publico':'URL'?></span><span><?=$isLinkType?'URL de destino':'A partir de'?></span><span>Acoes</span></div>
             <div id="dateLinks">
             <?php foreach($links as $link): ?>
             <?php $linkSlug = trim((string)($link['slug'] ?? '')); $linkPublicUrl = $linkSlug !== '' ? date_redirects_public_url($linkSlug) : ''; ?>
@@ -569,12 +572,19 @@ include __DIR__ . '/_header.php';
                   <input type="datetime-local" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>" <?=$isLinkType?'':'required'?> <?=$canWrite?'':'disabled'?>>
                 </div>
               <?php endif; ?>
+              <div class="dr-link-actions">
+                <button type="button" class="dr-icon-btn dr-clone" title="Clonar link" <?=$canWrite?'':'disabled'?>>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>
+                  </svg>
+                </button>
                 <label class="dr-trash" title="Apagar link">
                   <input type="checkbox" name="delete_link[]" value="<?=(int)$link['id']?>" <?=$canWrite?'':'disabled'?>>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>
                   </svg>
                 </label>
+              </div>
             </div>
             <?php endforeach; ?>
           </div>
@@ -630,7 +640,19 @@ include __DIR__ . '/_header.php';
     <div class="dr-field">
       <input type="datetime-local" name="starts_at[]" required>
     </div>
-    <span></span>
+    <div class="dr-link-actions">
+      <button type="button" class="dr-icon-btn dr-clone" title="Clonar link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>
+        </svg>
+      </button>
+      <label class="dr-trash" title="Apagar link">
+        <input type="checkbox" name="delete_link[]" value="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>
+        </svg>
+      </label>
+    </div>
   </div>
 </template>
 
@@ -658,8 +680,38 @@ document.addEventListener('click', async function(e) {
     setTimeout(function() {
       const row = trash.closest('.dr-link-row');
       const input = trash.querySelector('input[type="checkbox"]');
+      const idInput = row ? row.querySelector('input[name="link_id[]"]') : null;
+      if (row && idInput && Number(idInput.value || 0) === 0) {
+        row.remove();
+        return;
+      }
       if (row && input) row.classList.toggle('is-delete', input.checked);
     }, 0);
+  }
+  const cloneBtn = e.target.closest('.dr-clone');
+  if (cloneBtn) {
+    const row = cloneBtn.closest('.dr-link-row');
+    if (!row) return;
+    const clone = row.cloneNode(true);
+    clone.classList.remove('is-delete');
+    const idInput = clone.querySelector('input[name="link_id[]"]');
+    if (idInput) idInput.value = '0';
+    const label = clone.querySelector('.dr-link-label');
+    if (label) label.innerHTML = '<strong>Novo</strong> 0 cliques';
+    const deleteInput = clone.querySelector('input[name="delete_link[]"]');
+    if (deleteInput) {
+      deleteInput.checked = false;
+      deleteInput.value = '0';
+    }
+    clone.querySelectorAll('.dr-link-public').forEach(el => el.remove());
+    const slugInput = clone.querySelector('input[name="link_slug[]"]');
+    if (slugInput && slugInput.value.trim() !== '') {
+      slugInput.value = slugInput.value.trim().replace(/-copia-\d+$/, '') + '-copia-' + Date.now().toString().slice(-5);
+    }
+    const hiddenLabel = clone.querySelector('input[name="label[]"]');
+    if (hiddenLabel) hiddenLabel.value = 'Novo link';
+    row.insertAdjacentElement('afterend', clone);
+    return;
   }
 });
 const addDateLink = document.getElementById('addDateLink');
@@ -683,7 +735,19 @@ if (addDateLink) {
           <input type="hidden" name="label[]" value="Novo link">
           <input type="hidden" name="starts_at[]" value="">
         </div>
-        <span></span>
+        <div class="dr-link-actions">
+          <button type="button" class="dr-icon-btn dr-clone" title="Clonar link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>
+            </svg>
+          </button>
+          <label class="dr-trash" title="Apagar link">
+            <input type="checkbox" name="delete_link[]" value="0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>
+            </svg>
+          </label>
+        </div>
       `;
       target.appendChild(row);
       return;
