@@ -19,10 +19,32 @@ try {
         echo 'Este redirecionamento ainda nao esta disponivel.';
         exit;
     }
-    date_redirects_log_click($pdo, $dest['redirector'], $dest['link'], $dest['url']);
+    $meta = ['status' => 'redirected'];
+    $targetUrl = $dest['url'];
+    $redirector = $dest['redirector'];
+    $link = $dest['link'];
+
+    if ((string)($redirector['redirect_type'] ?? 'date') === 'link' && (int)($redirector['antifraud_enabled'] ?? 0) === 1) {
+        $check = date_redirects_antifraud_check($pdo, $redirector, $link);
+        $identity = $check['identity'] ?? [];
+        $blacklist = $check['blacklist'] ?? null;
+        $meta = [
+            'status' => !empty($check['blocked']) ? 'blocked_silent' : 'redirected',
+            'user_id' => (int)($identity['user_id'] ?? 0),
+            'phone' => (string)($identity['phone'] ?? ''),
+            'email' => (string)($identity['email'] ?? ''),
+            'blacklist_id' => $blacklist ? (int)($blacklist['id'] ?? 0) : null,
+            'identifier_source' => (string)($identity['source'] ?? ''),
+        ];
+        if (!empty($check['blocked'])) {
+            $targetUrl = date_redirects_blocked_url((string)($redirector['blocked_redirect_url'] ?? ''));
+        }
+    }
+
+    date_redirects_log_click($pdo, $redirector, $link, $targetUrl, $meta);
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
-    header('Location: ' . $dest['url'], true, 302);
+    header('Location: ' . $targetUrl, true, 302);
     exit;
 } catch (Throwable $e) {
     http_response_code(500);

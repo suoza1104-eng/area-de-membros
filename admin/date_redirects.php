@@ -96,10 +96,12 @@ try {
 
         if ($action === 'create') {
             $name = trim((string)($_POST['name'] ?? ''));
+            $redirectType = (string)($_POST['redirect_type'] ?? 'date');
+            if (!in_array($redirectType, ['date', 'link'], true)) $redirectType = 'date';
             if ($name === '') throw new RuntimeException('Informe o nome do redirecionador.');
             $slug = date_redirects_unique_slug($pdo, $name);
-            $pdo->prepare("INSERT INTO date_redirectors (name, slug, status) VALUES (:name, :slug, 'active')")
-                ->execute(['name' => $name, 'slug' => $slug]);
+            $pdo->prepare("INSERT INTO date_redirectors (name, slug, status, redirect_type) VALUES (:name, :slug, 'active', :redirect_type)")
+                ->execute(['name' => $name, 'slug' => $slug, 'redirect_type' => $redirectType]);
             dr_redirect('id=' . (int)$pdo->lastInsertId() . '&created=1');
         }
 
@@ -109,14 +111,36 @@ try {
         if ($action === 'update_redirector') {
             $name = trim((string)($_POST['name'] ?? ''));
             $slugRaw = trim((string)($_POST['slug'] ?? ''));
+            $redirectType = (string)($_POST['redirect_type'] ?? 'date');
+            if (!in_array($redirectType, ['date', 'link'], true)) $redirectType = 'date';
+            $antifraudEnabled = $redirectType === 'link' && !empty($_POST['antifraud_enabled']) ? 1 : 0;
+            $blockedRedirectUrl = trim((string)($_POST['blocked_redirect_url'] ?? ''));
+            if ($blockedRedirectUrl !== '' && !date_redirects_valid_url($blockedRedirectUrl)) {
+                throw new RuntimeException('URL de obrigado/bloqueio invalida.');
+            }
             if ($name === '') throw new RuntimeException('Informe o nome.');
             $slug = $slugRaw !== '' ? date_redirects_slugify($slugRaw) : date_redirects_unique_slug($pdo, $name, $id);
             if ($slug === '') throw new RuntimeException('Slug invalido.');
             $st = $pdo->prepare('SELECT id FROM date_redirectors WHERE slug = :slug AND id <> :id LIMIT 1');
             $st->execute(['slug' => $slug, 'id' => $id]);
             if ($st->fetchColumn()) throw new RuntimeException('Este slug ja esta em uso.');
-            $pdo->prepare('UPDATE date_redirectors SET name = :name, slug = :slug WHERE id = :id AND deleted_at IS NULL')
-                ->execute(['name' => $name, 'slug' => $slug, 'id' => $id]);
+            $pdo->prepare('
+                UPDATE date_redirectors
+                   SET name = :name,
+                       slug = :slug,
+                       redirect_type = :redirect_type,
+                       antifraud_enabled = :antifraud_enabled,
+                       blocked_redirect_url = NULLIF(:blocked_redirect_url, \'\')
+                 WHERE id = :id
+                   AND deleted_at IS NULL
+            ')->execute([
+                'name' => $name,
+                'slug' => $slug,
+                'redirect_type' => $redirectType,
+                'antifraud_enabled' => $antifraudEnabled,
+                'blocked_redirect_url' => $blockedRedirectUrl,
+                'id' => $id,
+            ]);
             dr_redirect('id=' . $id . '&saved=1');
         }
 
@@ -140,8 +164,16 @@ try {
             $name = (string)$src['name'] . ' (copia)';
             $slug = date_redirects_unique_slug($pdo, $name);
             $pdo->beginTransaction();
-            $pdo->prepare("INSERT INTO date_redirectors (name, slug, status) VALUES (:name, :slug, 'active')")
-                ->execute(['name' => $name, 'slug' => $slug]);
+            $pdo->prepare("
+                INSERT INTO date_redirectors (name, slug, status, redirect_type, antifraud_enabled, blocked_redirect_url)
+                VALUES (:name, :slug, 'active', :redirect_type, :antifraud_enabled, :blocked_redirect_url)
+            ")->execute([
+                'name' => $name,
+                'slug' => $slug,
+                'redirect_type' => (string)($src['redirect_type'] ?? 'date'),
+                'antifraud_enabled' => (int)($src['antifraud_enabled'] ?? 0),
+                'blocked_redirect_url' => (string)($src['blocked_redirect_url'] ?? ''),
+            ]);
             $newId = (int)$pdo->lastInsertId();
             $links = $pdo->prepare('SELECT label, url, starts_at, sort_order FROM date_redirect_links WHERE redirector_id = :id ORDER BY starts_at, id');
             $links->execute(['id' => $id]);
@@ -160,6 +192,9 @@ try {
         }
 
         if ($action === 'save_links') {
+            $stType = $pdo->prepare('SELECT redirect_type FROM date_redirectors WHERE id = :id AND deleted_at IS NULL LIMIT 1');
+            $stType->execute(['id' => $id]);
+            $redirectType = (string)($stType->fetchColumn() ?: 'date');
             $linkIds = $_POST['link_id'] ?? [];
             $labels = $_POST['label'] ?? [];
             $urls = $_POST['url'] ?? [];
@@ -181,7 +216,9 @@ try {
                 $startsAtRaw = (string)($starts[$idx] ?? '');
                 if ($url === '' && $startsAtRaw === '') continue;
                 if (!date_redirects_valid_url($url)) throw new RuntimeException('URL invalida: ' . $url);
-                $startsAt = date_redirects_parse_datetime($startsAtRaw);
+                $startsAt = $redirectType === 'link' && trim($startsAtRaw) === ''
+                    ? date('Y-m-d H:i:s')
+                    : date_redirects_parse_datetime($startsAtRaw);
                 if ($label === '') $label = 'Link ' . ((int)$idx + 1);
                 $params = [
                     'rid' => $id,
@@ -251,7 +288,7 @@ $redirectors = $pdo->query("
 $chartSeriesByRedirector = dr_click_chart_series_map($pdo, array_column($redirectors, 'id'), 365);
 
 $menu = 'date_redirects';
-$page_title = 'Redirecionadores por Data';
+$page_title = 'Redirecionadores';
 include __DIR__ . '/_header.php';
 ?>
 <style>
@@ -292,8 +329,9 @@ include __DIR__ . '/_header.php';
 .dr-editor-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
 .dr-editor-title{font-weight:800;color:var(--text);font-size:15px}
 .dr-editor-sub{color:var(--muted);font-size:12px;margin-top:3px}
-.dr-config{display:grid;grid-template-columns:minmax(0,1fr) 220px auto;gap:10px;align-items:end;border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:16px}
+.dr-config{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:10px;align-items:end;border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:16px}
 .dr-field label{display:block;color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.dr-check{height:36px;display:flex!important;align-items:center;gap:8px;background:#101827;border:1px solid var(--border-light);border-radius:6px;padding:0 10px;color:var(--text)!important;text-transform:none!important;letter-spacing:0!important;font-size:13px!important;margin:0!important}
 .dr-link-row .dr-field label{display:none}
 .dr-public-url{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;min-width:0;margin-top:10px}
 .dr-public-url code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
@@ -333,14 +371,18 @@ include __DIR__ . '/_header.php';
 <div class="dr-shell">
   <div class="dr-head">
     <div class="dr-title">
-      <h1>Seus Redirecionadores por Data</h1>
-      <p>Configure um link geral que muda o destino automaticamente conforme data e hora.</p>
+      <h1>Seus Redirecionadores</h1>
+      <p>Configure links por data ou links fixos com protecao antifraude para grupos.</p>
     </div>
     <?php if(!$edit): ?>
     <form method="post" class="dr-actions">
       <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
       <input type="hidden" name="action" value="create">
       <input name="name" placeholder="Nome do novo redirecionador" required <?=$canWrite?'':'disabled'?>>
+      <select name="redirect_type" <?=$canWrite?'':'disabled'?>>
+        <option value="date">Por data</option>
+        <option value="link">Por link/grupo</option>
+      </select>
       <button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>+ Criar novo</button>
     </form>
     <?php else: ?>
@@ -360,7 +402,7 @@ include __DIR__ . '/_header.php';
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z"/></svg>
           </div>
           <div style="min-width:0">
-            <div class="dr-name"><?=date_redirects_h($r['name'])?> <span class="dr-pill <?=(string)$r['status']==='active'?'ok':'warn'?>"><?=(string)$r['status']==='active'?'Ativo':'Pausado'?></span></div>
+            <div class="dr-name"><?=date_redirects_h($r['name'])?> <span class="dr-pill <?=(string)$r['status']==='active'?'ok':'warn'?>"><?=(string)$r['status']==='active'?'Ativo':'Pausado'?></span> <span class="dr-pill"><?=(string)($r['redirect_type'] ?? 'date')==='link'?'Por link':'Por data'?></span><?php if((int)($r['antifraud_enabled'] ?? 0)===1): ?> <span class="dr-pill ok">Antifraude</span><?php endif; ?></div>
             <div class="dr-linkline">
               <button type="button" class="btn btn-ghost btn-xs dr-copy" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar</button>
               <code><?=date_redirects_h($publicUrl)?></code>
@@ -397,13 +439,15 @@ include __DIR__ . '/_header.php';
       <?php endforeach; ?>
       <?php if(!$redirectors): ?><div class="dr-card dr-empty">Nenhum redirecionador criado.</div><?php endif; ?>
     </div>
-  <?php else: $publicUrl = date_redirects_public_url((string)$edit['slug']); ?>
+  <?php else: $publicUrl = date_redirects_public_url((string)$edit['slug']); $editType = (string)($edit['redirect_type'] ?? 'date'); $isLinkType = $editType === 'link'; ?>
     <section class="dr-editor">
       <div class="dr-editor-head">
         <div>
           <div class="dr-editor-title">Editar Redirecionador <?=date_redirects_h((string)$edit['name'])?></div>
           <div class="dr-editor-sub">
             <span class="dr-pill <?=(string)$edit['status']==='active'?'ok':'warn'?>"><?=(string)$edit['status']==='active'?'Ativo':'Pausado'?></span>
+            <span class="dr-pill"><?=$isLinkType?'Por link/grupo':'Por data'?></span>
+            <?php if((int)($edit['antifraud_enabled'] ?? 0)===1): ?><span class="dr-pill ok">Antifraude ativo</span><?php endif; ?>
             <span class="dr-pill"><?=(int)$edit['clicks_total']?> cliques</span>
             <span class="dr-pill"><?=count($links)?> links</span>
           </div>
@@ -429,6 +473,21 @@ include __DIR__ . '/_header.php';
               <label>Slug do link</label>
               <input name="slug" value="<?=date_redirects_h($edit['slug'])?>" required <?=$canWrite?'':'disabled'?>>
             </div>
+            <div class="dr-field">
+              <label>Tipo</label>
+              <select name="redirect_type" id="redirectType" <?=$canWrite?'':'disabled'?>>
+                <option value="date" <?=$editType==='date'?'selected':''?>>Por data</option>
+                <option value="link" <?=$editType==='link'?'selected':''?>>Por link/grupo</option>
+              </select>
+            </div>
+            <div class="dr-field dr-antifraud-options">
+              <label>Antifraude em grupos</label>
+              <label class="dr-check"><input type="checkbox" name="antifraud_enabled" value="1" <?=(int)($edit['antifraud_enabled'] ?? 0)===1?'checked':''?> <?=$canWrite?'':'disabled'?>> Ativar</label>
+            </div>
+            <div class="dr-field dr-antifraud-options">
+              <label>Pagina ficticia se bloquear</label>
+              <input name="blocked_redirect_url" value="<?=date_redirects_h((string)($edit['blocked_redirect_url'] ?? ''))?>" placeholder="<?=date_redirects_h(date_redirects_blocked_url())?>" <?=$canWrite?'':'disabled'?>>
+            </div>
             <button class="btn btn-primary" <?=$canWrite?'':'disabled'?>>Salvar</button>
           </div>
           <div class="dr-actions">
@@ -444,7 +503,7 @@ include __DIR__ . '/_header.php';
           <input type="hidden" name="action" value="save_links">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
           <div class="dr-link-table">
-            <div class="dr-link-head"><span>Link</span><span>URL</span><span>A partir de</span><span>Excluir</span></div>
+            <div class="dr-link-head"><span>Link</span><span>URL</span><span><?=$isLinkType?'Data interna':'A partir de'?></span><span>Excluir</span></div>
             <div id="dateLinks">
             <?php foreach($links as $link): ?>
             <div class="dr-link-row">
@@ -460,7 +519,7 @@ include __DIR__ . '/_header.php';
                 </div>
                 <div class="dr-field">
                   <label>Data e hora</label>
-                  <input type="datetime-local" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>" required <?=$canWrite?'':'disabled'?>>
+                  <input type="datetime-local" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>" <?=$isLinkType?'':'required'?> <?=$canWrite?'':'disabled'?>>
                 </div>
                 <label class="dr-trash" title="Apagar link">
                   <input type="checkbox" name="delete_link[]" value="<?=(int)$link['id']?>" <?=$canWrite?'':'disabled'?>>
@@ -558,8 +617,28 @@ const addDateLink = document.getElementById('addDateLink');
 if (addDateLink) {
   addDateLink.addEventListener('click', function() {
     const tpl = document.getElementById('dateLinkTemplate');
-    document.getElementById('dateLinks').appendChild(tpl.content.cloneNode(true));
+    const clone = tpl.content.cloneNode(true);
+    const type = document.getElementById('redirectType');
+    const starts = clone.querySelector('input[name="starts_at[]"]');
+    if (starts && type && type.value === 'link') starts.removeAttribute('required');
+    document.getElementById('dateLinks').appendChild(clone);
   });
+}
+const redirectType = document.getElementById('redirectType');
+function updateRedirectTypeUi() {
+  if (!redirectType) return;
+  const isLink = redirectType.value === 'link';
+  document.querySelectorAll('.dr-antifraud-options').forEach(el => {
+    el.style.display = isLink ? '' : 'none';
+  });
+  document.querySelectorAll('input[name="starts_at[]"]').forEach(input => {
+    if (isLink) input.removeAttribute('required');
+    else input.setAttribute('required', 'required');
+  });
+}
+if (redirectType) {
+  redirectType.addEventListener('change', updateRedirectTypeUi);
+  updateRedirectTypeUi();
 }
 
 (function() {

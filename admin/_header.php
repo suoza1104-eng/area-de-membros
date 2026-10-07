@@ -119,7 +119,7 @@ $titleMap = [
     'manychat'         => 'Manychat',
     'torpedo_voz'      => 'Torpedo de Voz',
     'telegram'         => 'Telegram',
-    'date_redirects'   => 'Redirecionadores por Data',
+    'date_redirects'   => 'Redirecionadores',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
     'whatsapp_monitor' => 'WhatsApp Monitor',
@@ -1011,7 +1011,7 @@ button:not([class]):hover { filter: brightness(1.07); }
       <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z"/>
       </svg>
-      Redirecionador por Data
+      Redirecionadores
     </a>
     <?php endif; ?>
 
