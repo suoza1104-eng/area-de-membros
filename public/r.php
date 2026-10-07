@@ -23,6 +23,7 @@ try {
     $targetUrl = $dest['url'];
     $redirector = $dest['redirector'];
     $link = $dest['link'];
+    $matchedSlug = (string)($dest['matched_slug'] ?? $slug);
 
     if ((string)($redirector['redirect_type'] ?? 'date') === 'link' && (int)($redirector['antifraud_enabled'] ?? 0) === 1) {
         $check = date_redirects_antifraud_check($pdo, $redirector, $link);
@@ -35,11 +36,13 @@ try {
             'email' => (string)($identity['email'] ?? ''),
             'blacklist_id' => $blacklist ? (int)($blacklist['id'] ?? 0) : null,
             'identifier_source' => (string)($identity['source'] ?? ''),
+            'slug' => $matchedSlug,
         ];
         if (!empty($check['blocked'])) {
             $targetUrl = date_redirects_blocked_url((string)($redirector['blocked_redirect_url'] ?? ''));
         }
     }
+    $meta['slug'] = $matchedSlug;
 
     date_redirects_log_click($pdo, $redirector, $link, $targetUrl, $meta);
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');

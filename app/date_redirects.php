@@ -36,17 +36,26 @@ function date_redirects_ensure_schema(PDO $pdo): void
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             redirector_id INT UNSIGNED NOT NULL,
             label VARCHAR(80) NOT NULL,
+            slug VARCHAR(120) NULL,
             url TEXT NOT NULL,
             starts_at DATETIME NOT NULL,
             sort_order INT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_date_redirect_links_slug (slug),
             KEY idx_date_redirect_links_redirector_time (redirector_id, starts_at),
             CONSTRAINT fk_date_redirect_links_redirector
                 FOREIGN KEY (redirector_id) REFERENCES date_redirectors(id)
                 ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    foreach ([
+        "ALTER TABLE date_redirect_links ADD COLUMN slug VARCHAR(120) NULL AFTER label",
+        "ALTER TABLE date_redirect_links ADD UNIQUE KEY uk_date_redirect_links_slug (slug)",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS date_redirect_clicks (
@@ -128,7 +137,43 @@ function date_redirects_unique_slug(PDO $pdo, string $name, int $ignoreId = 0): 
         $sql .= ' LIMIT 1';
         $st = $pdo->prepare($sql);
         $st->execute($params);
-        if (!$st->fetchColumn()) return $slug;
+        $redirectorExists = (bool)$st->fetchColumn();
+        $linkExists = false;
+        try {
+            $stLink = $pdo->prepare('SELECT id FROM date_redirect_links WHERE slug = :slug LIMIT 1');
+            $stLink->execute(['slug' => $slug]);
+            $linkExists = (bool)$stLink->fetchColumn();
+        } catch (Throwable $e) {}
+        if (!$redirectorExists && !$linkExists) return $slug;
+        $suffix = '-' . $i++;
+        $slug = substr($base, 0, 100 - strlen($suffix)) . $suffix;
+    }
+}
+
+function date_redirects_unique_link_slug(PDO $pdo, string $name, int $ignoreLinkId = 0): string
+{
+    $base = date_redirects_slugify($name);
+    $slug = $base;
+    $i = 2;
+    while (true) {
+        $redirectorExists = false;
+        try {
+            $st = $pdo->prepare('SELECT id FROM date_redirectors WHERE slug = :slug LIMIT 1');
+            $st->execute(['slug' => $slug]);
+            $redirectorExists = (bool)$st->fetchColumn();
+        } catch (Throwable $e) {}
+
+        $sql = 'SELECT id FROM date_redirect_links WHERE slug = :slug';
+        $params = ['slug' => $slug];
+        if ($ignoreLinkId > 0) {
+            $sql .= ' AND id <> :id';
+            $params['id'] = $ignoreLinkId;
+        }
+        $sql .= ' LIMIT 1';
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        if (!$redirectorExists && !$st->fetchColumn()) return $slug;
+
         $suffix = '-' . $i++;
         $slug = substr($base, 0, 100 - strlen($suffix)) . $suffix;
     }
@@ -213,6 +258,26 @@ function date_redirects_seed(PDO $pdo): void
 
 function date_redirects_find_destination(PDO $pdo, string $slug): ?array
 {
+    $st = $pdo->prepare("
+        SELECT r.*, l.id AS _link_id
+          FROM date_redirect_links l
+          JOIN date_redirectors r ON r.id = l.redirector_id
+         WHERE l.slug = :slug
+           AND r.redirect_type = 'link'
+           AND r.status = 'active'
+           AND r.deleted_at IS NULL
+         LIMIT 1
+    ");
+    $st->execute(['slug' => $slug]);
+    $redirector = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if ($redirector) {
+        $st = $pdo->prepare('SELECT * FROM date_redirect_links WHERE id = :id LIMIT 1');
+        $st->execute(['id' => (int)$redirector['_link_id']]);
+        $link = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (!$link || !date_redirects_valid_url((string)$link['url'])) return null;
+        return ['redirector' => $redirector, 'link' => $link, 'url' => (string)$link['url'], 'matched_slug' => $slug];
+    }
+
     $st = $pdo->prepare("SELECT * FROM date_redirectors WHERE slug = :slug AND deleted_at IS NULL LIMIT 1");
     $st->execute(['slug' => $slug]);
     $redirector = $st->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -232,7 +297,7 @@ function date_redirects_find_destination(PDO $pdo, string $slug): ?array
     $link = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 
     if (!$link || !date_redirects_valid_url((string)$link['url'])) return null;
-    return ['redirector' => $redirector, 'link' => $link, 'url' => (string)$link['url']];
+    return ['redirector' => $redirector, 'link' => $link, 'url' => (string)$link['url'], 'matched_slug' => $slug];
 }
 
 function date_redirects_log_click(PDO $pdo, array $redirector, ?array $link, ?string $url, array $meta = []): void
@@ -240,6 +305,10 @@ function date_redirects_log_click(PDO $pdo, array $redirector, ?array $link, ?st
     $ip = substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 64);
     $ua = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
     $referer = substr((string)($_SERVER['HTTP_REFERER'] ?? ''), 0, 255);
+    $clickSlug = trim((string)($meta['slug'] ?? ''));
+    if ($clickSlug === '' && $link && !empty($link['slug'])) $clickSlug = (string)$link['slug'];
+    if ($clickSlug === '') $clickSlug = (string)$redirector['slug'];
+
     $pdo->prepare("
         INSERT INTO date_redirect_clicks
             (redirector_id, link_id, slug, destination_url, status, user_id, phone, email, blacklist_id, identifier_source, ip, user_agent, referer)
@@ -248,7 +317,7 @@ function date_redirects_log_click(PDO $pdo, array $redirector, ?array $link, ?st
     ")->execute([
         'rid' => (int)$redirector['id'],
         'lid' => $link ? (int)$link['id'] : null,
-        'slug' => (string)$redirector['slug'],
+        'slug' => $clickSlug,
         'url' => $url,
         'status' => (string)($meta['status'] ?? 'redirected'),
         'user_id' => (int)($meta['user_id'] ?? 0) ?: null,

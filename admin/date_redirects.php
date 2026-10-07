@@ -175,13 +175,16 @@ try {
                 'blocked_redirect_url' => (string)($src['blocked_redirect_url'] ?? ''),
             ]);
             $newId = (int)$pdo->lastInsertId();
-            $links = $pdo->prepare('SELECT label, url, starts_at, sort_order FROM date_redirect_links WHERE redirector_id = :id ORDER BY starts_at, id');
+            $links = $pdo->prepare('SELECT label, slug, url, starts_at, sort_order FROM date_redirect_links WHERE redirector_id = :id ORDER BY starts_at, id');
             $links->execute(['id' => $id]);
-            $ins = $pdo->prepare('INSERT INTO date_redirect_links (redirector_id, label, url, starts_at, sort_order) VALUES (:rid, :label, :url, :starts_at, :sort_order)');
+            $ins = $pdo->prepare('INSERT INTO date_redirect_links (redirector_id, label, slug, url, starts_at, sort_order) VALUES (:rid, :label, :slug, :url, :starts_at, :sort_order)');
             foreach ($links->fetchAll(PDO::FETCH_ASSOC) ?: [] as $link) {
+                $linkSlug = trim((string)($link['slug'] ?? ''));
+                if ($linkSlug !== '') $linkSlug = date_redirects_unique_link_slug($pdo, $linkSlug);
                 $ins->execute([
                     'rid' => $newId,
                     'label' => $link['label'],
+                    'slug' => $linkSlug !== '' ? $linkSlug : null,
                     'url' => $link['url'],
                     'starts_at' => $link['starts_at'],
                     'sort_order' => $link['sort_order'],
@@ -197,13 +200,14 @@ try {
             $redirectType = (string)($stType->fetchColumn() ?: 'date');
             $linkIds = $_POST['link_id'] ?? [];
             $labels = $_POST['label'] ?? [];
+            $slugs = $_POST['link_slug'] ?? [];
             $urls = $_POST['url'] ?? [];
             $starts = $_POST['starts_at'] ?? [];
             $delete = array_flip(array_map('intval', $_POST['delete_link'] ?? []));
             $seen = [];
             $pdo->beginTransaction();
-            $upd = $pdo->prepare('UPDATE date_redirect_links SET label = :label, url = :url, starts_at = :starts_at, sort_order = :sort_order WHERE id = :id AND redirector_id = :rid');
-            $ins = $pdo->prepare('INSERT INTO date_redirect_links (redirector_id, label, url, starts_at, sort_order) VALUES (:rid, :label, :url, :starts_at, :sort_order)');
+            $upd = $pdo->prepare('UPDATE date_redirect_links SET label = :label, slug = :slug, url = :url, starts_at = :starts_at, sort_order = :sort_order WHERE id = :id AND redirector_id = :rid');
+            $ins = $pdo->prepare('INSERT INTO date_redirect_links (redirector_id, label, slug, url, starts_at, sort_order) VALUES (:rid, :label, :slug, :url, :starts_at, :sort_order)');
             $del = $pdo->prepare('DELETE FROM date_redirect_links WHERE id = :id AND redirector_id = :rid');
             foreach ($urls as $idx => $urlRaw) {
                 $linkId = (int)($linkIds[$idx] ?? 0);
@@ -213,6 +217,7 @@ try {
                 }
                 $url = trim((string)$urlRaw);
                 $label = trim((string)($labels[$idx] ?? ''));
+                $linkSlugRaw = trim((string)($slugs[$idx] ?? ''));
                 $startsAtRaw = (string)($starts[$idx] ?? '');
                 if ($url === '' && $startsAtRaw === '') continue;
                 if (!date_redirects_valid_url($url)) throw new RuntimeException('URL invalida: ' . $url);
@@ -220,9 +225,15 @@ try {
                     ? date('Y-m-d H:i:s')
                     : date_redirects_parse_datetime($startsAtRaw);
                 if ($label === '') $label = 'Link ' . ((int)$idx + 1);
+                $linkSlug = null;
+                if ($redirectType === 'link') {
+                    $slugSeed = $linkSlugRaw !== '' ? $linkSlugRaw : $label;
+                    $linkSlug = date_redirects_unique_link_slug($pdo, $slugSeed, $linkId);
+                }
                 $params = [
                     'rid' => $id,
                     'label' => $label,
+                    'slug' => $linkSlug,
                     'url' => $url,
                     'starts_at' => $startsAt,
                     'sort_order' => (int)$idx + 1,
@@ -268,7 +279,7 @@ if ($editId > 0) {
                  GROUP BY link_id
               ) c ON c.link_id = l.id
              WHERE l.redirector_id = :rid
-             ORDER BY l.starts_at ASC, l.sort_order ASC, l.id ASC
+             ORDER BY l.sort_order ASC, l.starts_at ASC, l.id ASC
         ");
         $st->execute(['rid' => $editId]);
         $links = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -278,6 +289,7 @@ if ($editId > 0) {
 $redirectors = $pdo->query("
     SELECT r.*,
            (SELECT COUNT(*) FROM date_redirect_links l WHERE l.redirector_id = r.id) link_count,
+           (SELECT l.slug FROM date_redirect_links l WHERE l.redirector_id = r.id AND l.slug IS NOT NULL AND l.slug <> '' ORDER BY l.sort_order ASC, l.id ASC LIMIT 1) first_link_slug,
            (SELECT MIN(starts_at) FROM date_redirect_links l WHERE l.redirector_id = r.id) first_at,
            (SELECT MAX(starts_at) FROM date_redirect_links l WHERE l.redirector_id = r.id) last_at
       FROM date_redirectors r
@@ -337,11 +349,14 @@ include __DIR__ . '/_header.php';
 .dr-public-url code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .dr-link-table{display:grid;gap:8px}
 .dr-link-head,.dr-link-row{display:grid;grid-template-columns:54px minmax(220px,1fr) 210px 52px;gap:10px;align-items:center}
+.dr-link-table.is-link .dr-link-head,.dr-link-table.is-link .dr-link-row{grid-template-columns:54px minmax(220px,320px) minmax(260px,1fr) 52px}
 .dr-link-head{padding:0 8px 2px;color:var(--muted);font-size:10px;text-transform:uppercase;font-weight:800;letter-spacing:.06em}
 .dr-link-row{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.025)}
 .dr-link-row.is-delete{opacity:.48;border-color:rgba(239,68,68,.35);background:var(--danger-dim)}
 .dr-link-label{color:var(--muted);font-size:12px;text-align:center}
 .dr-link-label strong{display:block;color:var(--text);font-size:12px}
+.dr-link-public{display:flex;align-items:center;gap:7px;margin-top:7px;min-width:0;color:var(--muted);font-size:11px}
+.dr-link-public code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 .dr-trash{width:36px;height:36px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:var(--danger)!important;color:white!important;border:0!important;padding:0!important}
 .dr-trash svg{width:16px;height:16px}
 .dr-trash input{display:none}
@@ -395,7 +410,7 @@ include __DIR__ . '/_header.php';
 
   <?php if(!$edit): ?>
     <div class="dr-list">
-      <?php foreach($redirectors as $r): $publicUrl = date_redirects_public_url((string)$r['slug']); ?>
+      <?php foreach($redirectors as $r): $isRowLinkType = (string)($r['redirect_type'] ?? 'date') === 'link'; $firstLinkSlug = trim((string)($r['first_link_slug'] ?? '')); $publicUrl = $isRowLinkType && $firstLinkSlug !== '' ? date_redirects_public_url($firstLinkSlug) : date_redirects_public_url((string)$r['slug']); ?>
       <div class="dr-row">
         <div class="dr-row-main">
           <div class="dr-icon">
@@ -404,8 +419,12 @@ include __DIR__ . '/_header.php';
           <div style="min-width:0">
             <div class="dr-name"><?=date_redirects_h($r['name'])?> <span class="dr-pill <?=(string)$r['status']==='active'?'ok':'warn'?>"><?=(string)$r['status']==='active'?'Ativo':'Pausado'?></span> <span class="dr-pill"><?=(string)($r['redirect_type'] ?? 'date')==='link'?'Por link':'Por data'?></span><?php if((int)($r['antifraud_enabled'] ?? 0)===1): ?> <span class="dr-pill ok">Antifraude</span><?php endif; ?></div>
             <div class="dr-linkline">
+              <?php if($isRowLinkType && $firstLinkSlug === ''): ?>
+              <span>Cadastre os slugs individuais dentro do redirecionador.</span>
+              <?php else: ?>
               <button type="button" class="btn btn-ghost btn-xs dr-copy" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar</button>
               <code><?=date_redirects_h($publicUrl)?></code>
+              <?php endif; ?>
             </div>
           </div>
         </div>
@@ -416,8 +435,10 @@ include __DIR__ . '/_header.php';
           <div class="dr-menu-panel">
             <button type="button" data-metrics-id="<?=(int)$r['id']?>" data-metrics-name="<?=date_redirects_h((string)$r['name'])?>" data-metrics-total="<?=(int)$r['clicks_total']?>">Abrir metricas</button>
             <a href="date_redirects.php?id=<?=(int)$r['id']?>">Editar redirecionador</a>
-            <button type="button" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar link geral</button>
+            <?php if(!$isRowLinkType || $firstLinkSlug !== ''): ?>
+            <button type="button" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar <?=$isRowLinkType?'primeiro link':'link geral'?></button>
             <a href="<?=date_redirects_h($publicUrl)?>" target="_blank">Abrir link</a>
+            <?php endif; ?>
             <form method="post">
               <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
               <input type="hidden" name="id" value="<?=(int)$r['id']?>">
@@ -470,7 +491,7 @@ include __DIR__ . '/_header.php';
               <input name="name" value="<?=date_redirects_h($edit['name'])?>" required <?=$canWrite?'':'disabled'?>>
             </div>
             <div class="dr-field">
-              <label>Slug do link</label>
+              <label><?=$isLinkType?'Slug interno':'Slug do link geral'?></label>
               <input name="slug" value="<?=date_redirects_h($edit['slug'])?>" required <?=$canWrite?'':'disabled'?>>
             </div>
             <div class="dr-field">
@@ -492,35 +513,62 @@ include __DIR__ . '/_header.php';
           </div>
           <div class="dr-actions">
             <button type="button" class="btn btn-primary" id="addDateLink" <?=$canWrite?'':'disabled'?>>+ Adicionar mais um link</button>
+            <?php if(!$isLinkType): ?>
             <button type="button" class="btn btn-ghost" data-copy="<?=date_redirects_h($publicUrl)?>">Copiar link</button>
             <a class="btn btn-ghost" href="<?=date_redirects_h($publicUrl)?>" target="_blank">Testar</a>
+            <?php endif; ?>
           </div>
+          <?php if(!$isLinkType): ?>
           <div class="dr-public-url"><span>Link geral</span><code><?=date_redirects_h($publicUrl)?></code></div>
+          <?php else: ?>
+          <div class="dr-public-url"><span>Links publicos</span><code>cada linha abaixo tem seu proprio slug e link publico.</code></div>
+          <?php endif; ?>
         </form>
 
         <form method="post" id="linksForm" style="margin-top:16px">
           <input type="hidden" name="csrf" value="<?=date_redirects_h($csrf)?>">
           <input type="hidden" name="action" value="save_links">
           <input type="hidden" name="id" value="<?=(int)$edit['id']?>">
-          <div class="dr-link-table">
-            <div class="dr-link-head"><span>Link</span><span>URL</span><span><?=$isLinkType?'Data interna':'A partir de'?></span><span>Excluir</span></div>
+          <div class="dr-link-table <?=$isLinkType?'is-link':''?>">
+            <div class="dr-link-head"><span>Link</span><span><?=$isLinkType?'Slug publico':'URL'?></span><span><?=$isLinkType?'URL de destino':'A partir de'?></span><span>Excluir</span></div>
             <div id="dateLinks">
             <?php foreach($links as $link): ?>
+            <?php $linkSlug = trim((string)($link['slug'] ?? '')); $linkPublicUrl = $linkSlug !== '' ? date_redirects_public_url($linkSlug) : ''; ?>
             <div class="dr-link-row">
               <input type="hidden" name="link_id[]" value="<?=(int)$link['id']?>">
               <div class="dr-link-label">
                 <strong><?=date_redirects_h($link['label'])?></strong>
                 <?=(int)$link['clicks']?> cliques
               </div>
+              <?php if($isLinkType): ?>
+                <div class="dr-field">
+                  <label>Slug publico</label>
+                  <input name="link_slug[]" value="<?=date_redirects_h($linkSlug)?>" placeholder="ex: grupo-061026" required <?=$canWrite?'':'disabled'?>>
+                  <?php if($linkPublicUrl !== ''): ?>
+                  <div class="dr-link-public">
+                    <button type="button" class="btn btn-ghost btn-xs dr-copy" data-copy="<?=date_redirects_h($linkPublicUrl)?>">Copiar</button>
+                    <code><?=date_redirects_h($linkPublicUrl)?></code>
+                  </div>
+                  <?php endif; ?>
+                </div>
+                <div class="dr-field">
+                  <label>URL de destino</label>
+                  <input name="url[]" value="<?=date_redirects_h($link['url'])?>" required <?=$canWrite?'':'disabled'?>>
+                  <input type="hidden" name="label[]" value="<?=date_redirects_h($link['label'])?>">
+                  <input type="hidden" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>">
+                </div>
+              <?php else: ?>
                 <div class="dr-field">
                   <label><?=date_redirects_h($link['label'])?> · <?=(int)$link['clicks']?> cliques</label>
                   <input name="url[]" value="<?=date_redirects_h($link['url'])?>" required <?=$canWrite?'':'disabled'?>>
                   <input type="hidden" name="label[]" value="<?=date_redirects_h($link['label'])?>">
                 </div>
                 <div class="dr-field">
+                  <input type="hidden" name="link_slug[]" value="">
                   <label>Data e hora</label>
                   <input type="datetime-local" name="starts_at[]" value="<?=date_redirects_h(dr_datetime_input((string)$link['starts_at']))?>" <?=$isLinkType?'':'required'?> <?=$canWrite?'':'disabled'?>>
                 </div>
+              <?php endif; ?>
                 <label class="dr-trash" title="Apagar link">
                   <input type="checkbox" name="delete_link[]" value="<?=(int)$link['id']?>" <?=$canWrite?'':'disabled'?>>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -577,6 +625,7 @@ include __DIR__ . '/_header.php';
     <div class="dr-field">
       <input name="url[]" placeholder="https://..." required>
       <input type="hidden" name="label[]" value="Novo link">
+      <input type="hidden" name="link_slug[]" value="">
     </div>
     <div class="dr-field">
       <input type="datetime-local" name="starts_at[]" required>
@@ -619,9 +668,27 @@ if (addDateLink) {
     const tpl = document.getElementById('dateLinkTemplate');
     const clone = tpl.content.cloneNode(true);
     const type = document.getElementById('redirectType');
-    const starts = clone.querySelector('input[name="starts_at[]"]');
-    if (starts && type && type.value === 'link') starts.removeAttribute('required');
-    document.getElementById('dateLinks').appendChild(clone);
+    const target = document.getElementById('dateLinks');
+    if (type && type.value === 'link') {
+      const row = document.createElement('div');
+      row.className = 'dr-link-row';
+      row.innerHTML = `
+        <input type="hidden" name="link_id[]" value="0">
+        <div class="dr-link-label"><strong>Novo</strong> 0 cliques</div>
+        <div class="dr-field">
+          <input name="link_slug[]" placeholder="ex: grupo-061026" required>
+        </div>
+        <div class="dr-field">
+          <input name="url[]" placeholder="https://chat.whatsapp.com/..." required>
+          <input type="hidden" name="label[]" value="Novo link">
+          <input type="hidden" name="starts_at[]" value="">
+        </div>
+        <span></span>
+      `;
+      target.appendChild(row);
+      return;
+    }
+    target.appendChild(clone);
   });
 }
 const redirectType = document.getElementById('redirectType');
