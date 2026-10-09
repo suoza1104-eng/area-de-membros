@@ -105,6 +105,43 @@ function enrollment_find_user(PDO $pdo, string $email, string $telefone): ?array
     return null;
 }
 
+/**
+ * Garante que o aluno tenha turma: se estiver sem, entra na turma com janela de
+ * inscricao aberta agora (mesma regra do formulario), com a data da live.
+ * Usado pela recuperacao de login, que cria/encontra alunos fora do fluxo normal.
+ * Nao dispara eventos de inscricao. Devolve o codigo da turma atribuida ('' se nada mudou).
+ */
+function enrollment_ensure_active_course_access(PDO $pdo, int $userId, bool $isNew = false): string
+{
+    if ($userId <= 0) return '';
+    enrollment_ensure_schema($pdo);
+    $st = $pdo->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
+    $st->execute([':id' => $userId]);
+    $user = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$user || course_access_user_turma_code($user) !== '') return '';
+
+    $turma = enrollment_find_turma($pdo);
+    $codigoTurma = trim((string)($turma['codigo'] ?? ''));
+    if ($codigoTurma === '') return '';
+    $dataLive = trim((string)($turma['data_live'] ?? ''));
+    $codigoLive = trim((string)($turma['codigo_live'] ?? ''));
+
+    $sets = [];
+    $params = [':id' => $userId];
+    foreach (['codigo_turma' => $codigoTurma, 'turma_codigo' => $codigoTurma, 'data_live' => $dataLive,
+              'turma_live_at' => $dataLive, 'codigo_live' => $codigoLive] as $column => $value) {
+        if ($value === '' || !enrollment_column_exists($pdo, 'users', $column)) continue;
+        $sets[] = "`$column` = :v_$column";
+        $params[":v_$column"] = $value;
+    }
+    if (!$sets) return '';
+    $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id')->execute($params);
+    $pdo->prepare("INSERT INTO inscricao_logs (user_id, codigo_turma, is_novo, access_type, source, created_at)
+                   VALUES (:uid, :turma, :novo, 'free', 'login_recovery', NOW())")
+        ->execute([':uid' => $userId, ':turma' => $codigoTurma, ':novo' => $isNew ? 1 : 0]);
+    return $codigoTurma;
+}
+
 /** Registra uma inscricao com as mesmas atribuicoes, independentemente do canal de entrada. */
 function enrollment_register(PDO $pdo, array $input): array
 {

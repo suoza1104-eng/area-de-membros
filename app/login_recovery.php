@@ -210,7 +210,7 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
     // 2. Garantir turma e acesso ao curso ativo
     try {
         if (function_exists('enrollment_ensure_active_course_access')) {
-            enrollment_ensure_active_course_access($pdo, $userId);
+            enrollment_ensure_active_course_access($pdo, $userId, !empty($lrUsuarioCriado));
         }
     } catch (Throwable $e) {}
 
