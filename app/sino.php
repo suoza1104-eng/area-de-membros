@@ -268,8 +268,11 @@ function sino_user_select(PDO $pdo): string
     $bloq = sino_column_exists($pdo, 'users', 'bloquear') ? 'COALESCE(u.bloquear,0)' : '0';
     $link = sino_column_exists($pdo, 'turmas', 'link_live') ? 't.link_live' : 'NULL';
     $codigoLive = sino_column_exists($pdo, 'turmas', 'codigo_live') ? 't.codigo_live' : 'NULL';
+    // Data/hora de inscricao: a ultima inscricao (reinscricao conta) ou o cadastro.
+    $inscricao = sino_column_exists($pdo, 'users', 'created_at') ? 'u.created_at' : 'NULL';
+    if (sino_column_exists($pdo, 'inscricao_logs', 'created_at')) $inscricao = "COALESCE((SELECT MAX(il.created_at) FROM inscricao_logs il WHERE il.user_id = u.id), {$inscricao})";
     return "SELECT u.id, u.nome, u.email, u.telefone, {$turmaExpr} AS turma_codigo,
-                   {$userLive} AS user_live, {$bloq} AS bloquear,
+                   {$userLive} AS user_live, {$bloq} AS bloquear, {$inscricao} AS data_inscricao,
                    t.data_live AS turma_live, {$link} AS turma_link, {$codigoLive} AS turma_codigo_live
               FROM users u
          LEFT JOIN turmas t ON t.codigo = {$turmaExpr}";
@@ -280,7 +283,48 @@ function sino_load_user(PDO $pdo, int $userId): ?array
     $st = $pdo->prepare(sino_user_select($pdo) . ' WHERE u.id = :id LIMIT 1');
     $st->execute([':id' => $userId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
-    return $row ?: null;
+    if (!$row) return null;
+    $rows = [$row];
+    sino_attach_magic_links($pdo, $rows);
+    return $rows[0];
+}
+
+/**
+ * Link de login direto (magic link) de cada aluno: reaproveita um link valido
+ * por mais 15 dias; senao cria um de 60 dias (em lote, uma consulta por grupo).
+ */
+function sino_attach_magic_links(PDO $pdo, array &$rows): void
+{
+    $ids = array_values(array_unique(array_filter(array_map(static fn($r) => (int)($r['id'] ?? 0), $rows))));
+    if (!$ids) return;
+    $links = [];
+    try {
+        if (function_exists('gerar_magic_link') && !sino_column_exists($pdo, 'magic_links', 'token')) gerar_magic_link($ids[0], 60, false); // cria a tabela
+        foreach (array_chunk($ids, 1000) as $chunk) {
+            $in = implode(',', array_map('intval', $chunk));
+            $st = $pdo->query("SELECT user_id, token FROM magic_links WHERE user_id IN ({$in}) AND one_shot = 0 AND expires_at > DATE_ADD(NOW(), INTERVAL 15 DAY) ORDER BY expires_at ASC");
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) $links[(int)$r['user_id']] = (string)$r['token'];
+        }
+        $novos = array_values(array_diff($ids, array_keys($links)));
+        foreach (array_chunk($novos, 500) as $chunk) {
+            $vals = []; $params = [];
+            foreach ($chunk as $i => $uid) {
+                $token = bin2hex(random_bytes(32));
+                $vals[] = "(:u{$i}, :t{$i}, DATE_ADD(NOW(), INTERVAL 60 DAY), 0)";
+                $params[":u{$i}"] = $uid; $params[":t{$i}"] = $token;
+                $links[$uid] = $token;
+            }
+            $pdo->prepare('INSERT INTO magic_links (user_id, token, expires_at, one_shot) VALUES ' . implode(',', $vals))->execute($params);
+        }
+    } catch (Throwable $e) {
+        @error_log('sino_attach_magic_links: ' . $e->getMessage());
+    }
+    $base = rtrim((string)BASE_URL, '/') . '/login.php?am=';
+    foreach ($rows as &$row) {
+        $uid = (int)($row['id'] ?? 0);
+        if (isset($links[$uid])) $row['magic_link'] = $base . $links[$uid];
+    }
+    unset($row);
 }
 
 /**
@@ -320,6 +364,10 @@ function sino_contact_from_row(array $row, ?string &$motivo = null): ?array
         if ($repescagem !== '') $link = $repescagem;
     }
     if ($link !== '') $fields['link_live'] = $link;
+    $magic = trim((string)($row['magic_link'] ?? ''));
+    if ($magic !== '') $fields['magic_link'] = $magic;
+    $inscricao = sino_iso_datetime($row['data_inscricao'] ?? '');
+    if ($inscricao !== null) $fields['data_inscricao'] = $inscricao;
 
     if ($fields) $contact['fields'] = $fields;
     $contact['tags'] = [SINO_TAG_ALUNO];
@@ -495,7 +543,7 @@ function sino_process_fluxo(PDO $pdo, array $job, array $payload): string
 }
 
 /** Alunos de uma turma, a partir de um id, prontos para o lote. */
-function sino_turma_contacts(PDO $pdo, string $codigo, int $afterId, int $limit, array &$ignorados = []): array
+function sino_turma_contacts(PDO $pdo, string $codigo, int $afterId, int $limit, array &$ignorados = [], bool $withMagicLinks = true): array
 {
     $where = sino_column_exists($pdo, 'users', 'turma_codigo')
         ? "(u.codigo_turma = :c1 OR ((u.codigo_turma IS NULL OR u.codigo_turma = '') AND u.turma_codigo = :c2))"
@@ -506,7 +554,9 @@ function sino_turma_contacts(PDO $pdo, string $codigo, int $afterId, int $limit,
     $st->execute($params);
     $contacts = [];
     $lastId = $afterId;
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if ($withMagicLinks) sino_attach_magic_links($pdo, $rows);
+    foreach ($rows as $row) {
         $lastId = (int)$row['id'];
         $motivo = null;
         $contact = sino_contact_from_row($row, $motivo);
@@ -734,7 +784,7 @@ function sino_initial_load(PDO $pdo, bool $dryRun, ?string $turma = null): array
         $qtd = 0; $lotes = 0; $after = 0; $ign = [];
         do {
             $ignLote = [];
-            $lote = sino_turma_contacts($pdo, $codigo, $after, SINO_BATCH_MAX, $ignLote);
+            $lote = sino_turma_contacts($pdo, $codigo, $after, SINO_BATCH_MAX, $ignLote, false); // so conta: sem gerar links
             foreach ($ignLote as $k => $v) $ign[$k] = ($ign[$k] ?? 0) + $v;
             $qtd += count($lote['contacts']);
             if ($lote['contacts']) $lotes++;
