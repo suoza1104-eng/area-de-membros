@@ -1490,6 +1490,7 @@ function support_agent_reschedule_live(PDO $pdo,int $userId,string $slot): bool
     $liveUrl=trim((string)get_setting('reagendar_live_url',''));$offsetMin=(int)get_setting('reagendar_dispatch_offset_min','0');$delayMs=max(0,min(30000,(int)get_setting('reagendar_dispatch_delay_ms','500')));$dt=new DateTimeImmutable($slot,new DateTimeZone('America/Sao_Paulo'));$dispatchAt=$dt->modify(($offsetMin>=0?'+':'').$offsetMin.' minutes')->format('Y-m-d H:i:s');$histId=0;
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET '.implode(',',$sets).' WHERE id=:id LIMIT 1')->execute($params);
+    sino_aluno_atualizado((int)$userId); // Sino (WhatsApp): so enfileira
     if(support_chat_table_exists($pdo,'reagendamentos_live')){
         $cols=['user_id','old_codigo_turma','new_codigo_turma','old_turma_live_at','new_turma_live_at','status','origem','created_at'];$vals=[':u',':oc',':nc',':ol',':nl',"'reagendado'",':origem','NOW()'];$p=['u'=>$userId,'oc'=>$turma?:null,'nc'=>$turma?:null,'ol'=>$old?:null,'nl'=>$slot,'origem'=>'agente_suporte'];
         if(support_chat_column_exists($pdo,'reagendamentos_live','live_url')){$cols[]='live_url';$vals[]=':url';$p['url']=$liveUrl?:null;}

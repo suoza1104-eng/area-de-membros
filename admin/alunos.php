@@ -230,6 +230,7 @@ function al_reagendar_live_manual(PDO $pdo, int $userId, string $dataLiveRaw): i
     $pdo->beginTransaction();
     try {
         $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
+        sino_aluno_atualizado((int)$userId); // Sino (WhatsApp): so enfileira
         $pdo->prepare("INSERT INTO reagendamentos_live
             (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
             VALUES (:u, :oc, :nc, :ol, :nl, 'reagendado', :url, :sf, :delay, :ip, :ua, 'suporte', NULL, NOW())")
@@ -410,6 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             try {
                 $pdo->prepare("UPDATE users SET email = :e WHERE id = :id")->execute([':e' => $nemail, ':id' => $uid]);
+                sino_aluno_atualizado((int)$uid); // Sino (WhatsApp): so enfileira
                 $msgPost = 'E-mail/login atualizado.';
             } catch (Throwable $e) {
                 $msgPost = 'Erro: ' . $e->getMessage(); $msgPostTipo = 'erro';

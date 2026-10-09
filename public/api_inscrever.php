@@ -354,6 +354,10 @@ try {
         ]);
     }
 
+    // Sino (WhatsApp): so enfileira; o envio e feito pelo cron.
+    if ($foi_cadastrado) sino_aluno_cadastrado($user_id);
+    else sino_aluno_atualizado($user_id);
+
     // Captura os eventos antes de responder ao hub. O envio continua assincrono
     // pelo cron, mas o registro do evento nao depende do trabalho pos-resposta.
     $qtdInscricoes     = 0;

@@ -266,6 +266,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($nomeCorrigido !== trim((string)($user['nome'] ?? ''))) {
                         $stNome = $pdo->prepare("UPDATE users SET nome = :nome WHERE id = :id LIMIT 1");
                         $stNome->execute(['nome' => $nomeCorrigido, 'id' => $userId]);
+                        sino_aluno_atualizado((int)$userId); // Sino (WhatsApp): so enfileira
                         $user['nome'] = $nomeCorrigido;
                     }
             $pdo->beginTransaction();

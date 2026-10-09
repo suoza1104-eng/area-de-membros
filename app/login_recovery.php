@@ -199,6 +199,7 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
             $ins = $pdo->prepare('INSERT INTO users (' . implode(', ', $quotedCols) . ') VALUES (' . implode(', ', $holders) . ')');
             $ins->execute($params);
             $userId = (int)$pdo->lastInsertId();
+            $lrUsuarioCriado = true;
         }
     }
     
@@ -212,6 +213,10 @@ function login_recovery_auto_register(PDO $pdo, string $email, string $nome, str
             enrollment_ensure_active_course_access($pdo, $userId);
         }
     } catch (Throwable $e) {}
+
+    // Sino (WhatsApp): so enfileira, depois de a turma ter sido garantida acima.
+    if (!empty($lrUsuarioCriado)) sino_aluno_cadastrado($userId);
+    else sino_aluno_atualizado($userId);
     
     // 3. Adicionar Tag RECUPE_CADASTRO_LOGIN
     try {

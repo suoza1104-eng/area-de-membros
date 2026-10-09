@@ -384,6 +384,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ji          = (string)($_POST['janela_inicio'] ?? '');
     $jf          = (string)($_POST['janela_fim'] ?? '');
     $dl          = (string)($_POST['data_live'] ?? '');
+    $linkLive    = trim((string)($_POST['link_live'] ?? ''));
     $senhaCert   = trim((string)($_POST['senha_certificado'] ?? ''));
     $accessDeadlineEnabled = isset($_POST['access_deadline_enabled']) ? 1 : 0;
     $accessDeadlineDays = max(1, min(3650, (int)($_POST['access_deadline_days'] ?? 30)));
@@ -411,9 +412,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$hasSenhaCert) {
         try { $pdo->exec("ALTER TABLE turmas ADD COLUMN senha_certificado VARCHAR(255) NOT NULL DEFAULT ''"); $hasSenhaCert = true; } catch (Throwable $e) {}
     }
+    $hasLinkLive = col_exists($pdo, 'turmas', 'link_live');
+    if (!$hasLinkLive) {
+        try { $pdo->exec("ALTER TABLE turmas ADD COLUMN link_live VARCHAR(500) NULL"); $hasLinkLive = true; } catch (Throwable $e) {}
+    }
+
+    // Estado anterior, para avisar o Sino so quando data/link da live mudarem.
+    $turmaAntes = [];
+    if ($id > 0) {
+        $stAntes = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+        $stAntes->execute([':id' => $id]);
+        $turmaAntes = $stAntes->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
 
     if ($id > 0) {
         $set = []; $params = [':id' => $id];
+        if ($hasLinkLive) { $set[] = "link_live = :ll"; $params[':ll'] = $linkLive !== '' ? $linkLive : null; }
         $set[] = "codigo = :c";         $params[':c']  = $codigo;
         $set[] = "janela_inicio = :ji"; $params[':ji'] = $jiDb;
         $set[] = "janela_fim = :jf";    $params[':jf'] = $jfDb;
@@ -440,6 +454,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $params = [':c'=>$codigo, ':ji'=>$jiDb, ':jf'=>$jfDb, ':dl'=>$dlDb];
         if ($hasCodigoLive) { $cols[] = "codigo_live"; $vals[] = ":cl"; $params[':cl'] = $codigoLive; }
         if ($hasSenhaCert)  { $cols[] = "senha_certificado"; $vals[] = ":sc"; $params[':sc'] = $senhaCert; }
+        if ($hasLinkLive)   { $cols[] = "link_live"; $vals[] = ":ll"; $params[':ll'] = $linkLive !== '' ? $linkLive : null; }
         $cols[] = "access_deadline_enabled"; $vals[] = ":ade"; $params[':ade'] = $accessDeadlineEnabled;
         $cols[] = "access_deadline_days"; $vals[] = ":add"; $params[':add'] = $accessDeadlineDays;
         $cols[] = "access_deadline_start"; $vals[] = ":ads"; $params[':ads'] = $accessDeadlineStart;
@@ -464,6 +479,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (col_exists($pdo, 'users', 'data_live'))     $pdo->prepare("UPDATE users SET data_live = :dl WHERE codigo_turma = :c")->execute([':dl'=>$dlDb,':c'=>$codigo]);
             if (col_exists($pdo, 'users', 'turma_live_at')) $pdo->prepare("UPDATE users SET turma_live_at = :dl WHERE codigo_turma = :c")->execute([':dl'=>$dlDb,':c'=>$codigo]);
         } catch (Throwable $e) {}
+    }
+
+    // Sino (WhatsApp): data/link da live definidos ou alterados -> atualiza todos os alunos da turma (via fila).
+    $liveAntes = !empty($turmaAntes['data_live']) ? date('Y-m-d H:i:s', (int)strtotime((string)$turmaAntes['data_live'])) : null;
+    $linkAntes = trim((string)($turmaAntes['link_live'] ?? ''));
+    if (!$turmaAntes || $liveAntes !== $dlDb || $linkAntes !== $linkLive || (string)($turmaAntes['codigo'] ?? '') !== $codigo) {
+        if ($dlDb !== null || $linkLive !== '') sino_turma_atualizada($codigo);
     }
 
     header('Location: turmas.php'); exit;
@@ -719,6 +741,10 @@ include __DIR__ . '/_header.php';
             <label>
                 <span class="field-lbl">Data/hora da live</span>
                 <input type="datetime-local" name="data_live" value="<?= h(dt_local_value($edit['data_live'] ?? null)) ?>">
+            </label>
+            <label>
+                <span class="field-lbl">Link da live</span>
+                <input type="url" name="link_live" value="<?= h((string)($edit['link_live'] ?? '')) ?>" placeholder="https://youtube.com/live/...">
             </label>
         </div>
 

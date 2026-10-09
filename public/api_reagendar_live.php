@@ -185,6 +185,7 @@ try {
     rl_ensure_history($pdo);
     $pdo->beginTransaction();
     $pdo->prepare('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id LIMIT 1')->execute($params);
+    sino_aluno_atualizado((int)$alunoId); // Sino (WhatsApp): so enfileira
     $pdo->prepare("INSERT INTO reagendamentos_live
         (user_id, old_codigo_turma, new_codigo_turma, old_turma_live_at, new_turma_live_at, status, live_url, sf_disparo_at, sf_delay_ms, ip, user_agent, origem, webhook_url, created_at)
         VALUES (:u, :oldc, :newc, :oldl, :newl, 'reagendado', :url, :sfat, :delay, :ip, :ua, 'aluno', :wh, NOW())")

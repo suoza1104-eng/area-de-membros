@@ -212,6 +212,10 @@ function enrollment_register(PDO $pdo, array $input): array
         throw $e;
     }
 
+    // Sino (WhatsApp): so enfileira; o envio e feito pelo cron.
+    if ($isNew) sino_aluno_cadastrado($userId);
+    else sino_aluno_atualizado($userId);
+
     $lifetimeGrant = null;
     if ($accessType === 'lifetime') {
         $transactionCode = trim((string)($input['transaction_code'] ?? ''));

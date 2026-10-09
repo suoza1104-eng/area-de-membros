@@ -427,6 +427,7 @@ try {
         $sql = "INSERT INTO users (".implode(',',$cols).") VALUES (".implode(',',$vals).")";
         $pdo->prepare($sql)->execute($par);
         $userId = (int)$pdo->lastInsertId();
+        $iwUsuarioCriado = true;
     }
 
     if ($userId === 0) {
@@ -450,6 +451,10 @@ try {
                 ]);
         } catch (Throwable $e) { /* não crítico */ }
     }
+
+    // Sino (WhatsApp): so enfileira; o envio e feito pelo cron.
+    if (!empty($iwUsuarioCriado)) sino_aluno_cadastrado($userId);
+    elseif ($nome !== '' || $telefone !== '' || $email !== '') sino_aluno_atualizado($userId);
 
     // Tag extra (sempre aplicada se configurada)
     if (function_exists('adicionar_tag') && !empty($ihw['tag_extra'])) {

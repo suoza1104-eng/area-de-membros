@@ -278,6 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (in_array('utm_content',$userCols,true))  { $set[]='utm_content=:ux'; $p['ux']=$utm_content?:null; }
                 if (empty($set)) throw new RuntimeException('Nenhuma coluna compatível.');
                 $pdo->prepare('UPDATE users SET ' . implode(', ', $set) . ' WHERE id = :id')->execute($p);
+                sino_aluno_atualizado((int)$id); // Sino (WhatsApp): so enfileira
                 $msgOk = 'Dados salvos com sucesso.';
                 // Recarrega
                 $aluno = $pdo->prepare('SELECT * FROM users WHERE id = :id LIMIT 1')->execute(['id'=>$id]) ? null : null;

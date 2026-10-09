@@ -89,6 +89,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 15,
             'timeout' => 300,
         ],
+        'sino_outbox' => [
+            'label' => 'Sino (WhatsApp) - fila de envio',
+            'description' => 'Envia ao Sino os alunos cadastrados/alterados e as mudancas de data/link da live das turmas (ate 200 por rodada).',
+            'script' => __DIR__ . '/../cron/processar_sino.php',
+            'interval' => 1,
+            'timeout' => 120,
+        ],
         'fluxos_push' => [
             'label' => 'Fluxos de notificações push',
             'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',
