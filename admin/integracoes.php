@@ -464,8 +464,8 @@ include __DIR__ . '/_header.php';
   </div>
 
   <nav class="int-tabs">
-    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','whatsapp'=>'WhatsApp (Evolution API)','meta'=>'META (Anúncios)','api'=>'Chaves API','logs'=>'Logs'] as $key => $label): ?>
-      <a class="<?= $tab === $key ? 'active' : '' ?>" href="integracoes.php?tab=<?= int_h($key) ?>"><?= int_h($label) ?></a>
+    <?php foreach (['overview'=>'Visão geral','webhooks'=>'Webhooks','hub'=>'Hub de Integrações','superfuncionario'=>'SuperFuncionário','manychat'=>'ManyChat','sino'=>'Sino (WhatsApp)','whatsapp'=>'WhatsApp (Evolution API)','meta'=>'META (Anúncios)','api'=>'Chaves API','logs'=>'Logs'] as $key => $label): ?>
+      <a class="<?= $tab === $key ? 'active' : '' ?>" href="<?= $key === 'sino' ? 'sino.php' : 'integracoes.php?tab=' . int_h($key) ?>"><?= int_h($label) ?></a>
     <?php endforeach; ?>
   </nav>
 
