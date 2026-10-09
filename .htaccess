@@ -9,6 +9,8 @@
 # ja tinha acionado varios desses scripts por HTTP. Sem ancora em ^/ pra
 # funcionar tanto na raiz (VPS) quanto em /area_membros/ (HostGator).
 RedirectMatch 404 /\.git/
+# .env guarda chaves (ex.: SINO_API_KEY) e nunca pode ser baixado.
+RedirectMatch 404 /\.env
 RedirectMatch 404 /scripts/
 RedirectMatch 404 /reports/
 RedirectMatch 404 /infra/

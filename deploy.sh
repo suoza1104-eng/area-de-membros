@@ -59,7 +59,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] novo commit $REMOTE — atualizando" >> "$L
 git reset --hard origin/main -q
 
 /usr/bin/rsync -a --delete --no-perms \
-    --exclude=.git --exclude=uploads/ --exclude=vendor/ \
+    --exclude=.git --exclude=/.env --exclude=uploads/ --exclude=vendor/ \
     "$REPO_DIR/" "$DEPLOY_DIR/"
 
 /bin/chmod -R u=rwX,go=rX "$DEPLOY_DIR"
