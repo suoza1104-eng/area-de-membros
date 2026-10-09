@@ -119,7 +119,6 @@ $titleMap = [
     'manychat'         => 'Manychat',
     'torpedo_voz'      => 'Torpedo de Voz',
     'telegram'         => 'Telegram',
-    'sino'             => 'Integração Sino',
     'date_redirects'   => 'Redirecionadores',
     'superfuncionario' => 'SuperFuncionário',
     'whatsapp_config'  => 'Configurações WhatsApp',
@@ -952,16 +951,6 @@ button:not([class]):hover { filter: brightness(1.07); }
         <path d="M9 14l13-11"/>
       </svg>
       Telegram
-    </a>
-    <?php endif; ?>
-
-    <?php if ($__sbV['integracoes']): ?>
-    <a href="sino.php" class="sb-item <?= $currentMenu === 'sino' ? 'active' : '' ?>">
-      <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
-        <path d="M13.73 21a2 2 0 01-3.46 0"/>
-      </svg>
-      Integração Sino
     </a>
     <?php endif; ?>
 
