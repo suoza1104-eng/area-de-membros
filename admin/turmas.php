@@ -481,10 +481,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Throwable $e) {}
     }
 
-    // Sino (WhatsApp): data/link da live definidos ou alterados -> atualiza todos os alunos da turma (via fila).
+    // Sino (WhatsApp): data, link ou codigo da live definidos ou alterados -> atualiza todos os alunos da turma (via fila).
     $liveAntes = !empty($turmaAntes['data_live']) ? date('Y-m-d H:i:s', (int)strtotime((string)$turmaAntes['data_live'])) : null;
     $linkAntes = trim((string)($turmaAntes['link_live'] ?? ''));
-    if (!$turmaAntes || $liveAntes !== $dlDb || $linkAntes !== $linkLive || (string)($turmaAntes['codigo'] ?? '') !== $codigo) {
+    $codigoLiveAntes = trim((string)($turmaAntes['codigo_live'] ?? ''));
+    if (!$turmaAntes || $liveAntes !== $dlDb || $linkAntes !== $linkLive || $codigoLiveAntes !== (string)$codigoLive || (string)($turmaAntes['codigo'] ?? '') !== $codigo) {
         if ($dlDb !== null || $linkLive !== '') sino_turma_atualizada($codigo);
     }
 

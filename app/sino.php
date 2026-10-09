@@ -267,9 +267,10 @@ function sino_user_select(PDO $pdo): string
     $userLive = $liveParts ? 'COALESCE(' . implode(', ', $liveParts) . ')' : 'NULL';
     $bloq = sino_column_exists($pdo, 'users', 'bloquear') ? 'COALESCE(u.bloquear,0)' : '0';
     $link = sino_column_exists($pdo, 'turmas', 'link_live') ? 't.link_live' : 'NULL';
+    $codigoLive = sino_column_exists($pdo, 'turmas', 'codigo_live') ? 't.codigo_live' : 'NULL';
     return "SELECT u.id, u.nome, u.email, u.telefone, {$turmaExpr} AS turma_codigo,
                    {$userLive} AS user_live, {$bloq} AS bloquear,
-                   t.data_live AS turma_live, {$link} AS turma_link
+                   t.data_live AS turma_live, {$link} AS turma_link, {$codigoLive} AS turma_codigo_live
               FROM users u
          LEFT JOIN turmas t ON t.codigo = {$turmaExpr}";
 }
@@ -302,6 +303,10 @@ function sino_contact_from_row(array $row, ?string &$motivo = null): ?array
     $fields = [];
     $turma = trim((string)($row['turma_codigo'] ?? ''));
     if ($turma !== '') $fields['turma'] = $turma;
+    // Mesmo valor de extra.codigo_live dos eventos: codigo da live da turma, ou o codigo da turma.
+    $codigoLive = trim((string)($row['turma_codigo_live'] ?? ''));
+    if ($codigoLive === '') $codigoLive = $turma;
+    if ($codigoLive !== '') $fields['codigo_live'] = $codigoLive;
 
     // A data do proprio aluno prevalece: alunos reagendados tem live diferente da turma.
     $userLive = sino_iso_datetime($row['user_live'] ?? '');
