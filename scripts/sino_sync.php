@@ -57,54 +57,19 @@ if (!isset($opts['turma']) && !isset($opts['todas-futuras'])) {
     exit(1);
 }
 if (!$dryRun && !sino_enabled()) { out('SINO_ENABLED=false: nada sera enfileirado. Use --dry-run para simular.'); exit(1); }
-if (!$dryRun) sino_ensure_schema($pdo);
 
-if (isset($opts['turma'])) {
-    $st = $pdo->prepare("SELECT codigo, data_live FROM turmas WHERE codigo = :c LIMIT 1");
-    $st->execute([':c' => trim((string)$opts['turma'])]);
-} else {
-    $st = $pdo->query("SELECT codigo, data_live FROM turmas WHERE data_live > NOW() ORDER BY data_live");
-}
-$turmas = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-if (!$turmas) { out('Nenhuma turma encontrada.'); exit(1); }
+$res = sino_initial_load($pdo, $dryRun, isset($opts['turma']) ? (string)$opts['turma'] : null);
+if (!$res['turmas'] && !$res['reagendados']) { out('Nenhuma turma encontrada.'); exit(1); }
 
 out(($dryRun ? '[SIMULACAO] ' : '') . 'Carga inicial no Sino (chamada 3 por turma, sem boas-vindas)');
-$total = 0;
-$ignoradosTotal = [];
-foreach ($turmas as $t) {
-    $codigo = (string)$t['codigo'];
-    $qtd = 0; $lotes = 0; $after = 0; $ign = [];
-    do {
-        $ignLote = [];
-        $lote = sino_turma_contacts($pdo, $codigo, $after, SINO_BATCH_MAX, $ignLote);
-        foreach ($ignLote as $k => $v) $ign[$k] = ($ign[$k] ?? 0) + $v;
-        $qtd += count($lote['contacts']);
-        if ($lote['contacts']) $lotes++;
-        $after = $lote['last_id'];
-    } while ($lote['rows'] >= SINO_BATCH_MAX);
-    foreach ($ign as $k => $v) $ignoradosTotal[$k] = ($ignoradosTotal[$k] ?? 0) + $v;
-    $total += $qtd;
+foreach ($res['turmas'] as $t) {
     out(sprintf('  turma %-10s live %s  alunos a enviar: %5d  lotes: %d  ignorados: %s',
-        $codigo, (string)($t['data_live'] ?? '-'), $qtd, $lotes, $ign ? json_encode($ign, JSON_UNESCAPED_UNICODE) : '0'));
-    if (!$dryRun && $qtd > 0) sino_turma_atualizada($codigo, 'carga_inicial');
+        $t['codigo'], $t['data_live'] ?: '-', $t['alunos'], $t['lotes'], $t['ignorados'] ? json_encode($t['ignorados'], JSON_UNESCAPED_UNICODE) : '0'));
 }
-
-// Alunos reagendados para uma live futura cuja turma original ja passou:
-// nao entram no lote de nenhuma turma futura, entao vao individualmente (chamada 2).
-$reag = [];
-if (isset($opts['todas-futuras'])) {
-    $st = $pdo->query("SELECT * FROM (" . sino_user_select($pdo) . ") x
-                        WHERE x.user_live > NOW() AND (x.turma_live IS NULL OR x.turma_live <= NOW())");
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-        $motivo = null;
-        if (sino_contact_from_row($row, $motivo) === null) { $ignoradosTotal[$motivo] = ($ignoradosTotal[$motivo] ?? 0) + 1; continue; }
-        $reag[] = (int)$row['id'];
-        if (!$dryRun) sino_aluno_atualizado((int)$row['id']);
-    }
-    out(sprintf('  reagendados com live futura (turma ja encerrada): %d', count($reag)));
-}
+// Reagendados para live futura cuja turma ja passou vao individualmente (chamada 2).
+if (isset($opts['todas-futuras'])) out(sprintf('  reagendados com live futura (turma ja encerrada): %d', $res['reagendados']));
 
 out('');
 out(sprintf('Total de alunos %s: %d  (ignorados: %s)',
-    $dryRun ? 'que seriam enviados' : 'colocados na fila', $total + count($reag),
-    $ignoradosTotal ? json_encode($ignoradosTotal, JSON_UNESCAPED_UNICODE) : '0'));
+    $dryRun ? 'que seriam enviados' : 'colocados na fila', $res['total'],
+    $res['ignorados'] ? json_encode($res['ignorados'], JSON_UNESCAPED_UNICODE) : '0'));

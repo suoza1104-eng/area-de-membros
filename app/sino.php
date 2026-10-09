@@ -22,20 +22,44 @@ const SINO_TIMEOUT_S        = 15;
 
 // ===================== CONFIGURACAO =====================
 
+/**
+ * Configuracao: o .env (SINO_*) tem prioridade; sem ele, vale o que foi salvo
+ * na tela admin/sino.php (tabela settings, fora do codigo e do git).
+ */
+function sino_config_value(string $envKey, string $settingKey, string $default = ''): string
+{
+    $env = getenv($envKey);
+    if ($env !== false && trim((string)$env) !== '') return trim((string)$env);
+    if (function_exists('get_setting')) {
+        try {
+            $v = get_setting($settingKey, null);
+            if ($v !== null && trim((string)$v) !== '') return trim((string)$v);
+        } catch (Throwable $e) {}
+    }
+    return $default;
+}
+
+/** Diz se a configuracao esta vindo do .env do servidor (a tela so informa). */
+function sino_config_from_env(string $envKey): bool
+{
+    $env = getenv($envKey);
+    return $env !== false && trim((string)$env) !== '';
+}
+
 function sino_enabled(): bool
 {
-    $v = strtolower(trim((string)am_env('SINO_ENABLED', 'false')));
+    $v = strtolower(sino_config_value('SINO_ENABLED', 'sino_enabled', 'false'));
     return in_array($v, ['1', 'true', 'yes', 'on', 'sim'], true);
 }
 
 function sino_api_url(): string
 {
-    return rtrim((string)am_env('SINO_API_URL', 'https://sino.professoremersonleite.site/v1'), '/');
+    return rtrim(sino_config_value('SINO_API_URL', 'sino_api_url', 'https://sino.professoremersonleite.site/v1'), '/');
 }
 
 function sino_api_key(): string
 {
-    return trim((string)am_env('SINO_API_KEY', ''));
+    return sino_config_value('SINO_API_KEY', 'sino_api_key', '');
 }
 
 // ===================== CLIENTE HTTP =====================
@@ -681,4 +705,51 @@ function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, arra
     $ok = sino_enqueue('fluxo', (string)$userId, ['flow_key' => $flowKey, 'user_id' => $userId, 'run_id' => $runId, 'body' => $contact], $idem);
     if (!$ok) throw new RuntimeException('Falha ao colocar o aluno na fila do Sino.');
     return ['queued' => true, 'flow_key' => $flowKey, 'idempotency_key' => $idem];
+}
+
+// ===================== CARGA INICIAL (terminal e tela admin/sino.php) =====================
+
+/**
+ * Coloca na fila os alunos das turmas com live no futuro (chamada 3, lote por
+ * turma) e os reagendados para live futura cuja turma ja passou (chamada 2).
+ * Nunca dispara boas-vindas. Com $dryRun so conta, sem gravar nada.
+ */
+function sino_initial_load(PDO $pdo, bool $dryRun, ?string $turma = null): array
+{
+    if (!$dryRun) sino_ensure_schema($pdo);
+    if ($turma !== null) {
+        $st = $pdo->prepare("SELECT codigo, data_live FROM turmas WHERE codigo = :c LIMIT 1");
+        $st->execute([':c' => trim($turma)]);
+    } else {
+        $st = $pdo->query("SELECT codigo, data_live FROM turmas WHERE data_live > NOW() ORDER BY data_live");
+    }
+    $result = ['turmas' => [], 'reagendados' => 0, 'total' => 0, 'ignorados' => []];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $t) {
+        $codigo = (string)$t['codigo'];
+        $qtd = 0; $lotes = 0; $after = 0; $ign = [];
+        do {
+            $ignLote = [];
+            $lote = sino_turma_contacts($pdo, $codigo, $after, SINO_BATCH_MAX, $ignLote);
+            foreach ($ignLote as $k => $v) $ign[$k] = ($ign[$k] ?? 0) + $v;
+            $qtd += count($lote['contacts']);
+            if ($lote['contacts']) $lotes++;
+            $after = $lote['last_id'];
+        } while ($lote['rows'] >= SINO_BATCH_MAX);
+        foreach ($ign as $k => $v) $result['ignorados'][$k] = ($result['ignorados'][$k] ?? 0) + $v;
+        if (!$dryRun && $qtd > 0) sino_turma_atualizada($codigo, 'carga_inicial');
+        $result['turmas'][] = ['codigo' => $codigo, 'data_live' => (string)($t['data_live'] ?? ''), 'alunos' => $qtd, 'lotes' => $lotes, 'ignorados' => $ign];
+        $result['total'] += $qtd;
+    }
+    if ($turma === null) {
+        $st = $pdo->query("SELECT * FROM (" . sino_user_select($pdo) . ") x
+                            WHERE x.user_live > NOW() AND (x.turma_live IS NULL OR x.turma_live <= NOW())");
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $motivo = null;
+            if (sino_contact_from_row($row, $motivo) === null) { $result['ignorados'][$motivo] = ($result['ignorados'][$motivo] ?? 0) + 1; continue; }
+            $result['reagendados']++;
+            if (!$dryRun) sino_aluno_atualizado((int)$row['id']);
+        }
+        $result['total'] += $result['reagendados'];
+    }
+    return $result;
 }
