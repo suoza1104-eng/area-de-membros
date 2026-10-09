@@ -164,7 +164,7 @@ function sino_enqueue_row(PDO $pdo, string $tipo, string $ref, array $payload, ?
     // Atualizacoes repetidas do mesmo aluno/turma ainda nao enviadas viram uma so:
     // o contato e montado com os dados atuais no momento do envio.
     // Um cadastro ainda nao enviado ja leva os dados atuais do aluno.
-    if ($tipo !== 'aluno_cadastrado') {
+    if ($tipo === 'aluno_atualizado' || $tipo === 'turma_atualizada') {
         $tipos = $tipo === 'aluno_atualizado' ? "'aluno_atualizado','aluno_cadastrado'" : "'turma_atualizada'";
         $st = $pdo->prepare("SELECT id FROM sino_outbox WHERE tipo IN ({$tipos}) AND ref = :r AND status = 'pendente' AND tentativas = 0 LIMIT 1");
         $st->execute([':r' => $ref]);
@@ -310,8 +310,9 @@ function sino_log(string $tipo, string $ref, int $http, string $mensagem, array 
 {
     $ok = $http >= 200 && $http < 300;
     $ctx = ['tipo' => $tipo, 'http' => $http] + $extra;
-    if (str_starts_with($tipo, 'aluno')) $ctx['user_id'] = (int)$ref; else $ctx['turma'] = $ref;
-    $linha = sprintf('[sino] %s %s=%s http=%d %s', $tipo, str_starts_with($tipo, 'aluno') ? 'aluno' : 'turma', $ref, $http, $mensagem);
+    $porAluno = $tipo !== 'turma_atualizada';
+    if ($porAluno) $ctx['user_id'] = (int)$ref; else $ctx['turma'] = $ref;
+    $linha = sprintf('[sino] %s %s=%s http=%d %s', $tipo, $porAluno ? 'aluno' : 'turma', $ref, $http, $mensagem);
     try {
         if (function_exists('log_sistema')) log_sistema($ok ? 'info' : 'error', 'sino', $linha, $ctx);
         else @error_log($linha);
@@ -434,6 +435,36 @@ function sino_process_aluno_atualizado(PDO $pdo, array $job, array $payload): st
     return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
 }
 
+/**
+ * Bloco "Enviar para fluxo do Sino" da automacao. 409/404 (fluxo pausado ou
+ * apagado) -> grava o mesmo contato em /contacts para nao perder o aluno.
+ */
+function sino_process_fluxo(PDO $pdo, array $job, array $payload): string
+{
+    $flowKey = (string)($payload['flow_key'] ?? '');
+    $body = is_array($payload['body'] ?? null) ? $payload['body'] : [];
+    if ($flowKey === '' || !$body) {
+        sino_outbox_finish($pdo, $job, 'erro_definitivo', 0, 'payload sem fluxo ou contato');
+        return 'erro_definitivo';
+    }
+
+    if (empty($payload['fallback_contacts'])) {
+        $res = sino_request('POST', '/flows/' . rawurlencode($flowKey) . '/trigger', $body, (string)$job['idempotency_key']);
+        if ($res['status'] !== 409 && $res['status'] !== 404) {
+            $msg = 'fluxo ' . $flowKey . ' started=' . (!empty($res['body']['started']) ? 'true' : 'false');
+            if (!empty($res['body']['reason'])) $msg .= ' reason=' . (is_scalar($res['body']['reason']) ? (string)$res['body']['reason'] : json_encode($res['body']['reason'], JSON_UNESCAPED_UNICODE));
+            return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
+        }
+        $estado = $res['status'] === 404 ? 'apagado' : 'inativo';
+        sino_log('fluxo', (string)$job['ref'], (int)$res['status'], 'fluxo ' . $flowKey . ' ' . $estado . ' no Sino: enviando contato para /contacts', ['outbox_id' => (int)$job['id']]);
+        $payload['fallback_contacts'] = $estado;
+    }
+    $contact = $body;
+    unset($contact['data']);
+    $res = sino_request('POST', '/contacts', $contact, 'aluno-' . (int)$job['ref'] . '-' . sino_body_hash($contact));
+    return sino_outbox_resolve($pdo, $job, $res, $payload, 'fluxo ' . $flowKey . ' ' . $payload['fallback_contacts'] . ' no Sino -> contato gravado');
+}
+
 /** Alunos de uma turma, a partir de um id, prontos para o lote. */
 function sino_turma_contacts(PDO $pdo, string $codigo, int $afterId, int $limit, array &$ignorados = []): array
 {
@@ -551,6 +582,7 @@ function sino_process_outbox(PDO $pdo, int $limit = SINO_RODADA_MAX): array
                 case 'aluno_cadastrado': $r = sino_process_aluno_cadastrado($pdo, $job, $payload); break;
                 case 'aluno_atualizado': $r = sino_process_aluno_atualizado($pdo, $job, $payload); break;
                 case 'turma_atualizada': $r = sino_process_turma_atualizada($pdo, $job, $payload, $deadline); break;
+                case 'fluxo':            $r = sino_process_fluxo($pdo, $job, $payload); break;
                 default:
                     sino_outbox_finish($pdo, $job, 'erro_definitivo', 0, 'tipo desconhecido');
                     $r = 'erro_definitivo';
@@ -566,4 +598,87 @@ function sino_process_outbox(PDO $pdo, int $limit = SINO_RODADA_MAX): array
     $stats['ok'] = true;
     $stats['duracao_ms'] = (int)round((microtime(true) - $started) * 1000);
     return $stats;
+}
+
+// ===================== BLOCO DA AUTOMACAO: "Enviar para fluxo do Sino" =====================
+
+/**
+ * Fluxos ativos do Sino que podem ser disparados por API (trigger.type = api),
+ * cacheados por 5 minutos. Devolve ['ok', 'flows' => [{key,name,status,fields}], 'cached_at', 'error'].
+ */
+function sino_list_flows(bool $refresh = false): array
+{
+    $cacheKey = 'sino_flows_cache';
+    $cached = json_decode((string)get_setting($cacheKey, ''), true);
+    if (!$refresh && is_array($cached) && (int)($cached['ts'] ?? 0) > time() - 300) {
+        return ['ok' => true, 'flows' => $cached['flows'], 'cached_at' => date('Y-m-d H:i:s', (int)$cached['ts']), 'error' => ''];
+    }
+    $res = sino_request('GET', '/flows?status=active');
+    if ($res['status'] !== 200 || !is_array($res['body']['flows'] ?? null)) {
+        $erro = $res['error'] !== '' ? $res['error'] : 'resposta inesperada do Sino';
+        // Sem conexao: mostra a ultima lista conhecida, avisando o erro.
+        return ['ok' => false, 'flows' => is_array($cached['flows'] ?? null) ? $cached['flows'] : [], 'cached_at' => isset($cached['ts']) ? date('Y-m-d H:i:s', (int)$cached['ts']) : '', 'error' => $erro];
+    }
+    $flows = [];
+    foreach ($res['body']['flows'] as $f) {
+        if (!is_array($f) || ($f['trigger']['type'] ?? '') !== 'api' || empty($f['key'])) continue;
+        if (($f['status'] ?? 'active') !== 'active' || (isset($f['acceptsContacts']) && !$f['acceptsContacts'])) continue;
+        $flows[] = [
+            'key' => (string)$f['key'],
+            'name' => (string)($f['name'] ?? $f['key']),
+            'status' => (string)($f['status'] ?? 'active'),
+            'fields' => array_values(array_map('strval', (array)($f['uses']['fields'] ?? []))),
+        ];
+    }
+    set_setting($cacheKey, (string)json_encode(['ts' => time(), 'flows' => $flows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    return ['ok' => true, 'flows' => $flows, 'cached_at' => date('Y-m-d H:i:s'), 'error' => ''];
+}
+
+/** Valor de um "dado extra" do bloco: variaveis da automacao ({{nome}}, {{turma}}...) e {{extra.campo}} do evento. */
+function sino_render_data_value(string $template, array $user, array $extra): string
+{
+    $value = function_exists('push_flow_render_template') ? push_flow_render_template($template, $user, $extra) : $template;
+    return (string)preg_replace_callback('/\{\{\s*extra\.([a-zA-Z0-9_.]+)\s*\}\}/', static function (array $m) use ($extra): string {
+        $v = $extra;
+        foreach (explode('.', $m[1]) as $part) {
+            if (!is_array($v) || !array_key_exists($part, $v)) return '';
+            $v = $v[$part];
+        }
+        return is_scalar($v) ? (string)$v : '';
+    }, $value);
+}
+
+/**
+ * Execucao do bloco: NAO chama a API, so enfileira no sino_outbox (tipo fluxo).
+ * O fluxo da automacao segue para o proximo bloco sem esperar o envio.
+ */
+function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, array $extra, array $job): array
+{
+    $flowKey = trim((string)($config['flowKey'] ?? ''));
+    $userId = (int)($job['user_id'] ?? $user['id'] ?? 0);
+    if ($flowKey === '') throw new RuntimeException('Selecione o fluxo do Sino no bloco.');
+    if (!sino_enabled()) return ['skipped' => 'SINO_ENABLED=false', 'flow_key' => $flowKey];
+
+    $row = $userId > 0 ? sino_load_user($pdo, $userId) : null;
+    $motivo = $row ? null : 'aluno nao encontrado';
+    $contact = $row ? sino_contact_from_row($row, $motivo) : null;
+    if ($contact === null) {
+        sino_log('fluxo', (string)$userId, 0, 'fluxo ' . $flowKey . ' nao enfileirado: ' . $motivo);
+        return ['skipped' => (string)$motivo, 'flow_key' => $flowKey];
+    }
+
+    $data = [];
+    foreach ((array)($config['data'] ?? []) as $pair) {
+        $key = trim((string)($pair['key'] ?? ''));
+        if ($key === '') continue;
+        $value = trim(sino_render_data_value((string)($pair['value'] ?? ''), $user, $extra));
+        if ($value !== '') $data[$key] = $value;
+    }
+    if ($data) $contact['data'] = $data;
+
+    $runId = (int)($job['run_id'] ?? 0);
+    $idem = 'fluxo-' . $flowKey . '-aluno-' . $userId . '-' . $runId;
+    $ok = sino_enqueue('fluxo', (string)$userId, ['flow_key' => $flowKey, 'user_id' => $userId, 'run_id' => $runId, 'body' => $contact], $idem);
+    if (!$ok) throw new RuntimeException('Falha ao colocar o aluno na fila do Sino.');
+    return ['queued' => true, 'flow_key' => $flowKey, 'idempotency_key' => $idem];
 }
