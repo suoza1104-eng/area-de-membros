@@ -94,6 +94,7 @@ if ($userId > 0 && function_exists('gerar_magic_link')) {
     const safari=/Safari/i.test(ua)&&!/CriOS|FxiOS|EdgiOS/i.test(ua);
     const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
     const fallbackUrl=<?= json_encode($fallbackUrl, JSON_UNESCAPED_SLASHES) ?>;
+    const notifyMode=new URLSearchParams(window.location.search).has('ativar_notificacoes');
     let installPrompt=window.__areaMembrosInstallPrompt;
 
     function message(text,type){status.textContent=text;status.className='install-status show '+(type||'')}
@@ -117,9 +118,42 @@ if ($userId > 0 && function_exists('gerar_magic_link')) {
         window.setTimeout(goToFallback,3000);
     }
     function showIos(){iosHelp.style.display='block';action.disabled=false;action.textContent='Ver passo a passo para instalar';action.onclick=function(){iosHelp.scrollIntoView({behavior:'smooth',block:'start'})}}
+    async function enableNotifications(){
+        action.disabled=true;
+        action.textContent='Ativando notificacoes...';
+        try{
+            if(!('Notification' in window))throw new Error('Este navegador nao oferece notificacoes.');
+            if(Notification.permission==='denied')throw new Error('As notificacoes estao bloqueadas neste navegador.');
+            if(typeof window.areaMembrosEnablePush!=='function')throw new Error('O servico de notificacoes ainda nao carregou.');
+            await window.areaMembrosEnablePush();
+            prepareFallback('Notificacoes ativadas. Vou abrir o aplicativo agora.', 'ok', 1300);
+        }catch(e){
+            prepareFallback((e&&e.message?e.message:'Nao foi possivel ativar notificacoes agora.')+' Vou abrir suas aulas pelo acesso direto.', 'err', 1800);
+        }
+    }
+    function setupNotificationMode(){
+        document.querySelector('.eyebrow').textContent='Notificacoes do aplicativo';
+        document.querySelector('.install-content h1').textContent='Ative os avisos importantes';
+        document.querySelector('.lead').textContent='Assim voce recebe comunicados, aulas novas e avisos da turma no celular.';
+        if(!('Notification' in window)){prepareFallback('Este navegador nao oferece notificacoes. Vou abrir suas aulas pelo acesso direto.','err',1800);return}
+        if(Notification.permission==='granted'){
+            action.disabled=true;
+            action.textContent='Notificacoes ja ativadas';
+            message('Notificacoes ja estavam ativadas neste aparelho. Vou abrir o aplicativo agora.','ok');
+            if(typeof window.areaMembrosEnablePush==='function')window.areaMembrosEnablePush().catch(function(){});
+            window.setTimeout(goToFallback,1300);
+            return;
+        }
+        if(Notification.permission==='denied'){prepareFallback('As notificacoes ja estao bloqueadas neste navegador. Vou abrir suas aulas pelo acesso direto.','err',1800);return}
+        action.disabled=false;
+        action.textContent='Ativar notificacoes agora';
+        action.onclick=enableNotifications;
+        message('Toque no botao e confirme a permissao do navegador para ativar os avisos.','ok');
+    }
 
     // A desinstalacao da PWA nao apaga o localStorage do site. Por isso,
     // somente o modo standalone real pode confirmar que o app esta aberto.
+    if(notifyMode){setupNotificationMode();return}
     if(standalone){installed();return}
     if(apple){
         if(!safari){iosSafariWarning.style.display='block';message('Este link não está aberto no Safari. Veja abaixo como continuar.','err')}
