@@ -6,6 +6,16 @@ proteger_aluno();
 
 $appName = trim((string)(get_setting('push_app_name', 'Área de Membros') ?? 'Área de Membros')) ?: 'Área de Membros';
 $image = trim((string)(get_setting('push_popup_image_url', 'pwa-install-phone.jpg') ?? 'pwa-install-phone.jpg')) ?: 'pwa-install-phone.jpg';
+$userId = (int)($_SESSION['aluno_id'] ?? 0);
+$fallbackUrl = rtrim(BASE_URL, '/') . '/trilha.php?source=app_fallback';
+if ($userId > 0 && function_exists('gerar_magic_link')) {
+    $magicUrl = gerar_magic_link($userId, 60, false);
+    if ($magicUrl !== '') {
+        $basePath = trim((string)(parse_url((string)BASE_URL, PHP_URL_PATH) ?: ''), '/');
+        $next = trim($basePath . '/trilha.php?source=app_fallback', '/');
+        $fallbackUrl = $magicUrl . (str_contains($magicUrl, '?') ? '&' : '?') . 'next=' . rawurlencode($next);
+    }
+}
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -83,24 +93,28 @@ $image = trim((string)(get_setting('push_popup_image_url', 'pwa-install-phone.jp
     const chrome=/Chrome\//i.test(ua)&&!/(?:wv\)|; wv|Version\/4\.0|EdgA|OPR|Opera|SamsungBrowser|FBAN|FBAV|Instagram|WhatsApp)/i.test(ua);
     const safari=/Safari/i.test(ua)&&!/CriOS|FxiOS|EdgiOS/i.test(ua);
     const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+    const fallbackUrl=<?= json_encode($fallbackUrl, JSON_UNESCAPED_SLASHES) ?>;
     let installPrompt=window.__areaMembrosInstallPrompt;
 
     function message(text,type){status.textContent=text;status.className='install-status show '+(type||'')}
     function installed(){action.disabled=true;action.textContent='Aplicativo já instalado';message('O aplicativo já está instalado neste aparelho.','ok')}
     function installerReady(){installPrompt=window.__areaMembrosInstallPrompt;action.disabled=false;action.textContent='Instalar aplicativo agora'}
+    function goToFallback(){window.location.href=fallbackUrl}
+    function prepareFallback(text,type,delay){
+        action.disabled=false;
+        action.textContent='Entrar nas aulas agora';
+        action.onclick=goToFallback;
+        message(text,type||'ok');
+        if(delay)window.setTimeout(goToFallback,delay);
+    }
     function installUnavailable(){
         if(installPrompt||standalone||apple||(android&&!chrome))return;
-        action.disabled=false;
-        action.textContent='Ver orientacao de instalacao';
-        action.onclick=function(){
-            message('Se aparecer "Abrir no app" na barra do Chrome, o aplicativo ja esta instalado neste computador. Caso contrario, use o menu do Chrome e escolha "Instalar aplicativo".','ok');
-        };
-        message('O Chrome nao liberou o botao automatico de instalacao. Isso costuma acontecer quando o app ja esta instalado ou quando o navegador ainda esta validando a instalacao.','ok');
+        prepareFallback('O Chrome nao liberou a instalacao automatica. Se o app ja estiver instalado, o navegador pode abrir pelo app; se nao, voce entra logado pelo navegador.', 'ok', 2200);
     }
     function openChrome(){
-        const fallback=window.location.href;
         const path=window.location.host+window.location.pathname+window.location.search;
-        window.location.href='intent://'+path+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallback)+';end';
+        window.location.href='intent://'+path+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallbackUrl)+';end';
+        window.setTimeout(goToFallback,3000);
     }
     function showIos(){iosHelp.style.display='block';action.disabled=false;action.textContent='Ver passo a passo para instalar';action.onclick=function(){iosHelp.scrollIntoView({behavior:'smooth',block:'start'})}}
 
@@ -124,6 +138,17 @@ $image = trim((string)(get_setting('push_popup_image_url', 'pwa-install-phone.jp
         const choice=await installPrompt.userChoice;installPrompt=null;
         if(choice.outcome==='accepted'){action.textContent='Instalação confirmada';message('Pronto. O aplicativo está sendo adicionado à sua tela inicial.','ok')}
         else{action.disabled=false;action.textContent='Instalar aplicativo agora';message('A instalação foi cancelada. Você pode tentar novamente.')}
+    };
+    action.onclick=async function(){
+        if(!installPrompt){goToFallback();return}
+        try{
+            action.disabled=true;installPrompt.prompt();
+            const choice=await installPrompt.userChoice;installPrompt=null;
+            if(choice.outcome==='accepted'){action.textContent='Instalacao confirmada';message('Pronto. O aplicativo esta sendo adicionado a sua tela inicial. Vou abrir suas aulas em seguida.','ok');window.setTimeout(goToFallback,1800)}
+            else{prepareFallback('A instalacao foi cancelada. Vou abrir suas aulas pelo navegador com login direto.','ok',1800)}
+        }catch(e){
+            prepareFallback('Nao foi possivel concluir a instalacao agora. Vou abrir suas aulas pelo navegador com login direto.','err',1800);
+        }
     };
     window.addEventListener('appinstalled',installed);
 })();
