@@ -376,7 +376,12 @@ function sino_contact_from_row(array $row, ?string &$motivo = null): ?array
     }
     if ($link !== '') $fields['link_live'] = $link;
     $magic = trim((string)($row['magic_link'] ?? ''));
-    if ($magic !== '') $fields['magic_link'] = $magic;
+    if ($magic !== '') {
+        $fields['magic_link'] = $magic;
+        $fields['app_login_url'] = function_exists('welcome_page_add_next_to_login_url')
+            ? welcome_page_add_next_to_login_url($magic, 'aplicativo.php')
+            : $magic . (str_contains($magic, '?') ? '&' : '?') . 'next=aplicativo.php';
+    }
     $welcome = trim((string)($row['welcome_url'] ?? ''));
     if ($welcome !== '') $fields['welcome_url'] = $welcome;
     $inscricao = sino_iso_datetime($row['data_inscricao'] ?? '');

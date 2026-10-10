@@ -34,7 +34,7 @@ function welcome_page_default_settings(): array
         'welcome_page_button1_text' => 'Entre no grupo de alunos',
         'welcome_page_button1_desc' => 'E por la que saem avisos importantes, novidades, lives e materiais extras.',
         'welcome_page_button2_label' => 'Baixar aplicativo',
-        'welcome_page_button2_url' => '{{app_url}}',
+        'welcome_page_button2_url' => '{{app_login_url}}',
         'welcome_page_button2_text' => 'Baixe o aplicativo das aulas',
         'welcome_page_button2_desc' => 'Assista as aulas pelo celular, em qualquer lugar.',
         'welcome_page_button3_label' => 'Ativar notificacoes',
@@ -69,6 +69,9 @@ function welcome_page_settings(): array
             $settings[$key] = (string)get_setting($key, $default);
         }
     }
+    if (trim((string)($settings['welcome_page_button2_url'] ?? '')) === '{{app_url}}') {
+        $settings['welcome_page_button2_url'] = '{{app_login_url}}';
+    }
     return $settings;
 }
 
@@ -90,6 +93,60 @@ function welcome_page_token(): string
 function welcome_page_public_url(string $token): string
 {
     return rtrim(BASE_URL, '/') . '/b.php?w=' . rawurlencode($token);
+}
+
+function welcome_page_add_next_to_login_url(string $loginUrl, string $next): string
+{
+    $loginUrl = trim($loginUrl);
+    $next = welcome_page_public_next_path($next);
+    if ($loginUrl === '' || $next === '') return $loginUrl;
+    return $loginUrl . (str_contains($loginUrl, '?') ? '&' : '?') . 'next=' . rawurlencode($next);
+}
+
+function welcome_page_public_next_path(string $path): string
+{
+    $path = ltrim(trim($path), '/');
+    if ($path === '') return '';
+    $basePath = trim((string)(parse_url((string)BASE_URL, PHP_URL_PATH) ?: ''), '/');
+    return trim($basePath . '/' . $path, '/');
+}
+
+function welcome_page_login_next_url(PDO $pdo, int $userId, string $next = 'aplicativo.php'): string
+{
+    if ($userId <= 0) return '';
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS magic_links (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                user_id     INT NOT NULL,
+                token       VARCHAR(64) NOT NULL,
+                expires_at  DATETIME NOT NULL,
+                one_shot    TINYINT(1) NOT NULL DEFAULT 0,
+                used_at     DATETIME NULL,
+                created_at  DATETIME NOT NULL DEFAULT NOW(),
+                UNIQUE KEY uk_ml_token (token),
+                INDEX idx_ml_user (user_id)
+            )
+        ");
+        $st = $pdo->prepare("
+            SELECT token
+              FROM magic_links
+             WHERE user_id = :uid
+               AND one_shot = 0
+               AND expires_at > DATE_ADD(NOW(), INTERVAL 15 DAY)
+             ORDER BY expires_at DESC
+             LIMIT 1
+        ");
+        $st->execute([':uid' => $userId]);
+        $token = trim((string)($st->fetchColumn() ?: ''));
+        $loginUrl = $token !== '' ? rtrim(BASE_URL, '/') . '/login.php?am=' . rawurlencode($token) : '';
+        if ($loginUrl === '' && function_exists('gerar_magic_link')) {
+            $loginUrl = gerar_magic_link($userId, 60, false);
+        }
+        return welcome_page_add_next_to_login_url($loginUrl, $next);
+    } catch (Throwable $e) {
+        return '';
+    }
 }
 
 function welcome_page_ensure_user_link(PDO $pdo, int $userId): string
@@ -144,11 +201,16 @@ function welcome_page_first_name(array $user): string
     return trim((string)($parts[0] ?? $name)) ?: 'Aluno';
 }
 
-function welcome_page_vars(array $user, array $settings): array
+function welcome_page_vars(array $user, array $settings, ?PDO $pdo = null): array
 {
     $turma = trim((string)($user['codigo_turma'] ?? ($user['turma_codigo'] ?? '')));
+    $userId = (int)($user['id'] ?? 0);
+    $appLoginUrl = '';
+    if ($pdo instanceof PDO && $userId > 0) {
+        $appLoginUrl = welcome_page_login_next_url($pdo, $userId, 'aplicativo.php');
+    }
     $vars = [
-        'id' => (string)($user['id'] ?? ''),
+        'id' => (string)$userId,
         'nome' => trim((string)($user['nome'] ?? '')),
         'primeiro_nome' => welcome_page_first_name($user),
         'email' => trim((string)($user['email'] ?? '')),
@@ -157,6 +219,7 @@ function welcome_page_vars(array $user, array $settings): array
         'turma' => $turma,
         'data_live' => trim((string)($user['data_live'] ?? ($user['turma_live_at'] ?? ''))),
         'app_url' => (string)($settings['welcome_page_app_url'] ?? ''),
+        'app_login_url' => $appLoginUrl !== '' ? $appLoginUrl : (string)($settings['welcome_page_app_url'] ?? ''),
         'notification_url' => (string)($settings['welcome_page_notification_url'] ?? ''),
         'welcome_url' => trim((string)($user['welcome_url'] ?? '')),
     ];
@@ -169,6 +232,15 @@ function welcome_page_replace(string $template, array $vars, bool $urlEncode = f
         $value = (string)($vars[$m[1]] ?? '');
         return $urlEncode ? rawurlencode($value) : $value;
     }, $template) ?? $template;
+}
+
+function welcome_page_replace_url(string $template, array $vars): string
+{
+    $template = trim($template);
+    if (preg_match('/^\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}$/', $template, $m)) {
+        return (string)($vars[$m[1]] ?? '');
+    }
+    return welcome_page_replace($template, $vars, true);
 }
 
 function welcome_page_youtube_id(string $value): string

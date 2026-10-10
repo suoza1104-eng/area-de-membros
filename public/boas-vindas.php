@@ -17,10 +17,10 @@ if (!$user || (string)($settings['welcome_page_enabled'] ?? '1') !== '1') {
 
 $url = welcome_page_ensure_user_link($pdo, (int)$user['id']);
 $user['welcome_url'] = $url;
-$vars = welcome_page_vars($user, $settings);
+$vars = welcome_page_vars($user, $settings, $pdo);
 $h = static fn($v): string => htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $text = static fn(string $key): string => welcome_page_replace((string)($settings[$key] ?? ''), $vars, false);
-$link = static fn(string $key): string => welcome_page_replace((string)($settings[$key] ?? '#'), $vars, true);
+$link = static fn(string $key): string => welcome_page_replace_url((string)($settings[$key] ?? '#'), $vars);
 $videoHtml = welcome_page_video_html($settings);
 $supportUrl = trim($link('welcome_page_support_url'));
 if ($supportUrl === '') {

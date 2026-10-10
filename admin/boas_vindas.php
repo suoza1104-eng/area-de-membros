@@ -118,7 +118,7 @@ include __DIR__ . '/_header.php';
         <div class="bv-card bv-help">
           <h2>Variaveis</h2>
           <p class="bv-muted">Use nos textos e links. Em links, os valores sao codificados automaticamente.</p>
-          <?php foreach (['{{nome}}','{{primeiro_nome}}','{{email}}','{{telefone}}','{{codigo_turma}}','{{data_live}}','{{app_url}}','{{notification_url}}','{{welcome_url}}'] as $var): ?><code><?= bv_h($var) ?></code><?php endforeach; ?>
+          <?php foreach (['{{nome}}','{{primeiro_nome}}','{{email}}','{{telefone}}','{{codigo_turma}}','{{data_live}}','{{app_url}}','{{app_login_url}}','{{notification_url}}','{{welcome_url}}'] as $var): ?><code><?= bv_h($var) ?></code><?php endforeach; ?>
         </div>
         <div class="bv-phone">
           <div class="bv-phone-top">
