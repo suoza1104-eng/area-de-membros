@@ -12,6 +12,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/welcome_page.php';
 
 const SINO_FLOW_BOAS_VINDAS = 'boas_vindas_aluno';
 const SINO_TAG_ALUNO        = 'aluno_quadros';
@@ -245,7 +246,7 @@ function sino_iso_datetime($value): ?string
 /** Tag em minusculas, sem acentos nem espacos. */
 function sino_tag(string $value): string
 {
-    $value = mb_strtolower(trim($value), 'UTF-8');
+    $value = function_exists('mb_strtolower') ? mb_strtolower(trim($value), 'UTF-8') : strtolower(trim($value));
     $value = strtr($value, [
         'á'=>'a','à'=>'a','â'=>'a','ã'=>'a','ä'=>'a','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e',
         'í'=>'i','ì'=>'i','î'=>'i','ï'=>'i','ó'=>'o','ò'=>'o','ô'=>'o','õ'=>'o','ö'=>'o',
@@ -258,6 +259,9 @@ function sino_tag(string $value): string
 /** SELECT dos dados do aluno + turma usados no contato do Sino. */
 function sino_user_select(PDO $pdo): string
 {
+    if (function_exists('welcome_page_ensure_schema')) {
+        try { welcome_page_ensure_schema($pdo); } catch (Throwable $e) {}
+    }
     $turmaExpr = sino_column_exists($pdo, 'users', 'turma_codigo')
         ? "COALESCE(NULLIF(u.codigo_turma,''), NULLIF(u.turma_codigo,''))"
         : "NULLIF(u.codigo_turma,'')";
@@ -268,12 +272,14 @@ function sino_user_select(PDO $pdo): string
     $bloq = sino_column_exists($pdo, 'users', 'bloquear') ? 'COALESCE(u.bloquear,0)' : '0';
     $link = sino_column_exists($pdo, 'turmas', 'link_live') ? 't.link_live' : 'NULL';
     $codigoLive = sino_column_exists($pdo, 'turmas', 'codigo_live') ? 't.codigo_live' : 'NULL';
+    $welcomeUrl = sino_column_exists($pdo, 'users', 'welcome_url') ? 'u.welcome_url' : 'NULL';
     // Data/hora de inscricao: a ultima inscricao (reinscricao conta) ou o cadastro.
     $inscricao = sino_column_exists($pdo, 'users', 'created_at') ? 'u.created_at' : 'NULL';
     if (sino_column_exists($pdo, 'inscricao_logs', 'created_at')) $inscricao = "COALESCE((SELECT MAX(il.created_at) FROM inscricao_logs il WHERE il.user_id = u.id), {$inscricao})";
     return "SELECT u.id, u.nome, u.email, u.telefone, {$turmaExpr} AS turma_codigo,
                    {$userLive} AS user_live, {$bloq} AS bloquear, {$inscricao} AS data_inscricao,
-                   t.data_live AS turma_live, {$link} AS turma_link, {$codigoLive} AS turma_codigo_live
+                   t.data_live AS turma_live, {$link} AS turma_link, {$codigoLive} AS turma_codigo_live,
+                   {$welcomeUrl} AS welcome_url
               FROM users u
          LEFT JOIN turmas t ON t.codigo = {$turmaExpr}";
 }
@@ -284,6 +290,11 @@ function sino_load_user(PDO $pdo, int $userId): ?array
     $st->execute([':id' => $userId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
+    if (function_exists('welcome_page_ensure_user_link') && trim((string)($row['welcome_url'] ?? '')) === '') {
+        try {
+            $row['welcome_url'] = welcome_page_ensure_user_link($pdo, $userId);
+        } catch (Throwable $e) {}
+    }
     $rows = [$row];
     sino_attach_magic_links($pdo, $rows);
     return $rows[0];
@@ -366,6 +377,8 @@ function sino_contact_from_row(array $row, ?string &$motivo = null): ?array
     if ($link !== '') $fields['link_live'] = $link;
     $magic = trim((string)($row['magic_link'] ?? ''));
     if ($magic !== '') $fields['magic_link'] = $magic;
+    $welcome = trim((string)($row['welcome_url'] ?? ''));
+    if ($welcome !== '') $fields['welcome_url'] = $welcome;
     $inscricao = sino_iso_datetime($row['data_inscricao'] ?? '');
     if ($inscricao !== null) $fields['data_inscricao'] = $inscricao;
 

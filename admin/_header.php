@@ -852,7 +852,7 @@ button:not([class]):hover { filter: brightness(1.07); }
       }
     }
     $isAreaMembrosActive = in_array(basename($_SERVER['PHP_SELF']), [
-      'aulas.php', 'turmas.php', 'cursos_recomendados.php', 'certificado_config.php', 'certificados_individuais.php'
+      'aulas.php', 'turmas.php', 'cursos_recomendados.php', 'certificado_config.php', 'certificados_individuais.php', 'boas_vindas.php'
     ], true);
     $canSeeAreaMembros = !empty($__sbV['aulas']) || !empty($__sbV['turmas']) || !empty($__sbV['cursos']) || !empty($__sbV['certificado']);
     ?>

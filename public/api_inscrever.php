@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/welcome_page.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -93,6 +94,7 @@ $codigo_turma = null;
 $data_live = null;
 $webhooksDisparados = false;
 $effectiveAccess = [];
+$welcomeUrl = '';
 
 try {
     $raw = file_get_contents('php://input') ?: '';
@@ -354,6 +356,15 @@ try {
         ]);
     }
 
+    try {
+        $welcomeUrl = welcome_page_ensure_user_link($pdo, $user_id);
+    } catch (Throwable $e) {
+        api_safe_log('warning', 'api_inscrever', 'Falha ao gerar link de boas-vindas', [
+            'user_id' => $user_id,
+            'erro' => $e->getMessage(),
+        ]);
+    }
+
     // Sino (WhatsApp): so enfileira; o envio e feito pelo cron.
     if ($foi_cadastrado) sino_aluno_cadastrado($user_id);
     else sino_aluno_atualizado($user_id);
@@ -396,6 +407,7 @@ try {
         'codigo_turma'             => $codigo_turma,
         'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
         'data_live'                => $data_live,
+        'welcome_url'              => $welcomeUrl,
         'qtd_inscricoes'           => $qtdInscricoes,
         'primeira_inscricao'       => $primeiraInscricao,
         'data_inscricao_anterior'  => $dataInscAnterior,
@@ -429,6 +441,7 @@ try {
         'user_id' => $user_id,
         'codigo_turma' => $codigo_turma,
         'data_live' => $data_live,
+        'welcome_url' => $welcomeUrl,
     ]);
 
     api_flush_and_continue();
@@ -472,6 +485,7 @@ try {
         'codigo_turma'             => $codigo_turma,
         'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
         'data_live'                => $data_live,
+        'welcome_url'              => $welcomeUrl,
         'qtd_inscricoes'           => $qtdInscricoes,
         'primeira_inscricao'       => $primeiraInscricao,
         'data_inscricao_anterior'  => $dataInscAnterior,
