@@ -1208,7 +1208,8 @@ button:not([class]):hover { filter: brightness(1.07); }
     'turmas.php',
     'cursos_recomendados.php',
     'certificado_config.php',
-    'certificados_individuais.php'
+    'certificados_individuais.php',
+    'boas_vindas.php'
   ];
   $alunosGroup = [
     'alunos.php',
@@ -1323,6 +1324,18 @@ button:not([class]):hover { filter: brightness(1.07); }
           <path d="M16 18l2 3 2-3"/>
         </svg>
         Certificados Individuais
+      </a>
+      <?php endif; ?>
+
+      <?php if (!empty($__sbV['aulas'])): ?>
+      <a href="boas_vindas.php" class="am-nav-item <?= $currentScript === 'boas_vindas.php' ? 'active' : '' ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 5h16v14H4z"/>
+          <path d="M8 9h8"/>
+          <path d="M8 13h5"/>
+          <path d="M17 13l2 2 3-4"/>
+        </svg>
+        Boas-vindas
       </a>
       <?php endif; ?>
     </nav>
