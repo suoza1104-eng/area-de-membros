@@ -98,7 +98,13 @@ if ($userId > 0 && function_exists('gerar_magic_link')) {
     let installPrompt=window.__areaMembrosInstallPrompt;
 
     function message(text,type){status.textContent=text;status.className='install-status show '+(type||'')}
-    function installed(){action.disabled=true;action.textContent='Aplicativo já instalado';message('O aplicativo já está instalado neste aparelho.','ok')}
+    function installed(){
+        action.disabled=false;
+        action.textContent='Abrir aulas agora';
+        action.onclick=goToFallback;
+        message('O aplicativo ja esta instalado neste aparelho. Vou abrir suas aulas agora.','ok');
+        window.setTimeout(goToFallback,1200);
+    }
     function installerReady(){installPrompt=window.__areaMembrosInstallPrompt;action.disabled=false;action.textContent='Instalar aplicativo agora'}
     function goToFallback(){window.location.href=fallbackUrl}
     function prepareFallback(text,type,delay){
@@ -166,13 +172,6 @@ if ($userId > 0 && function_exists('gerar_magic_link')) {
     if(installPrompt)installerReady();
     window.addEventListener('area-install-ready',installerReady);
     setTimeout(installUnavailable,2500);
-    action.onclick=async function(){
-        if(!installPrompt)return;
-        action.disabled=true;installPrompt.prompt();
-        const choice=await installPrompt.userChoice;installPrompt=null;
-        if(choice.outcome==='accepted'){action.textContent='Instalação confirmada';message('Pronto. O aplicativo está sendo adicionado à sua tela inicial.','ok')}
-        else{action.disabled=false;action.textContent='Instalar aplicativo agora';message('A instalação foi cancelada. Você pode tentar novamente.')}
-    };
     action.onclick=async function(){
         if(!installPrompt){goToFallback();return}
         try{
