@@ -24,6 +24,7 @@ function welcome_page_default_settings(): array
         'welcome_page_badge_text' => 'Inscricao confirmada',
         'welcome_page_headline' => 'Parabens, {{primeiro_nome}}! Seu acesso esta liberado.',
         'welcome_page_lead' => 'Assista ao video e siga os passos rapidos abaixo para comecar da melhor forma.',
+        'welcome_page_video_enabled' => '1',
         'welcome_page_video_type' => 'youtube',
         'welcome_page_video_value' => '',
         'welcome_page_video_duration' => '3:24',
@@ -31,18 +32,22 @@ function welcome_page_default_settings(): array
         'welcome_page_video_subtitle' => 'Mensagem do Professor Emerson Leite',
         'welcome_page_button1_label' => 'Entrar no grupo',
         'welcome_page_button1_url' => 'https://chat.whatsapp.com/{{codigo_turma}}',
+        'welcome_page_button1_target' => '_blank',
         'welcome_page_button1_text' => 'Entre no grupo de alunos',
         'welcome_page_button1_desc' => 'E por la que saem avisos importantes, novidades, lives e materiais extras.',
         'welcome_page_button2_label' => 'Baixar aplicativo',
         'welcome_page_button2_url' => '{{app_login_url}}',
+        'welcome_page_button2_target' => '_self',
         'welcome_page_button2_text' => 'Baixe o aplicativo das aulas',
         'welcome_page_button2_desc' => 'Assista as aulas pelo celular, em qualquer lugar.',
         'welcome_page_button3_label' => 'Ativar notificacoes',
         'welcome_page_button3_url' => '{{notification_url}}',
+        'welcome_page_button3_target' => '_self',
         'welcome_page_button3_text' => 'Ative as notificacoes do app',
         'welcome_page_button3_desc' => 'Receba avisos quando sair aula nova, live ou comunicado importante.',
         'welcome_page_button4_label' => 'Baixar e-book',
         'welcome_page_button4_url' => '#',
+        'welcome_page_button4_target' => '_blank',
         'welcome_page_button4_text' => 'Baixe seu e-book',
         'welcome_page_button4_desc' => 'Material de apoio para consultar sempre que precisar.',
         'welcome_page_app_url' => rtrim(BASE_URL, '/') . '/aplicativo.php',
@@ -80,7 +85,10 @@ function welcome_page_save_settings(array $data): void
     $defaults = welcome_page_default_settings();
     foreach ($defaults as $key => $default) {
         $value = (string)($data[$key] ?? $default);
-        if ($key === 'welcome_page_enabled') $value = !empty($data[$key]) ? '1' : '0';
+        if ($key === 'welcome_page_enabled' || $key === 'welcome_page_video_enabled') $value = !empty($data[$key]) ? '1' : '0';
+        if (preg_match('/^welcome_page_button[1-4]_target$/', $key)) {
+            $value = in_array($value, ['_self', '_blank'], true) ? $value : '_blank';
+        }
         set_setting($key, $value);
     }
 }

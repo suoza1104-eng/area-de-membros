@@ -72,6 +72,7 @@ include __DIR__ . '/_header.php';
         <div class="bv-card">
           <h2>Cabecalho e video</h2>
           <label><input type="checkbox" name="welcome_page_enabled" value="1" <?= $cfg['welcome_page_enabled'] === '1' ? 'checked' : '' ?> style="width:auto"> Pagina ativa</label>
+          <label><input type="checkbox" name="welcome_page_video_enabled" value="1" <?= ($cfg['welcome_page_video_enabled'] ?? '1') === '1' ? 'checked' : '' ?> style="width:auto"> Exibir video na pagina</label>
           <div class="bv-two">
             <div><label>Nome do curso</label><input name="welcome_page_course_name" value="<?= bv_h($cfg['welcome_page_course_name']) ?>"></div>
             <div><label>Selo superior</label><input name="welcome_page_badge_text" value="<?= bv_h($cfg['welcome_page_badge_text']) ?>"></div>
@@ -99,7 +100,10 @@ include __DIR__ . '/_header.php';
                 <div><label>Texto do botao</label><input name="welcome_page_button<?= $i ?>_label" value="<?= bv_h($cfg['welcome_page_button'.$i.'_label']) ?>"></div>
               </div>
               <label>Descricao</label><textarea name="welcome_page_button<?= $i ?>_desc"><?= bv_h($cfg['welcome_page_button'.$i.'_desc']) ?></textarea>
-              <label>Link do botao</label><input name="welcome_page_button<?= $i ?>_url" value="<?= bv_h($cfg['welcome_page_button'.$i.'_url']) ?>">
+              <div class="bv-two">
+                <div><label>Link do botao</label><input name="welcome_page_button<?= $i ?>_url" value="<?= bv_h($cfg['welcome_page_button'.$i.'_url']) ?>"></div>
+                <div><label>Abrir link</label><select name="welcome_page_button<?= $i ?>_target"><option value="_self" <?= ($cfg['welcome_page_button'.$i.'_target'] ?? '_blank')==='_self'?'selected':'' ?>>Na mesma pagina</option><option value="_blank" <?= ($cfg['welcome_page_button'.$i.'_target'] ?? '_blank')==='_blank'?'selected':'' ?>>Em outra aba</option></select></div>
+              </div>
             </div>
           <?php endfor; ?>
         </div>
@@ -126,7 +130,7 @@ include __DIR__ . '/_header.php';
             <h3><?= bv_h($cfg['welcome_page_headline']) ?></h3>
             <p><?= bv_h($cfg['welcome_page_lead']) ?></p>
           </div>
-          <div class="bv-video">VIDEO</div>
+          <?php if (($cfg['welcome_page_video_enabled'] ?? '1') === '1'): ?><div class="bv-video">VIDEO</div><?php endif; ?>
           <?php for ($i=1; $i<=4; $i++): ?>
             <div class="bv-step"><b><?= bv_h($cfg['welcome_page_button'.$i.'_text']) ?></b><span><?= bv_h($cfg['welcome_page_button'.$i.'_desc']) ?></span><i><?= bv_h($cfg['welcome_page_button'.$i.'_label']) ?></i></div>
           <?php endfor; ?>
