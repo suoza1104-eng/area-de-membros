@@ -88,6 +88,15 @@ $image = trim((string)(get_setting('push_popup_image_url', 'pwa-install-phone.jp
     function message(text,type){status.textContent=text;status.className='install-status show '+(type||'')}
     function installed(){action.disabled=true;action.textContent='Aplicativo já instalado';message('O aplicativo já está instalado neste aparelho.','ok')}
     function installerReady(){installPrompt=window.__areaMembrosInstallPrompt;action.disabled=false;action.textContent='Instalar aplicativo agora'}
+    function installUnavailable(){
+        if(installPrompt||standalone||apple||(android&&!chrome))return;
+        action.disabled=false;
+        action.textContent='Ver orientacao de instalacao';
+        action.onclick=function(){
+            message('Se aparecer "Abrir no app" na barra do Chrome, o aplicativo ja esta instalado neste computador. Caso contrario, use o menu do Chrome e escolha "Instalar aplicativo".','ok');
+        };
+        message('O Chrome nao liberou o botao automatico de instalacao. Isso costuma acontecer quando o app ja esta instalado ou quando o navegador ainda esta validando a instalacao.','ok');
+    }
     function openChrome(){
         const fallback=window.location.href;
         const path=window.location.host+window.location.pathname+window.location.search;
@@ -108,6 +117,7 @@ $image = trim((string)(get_setting('push_popup_image_url', 'pwa-install-phone.jp
     action.textContent='Preparando instalação...';
     if(installPrompt)installerReady();
     window.addEventListener('area-install-ready',installerReady);
+    setTimeout(installUnavailable,2500);
     action.onclick=async function(){
         if(!installPrompt)return;
         action.disabled=true;installPrompt.prompt();
