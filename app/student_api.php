@@ -65,6 +65,110 @@ function student_api_ensure_schema(PDO $pdo): void
     $done = true;
 }
 
+function student_api_ensure_message_optout_schema(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    student_api_ensure_schema($pdo);
+    foreach ([
+        "ALTER TABLE users ADD COLUMN whatsapp_opt_out TINYINT(1) NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN whatsapp_opt_out_at DATETIME NULL",
+        "ALTER TABLE users ADD COLUMN whatsapp_opt_out_source VARCHAR(80) NULL",
+        "ALTER TABLE users ADD COLUMN whatsapp_opt_out_reason VARCHAR(255) NULL",
+    ] as $sql) {
+        try { $pdo->exec($sql); } catch (Throwable $e) {}
+    }
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS message_opt_out_events (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NULL,
+            email VARCHAR(190) NULL,
+            phone VARCHAR(40) NULL,
+            action VARCHAR(20) NOT NULL,
+            source VARCHAR(80) NULL,
+            reason VARCHAR(255) NULL,
+            external_event_id VARCHAR(120) NULL,
+            payload_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_message_opt_user (user_id, created_at),
+            KEY idx_message_opt_phone (phone),
+            KEY idx_message_opt_email (email),
+            UNIQUE KEY uk_message_opt_external (source, external_event_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $done = true;
+}
+
+function student_api_user_message_preferences(array $user): array
+{
+    return [
+        'whatsapp_opt_out' => (int)($user['whatsapp_opt_out'] ?? 0) === 1,
+        'whatsapp_opt_out_em' => student_api_dt($user['whatsapp_opt_out_at'] ?? null),
+        'whatsapp_opt_out_origem' => ($user['whatsapp_opt_out_source'] ?? '') !== '' ? (string)$user['whatsapp_opt_out_source'] : null,
+        'whatsapp_opt_out_motivo' => ($user['whatsapp_opt_out_reason'] ?? '') !== '' ? (string)$user['whatsapp_opt_out_reason'] : null,
+    ];
+}
+
+function student_api_set_message_opt_out(PDO $pdo, int $userId, bool $optOut, string $source, string $reason, string $externalEventId = '', array $payload = []): array
+{
+    student_api_ensure_message_optout_schema($pdo);
+    $source = mb_substr(trim($source), 0, 80) ?: 'api';
+    $reason = mb_substr(trim($reason), 0, 255) ?: ($optOut ? 'cancelamento_solicitado' : 'opt_in');
+    $externalEventId = mb_substr(trim($externalEventId), 0, 120);
+    $action = $optOut ? 'opt_out' : 'opt_in';
+
+    $st = $pdo->prepare("SELECT id,nome,email,telefone,whatsapp_opt_out,whatsapp_opt_out_at,whatsapp_opt_out_source,whatsapp_opt_out_reason FROM users WHERE id=:id LIMIT 1");
+    $st->execute([':id' => $userId]);
+    $user = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$user) throw new RuntimeException('Aluno nao encontrado.');
+
+    $pdo->prepare("
+        UPDATE users
+           SET whatsapp_opt_out = :out,
+               whatsapp_opt_out_at = IF(:out2 = 1, NOW(), NULL),
+               whatsapp_opt_out_source = :source,
+               whatsapp_opt_out_reason = :reason
+         WHERE id = :id
+         LIMIT 1
+    ")->execute([
+        ':out' => $optOut ? 1 : 0,
+        ':out2' => $optOut ? 1 : 0,
+        ':source' => $source,
+        ':reason' => $reason,
+        ':id' => $userId,
+    ]);
+
+    $pdo->prepare("
+        INSERT IGNORE INTO message_opt_out_events (user_id,email,phone,action,source,reason,external_event_id,payload_json)
+        VALUES (:user,:email,:phone,:action,:source,:reason,:event,:payload)
+    ")->execute([
+        ':user' => $userId,
+        ':email' => mb_substr((string)($user['email'] ?? ''), 0, 190) ?: null,
+        ':phone' => mb_substr(student_api_normalize_phone((string)($user['telefone'] ?? '')), 0, 40) ?: null,
+        ':action' => $action,
+        ':source' => $source,
+        ':reason' => $reason,
+        ':event' => $externalEventId !== '' ? $externalEventId : null,
+        ':payload' => $payload ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+    ]);
+
+    if (function_exists('adicionar_tag')) {
+        try {
+            adicionar_tag($userId, $optOut ? 'MENSAGENS_CANCELADAS' : 'MENSAGENS_REATIVADAS', $source);
+        } catch (Throwable $e) {}
+    }
+    if (function_exists('sino_aluno_atualizado')) {
+        try { sino_aluno_atualizado($userId); } catch (Throwable $e) {}
+    }
+
+    $st->execute([':id' => $userId]);
+    $updated = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    return [
+        'user' => $updated,
+        'preferencias_mensagens' => student_api_user_message_preferences($updated),
+    ];
+}
+
 /* ------------------------------------------------------------------ chaves */
 
 /** Cria uma chave e devolve o texto completo (unica vez em que ele existe). */
@@ -332,6 +436,7 @@ function student_api_table_exists(PDO $pdo, string $table): bool
 
 function student_api_build_profile(PDO $pdo, array $user, bool $includeFinancial): array
 {
+    student_api_ensure_message_optout_schema($pdo);
     $uid = (int)$user['id'];
     $email = strtolower(trim((string)$user['email']));
     $q = function (string $sql, array $params = []) use ($pdo): array {
@@ -339,6 +444,7 @@ function student_api_build_profile(PDO $pdo, array $user, bool $includeFinancial
         $st->execute($params);
         return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
     };
+    $messagePrefRow = $q("SELECT whatsapp_opt_out,whatsapp_opt_out_at,whatsapp_opt_out_source,whatsapp_opt_out_reason FROM users WHERE id=:u LIMIT 1", [':u' => $uid])[0] ?? $user;
 
     // Tags do aluno (base para live, cliques e marcos)
     $tagRows = $q("SELECT t.nome, ut.origem, ut.created_at
@@ -573,6 +679,7 @@ function student_api_build_profile(PDO $pdo, array $user, bool $includeFinancial
         ],
         'tags' => array_map(fn($t) => ['nome' => $t['nome'], 'origem' => $t['origem'], 'em' => student_api_dt($t['created_at'])], $tagRows),
         'email_marketing' => $emailMarketing,
+        'preferencias_mensagens' => student_api_user_message_preferences($messagePrefRow),
         'whatsapp' => $whatsapp,
         'suporte' => $suporte,
     ];

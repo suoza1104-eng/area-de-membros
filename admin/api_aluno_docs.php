@@ -10,6 +10,7 @@ if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 function apid_h(string $v): string { return htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 $endpoint = rtrim(BASE_URL, '/') . '/api/v1/aluno.php';
+$messagesEndpoint = rtrim(BASE_URL, '/') . '/api/v1/mensagens.php';
 
 // [campo, tipo, descricao]
 $sections = [
@@ -83,6 +84,7 @@ $sections = [
     'aluno: outros' => [
         ['tags[]', 'array', 'Todas as tags do aluno, em ordem: nome, origem, em. Ex.: INSCRITO, PRIMEIRO_LOGIN, VIU_AULA_3, ACESSOU_LIVE.'],
         ['email_marketing.*', 'boolean/string', 'status, descadastrado, descadastrado_em, bounce, marcou_spam, bloqueado.'],
+        ['preferencias_mensagens.*', 'boolean/string', 'whatsapp_opt_out, whatsapp_opt_out_em, origem e motivo do cancelamento de mensagens.'],
         ['whatsapp.*', 'boolean/int', 'esta_em_grupo, grupos_atuais, grupos_historico, entrou_primeira_vez_em, visto_por_ultimo_em.'],
         ['suporte.*', 'int/string', 'conversas, conversas_abertas, ultima_mensagem_em, ultimo_assunto (chat de suporte).'],
         ['compras.*', 'object', 'Só para chaves com escopo "Completo": total_registros, compras_aprovadas, valor_total_aprovado (R$) e itens[] com plataforma, transacao, produto, status (APPROVED, PENDING, CANCELED, REFUNDED...), status_original, valor, moeda, forma_pagamento, parcelas, data.'],
@@ -233,6 +235,18 @@ td:nth-child(2){color:var(--muted);white-space:nowrap;font-size:12px}
     <li>Chaves com escopo "Sem compras" não recebem o bloco <code>compras</code>.</li>
     <li>Se uma chave vazar, ela pode ser revogada no painel na hora, sem afetar as outras plataformas.</li>
   </ul>
+  <h2>8. Cancelar ou reativar mensagens</h2>
+  <p>Para Sino, ManyChat, n8n ou outro sistema externo registrar que o aluno pediu para parar mensagens, use o endpoint abaixo com a mesma chave <code>X-API-Key</code>.</p>
+  <div class="box">
+    <strong>POST</strong> <code><?= apid_h($messagesEndpoint) ?></code><br>
+    <span class="muted">Content-Type: application/json</span>
+  </div>
+  <pre>curl -X POST "<?= apid_h($messagesEndpoint) ?>" \
+  -H "X-API-Key: amk_sua_chave_aqui" \
+  -H "Content-Type: application/json" \
+  -d '{"telefone":"11999998888","action":"opt_out","source":"sino","reason":"cancelou_mensagens"}'</pre>
+  <p>Campos aceitos: <code>user_id</code>, <code>email</code> ou <code>telefone</code> para localizar o aluno; <code>action</code> como <code>opt_out</code> para cancelar ou <code>opt_in</code> para reativar; <code>source</code>, <code>reason</code> e <code>event_id</code> opcionais.</p>
+  <p>Ao cancelar, o sistema grava <code>preferencias_mensagens.whatsapp_opt_out=true</code>, aplica a tag <code>MENSAGENS_CANCELADAS</code> e enfileira atualizacao para o Sino com os campos <code>whatsapp_opt_out=1</code> e <code>receber_mensagens=0</code>.</p>
 </main>
 </body>
 </html>

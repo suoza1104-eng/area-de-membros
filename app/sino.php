@@ -12,6 +12,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/student_api.php';
 require_once __DIR__ . '/welcome_page.php';
 
 const SINO_FLOW_BOAS_VINDAS = 'boas_vindas_aluno';
@@ -262,6 +263,9 @@ function sino_user_select(PDO $pdo): string
     if (function_exists('welcome_page_ensure_schema')) {
         try { welcome_page_ensure_schema($pdo); } catch (Throwable $e) {}
     }
+    if (function_exists('student_api_ensure_message_optout_schema')) {
+        try { student_api_ensure_message_optout_schema($pdo); } catch (Throwable $e) {}
+    }
     $turmaExpr = sino_column_exists($pdo, 'users', 'turma_codigo')
         ? "COALESCE(NULLIF(u.codigo_turma,''), NULLIF(u.turma_codigo,''))"
         : "NULLIF(u.codigo_turma,'')";
@@ -273,13 +277,19 @@ function sino_user_select(PDO $pdo): string
     $link = sino_column_exists($pdo, 'turmas', 'link_live') ? 't.link_live' : 'NULL';
     $codigoLive = sino_column_exists($pdo, 'turmas', 'codigo_live') ? 't.codigo_live' : 'NULL';
     $welcomeUrl = sino_column_exists($pdo, 'users', 'welcome_url') ? 'u.welcome_url' : 'NULL';
+    $whatsappOptOut = sino_column_exists($pdo, 'users', 'whatsapp_opt_out') ? 'COALESCE(u.whatsapp_opt_out,0)' : '0';
+    $whatsappOptOutAt = sino_column_exists($pdo, 'users', 'whatsapp_opt_out_at') ? 'u.whatsapp_opt_out_at' : 'NULL';
+    $whatsappOptOutSource = sino_column_exists($pdo, 'users', 'whatsapp_opt_out_source') ? 'u.whatsapp_opt_out_source' : 'NULL';
     // Data/hora de inscricao: a ultima inscricao (reinscricao conta) ou o cadastro.
     $inscricao = sino_column_exists($pdo, 'users', 'created_at') ? 'u.created_at' : 'NULL';
     if (sino_column_exists($pdo, 'inscricao_logs', 'created_at')) $inscricao = "COALESCE((SELECT MAX(il.created_at) FROM inscricao_logs il WHERE il.user_id = u.id), {$inscricao})";
     return "SELECT u.id, u.nome, u.email, u.telefone, {$turmaExpr} AS turma_codigo,
                    {$userLive} AS user_live, {$bloq} AS bloquear, {$inscricao} AS data_inscricao,
                    t.data_live AS turma_live, {$link} AS turma_link, {$codigoLive} AS turma_codigo_live,
-                   {$welcomeUrl} AS welcome_url
+                   {$welcomeUrl} AS welcome_url,
+                   {$whatsappOptOut} AS whatsapp_opt_out,
+                   {$whatsappOptOutAt} AS whatsapp_opt_out_at,
+                   {$whatsappOptOutSource} AS whatsapp_opt_out_source
               FROM users u
          LEFT JOIN turmas t ON t.codigo = {$turmaExpr}";
 }
@@ -384,12 +394,21 @@ function sino_contact_from_row(array $row, ?string &$motivo = null): ?array
     }
     $welcome = trim((string)($row['welcome_url'] ?? ''));
     if ($welcome !== '') $fields['welcome_url'] = $welcome;
+    $whatsappOptOut = (int)($row['whatsapp_opt_out'] ?? 0) === 1;
+    $fields['whatsapp_opt_out'] = $whatsappOptOut ? '1' : '0';
+    $fields['receber_mensagens'] = $whatsappOptOut ? '0' : '1';
+    if ($whatsappOptOut) {
+        $fields['whatsapp_opt_out_at'] = sino_iso_datetime($row['whatsapp_opt_out_at'] ?? '') ?? (string)($row['whatsapp_opt_out_at'] ?? '');
+        $optOutSource = trim((string)($row['whatsapp_opt_out_source'] ?? ''));
+        if ($optOutSource !== '') $fields['whatsapp_opt_out_source'] = $optOutSource;
+    }
     $inscricao = sino_iso_datetime($row['data_inscricao'] ?? '');
     if ($inscricao !== null) $fields['data_inscricao'] = $inscricao;
 
     if ($fields) $contact['fields'] = $fields;
     $contact['tags'] = [SINO_TAG_ALUNO];
     if ($turma !== '' && ($turmaTag = sino_tag($turma)) !== '') $contact['tags'][] = 'turma_' . $turmaTag;
+    if ($whatsappOptOut) $contact['tags'][] = 'mensagens_canceladas';
     return $contact;
 }
 
