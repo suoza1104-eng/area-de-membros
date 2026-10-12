@@ -386,6 +386,14 @@ function automation_flow_payment_product_filters(array $config): array
     return array_values(array_unique($values));
 }
 
+/** Cursos marcados no gatilho (lista courseFilters + o campo antigo courseFilter). Vazio = todos. */
+function automation_flow_course_filters(array $config): array
+{
+    $values = is_array($config['courseFilters'] ?? null) ? $config['courseFilters'] : [];
+    array_unshift($values, $config['courseFilter'] ?? '');
+    return array_values(array_unique(array_filter(array_map(static fn($v) => trim((string)$v), $values), static fn($v) => $v !== '')));
+}
+
 function automation_flow_course_matches(array $user, array $extra, string $filter): bool
 {
     $needle = automation_flow_match_norm($filter);
@@ -434,8 +442,14 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
         }
         if (!$matchedPaymentProduct) return false;
     }
-    $courseFilter = trim((string)($c['courseFilter'] ?? ''));
-    if ($courseFilter !== '' && !automation_flow_course_matches($user, $extra, $courseFilter)) return false;
+    $courseFilters = automation_flow_course_filters($c);
+    if ($courseFilters) {
+        $matchedCourse = false;
+        foreach ($courseFilters as $courseFilter) {
+            if (automation_flow_course_matches($user, $extra, $courseFilter)) { $matchedCourse = true; break; }
+        }
+        if (!$matchedCourse) return false;
+    }
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $user['turma_codigo'] ?? '', $extra['codigo_turma'] ?? ''] as $value) {
