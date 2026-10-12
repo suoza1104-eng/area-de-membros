@@ -624,19 +624,41 @@ const SINO_ROUTING_CHANNELS = ['automatic', 'official', 'unofficial'];
 const SINO_ROUTING_ROLES = ['sales', 'technical', 'student_support', 'broadcast'];
 
 /**
- * Produtos/cursos do Sino (IDs internos do Sino), cadastrados na aba
- * Integracoes > Sino: [{id, name, default}]. O Sino nao expoe produtos na API.
+ * Produtos/cursos do Sino (IDs internos do Sino), lidos de GET /v1/products
+ * (cache de 5 min). `default` = marcados na aba Integracoes > Sino para virem
+ * selecionados nos blocos. Sem conexao, usa a ultima lista conhecida.
  */
-function sino_products(): array
+function sino_products(bool $refresh = false): array
 {
-    $raw = json_decode((string)(function_exists('get_setting') ? get_setting('sino_products', '') : ''), true);
-    $out = [];
-    foreach (is_array($raw) ? $raw : [] as $p) {
-        $id = (int)($p['id'] ?? 0);
-        if ($id <= 0) continue;
-        $out[] = ['id' => $id, 'name' => trim((string)($p['name'] ?? '')) ?: ('Produto ' . $id), 'default' => !empty($p['default'])];
+    static $memo = null;
+    if ($memo !== null && !$refresh) return $memo;
+    $cache = json_decode((string)get_setting('sino_products_remote', ''), true);
+    $list = is_array($cache['products'] ?? null) ? $cache['products'] : null;
+    if ($refresh || $list === null || (int)($cache['ts'] ?? 0) < time() - 300) {
+        $res = sino_api_key() !== '' ? sino_request('GET', '/products') : ['status' => 0];
+        if ($res['status'] === 200 && is_array($res['body']['products'] ?? null)) {
+            $list = [];
+            foreach ($res['body']['products'] as $p) {
+                $id = (int)($p['id'] ?? 0);
+                if ($id > 0) $list[] = ['id' => $id, 'code' => (string)($p['code'] ?? ''), 'name' => trim((string)($p['name'] ?? '')) ?: ('Produto ' . $id)];
+            }
+            set_setting('sino_products_remote', (string)json_encode(['ts' => time(), 'products' => $list], JSON_UNESCAPED_UNICODE));
+        }
     }
-    return $out;
+    if ($list === null) { // nunca conectou: lista antiga cadastrada a mao
+        $list = array_values(array_filter(array_map(static fn($p) => ['id' => (int)($p['id'] ?? 0), 'code' => '', 'name' => (string)($p['name'] ?? '')], json_decode((string)get_setting('sino_products', ''), true) ?: []), static fn($p) => $p['id'] > 0));
+    }
+    $defaults = sino_product_default_ids();
+    return $memo = array_map(static fn($p) => $p + ['default' => in_array($p['id'], $defaults, true)], $list);
+}
+
+/** IDs marcados como padrao (aba Sino). Compatibilidade: a lista antiga guardava `default` por produto. */
+function sino_product_default_ids(): array
+{
+    $saved = get_setting('sino_products_default', null);
+    if ($saved !== null && $saved !== '') return array_values(array_map('intval', json_decode((string)$saved, true) ?: []));
+    $old = json_decode((string)get_setting('sino_products', ''), true) ?: [];
+    return array_values(array_map(static fn($p) => (int)$p['id'], array_filter($old, static fn($p) => !empty($p['default']))));
 }
 
 function sino_product_name(int $id): string

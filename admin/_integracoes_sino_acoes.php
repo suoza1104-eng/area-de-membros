@@ -35,16 +35,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with($snAction, 'sino_')
             exit;
         }
         if ($snAction === 'sino_products_save') {
-            $products = [];
-            foreach (preg_split('/\R/', (string)($_POST['products'] ?? '')) ?: [] as $line) {
-                $parts = array_map('trim', explode('|', $line));
-                $id = (int)($parts[0] ?? 0);
-                if ($id <= 0) continue;
-                $flag = mb_strtolower((string)($parts[2] ?? ''));
-                $products[$id] = ['id' => $id, 'name' => (string)($parts[1] ?? ''), 'default' => in_array($flag, ['padrão', 'padrao', 'sim', 'default', '1'], true)];
+            if (!empty($_POST['refresh'])) {
+                sino_products(true);
+                header('Location: integracoes.php?tab=sino&msg=' . rawurlencode('Lista de produtos atualizada do Sino.'));
+                exit;
             }
-            set_setting('sino_products', (string)json_encode(array_values($products), JSON_UNESCAPED_UNICODE));
-            header('Location: integracoes.php?tab=sino&msg=' . rawurlencode('Produtos do Sino salvos.'));
+            $ids = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['default_ids'] ?? [])), static fn($v) => $v > 0)));
+            set_setting('sino_products_default', (string)json_encode($ids));
+            header('Location: integracoes.php?tab=sino&msg=' . rawurlencode('Produtos padrao salvos.'));
             exit;
         }
         if ($snAction === 'sino_test') {

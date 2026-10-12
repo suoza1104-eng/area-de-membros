@@ -69,12 +69,17 @@ $snDis = $snCanWrite ? '' : 'disabled';
 
     <div class="int-panel">
       <h2>Produtos do Sino</h2>
-      <p class="sn-sub int-muted">Cursos/produtos que aparecem no bloco “Enviar para fluxo do Sino” (roteamento por curso). Use o <b>ID do produto no Sino</b>. Uma linha por produto: <code>ID | Nome | padrão</code> — os marcados como <code>padrão</code> já vêm selecionados nos blocos.</p>
+      <p class="sn-sub int-muted">Lista lida do Sino (<code>GET /v1/products</code>), usada no bloco “Enviar para fluxo do Sino” para escolher o curso. Marque os que devem vir <b>selecionados por padrão</b> nos blocos.</p>
       <form method="post" action="integracoes.php?tab=sino">
         <input type="hidden" name="csrf" value="<?= int_h($snCsrf) ?>">
         <input type="hidden" name="action" value="sino_products_save">
-        <div class="sn-field"><textarea name="products" rows="5" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;font-family:inherit" <?= $snDis ?> placeholder="1 | FERA | padrão"><?= int_h(implode("\n", array_map(static fn($p) => $p['id'] . ' | ' . $p['name'] . ($p['default'] ? ' | padrão' : ''), sino_products()))) ?></textarea></div>
-        <?php if ($snCanWrite): ?><div class="int-actions"><button class="int-btn primary" type="submit">Salvar produtos</button></div><?php endif; ?>
+        <div class="sn-field">
+          <?php foreach (sino_products() as $p): ?>
+            <label class="sn-check" style="margin-bottom:6px"><input type="checkbox" name="default_ids[]" value="<?= (int)$p['id'] ?>" <?= $p['default'] ? 'checked' : '' ?> <?= $snDis ?>> <?= int_h($p['name']) ?> <span class="sn-note">#<?= (int)$p['id'] ?><?= $p['code'] !== '' ? ' · ' . int_h($p['code']) : '' ?></span></label>
+          <?php endforeach; ?>
+          <?php if (!sino_products()): ?><div class="sn-note">Nenhum produto encontrado no Sino (confira a chave e a conexão).</div><?php endif; ?>
+        </div>
+        <?php if ($snCanWrite): ?><div class="int-actions"><button class="int-btn primary" type="submit">Salvar padrão</button><button class="int-btn" type="submit" name="refresh" value="1">↻ Atualizar lista do Sino</button></div><?php endif; ?>
       </form>
     </div>
   </div>
