@@ -34,6 +34,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with($snAction, 'sino_')
             header('Location: integracoes.php?tab=sino&msg=' . rawurlencode('Configuracao salva.'));
             exit;
         }
+        if ($snAction === 'sino_products_save') {
+            $products = [];
+            foreach (preg_split('/\R/', (string)($_POST['products'] ?? '')) ?: [] as $line) {
+                $parts = array_map('trim', explode('|', $line));
+                $id = (int)($parts[0] ?? 0);
+                if ($id <= 0) continue;
+                $flag = mb_strtolower((string)($parts[2] ?? ''));
+                $products[$id] = ['id' => $id, 'name' => (string)($parts[1] ?? ''), 'default' => in_array($flag, ['padrão', 'padrao', 'sim', 'default', '1'], true)];
+            }
+            set_setting('sino_products', (string)json_encode(array_values($products), JSON_UNESCAPED_UNICODE));
+            header('Location: integracoes.php?tab=sino&msg=' . rawurlencode('Produtos do Sino salvos.'));
+            exit;
+        }
         if ($snAction === 'sino_test') {
             $snTest = sino_request('GET', '/ping');
         }

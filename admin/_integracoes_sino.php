@@ -68,23 +68,14 @@ $snDis = $snCanWrite ? '' : 'disabled';
     </div>
 
     <div class="int-panel">
-      <h2>Carga inicial</h2>
-      <p class="sn-sub int-muted">Envia ao Sino os alunos das turmas com live no futuro (data, link e turma), para os lembretes funcionarem. Não dispara boas-vindas para alunos antigos.</p>
-      <div class="int-actions">
-        <form method="post" action="integracoes.php?tab=sino" class="sn-inline"><input type="hidden" name="csrf" value="<?= int_h($snCsrf) ?>"><input type="hidden" name="action" value="sino_load_preview"><button class="int-btn" type="submit" <?= $snDis ?>>Simular (só contar)</button></form>
-        <form method="post" action="integracoes.php?tab=sino" class="sn-inline" onsubmit="return confirm('Colocar na fila do Sino todos os alunos das turmas com live futura?')"><input type="hidden" name="csrf" value="<?= int_h($snCsrf) ?>"><input type="hidden" name="action" value="sino_load_run"><button class="int-btn primary" type="submit" <?= ($snCanWrite && $snEnabled) ? '' : 'disabled' ?>>Enviar carga inicial</button></form>
-      </div>
-      <?php if (!$snEnabled): ?><div class="sn-note">Ative a integração para liberar o envio.</div><?php endif; ?>
-      <?php if ($snLoad !== null): ?>
-        <table class="sn-table">
-          <tr><th>Turma</th><th>Live</th><th>Alunos</th><th>Ignorados</th></tr>
-          <?php foreach ($snLoad['turmas'] as $t): ?>
-            <tr><td><?= int_h($t['codigo']) ?></td><td><?= int_h($snDt($t['data_live'])) ?></td><td><?= (int)$t['alunos'] ?></td><td><?= (int)array_sum($t['ignorados']) ?></td></tr>
-          <?php endforeach; ?>
-          <tr><td colspan="2">Reagendados (turma já encerrada)</td><td><?= (int)$snLoad['reagendados'] ?></td><td></td></tr>
-        </table>
-        <div class="sn-pre <?= $snLoad['dry_run'] ? '' : 'sn-ok' ?>"><?= $snLoad['dry_run'] ? 'Simulação: ' . (int)$snLoad['total'] . ' alunos seriam enviados.' : '✓ ' . (int)$snLoad['total'] . ' alunos colocados na fila. O envio acontece nos próximos minutos.' ?><?php if ($snLoad['ignorados']): ?> Ignorados: <?= int_h(implode(', ', array_map(fn($k, $v) => "$k: $v", array_keys($snLoad['ignorados']), $snLoad['ignorados']))) ?>.<?php endif; ?></div>
-      <?php endif; ?>
+      <h2>Produtos do Sino</h2>
+      <p class="sn-sub int-muted">Cursos/produtos que aparecem no bloco “Enviar para fluxo do Sino” (roteamento por curso). Use o <b>ID do produto no Sino</b>. Uma linha por produto: <code>ID | Nome | padrão</code> — os marcados como <code>padrão</code> já vêm selecionados nos blocos.</p>
+      <form method="post" action="integracoes.php?tab=sino">
+        <input type="hidden" name="csrf" value="<?= int_h($snCsrf) ?>">
+        <input type="hidden" name="action" value="sino_products_save">
+        <div class="sn-field"><textarea name="products" rows="5" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;font-family:inherit" <?= $snDis ?> placeholder="1 | FERA | padrão"><?= int_h(implode("\n", array_map(static fn($p) => $p['id'] . ' | ' . $p['name'] . ($p['default'] ? ' | padrão' : ''), sino_products()))) ?></textarea></div>
+        <?php if ($snCanWrite): ?><div class="int-actions"><button class="int-btn primary" type="submit">Salvar produtos</button></div><?php endif; ?>
+      </form>
     </div>
   </div>
 

@@ -620,6 +620,51 @@ function sino_process_outbox(PDO $pdo, int $limit = SINO_RODADA_MAX): array
 
 // ===================== BLOCO DA AUTOMACAO: "Enviar para fluxo do Sino" =====================
 
+const SINO_ROUTING_CHANNELS = ['automatic', 'official', 'unofficial'];
+const SINO_ROUTING_ROLES = ['sales', 'technical', 'student_support', 'broadcast'];
+
+/**
+ * Produtos/cursos do Sino (IDs internos do Sino), cadastrados na aba
+ * Integracoes > Sino: [{id, name, default}]. O Sino nao expoe produtos na API.
+ */
+function sino_products(): array
+{
+    $raw = json_decode((string)(function_exists('get_setting') ? get_setting('sino_products', '') : ''), true);
+    $out = [];
+    foreach (is_array($raw) ? $raw : [] as $p) {
+        $id = (int)($p['id'] ?? 0);
+        if ($id <= 0) continue;
+        $out[] = ['id' => $id, 'name' => trim((string)($p['name'] ?? '')) ?: ('Produto ' . $id), 'default' => !empty($p['default'])];
+    }
+    return $out;
+}
+
+function sino_product_name(int $id): string
+{
+    foreach (sino_products() as $p) if ($p['id'] === $id) return $p['name'];
+    return '';
+}
+
+/**
+ * routing do bloco: canal (padrao oficial), funcao (padrao comunicacao em massa)
+ * e cursos (padrao: os marcados como padrao na lista de produtos). Blocos salvos
+ * antes destes campos usam os padroes.
+ */
+function sino_routing_from_config(array $config): array
+{
+    $channel = (string)($config['routingChannel'] ?? 'official');
+    if (!in_array($channel, SINO_ROUTING_CHANNELS, true)) $channel = 'official';
+    $role = (string)($config['routingRole'] ?? 'broadcast');
+    if (!in_array($role, SINO_ROUTING_ROLES, true)) $role = 'broadcast';
+    if (is_array($config['routingProductIds'] ?? null)) {
+        $ids = $config['routingProductIds'];
+    } else {
+        $ids = array_column(array_filter(sino_products(), static fn($p) => $p['default']), 'id');
+    }
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn($v) => $v > 0)));
+    return ['channel' => $channel, 'role' => $role, 'productIds' => $ids];
+}
+
 /**
  * Fluxos ativos do Sino que podem ser disparados por API (trigger.type = api),
  * cacheados por 5 minutos. Devolve ['ok', 'flows' => [{key,name,status,fields}], 'cached_at', 'error'].
@@ -705,11 +750,20 @@ function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, arra
     }
     if ($data) $contact['data'] = $data;
 
+    // Roteamento: o Sino escolhe o numero (oficial ou nao, funcao, curso) por estes campos.
+    $routing = sino_routing_from_config($config);
+    $contact['routing'] = $routing;
+    if ($routing['productIds']) {
+        $contact['productId'] = $routing['productIds'][0];
+        $productName = sino_product_name($routing['productIds'][0]);
+        if ($productName !== '') $contact['productName'] = $productName;
+    }
+
     $runId = (int)($job['run_id'] ?? 0);
     $idem = 'fluxo-' . $flowKey . '-aluno-' . $userId . '-' . $runId;
     $ok = sino_enqueue('fluxo', (string)$userId, ['flow_key' => $flowKey, 'user_id' => $userId, 'run_id' => $runId, 'body' => $contact], $idem);
     if (!$ok) throw new RuntimeException('Falha ao colocar o aluno na fila do Sino.');
-    return ['queued' => true, 'flow_key' => $flowKey, 'idempotency_key' => $idem];
+    return ['queued' => true, 'flow_key' => $flowKey, 'routing' => $routing, 'idempotency_key' => $idem];
 }
 
 // ===================== CARGA INICIAL (terminal e tela admin/sino.php) =====================
