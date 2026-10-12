@@ -41,6 +41,7 @@ $certCfg   = $stCfgCert->fetch() ?: [
     'senha_error_video_url'    => '',
     'webhook_error_url'        => '',
     'webhook_emitido_url'      => '',
+    'certificado_inline_pdf_enabled' => 0,
     'certificado_button_label' => 'Quero receber meu certificado',
     'certificado_button_link'  => '#',
 ];
@@ -337,6 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $btnLabel = $certCfg['certificado_button_label'] ?? 'Quero receber meu certificado';
 $btnLink  = $certCfg['certificado_button_link']  ?? '#';
+$inlinePdfEnabled = !empty($certCfg['certificado_inline_pdf_enabled'] ?? 0);
 
 $introVideoUrl     = trim((string)($certCfg['intro_video_url']          ?? ''));
 $introVideoEnabled = !empty($certCfg['intro_video_enabled']  ?? 0) || $introVideoUrl !== '';
@@ -555,6 +557,53 @@ function normalizar_video_url(string $url): string {
             color: var(--primary); word-break: break-all;
         }
 
+        .certificate-viewer {
+            margin-top: 18px;
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            overflow: hidden;
+            background: rgba(255,255,255,.04);
+        }
+        .certificate-viewer iframe {
+            display: block;
+            width: 100%;
+            height: min(76vh, 760px);
+            min-height: 420px;
+            border: 0;
+            background: #fff;
+        }
+        .certificate-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+        .certificate-actions a {
+            flex: 1 1 180px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 13px 18px;
+            border-radius: var(--r-full);
+            text-decoration: none;
+            font-weight: 800;
+            font-size: 14px;
+            transition: filter .15s, transform .15s;
+        }
+        .certificate-actions a:hover { filter: brightness(1.08); transform: translateY(-1px); }
+        .certificate-actions svg { width: 18px; height: 18px; flex-shrink: 0; }
+        .certificate-download {
+            background: var(--primary);
+            color: #111827;
+            border: 1px solid rgba(255,255,255,.45);
+        }
+        .certificate-open {
+            background: rgba(255,255,255,.06);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
         /* VIDEO */
         .video-box { margin-top: 16px; border-radius: var(--r); overflow: hidden; background: #000; }
         .video-inner { position: relative; padding-top: 56.25%; }
@@ -669,12 +718,28 @@ function normalizar_video_url(string $url): string {
                 </div>
             <?php endif; ?>
 
-            <div class="pulsing-cta">
-                <a href="<?= h($btnLink) ?>" target="_blank" rel="noopener">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
-                    <?= h($btnLabel) ?>
-                </a>
-            </div>
+            <?php if ($inlinePdfEnabled && $pdfUrl): ?>
+                <div class="certificate-viewer">
+                    <iframe src="<?= h($pdfUrl) ?>" title="Certificado em PDF"></iframe>
+                </div>
+                <div class="certificate-actions">
+                    <a class="certificate-download" href="<?= h($pdfUrl) ?>" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Baixar PDF
+                    </a>
+                    <a class="certificate-open" href="<?= h($pdfUrl) ?>" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        Abrir PDF
+                    </a>
+                </div>
+            <?php else: ?>
+                <div class="pulsing-cta">
+                    <a href="<?= h($btnLink) ?>" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+                        <?= h($btnLabel) ?>
+                    </a>
+                </div>
+            <?php endif; ?>
         <?php elseif ($etapa === 'form'): ?>
             <form method="post" action="" id="certForm">
                 <?php if ($certificadoSemSenha): ?>

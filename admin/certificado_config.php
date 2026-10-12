@@ -22,6 +22,7 @@ foreach ([
     "ALTER TABLE certificate_config ADD COLUMN senha_partes_fixas TEXT NULL",
     "ALTER TABLE certificate_config ADD COLUMN incompleto_video_enabled TINYINT(1) NOT NULL DEFAULT 0",
     "ALTER TABLE certificate_config ADD COLUMN incompleto_video_url VARCHAR(500) NOT NULL DEFAULT ''",
+    "ALTER TABLE certificate_config ADD COLUMN certificado_inline_pdf_enabled TINYINT(1) NOT NULL DEFAULT 0",
 ] as $ddl) {
     try { $pdo->exec($ddl); } catch (Throwable $e) {}
 }
@@ -51,6 +52,7 @@ $config = array_merge([
     'senha_error_video_url'     => '',
     'incompleto_video_enabled'  => 0,
     'incompleto_video_url'      => '',
+    'certificado_inline_pdf_enabled' => 0,
     'certificado_button_label'  => 'Quero receber meu certificado',
     'certificado_button_link'   => '',
     'senha_tipo'                => 'unica',
@@ -85,6 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $senhaErrorVideoUrl     = trim($_POST['senha_error_video_url'] ?? '');
         $incompletoVideoEnabled = isset($_POST['incompleto_video_enabled']) ? 1 : 0;
         $incompletoVideoUrl     = trim($_POST['incompleto_video_url'] ?? '');
+        $certificadoInlinePdfEnabled = isset($_POST['certificado_inline_pdf_enabled']) ? 1 : 0;
 
         $btnLabel   = trim($_POST['certificado_button_label'] ?? '');
         $btnLink    = trim($_POST['certificado_button_link'] ?? '');
@@ -131,6 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 senha_error_video_url        = :senha_error_video_url,
                 incompleto_video_enabled     = :incompleto_video_enabled,
                 incompleto_video_url         = :incompleto_video_url,
+                certificado_inline_pdf_enabled = :certificado_inline_pdf_enabled,
                 certificado_button_label     = :certificado_button_label,
                 certificado_button_link      = :certificado_button_link,
                 senha_tipo                   = :senha_tipo,
@@ -154,6 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ':senha_error_video_url'     => $senhaErrorVideoUrl,
             ':incompleto_video_enabled'  => $incompletoVideoEnabled,
             ':incompleto_video_url'      => $incompletoVideoUrl,
+            ':certificado_inline_pdf_enabled' => $certificadoInlinePdfEnabled,
             ':certificado_button_label'  => $btnLabel,
             ':certificado_button_link'   => $btnLink,
             ':senha_tipo'                => $senhaTipo,
@@ -737,6 +742,13 @@ if (!is_array($initPartes)) $initPartes = [];
                     <input type="url" name="certificado_button_link" placeholder="https://..." value="<?= h($config['certificado_button_link'] ?? '') ?>">
                 </div>
             </div>
+
+            <div class="spacer"></div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="certificado_inline_pdf_enabled" name="certificado_inline_pdf_enabled" <?= !empty($config['certificado_inline_pdf_enabled']) ? 'checked' : '' ?>>
+                <label for="certificado_inline_pdf_enabled">Exibir o certificado na propria tela do aluno</label>
+            </div>
+            <div class="note">Quando ativo, apos a emissao o aluno ve o PDF do certificado na tela e recebe um botao para baixar. O botao/link acima fica como fallback se o PDF nao puder ser gerado.</div>
 
             <div class="spacer"></div>
             <div class="info-box">
