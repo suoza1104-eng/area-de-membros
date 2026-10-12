@@ -2,12 +2,11 @@
 // FILE: scripts/sino_sync.php
 // Comando de terminal da integracao com o Sino.
 //
-//   php scripts/sino_sync.php --teste --telefone=31XXXXXXXXX
-//       Chama /v1/ping e envia um contato de teste para POST /v1/contacts (nunca o fluxo).
+//   php scripts/sino_sync.php --teste
+//       Chama /v1/ping. Nao cria contatos no Sino.
 //   php scripts/sino_sync.php --turma=230926 [--dry-run]
 //   php scripts/sino_sync.php --todas-futuras [--dry-run]
-//       Carga inicial: coloca na fila (chamada 3, lote por turma) os alunos das
-//       turmas com live no futuro. Nao dispara boas-vindas. Com --dry-run so conta.
+//       Carga inicial esta desativada. Alunos so entram pelo bloco de automacao.
 declare(strict_types=1);
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -21,8 +20,6 @@ function out(string $line = ''): void { echo $line . PHP_EOL; }
 
 // ===================== --teste =====================
 if (isset($opts['teste'])) {
-    $telefone = trim((string)($opts['telefone'] ?? ''));
-    if (preg_replace('/\D+/', '', $telefone) === '') { out('Informe --telefone=31XXXXXXXXX'); exit(1); }
     if (sino_api_key() === '') { out('SINO_API_KEY nao configurada no .env'); exit(1); }
     out('API: ' . sino_api_url() . '   SINO_ENABLED=' . (sino_enabled() ? 'true' : 'false') . ' (o teste roda mesmo desligado)');
 
@@ -30,24 +27,9 @@ if (isset($opts['teste'])) {
     out('GET /v1/ping -> HTTP ' . $ping['status']);
     out(json_encode($ping['body'] ?? $ping['error'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     if ($ping['status'] !== 200) exit(1);
+    out('Teste concluido. Nenhum contato foi criado no Sino.');
+    exit(0);
 
-    $body = [
-        'phone' => $telefone,
-        'name' => 'Teste Integração',
-        'externalId' => 'teste-integracao',
-        'fields' => [
-            'turma' => 'teste',
-            'data_live' => (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->modify('+3 days')->format(DATE_ATOM),
-        ],
-        'tags' => ['teste_integracao'],
-    ];
-    out('');
-    out('POST /v1/contacts');
-    out(json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-    $res = sino_request('POST', '/contacts', $body, 'teste-integracao-' . sino_body_hash($body));
-    out('-> HTTP ' . $res['status']);
-    out(json_encode($res['body'] ?? $res['error'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-    exit($res['status'] >= 200 && $res['status'] < 300 ? 0 : 1);
 }
 
 // ===================== CARGA INICIAL =====================
@@ -59,6 +41,10 @@ if (!isset($opts['turma']) && !isset($opts['todas-futuras'])) {
 if (!$dryRun && !sino_enabled()) { out('SINO_ENABLED=false: nada sera enfileirado. Use --dry-run para simular.'); exit(1); }
 
 $res = sino_initial_load($pdo, $dryRun, isset($opts['turma']) ? (string)$opts['turma'] : null);
+if (!empty($res['disabled'])) {
+    out((string)($res['message'] ?? 'Carga inicial desativada.'));
+    exit(0);
+}
 if (!$res['turmas'] && !$res['reagendados']) { out('Nenhuma turma encontrada.'); exit(1); }
 
 out(($dryRun ? '[SIMULACAO] ' : '') . 'Carga inicial no Sino (chamada 3 por turma, sem boas-vindas)');

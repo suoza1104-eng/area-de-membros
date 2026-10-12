@@ -2,11 +2,9 @@
 // FILE: app/sino.php
 // Integracao com o Sino (API de automacao do WhatsApp).
 //
-// Os pontos do sistema (cadastro, edicao de aluno, turmas) so INSEREM na fila
-// `sino_outbox` via sino_aluno_cadastrado() / sino_aluno_atualizado() /
-// sino_turma_atualizada(). Quem chama a API e o cron `sino_outbox`
-// (cron/processar_sino.php), para que o cadastro nunca fique lento ou falhe
-// quando o Sino estiver fora do ar.
+// O Sino recebe alunos somente quando eles passam pelo bloco de automacao
+// "Enviar para fluxo do Sino". Cadastros, login, matricula, importacoes e
+// atualizacoes gerais nao sincronizam contatos automaticamente.
 //
 // Configuracao (.env, fora do git): SINO_API_URL, SINO_API_KEY, SINO_ENABLED.
 declare(strict_types=1);
@@ -211,14 +209,14 @@ function sino_enqueue_row(PDO $pdo, string $tipo, string $ref, array $payload, ?
 function sino_aluno_cadastrado(int $userId): void
 {
     if ($userId <= 0) return;
-    sino_enqueue('aluno_cadastrado', (string)$userId, ['user_id' => $userId], 'aluno-' . $userId);
+    // Intencionalmente sem acao: o Sino recebe alunos somente pelo bloco de automacao.
 }
 
 /** Gancho: telefone, nome, e-mail, turma ou data da live do aluno mudou (chamada 2). */
 function sino_aluno_atualizado(int $userId): void
 {
     if ($userId <= 0) return;
-    sino_enqueue('aluno_atualizado', (string)$userId, ['user_id' => $userId]);
+    // Intencionalmente sem acao: atualizacoes gerais nao sincronizam contatos.
 }
 
 /** Gancho: data_live ou link_live da turma definido/alterado (chamada 3, todos os alunos). */
@@ -226,7 +224,7 @@ function sino_turma_atualizada(string $codigoTurma, string $origem = 'turma_alte
 {
     $codigoTurma = trim($codigoTurma);
     if ($codigoTurma === '') return;
-    sino_enqueue('turma_atualizada', $codigoTurma, ['turma' => $codigoTurma, 'origem' => $origem]);
+    // Intencionalmente sem acao: nao ha mais envio em lote de turma para o Sino.
 }
 
 // ===================== MONTAGEM DO CONTATO =====================
@@ -508,50 +506,23 @@ function sino_job_contact(PDO $pdo, array &$job, array &$payload, ?string &$moti
 
 function sino_process_aluno_cadastrado(PDO $pdo, array $job, array $payload): string
 {
-    $motivo = null;
-    $body = sino_job_contact($pdo, $job, $payload, $motivo);
-    if ($body === null) {
-        sino_log('aluno_cadastrado', (string)$job['ref'], 0, 'ignorado: ' . $motivo);
-        sino_outbox_finish($pdo, $job, 'ignorado', 0, (string)$motivo, $payload);
-        return 'ignorado';
-    }
-
-    if (empty($payload['fallback_contacts'])) {
-        $job['idempotency_key'] = $job['idempotency_key'] ?: 'aluno-' . (int)$job['ref'];
-        $res = sino_request('POST', '/flows/' . SINO_FLOW_BOAS_VINDAS . '/trigger', $body, (string)$job['idempotency_key']);
-        $code = (string)($res['body']['error']['code'] ?? '');
-        if (!($res['status'] === 409 && $code === 'flow_inactive')) {
-            $msg = 'started=' . (!empty($res['body']['started']) ? 'true' : 'false');
-            if (!empty($res['body']['reason'])) $msg .= ' reason=' . (is_scalar($res['body']['reason']) ? (string)$res['body']['reason'] : json_encode($res['body']['reason'], JSON_UNESCAPED_UNICODE));
-            return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
-        }
-        // Fluxo de boas-vindas ainda nao publicado: grava o contato para nao perder o aluno.
-        sino_log('aluno_cadastrado', (string)$job['ref'], 409, 'flow_inactive: enviando para /contacts');
-        $payload['fallback_contacts'] = true;
-    }
-    $key = 'aluno-' . (int)$job['ref'] . '-' . sino_body_hash($body);
-    $res = sino_request('POST', '/contacts', $body, $key);
-    return sino_outbox_resolve($pdo, $job, $res, $payload, 'flow_inactive -> contato gravado');
+    $msg = 'sync geral desativada: aluno so e enviado ao Sino pelo bloco de automacao';
+    sino_log('aluno_cadastrado', (string)$job['ref'], 0, $msg, ['outbox_id' => (int)$job['id']]);
+    sino_outbox_finish($pdo, $job, 'ignorado', 0, $msg, $payload);
+    return 'ignorado';
 }
 
 function sino_process_aluno_atualizado(PDO $pdo, array $job, array $payload): string
 {
-    $motivo = null;
-    $body = sino_job_contact($pdo, $job, $payload, $motivo);
-    if ($body === null) {
-        sino_log('aluno_atualizado', (string)$job['ref'], 0, 'ignorado: ' . $motivo);
-        sino_outbox_finish($pdo, $job, 'ignorado', 0, (string)$motivo, $payload);
-        return 'ignorado';
-    }
-    $job['idempotency_key'] = $job['idempotency_key'] ?: 'aluno-' . (int)$job['ref'] . '-' . sino_body_hash($body);
-    $res = sino_request('POST', '/contacts', $body, (string)$job['idempotency_key']);
-    $msg = isset($res['body']['created']) ? ('created=' . ($res['body']['created'] ? 'true' : 'false')) : 'ok';
-    return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
+    $msg = 'sync geral desativada: atualizacao de aluno nao cria contato no Sino';
+    sino_log('aluno_atualizado', (string)$job['ref'], 0, $msg, ['outbox_id' => (int)$job['id']]);
+    sino_outbox_finish($pdo, $job, 'ignorado', 0, $msg, $payload);
+    return 'ignorado';
 }
 
 /**
- * Bloco "Enviar para fluxo do Sino" da automacao. 409/404 (fluxo pausado ou
- * apagado) -> grava o mesmo contato em /contacts para nao perder o aluno.
+ * Bloco "Enviar para fluxo do Sino" da automacao. Apenas este caminho chama a
+ * API do Sino para o aluno, sempre disparando o fluxo configurado no bloco.
  */
 function sino_process_fluxo(PDO $pdo, array $job, array $payload): string
 {
@@ -562,21 +533,10 @@ function sino_process_fluxo(PDO $pdo, array $job, array $payload): string
         return 'erro_definitivo';
     }
 
-    if (empty($payload['fallback_contacts'])) {
-        $res = sino_request('POST', '/flows/' . rawurlencode($flowKey) . '/trigger', $body, (string)$job['idempotency_key']);
-        if ($res['status'] !== 409 && $res['status'] !== 404) {
-            $msg = 'fluxo ' . $flowKey . ' started=' . (!empty($res['body']['started']) ? 'true' : 'false');
-            if (!empty($res['body']['reason'])) $msg .= ' reason=' . (is_scalar($res['body']['reason']) ? (string)$res['body']['reason'] : json_encode($res['body']['reason'], JSON_UNESCAPED_UNICODE));
-            return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
-        }
-        $estado = $res['status'] === 404 ? 'apagado' : 'inativo';
-        sino_log('fluxo', (string)$job['ref'], (int)$res['status'], 'fluxo ' . $flowKey . ' ' . $estado . ' no Sino: enviando contato para /contacts', ['outbox_id' => (int)$job['id']]);
-        $payload['fallback_contacts'] = $estado;
-    }
-    $contact = $body;
-    unset($contact['data']);
-    $res = sino_request('POST', '/contacts', $contact, 'aluno-' . (int)$job['ref'] . '-' . sino_body_hash($contact));
-    return sino_outbox_resolve($pdo, $job, $res, $payload, 'fluxo ' . $flowKey . ' ' . $payload['fallback_contacts'] . ' no Sino -> contato gravado');
+    $res = sino_request('POST', '/flows/' . rawurlencode($flowKey) . '/trigger', $body, (string)$job['idempotency_key']);
+    $msg = 'fluxo ' . $flowKey . ' started=' . (!empty($res['body']['started']) ? 'true' : 'false');
+    if (!empty($res['body']['reason'])) $msg .= ' reason=' . (is_scalar($res['body']['reason']) ? (string)$res['body']['reason'] : json_encode($res['body']['reason'], JSON_UNESCAPED_UNICODE));
+    return sino_outbox_resolve($pdo, $job, $res, $payload, $msg);
 }
 
 /** Alunos de uma turma, a partir de um id, prontos para o lote. */
@@ -606,73 +566,16 @@ function sino_turma_contacts(PDO $pdo, string $codigo, int $afterId, int $limit,
 function sino_process_turma_atualizada(PDO $pdo, array $job, array $payload, float $deadline): string
 {
     $codigo = (string)($payload['turma'] ?? $job['ref']);
-    $afterId = (int)($payload['after_id'] ?? 0);
-    $tags = [SINO_TAG_ALUNO, 'turma_' . sino_tag($codigo)];
-    $enviados = (int)($payload['enviados'] ?? 0);
-
-    while (true) {
-        $ignorados = [];
-        $lote = sino_turma_contacts($pdo, $codigo, $afterId, SINO_BATCH_MAX, $ignorados);
-        if (!$lote['contacts'] && $lote['last_id'] === $afterId) break; // acabou a turma
-        if ($lote['contacts']) {
-            $body = ['tags' => $tags, 'contacts' => $lote['contacts']];
-            $key = 'turma-' . sino_tag($codigo) . '-' . sino_body_hash($body);
-            $res = sino_request('POST', '/contacts/batch', $body, $key);
-            $http = (int)$res['status'];
-            if ($http < 200 || $http >= 300) {
-                $payload['after_id'] = $afterId;
-                return sino_outbox_resolve($pdo, $job, $res, $payload);
-            }
-            foreach ((array)($res['body']['errors'] ?? []) as $err) {
-                $idx = (int)($err['index'] ?? -1);
-                $uid = (string)($lote['contacts'][$idx]['externalId'] ?? '?');
-                sino_log('aluno_atualizado', $uid, 422, 'erro no lote da turma ' . $codigo . ': ' . (string)($err['error'] ?? ''), ['outbox_id' => (int)$job['id']]);
-            }
-            $enviados += count($lote['contacts']);
-            sino_log('turma_atualizada', $codigo, $http, sprintf('lote received=%d created=%d updated=%d errors=%d',
-                (int)($res['body']['received'] ?? 0), (int)($res['body']['created'] ?? 0),
-                (int)($res['body']['updated'] ?? 0), count((array)($res['body']['errors'] ?? []))), ['outbox_id' => (int)$job['id']]);
-        }
-        $afterId = $lote['last_id'];
-        $payload['after_id'] = $afterId;
-        $payload['enviados'] = $enviados;
-        if ($lote['rows'] < SINO_BATCH_MAX) break;
-        if (microtime(true) > $deadline) {
-            // Sem tempo nesta rodada: salva o progresso e continua no proximo minuto.
-            $pdo->prepare("UPDATE sino_outbox SET payload = :p WHERE id = :id")
-                ->execute([':p' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ':id' => (int)$job['id']]);
-            return 'pendente';
-        }
-    }
-    sino_outbox_finish($pdo, $job, 'enviado', 200, '', $payload);
-    return 'enviado';
+    $msg = 'sync geral desativada: lote de turma nao cria contatos no Sino';
+    sino_log('turma_atualizada', $codigo, 0, $msg, ['outbox_id' => (int)$job['id']]);
+    sino_outbox_finish($pdo, $job, 'ignorado', 0, $msg, $payload);
+    return 'ignorado';
 }
 
-/**
- * Rede de seguranca: alunos criados por caminhos sem gancho explicito
- * (importacoes, SQL manual etc.) tambem recebem boas-vindas. Na primeira
- * execucao o cursor comeca no ultimo aluno, para nunca disparar para antigos.
- */
+/** Sync geral desativada: alunos novos nao sao capturados automaticamente. */
 function sino_capture_new_users(PDO $pdo): int
 {
-    $cursor = (int)get_setting('sino_user_cursor', '0');
-    if ($cursor <= 0) {
-        set_setting('sino_user_cursor', (string)(int)$pdo->query("SELECT COALESCE(MAX(id),0) FROM users")->fetchColumn());
-        return 0;
-    }
-    $hasCreated = sino_column_exists($pdo, 'users', 'created_at');
-    $st = $pdo->prepare("SELECT id, " . ($hasCreated ? 'created_at' : 'NULL AS created_at') . " FROM users WHERE id > :c ORDER BY id LIMIT 500");
-    $st->execute([':c' => $cursor]);
-    $now = time();
-    $novos = 0;
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-        $ts = $row['created_at'] ? (int)strtotime((string)$row['created_at']) : 0;
-        if ($ts > $now - 60) break; // deixa o cadastro terminar de gravar turma/live
-        if ($ts >= $now - 86400) { sino_aluno_cadastrado((int)$row['id']); $novos++; }
-        $cursor = (int)$row['id'];
-    }
-    set_setting('sino_user_cursor', (string)$cursor);
-    return $novos;
+    return 0;
 }
 
 /** Executado pelo cron a cada minuto: envia ate 200 itens pendentes. */
@@ -685,7 +588,6 @@ function sino_process_outbox(PDO $pdo, int $limit = SINO_RODADA_MAX): array
     $started = microtime(true);
     $deadline = $started + 50; // cabe dentro do minuto do cron
     $stats = ['capturados' => 0, 'processados' => 0, 'enviado' => 0, 'pendente' => 0, 'erro_definitivo' => 0, 'ignorado' => 0];
-    try { $stats['capturados'] = sino_capture_new_users($pdo); } catch (Throwable $e) { @error_log('sino_capture_new_users: ' . $e->getMessage()); }
 
     $st = $pdo->prepare("SELECT * FROM sino_outbox WHERE status = 'pendente' AND proxima_tentativa_em <= NOW() ORDER BY id LIMIT " . max(1, min(SINO_RODADA_MAX, $limit)));
     $st->execute();
@@ -784,6 +686,17 @@ function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, arra
     }
 
     $data = [];
+    $fields = is_array($contact['fields'] ?? null) ? $contact['fields'] : [];
+    foreach ([
+        'turma' => $fields['turma'] ?? ($extra['codigo_turma'] ?? ''),
+        'data_live' => $fields['data_live'] ?? ($extra['data_live'] ?? ''),
+        'magic_link' => $fields['magic_link'] ?? '',
+        'codigo_live' => $fields['codigo_live'] ?? ($extra['codigo_live'] ?? ''),
+        'welcome_url' => $fields['welcome_url'] ?? ($extra['welcome_url'] ?? ''),
+    ] as $key => $value) {
+        $value = trim((string)$value);
+        if ($value !== '') $data[$key] = $value;
+    }
     foreach ((array)($config['data'] ?? []) as $pair) {
         $key = trim((string)($pair['key'] ?? ''));
         if ($key === '') continue;
@@ -801,47 +714,15 @@ function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, arra
 
 // ===================== CARGA INICIAL (terminal e tela admin/sino.php) =====================
 
-/**
- * Coloca na fila os alunos das turmas com live no futuro (chamada 3, lote por
- * turma) e os reagendados para live futura cuja turma ja passou (chamada 2).
- * Nunca dispara boas-vindas. Com $dryRun so conta, sem gravar nada.
- */
+/** Carga inicial desativada: a entrada no Sino acontece somente pelo bloco. */
 function sino_initial_load(PDO $pdo, bool $dryRun, ?string $turma = null): array
 {
-    if (!$dryRun) sino_ensure_schema($pdo);
-    if ($turma !== null) {
-        $st = $pdo->prepare("SELECT codigo, data_live FROM turmas WHERE codigo = :c LIMIT 1");
-        $st->execute([':c' => trim($turma)]);
-    } else {
-        $st = $pdo->query("SELECT codigo, data_live FROM turmas WHERE data_live > NOW() ORDER BY data_live");
-    }
-    $result = ['turmas' => [], 'reagendados' => 0, 'total' => 0, 'ignorados' => []];
-    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $t) {
-        $codigo = (string)$t['codigo'];
-        $qtd = 0; $lotes = 0; $after = 0; $ign = [];
-        do {
-            $ignLote = [];
-            $lote = sino_turma_contacts($pdo, $codigo, $after, SINO_BATCH_MAX, $ignLote, false); // so conta: sem gerar links
-            foreach ($ignLote as $k => $v) $ign[$k] = ($ign[$k] ?? 0) + $v;
-            $qtd += count($lote['contacts']);
-            if ($lote['contacts']) $lotes++;
-            $after = $lote['last_id'];
-        } while ($lote['rows'] >= SINO_BATCH_MAX);
-        foreach ($ign as $k => $v) $result['ignorados'][$k] = ($result['ignorados'][$k] ?? 0) + $v;
-        if (!$dryRun && $qtd > 0) sino_turma_atualizada($codigo, 'carga_inicial');
-        $result['turmas'][] = ['codigo' => $codigo, 'data_live' => (string)($t['data_live'] ?? ''), 'alunos' => $qtd, 'lotes' => $lotes, 'ignorados' => $ign];
-        $result['total'] += $qtd;
-    }
-    if ($turma === null) {
-        $st = $pdo->query("SELECT * FROM (" . sino_user_select($pdo) . ") x
-                            WHERE x.user_live > NOW() AND (x.turma_live IS NULL OR x.turma_live <= NOW())");
-        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-            $motivo = null;
-            if (sino_contact_from_row($row, $motivo) === null) { $result['ignorados'][$motivo] = ($result['ignorados'][$motivo] ?? 0) + 1; continue; }
-            $result['reagendados']++;
-            if (!$dryRun) sino_aluno_atualizado((int)$row['id']);
-        }
-        $result['total'] += $result['reagendados'];
-    }
-    return $result;
+    return [
+        'disabled' => true,
+        'message' => 'Carga inicial desativada: o Sino recebe alunos somente pelo bloco de automacao.',
+        'turmas' => [],
+        'reagendados' => 0,
+        'total' => 0,
+        'ignorados' => [],
+    ];
 }
