@@ -386,6 +386,33 @@ function automation_flow_payment_product_filters(array $config): array
     return array_values(array_unique($values));
 }
 
+function automation_flow_course_matches(array $user, array $extra, string $filter): bool
+{
+    $needle = automation_flow_match_norm($filter);
+    if ($needle === '') return true;
+    $paths = [
+        ['course_id'], ['curso_id'], ['course_code'], ['curso_codigo'], ['course_name'], ['curso'], ['course'],
+        ['inscricao', 'course_id'], ['inscricao', 'curso_id'], ['inscricao', 'course_code'], ['inscricao', 'course_name'], ['inscricao', 'curso'],
+        ['metadata', 'course_id'], ['metadata', 'curso_id'], ['metadata', 'course_code'], ['metadata', 'course_name'], ['metadata', 'curso'],
+        ['payload', 'course_id'], ['payload', 'curso_id'], ['payload', 'course_code'], ['payload', 'course_name'], ['payload', 'curso'],
+    ];
+    foreach ($paths as $path) {
+        $value = automation_flow_extra_path_value($extra, $path);
+        if ($value !== null && automation_flow_match_norm($value) === $needle) return true;
+    }
+    foreach ([
+        $user['course_id'] ?? null,
+        $user['curso_id'] ?? null,
+        $user['course_code'] ?? null,
+        $user['curso_codigo'] ?? null,
+        $user['course_name'] ?? null,
+        $user['curso'] ?? null,
+    ] as $value) {
+        if ($value !== null && automation_flow_match_norm((string)$value) === $needle) return true;
+    }
+    return false;
+}
+
 function automation_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
 {
     $c = is_array($node['config'] ?? null) ? $node['config'] : [];
@@ -407,6 +434,8 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
         }
         if (!$matchedPaymentProduct) return false;
     }
+    $courseFilter = trim((string)($c['courseFilter'] ?? ''));
+    if ($courseFilter !== '' && !automation_flow_course_matches($user, $extra, $courseFilter)) return false;
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $user['turma_codigo'] ?? '', $extra['codigo_turma'] ?? ''] as $value) {

@@ -167,6 +167,12 @@ try {
     ] as $sql) {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
     }
+    $inscricaoCourseId = 1;
+    $inscricaoCourseName = '';
+    try {
+        $cfgCourse = $pdo->query("SELECT course_title FROM app_config WHERE id = 1 LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: [];
+        $inscricaoCourseName = trim((string)($cfgCourse['course_title'] ?? ''));
+    } catch (Throwable $e) {}
 
     // Garante existência da tabela de histórico de inscrições
     try {
@@ -405,6 +411,10 @@ try {
     }
     $extras = [
         'codigo_turma'             => $codigo_turma,
+        'course_id'                => $inscricaoCourseId,
+        'course_code'              => (string)$inscricaoCourseId,
+        'course_name'              => $inscricaoCourseName,
+        'curso'                    => $inscricaoCourseName,
         'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
         'data_live'                => $data_live,
         'welcome_url'              => $welcomeUrl,
@@ -483,6 +493,10 @@ try {
 
     $extras = [
         'codigo_turma'             => $codigo_turma,
+        'course_id'                => $inscricaoCourseId,
+        'course_code'              => (string)$inscricaoCourseId,
+        'course_name'              => $inscricaoCourseName,
+        'curso'                    => $inscricaoCourseName,
         'codigo_live'              => $codigo_live !== '' ? $codigo_live : $codigo_turma,
         'data_live'                => $data_live,
         'welcome_url'              => $welcomeUrl,
