@@ -265,7 +265,6 @@ if ($export === 'csv') {
                ORDER BY s.sale_date DESC, s.id DESC";
     $stmtCsv = $pdo->prepare($csvSql);
     $stmtCsv->execute($params);
-    $rows = $stmtCsv->fetchAll(PDO::FETCH_ASSOC);
 
     while (ob_get_level() > 0) ob_end_clean();
     header('Content-Type: text/csv; charset=UTF-8');
@@ -282,7 +281,7 @@ if ($export === 'csv') {
         'Email', 'Telefone', 'CPF/CNPJ', 'UTM Source', 'UTM Medium', 'UTM Campaign', 'UTM Term', 'UTM Content'
     ]);
 
-    foreach ($rows as $r) {
+    while ($r = $stmtCsv->fetch(PDO::FETCH_ASSOC)) {
         fputcsv($output, [
             $r['id'],
             strtoupper((string)$r['provider']),
@@ -433,6 +432,22 @@ function va_provider_badge(string $provider): string {
 .aud-btn-primary:hover { background: #2563eb; }
 .aud-btn-csv { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: #4ade80; }
 .aud-btn-csv:hover { background: rgba(34,197,94,0.3); }
+.aud-btn-csv.is-loading { pointer-events: none; opacity: .7; }
+
+.aud-export[hidden] { display: none; }
+.aud-export { position: fixed; inset: 0; z-index: 10020; display: grid; place-items: center; padding: 18px; background: rgba(2,6,23,0.78); backdrop-filter: blur(4px); }
+.aud-export-box { width: min(430px, 94vw); background: #070b12; border: 1px solid rgba(34,197,94,0.28); border-radius: 12px; box-shadow: 0 24px 80px rgba(0,0,0,0.55); padding: 20px; }
+.aud-export-top { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+.aud-export-title strong { display: block; color: #f8fafc; font-size: 16px; }
+.aud-export-title span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.aud-export-percent { color: #4ade80; font-size: 22px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.aud-export-track { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(148,163,184,0.16); border: 1px solid rgba(148,163,184,0.16); }
+.aud-export-bar { width: 0%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #22c55e, #60a5fa); transition: width .24s ease; }
+.aud-export-status { min-height: 18px; color: #cbd5e1; font-size: 12px; margin-top: 12px; }
+.aud-export-error { color: #fca5a5; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 12px; }
+.aud-export-actions { display: none; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.aud-export.has-error .aud-export-actions { display: flex; }
+.aud-export-close { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.3); background: rgba(15,23,42,0.8); color: #e2e8f0; cursor: pointer; font-size: 12px; font-weight: 700; }
 
 .aud-table-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: auto; }
 .aud-table { width: 100%; border-collapse: collapse; min-width: 1100px; font-size: 12px; }
@@ -588,7 +603,7 @@ function va_provider_badge(string $provider): string {
         <button type="submit" class="aud-btn aud-btn-primary">
           <i class="ph ph-magnifying-glass"></i> Filtrar
         </button>
-        <a href="?<?= htmlspecialchars(http_build_query(array_merge($_GET, ['export' => 'csv']))) ?>" class="aud-btn aud-btn-csv">
+        <a href="?<?= htmlspecialchars(http_build_query(array_merge($_GET, ['export' => 'csv']))) ?>" class="aud-btn aud-btn-csv" id="audExportCsv">
           <i class="ph ph-download-simple"></i> Exportar CSV
         </a>
       </div>
@@ -729,6 +744,24 @@ function va_provider_badge(string $provider): string {
 
 </div>
 
+<div class="aud-export" id="audExportProgress" hidden aria-live="polite" aria-modal="true" role="dialog">
+  <div class="aud-export-box">
+    <div class="aud-export-top">
+      <div class="aud-export-title">
+        <strong>Exportando CSV</strong>
+        <span>Preparando a planilha com os filtros atuais.</span>
+      </div>
+      <div class="aud-export-percent" id="audExportPercent">0%</div>
+    </div>
+    <div class="aud-export-track"><div class="aud-export-bar" id="audExportBar"></div></div>
+    <div class="aud-export-status" id="audExportStatus">Iniciando exportacao...</div>
+    <div class="aud-export-error" id="audExportError"></div>
+    <div class="aud-export-actions">
+      <button type="button" class="aud-export-close" id="audExportClose">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <div class="aud-modal" id="audSaleModal" hidden aria-hidden="true">
   <div class="aud-modal-backdrop" data-aud-close></div>
   <section class="aud-modal-panel" role="dialog" aria-modal="true" aria-labelledby="audSaleModalTitle">
@@ -754,7 +787,16 @@ function va_provider_badge(string $provider): string {
   const title = document.getElementById('audSaleModalTitle');
   const body = document.getElementById('audSaleModalBody');
   const copyBtn = document.getElementById('audCopyPayload');
+  const exportBtn = document.getElementById('audExportCsv');
+  const exportProgress = document.getElementById('audExportProgress');
+  const exportBar = document.getElementById('audExportBar');
+  const exportPercent = document.getElementById('audExportPercent');
+  const exportStatus = document.getElementById('audExportStatus');
+  const exportError = document.getElementById('audExportError');
+  const exportClose = document.getElementById('audExportClose');
   let currentPayload = null;
+  let exportTimer = null;
+  let exportValue = 0;
 
   function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
@@ -820,6 +862,100 @@ function va_provider_badge(string $provider): string {
     document.body.style.overflow = '';
   }
 
+  function setExportProgress(value, message) {
+    exportValue = Math.max(0, Math.min(100, Math.round(value)));
+    exportBar.style.width = exportValue + '%';
+    exportPercent.textContent = exportValue + '%';
+    if (message) exportStatus.textContent = message;
+  }
+
+  function startExportUi() {
+    exportProgress.hidden = false;
+    exportProgress.classList.remove('has-error');
+    exportError.textContent = '';
+    exportBtn.classList.add('is-loading');
+    exportBtn.innerHTML = '<i class="ph ph-spinner-gap"></i> Exportando...';
+    setExportProgress(4, 'Conectando ao servidor...');
+    window.clearInterval(exportTimer);
+    exportTimer = window.setInterval(() => {
+      if (exportValue < 88) setExportProgress(exportValue + Math.max(1, Math.round((90 - exportValue) / 12)), 'Gerando arquivo CSV...');
+    }, 600);
+  }
+
+  function finishExportUi() {
+    window.clearInterval(exportTimer);
+    setExportProgress(100, 'Download iniciado.');
+    window.setTimeout(() => {
+      exportProgress.hidden = true;
+      setExportProgress(0, 'Iniciando exportacao...');
+    }, 900);
+    exportBtn.classList.remove('is-loading');
+    exportBtn.innerHTML = '<i class="ph ph-download-simple"></i> Exportar CSV';
+  }
+
+  function failExportUi(message) {
+    window.clearInterval(exportTimer);
+    exportProgress.classList.add('has-error');
+    exportError.textContent = message || 'Nao foi possivel baixar o CSV.';
+    exportStatus.textContent = 'Exportacao interrompida.';
+    exportBtn.classList.remove('is-loading');
+    exportBtn.innerHTML = '<i class="ph ph-download-simple"></i> Exportar CSV';
+  }
+
+  function filenameFromDisposition(disposition) {
+    const fallback = 'auditoria_vendas_' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.csv';
+    const match = String(disposition || '').match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i);
+    if (!match) return fallback;
+    try { return decodeURIComponent(match[1] || match[2] || fallback); } catch (err) { return match[1] || match[2] || fallback; }
+  }
+
+  async function responseBlobWithProgress(res) {
+    const total = Number(res.headers.get('Content-Length') || 0);
+    if (!res.body || !total) return await res.blob();
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      setExportProgress(Math.min(98, Math.round((received / total) * 100)), 'Baixando arquivo...');
+    }
+    return new Blob(chunks, {type: res.headers.get('Content-Type') || 'text/csv;charset=UTF-8'});
+  }
+
+  async function downloadCsv(event) {
+    if (!exportBtn || exportBtn.classList.contains('is-loading')) return;
+    event.preventDefault();
+    startExportUi();
+    try {
+      const res = await fetch(exportBtn.href, {credentials: 'same-origin', headers: {'Accept': 'text/csv'}});
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error('HTTP ' + res.status + ' ao exportar.\n' + text.slice(0, 700));
+      }
+      const type = String(res.headers.get('Content-Type') || '').toLowerCase();
+      if (type && !type.includes('text/csv') && !type.includes('application/octet-stream')) {
+        const text = await res.text();
+        throw new Error('Resposta inesperada do servidor (' + type + ').\n' + text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 700));
+      }
+      const blob = await responseBlobWithProgress(res);
+      if (!blob.size) throw new Error('O servidor retornou um arquivo vazio.');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filenameFromDisposition(res.headers.get('Content-Disposition'));
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+      finishExportUi();
+    } catch (err) {
+      failExportUi(err.message || String(err));
+    }
+  }
+
   async function loadDetail(row) {
     const provider = row.dataset.provider || '';
     const transaction = row.dataset.transaction || '';
@@ -876,6 +1012,8 @@ function va_provider_badge(string $provider): string {
     copyBtn.innerHTML = '<i class="ph ph-check"></i>';
     window.setTimeout(() => { copyBtn.innerHTML = '<i class="ph ph-copy"></i>'; }, 1200);
   });
+  if (exportBtn) exportBtn.addEventListener('click', downloadCsv);
+  if (exportClose) exportClose.addEventListener('click', () => { exportProgress.hidden = true; });
 })();
 </script>
 
