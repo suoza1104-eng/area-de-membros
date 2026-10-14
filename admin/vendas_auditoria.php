@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-$__auditoriaJsonAction = (($_GET['action'] ?? '') === 'sale_detail');
-if ($__auditoriaJsonAction) {
+$__auditoriaRawResponse = (($_GET['action'] ?? '') === 'sale_detail') || (($_GET['export'] ?? '') === 'csv');
+if ($__auditoriaRawResponse) {
     ob_start();
 }
 $menu = 'vendas_analytics';
@@ -267,8 +267,11 @@ if ($export === 'csv') {
     $stmtCsv->execute($params);
     $rows = $stmtCsv->fetchAll(PDO::FETCH_ASSOC);
 
+    while (ob_get_level() > 0) ob_end_clean();
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="auditoria_vendas_' . date('Y-m-d_H-i') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     echo "\xEF\xBB\xBF"; // UTF-8 BOM
 
     $output = fopen('php://output', 'w');
