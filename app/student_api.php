@@ -62,6 +62,15 @@ function student_api_ensure_schema(PDO $pdo): void
             KEY idx_student_api_logs_user (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    // A chave do Sino precisa de mais vazao que o padrao operacional antigo.
+    // Mantem qualquer valor ja configurado acima disso.
+    try {
+        $pdo->exec("UPDATE student_api_keys
+            SET rate_limit_per_minute = 30
+            WHERE status = 'active'
+              AND rate_limit_per_minute < 30
+              AND (LOWER(name) LIKE '%sino%' OR LOWER(notes) LIKE '%sino%')");
+    } catch (Throwable $e) {}
     $done = true;
 }
 
@@ -255,12 +264,41 @@ function student_api_find_key(PDO $pdo, string $plain): ?array
     return $row ?: null;
 }
 
-function student_api_rate_limited(PDO $pdo, array $key): bool
+function student_api_rate_limit_status(PDO $pdo, array $key): array
 {
+    $limit = max(1, (int)($key['rate_limit_per_minute'] ?? 60));
     $st = $pdo->prepare("SELECT COUNT(*) FROM student_api_logs
         WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND)");
     $st->execute([':id' => (int)$key['id']]);
-    return (int)$st->fetchColumn() >= max(1, (int)$key['rate_limit_per_minute']);
+    $used = (int)$st->fetchColumn();
+    $retryAfter = 1;
+
+    if ($used >= $limit) {
+        $oldest = $pdo->prepare("SELECT created_at FROM student_api_logs
+            WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND)
+            ORDER BY created_at ASC
+            LIMIT 1");
+        $oldest->execute([':id' => (int)$key['id']]);
+        $oldestAt = (string)($oldest->fetchColumn() ?: '');
+        if ($oldestAt !== '') {
+            $age = max(0, time() - strtotime($oldestAt));
+            $retryAfter = max(1, 60 - $age);
+        }
+    }
+
+    return [
+        'limited' => $used >= $limit,
+        'limit' => $limit,
+        'used' => $used,
+        'retry_after' => $retryAfter,
+        'window_seconds' => 60,
+        'window_type' => 'sliding',
+    ];
+}
+
+function student_api_rate_limited(PDO $pdo, array $key): bool
+{
+    return (bool)student_api_rate_limit_status($pdo, $key)['limited'];
 }
 
 function student_api_log(PDO $pdo, ?int $keyId, string $email, string $phone, string $result, ?int $userId, int $httpStatus, int $durationMs): void
@@ -702,7 +740,7 @@ function student_api_purchases(PDO $pdo, int $uid, string $email, string $phoneL
         $params[':p1'] = $phoneLocal;
         $params[':p2'] = '55' . $phoneLocal;
     }
-    $st = $pdo->prepare("SELECT provider, external_transaction_id, product_name, normalized_status, provider_status,
+    $st = $pdo->prepare("SELECT provider, external_transaction_id, external_product_id, product_name, normalized_status, provider_status,
             gross_amount_cents, currency, payment_method, installments, first_received_at, excluded_from_financials
         FROM payment_sales
         WHERE " . implode(' OR ', $where) . "
@@ -714,6 +752,7 @@ function student_api_purchases(PDO $pdo, int $uid, string $email, string $phoneL
     $items = array_map(fn($r) => [
         'plataforma' => $r['provider'],
         'transacao' => $r['external_transaction_id'],
+        'produto_id' => $r['external_product_id'] !== null && $r['external_product_id'] !== '' ? (string)$r['external_product_id'] : null,
         'produto' => $r['product_name'],
         'status' => $r['normalized_status'],
         'status_original' => $r['provider_status'],

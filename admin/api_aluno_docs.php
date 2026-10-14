@@ -87,7 +87,7 @@ $sections = [
         ['preferencias_mensagens.*', 'boolean/string', 'whatsapp_opt_out, whatsapp_opt_out_em, origem e motivo do cancelamento de mensagens.'],
         ['whatsapp.*', 'boolean/int', 'esta_em_grupo, grupos_atuais, grupos_historico, entrou_primeira_vez_em, visto_por_ultimo_em.'],
         ['suporte.*', 'int/string', 'conversas, conversas_abertas, ultima_mensagem_em, ultimo_assunto (chat de suporte).'],
-        ['compras.*', 'object', 'Só para chaves com escopo "Completo": total_registros, compras_aprovadas, valor_total_aprovado (R$) e itens[] com plataforma, transacao, produto, status (APPROVED, PENDING, CANCELED, REFUNDED...), status_original, valor, moeda, forma_pagamento, parcelas, data.'],
+        ['compras.*', 'object', 'Só para chaves com escopo "Completo": total_registros, compras_aprovadas, valor_total_aprovado (R$) e itens[] com plataforma, transacao, produto_id, produto, status (APPROVED, PENDING, CANCELED, REFUNDED...), status_original, valor, moeda, forma_pagamento, parcelas, data.'],
     ],
 ];
 
@@ -96,7 +96,7 @@ $errors = [
     ['401', 'chave_invalida', 'Header X-API-Key ausente ou chave errada.'],
     ['403', 'chave_revogada', 'A chave foi revogada no painel.'],
     ['405', 'metodo_nao_permitido', 'Use POST.'],
-    ['429', 'limite_excedido', 'Passou do limite de consultas por minuto da chave. Aguarde 60s.'],
+    ['429', 'limite', 'Passou do limite de consultas por minuto da chave. Aguarde os segundos indicados em Retry-After.'],
     ['500 / 503', 'erro_interno / indisponivel', 'Falha temporária. Tente de novo.'],
 ];
 ?>
@@ -230,7 +230,7 @@ td:nth-child(2){color:var(--muted);white-space:nowrap;font-size:12px}
 
   <h2>7. Limites e segurança</h2>
   <ul>
-    <li>Cada chave tem um limite de consultas por minuto (padrão 60). Ao passar dele, a resposta é HTTP 429 com header <code>Retry-After: 60</code>.</li>
+    <li>Cada chave tem um limite de consultas por minuto (padrão 60). Ao passar dele, a resposta é HTTP 429 com header <code>Retry-After</code> em segundos e JSON <code>{"ok":false,"erro":"limite"}</code>.</li>
     <li>Toda consulta fica registrada (plataforma, data, quem foi consultado, resultado).</li>
     <li>Chaves com escopo "Sem compras" não recebem o bloco <code>compras</code>.</li>
     <li>Se uma chave vazar, ela pode ser revogada no painel na hora, sem afetar as outras plataformas.</li>

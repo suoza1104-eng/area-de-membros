@@ -129,6 +129,82 @@ function payment_event_compact_payload(array $row): array
     return $out;
 }
 
+function payment_event_setting(PDO $pdo, string $key, string $default = ''): string
+{
+    if (function_exists('get_setting')) {
+        try { return (string)get_setting($key, $default); } catch (Throwable $e) {}
+    }
+    try {
+        $st = $pdo->prepare("SELECT valor FROM settings WHERE chave = :k LIMIT 1");
+        $st->execute([':k' => $key]);
+        $value = $st->fetchColumn();
+        return $value !== false ? (string)$value : $default;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function payment_event_post_json(string $url, array $payload, array $headers, int $timeout = 5): array
+{
+    $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    if (!is_string($body)) $body = '{}';
+
+    $headers[] = 'Content-Type: application/json; charset=utf-8';
+    $headers[] = 'Accept: application/json';
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_TIMEOUT => $timeout,
+        ]);
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        return ['ok' => $error === '' && $status >= 200 && $status < 300, 'status' => $status, 'error' => $error, 'response' => is_string($response) ? $response : ''];
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => implode("\r\n", $headers),
+            'content' => $body,
+            'timeout' => $timeout,
+            'ignore_errors' => true,
+        ],
+    ]);
+    $response = @file_get_contents($url, false, $context);
+    $status = 0;
+    foreach (($http_response_header ?? []) as $line) {
+        if (preg_match('/^HTTP\/\S+\s+(\d+)/', (string)$line, $m)) { $status = (int)$m[1]; break; }
+    }
+    return ['ok' => $status >= 200 && $status < 300, 'status' => $status, 'error' => $response === false ? 'request_failed' : '', 'response' => is_string($response) ? $response : ''];
+}
+
+function payment_event_notify_sino_purchase(PDO $pdo, array $payload): void
+{
+    $url = trim(payment_event_setting($pdo, 'sino_purchase_webhook_url', ''));
+    $secret = trim(payment_event_setting($pdo, 'sino_purchase_webhook_secret', ''));
+    if ($url === '' || $secret === '' || !filter_var($url, FILTER_VALIDATE_URL)) return;
+
+    $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    if (!is_string($body)) $body = '{}';
+    $signature = hash_hmac('sha256', $body, $secret);
+
+    $res = payment_event_post_json($url, $payload, [
+        'X-Signature: sha256=' . $signature,
+        'X-Signature-Algorithm: HMAC-SHA256',
+    ]);
+    if (empty($res['ok'])) {
+        @error_log('payment_event_notify_sino_purchase: HTTP ' . (int)($res['status'] ?? 0) . ' ' . substr((string)($res['error'] ?? $res['response'] ?? ''), 0, 500));
+    }
+}
+
 function payment_event_business_identity(array $data): string
 {
     $parts = [
@@ -202,6 +278,21 @@ function payment_event_trigger_payload(array $data, array $metadata, int $eventI
         'aluno_identificado'=>(int)($data['user_id'] ?? 0) > 0 ? 1 : 0,
         'metadata'=>$metadata,
     ]);
+}
+
+function payment_event_sino_purchase_payload(array $data, string $provider): array
+{
+    $grossCents = (int)($data['gross_amount_cents'] ?? 0);
+    return [
+        'telefone' => trim((string)($data['buyer_phone'] ?? '')) ?: null,
+        'email' => trim((string)($data['buyer_email'] ?? '')) ?: null,
+        'nome' => trim((string)($data['buyer_name'] ?? '')) ?: null,
+        'produto_id' => trim((string)($data['product_code'] ?? '')) ?: null,
+        'produto' => trim((string)($data['product_name'] ?? '')) ?: null,
+        'valor' => round($grossCents / 100, 2),
+        'data_compra' => payment_event_datetime_or_null((string)($data['occurred_at'] ?? '')) ?: date('Y-m-d H:i:s'),
+        'plataforma' => $provider,
+    ];
 }
 
 function payment_event_capture_unmatched_automation(PDO $pdo, string $eventCode, array $extra): int
@@ -429,6 +520,13 @@ function payment_event_register(PDO $pdo, array $data): array
                     admin_app_notify_event($pdo, $eventCode, $extra);
                 } catch (Throwable $e) {
                     @error_log('admin_app_notify_event: ' . $e->getMessage());
+                }
+            }
+            if ($eventCode === 'PAGAMENTO_APROVADO' || $genericEvent === 'PAGAMENTO_APROVADO') {
+                try {
+                    payment_event_notify_sino_purchase($pdo, payment_event_sino_purchase_payload($data, $provider));
+                } catch (Throwable $e) {
+                    @error_log('payment_event_notify_sino_purchase: ' . $e->getMessage());
                 }
             }
             $pdo->prepare("UPDATE student_payment_events SET triggered_at=NOW(),trigger_count=trigger_count+1 WHERE id=:id")

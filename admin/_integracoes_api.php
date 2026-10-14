@@ -95,7 +95,15 @@ $labelStyle = 'display:block;font-size:10px;color:var(--muted);font-weight:800;t
         <tr>
           <td><strong><?= int_h($k['name']) ?></strong><?php if (!empty($k['notes'])): ?><br><span class="int-muted"><?= int_h($k['notes']) ?></span><?php endif; ?></td>
           <td><code><?= int_h($k['key_prefix']) ?>…</code></td>
-          <td><?= (int)$k['scope_financial'] === 1 ? 'Completo' : 'Sem compras' ?><br><span class="int-muted"><?= (int)$k['rate_limit_per_minute'] ?>/min</span></td>
+          <td>
+            <?= (int)$k['scope_financial'] === 1 ? 'Completo' : 'Sem compras' ?>
+            <form method="post" action="integracoes.php?tab=api" style="display:flex;gap:4px;align-items:center;margin:6px 0 0;">
+              <input type="hidden" name="action" value="api_update_key_rate">
+              <input type="hidden" name="api_key_id" value="<?= (int)$k['id'] ?>">
+              <input type="number" name="api_rate" min="1" max="1000" value="<?= (int)$k['rate_limit_per_minute'] ?>" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;">
+              <button class="int-btn" type="submit" style="padding:4px 7px;font-size:10px;">/min</button>
+            </form>
+          </td>
           <td><span class="int-badge <?= $active ? 'ok' : 'err' ?>"><?= $active ? 'Ativa' : 'Revogada' ?></span></td>
           <td><?= int_h(int_dt_br($k['created_at'])) ?><?php if (!empty($k['created_by'])): ?><br><span class="int-muted"><?= int_h($k['created_by']) ?></span><?php endif; ?></td>
           <td><?= $k['last_used_at'] ? int_h(int_dt_br($k['last_used_at'])) . '<br><span class="int-muted">' . int_h((string)$k['last_used_ip']) . '</span>' : '<span class="int-muted">Nunca</span>' ?></td>

@@ -54,9 +54,12 @@ if ($key['status'] !== 'active') {
     student_api_log($pdo, (int)$key['id'], '', '', 'revoked', null, 403, (int)((microtime(true) - $startedAt) * 1000));
     student_api_error(403, 'chave_revogada', 'Esta chave de API foi revogada.');
 }
-if (student_api_rate_limited($pdo, $key)) {
-    header('Retry-After: 60');
-    student_api_error(429, 'limite_excedido', 'Limite de ' . (int)$key['rate_limit_per_minute'] . ' consultas por minuto atingido para esta chave.');
+$rate = student_api_rate_limit_status($pdo, $key);
+if ($rate['limited']) {
+    header('Retry-After: ' . (int)$rate['retry_after']);
+    http_response_code(429);
+    echo json_encode(['ok' => false, 'erro' => 'limite'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 $input = [];

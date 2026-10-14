@@ -195,6 +195,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Throwable $e) {
             $msgError = 'Erro ao criar chave: ' . $e->getMessage();
         }
+    } elseif ($action === 'api_update_key_rate') {
+        try {
+            student_api_ensure_schema($pdo);
+            $keyId = (int)($_POST['api_key_id'] ?? 0);
+            $rate = max(1, min(1000, (int)($_POST['api_rate'] ?? 60)));
+            $pdo->prepare("UPDATE student_api_keys SET rate_limit_per_minute = :rate WHERE id = :id")
+                ->execute([':rate' => $rate, ':id' => $keyId]);
+            $msgOk = 'Limite da chave atualizado.';
+        } catch (Throwable $e) {
+            $msgError = 'Erro ao atualizar limite: ' . $e->getMessage();
+        }
     } elseif (in_array($action, ['api_revoke_key', 'api_activate_key', 'api_delete_key'], true)) {
         try {
             $keyId = (int)($_POST['api_key_id'] ?? 0);
