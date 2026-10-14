@@ -78,6 +78,23 @@ function va_in_clause(array $values, string $prefix, array &$params): string {
     return implode(',', $keys);
 }
 
+function va_sales_columns(PDO $pdo): array {
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM v_sales_master")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        return array_map('strval', $cols);
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function va_optional_sales_select(array $availableCols, array $cols): string {
+    $select = [];
+    foreach ($cols as $col) {
+        $select[] = in_array($col, $availableCols, true) ? "s.`{$col}`" : "NULL AS `{$col}`";
+    }
+    return implode(",\n                      ", $select);
+}
+
 if ($action === 'sale_detail') {
     if (ob_get_length() !== false) {
         ob_clean();
@@ -256,59 +273,68 @@ $whereSql = $whereClauses ? ('WHERE ' . implode(' AND ', $whereClauses)) : '';
 
 // Exportação CSV
 if ($export === 'csv') {
-    $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
-                      s.product_name, s.payment_method, s.installments, s.gross_revenue, s.net_revenue,
-                      s.producer_net, s.fees, s.refunded_value, s.buyer_name, s.buyer_email, s.buyer_phone,
-                      s.buyer_document, s.utm_source, s.utm_medium, s.utm_campaign, s.utm_term, s.utm_content
-               FROM v_sales_master s
-               {$whereSql}
-               ORDER BY s.sale_date DESC, s.id DESC";
-    $stmtCsv = $pdo->prepare($csvSql);
-    $stmtCsv->execute($params);
+    try {
+        $availableCols = va_sales_columns($pdo);
+        $optionalCsvCols = va_optional_sales_select($availableCols, ['buyer_document','utm_source','utm_medium','utm_campaign','utm_term','utm_content']);
+        $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
+                          s.product_name, s.payment_method, s.installments, s.gross_revenue, s.net_revenue,
+                          s.producer_net, s.fees, s.refunded_value, s.buyer_name, s.buyer_email, s.buyer_phone,
+                          {$optionalCsvCols}
+                   FROM v_sales_master s
+                   {$whereSql}
+                   ORDER BY s.sale_date DESC, s.id DESC";
+        $stmtCsv = $pdo->prepare($csvSql);
+        $stmtCsv->execute($params);
 
-    while (ob_get_level() > 0) ob_end_clean();
-    header('Content-Type: text/csv; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="auditoria_vendas_' . date('Y-m-d_H-i') . '.csv"');
-    header('Pragma: no-cache');
-    header('Expires: 0');
-    echo "\xEF\xBB\xBF"; // UTF-8 BOM
+        while (ob_get_level() > 0) ob_end_clean();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="auditoria_vendas_' . date('Y-m-d_H-i') . '.csv"');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+        echo "\xEF\xBB\xBF"; // UTF-8 BOM
 
-    $output = fopen('php://output', 'w');
-    fputcsv($output, [
-        'ID', 'Gateway', 'Transacao', 'Status', 'Data Venda', 'Data Confirmacao',
-        'Produto', 'Forma Pagamento', 'Parcelas', 'Bruto (R$)', 'Liquido (R$)',
-        'Liquido Produtor (R$)', 'Taxas (R$)', 'Reembolsado (R$)', 'Comprador',
-        'Email', 'Telefone', 'CPF/CNPJ', 'UTM Source', 'UTM Medium', 'UTM Campaign', 'UTM Term', 'UTM Content'
-    ]);
-
-    while ($r = $stmtCsv->fetch(PDO::FETCH_ASSOC)) {
+        $output = fopen('php://output', 'w');
         fputcsv($output, [
-            $r['id'],
-            strtoupper((string)$r['provider']),
-            $r['transaction_code'],
-            $r['status'],
-            $r['sale_date'],
-            $r['payment_confirmed_at'],
-            $r['product_name'],
-            $r['payment_method'],
-            $r['installments'],
-            number_format((float)$r['gross_revenue'], 2, '.', ''),
-            number_format((float)$r['net_revenue'], 2, '.', ''),
-            number_format((float)$r['producer_net'], 2, '.', ''),
-            number_format((float)$r['fees'], 2, '.', ''),
-            number_format((float)$r['refunded_value'], 2, '.', ''),
-            $r['buyer_name'],
-            $r['buyer_email'],
-            $r['buyer_phone'],
-            $r['buyer_document'],
-            $r['utm_source'],
-            $r['utm_medium'],
-            $r['utm_campaign'],
-            $r['utm_term'],
-            $r['utm_content']
+            'ID', 'Gateway', 'Transacao', 'Status', 'Data Venda', 'Data Confirmacao',
+            'Produto', 'Forma Pagamento', 'Parcelas', 'Bruto (R$)', 'Liquido (R$)',
+            'Liquido Produtor (R$)', 'Taxas (R$)', 'Reembolsado (R$)', 'Comprador',
+            'Email', 'Telefone', 'CPF/CNPJ', 'UTM Source', 'UTM Medium', 'UTM Campaign', 'UTM Term', 'UTM Content'
         ]);
+
+        while ($r = $stmtCsv->fetch(PDO::FETCH_ASSOC)) {
+            fputcsv($output, [
+                $r['id'],
+                strtoupper((string)$r['provider']),
+                $r['transaction_code'],
+                $r['status'],
+                $r['sale_date'],
+                $r['payment_confirmed_at'],
+                $r['product_name'],
+                $r['payment_method'],
+                $r['installments'],
+                number_format((float)$r['gross_revenue'], 2, '.', ''),
+                number_format((float)$r['net_revenue'], 2, '.', ''),
+                number_format((float)$r['producer_net'], 2, '.', ''),
+                number_format((float)$r['fees'], 2, '.', ''),
+                number_format((float)$r['refunded_value'], 2, '.', ''),
+                $r['buyer_name'],
+                $r['buyer_email'],
+                $r['buyer_phone'],
+                $r['buyer_document'] ?? '',
+                $r['utm_source'] ?? '',
+                $r['utm_medium'] ?? '',
+                $r['utm_campaign'] ?? '',
+                $r['utm_term'] ?? '',
+                $r['utm_content'] ?? ''
+            ]);
+        }
+        fclose($output);
+    } catch (Throwable $e) {
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo 'Erro ao exportar CSV da auditoria: ' . $e->getMessage();
     }
-    fclose($output);
     exit;
 }
 
