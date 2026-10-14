@@ -275,10 +275,10 @@ $whereSql = $whereClauses ? ('WHERE ' . implode(' AND ', $whereClauses)) : '';
 if ($export === 'csv') {
     try {
         $availableCols = va_sales_columns($pdo);
-        $optionalCsvCols = va_optional_sales_select($availableCols, ['buyer_document','utm_source','utm_medium','utm_campaign','utm_term','utm_content']);
+        $optionalCsvCols = va_optional_sales_select($availableCols, ['refunded_value','buyer_document','utm_source','utm_medium','utm_campaign','utm_term','utm_content']);
         $csvSql = "SELECT s.id, s.provider, s.transaction_code, s.status, s.sale_date, s.payment_confirmed_at,
                           s.product_name, s.payment_method, s.installments, s.gross_revenue, s.net_revenue,
-                          s.producer_net, s.fees, s.refunded_value, s.buyer_name, s.buyer_email, s.buyer_phone,
+                          s.producer_net, s.fees, s.buyer_name, s.buyer_email, s.buyer_phone,
                           {$optionalCsvCols}
                    FROM v_sales_master s
                    {$whereSql}
@@ -316,7 +316,7 @@ if ($export === 'csv') {
                 number_format((float)$r['net_revenue'], 2, '.', ''),
                 number_format((float)$r['producer_net'], 2, '.', ''),
                 number_format((float)$r['fees'], 2, '.', ''),
-                number_format((float)$r['refunded_value'], 2, '.', ''),
+                number_format((float)($r['refunded_value'] ?? 0), 2, '.', ''),
                 $r['buyer_name'],
                 $r['buyer_email'],
                 $r['buyer_phone'],
