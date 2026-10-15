@@ -287,9 +287,21 @@ function enrollment_register(PDO $pdo, array $input): array
     $st = $pdo->prepare("SELECT COUNT(*) qtd, MIN(created_at) primeira FROM inscricao_logs WHERE user_id = :uid");
     $st->execute([':uid'=>$userId]);
     $history = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    // Curso da inscricao (igual ao api_inscrever): permite filtro de curso nos gatilhos de automacao.
+    $courseId = (int)($input['course_id'] ?? 0) ?: 1;
+    $courseName = trim((string)($input['course_name'] ?? ''));
+    if ($courseName === '') {
+        try {
+            $courseName = trim((string)($pdo->query("SELECT course_title FROM app_config WHERE id = 1 LIMIT 1")->fetchColumn() ?: ''));
+        } catch (Throwable $e) {}
+    }
     $extras = [
         'event_id'=>$eventId,
         'codigo_turma'=>$codigoTurma,
+        'course_id'=>$courseId,
+        'course_code'=>(string)$courseId,
+        'course_name'=>$courseName,
+        'curso'=>$courseName,
         'codigo_live'=>$codigoLive !== '' ? $codigoLive : $codigoTurma,
         'data_live'=>$dataLive,
         'data_live_iso'=>$dataLive,

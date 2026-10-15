@@ -658,7 +658,7 @@ try {
 } catch (Throwable $e) {}
 // Gatilhos de inscricao so recebem o curso da propria area de membros (nao a vitrine de vendas).
 $enrollmentCourseOptions = $courseOptions;
-$enrollmentEvents = ['INSCRITO', 'REINSCRITO', 'INSCRICAO_GRATUITA', 'INSCRICAO_VITALICIA'];
+$enrollmentEvents = ['INSCRITO', 'REINSCRITO', 'INSCRITO_OU_REINSCRITO', 'INSCRICAO_GRATUITA', 'INSCRICAO_VITALICIA'];
 try {
     $courseRows = $pdo->query("
         SELECT DISTINCT TRIM(course) v FROM certificates WHERE course IS NOT NULL AND TRIM(course)<>''

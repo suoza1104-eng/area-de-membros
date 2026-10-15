@@ -15,6 +15,7 @@ function automation_trigger_seed_catalog(): array
         ['code'=>'PAGAMENTO_CANCELADO','label'=>'Pagamento cancelado/recusado','category'=>'Pagamentos','badge'=>'Pagamento','description'=>'Pagamento cancelado, expirado, recusado ou nao autorizado em qualquer gateway financeiro integrado.'],
         ['code'=>'CARRINHO_ABANDONADO','label'=>'Carrinho abandonado','category'=>'Pagamentos','badge'=>'Pagamento','description'=>'Carrinho abandonado identificado por um gateway ou checkout integrado.'],
         ['code'=>'REINSCRITO','label'=>'Aluno reinscrito','category'=>'Aluno','badge'=>'Aluno','description'=>'Disparado quando um aluno ja existente se inscreve novamente.'],
+        ['code'=>'INSCRITO_OU_REINSCRITO','label'=>'Aluno inscrito ou reinscrito','category'=>'Aluno','badge'=>'Aluno','description'=>'Disparado em toda inscricao: aluno novo (INSCRITO) ou aluno ja existente que se inscreve novamente (REINSCRITO).'],
         ['code'=>'PRIMEIRO_LOGIN','label'=>'Primeiro login','category'=>'Aluno','badge'=>'Aluno','description'=>'Disparado uma unica vez, na primeira vez que o aluno acessa a plataforma.'],
         ['code'=>'ASSISTIU_ALGUMA_AULA','label'=>'Assistiu alguma aula','category'=>'Aluno','badge'=>'Aluno','description'=>'Disparado quando o aluno assiste pelo menos 10 segundos de qualquer aula.'],
         ['code'=>'CONCLUIU_TRILHA','label'=>'Concluiu a trilha','category'=>'Aluno','badge'=>'Aluno','description'=>'Disparado quando o aluno finaliza todas as aulas obrigatorias.'],
