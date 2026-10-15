@@ -421,9 +421,6 @@ function automation_flow_course_matches(array $user, array $extra, string $filte
     return false;
 }
 
-function automation_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
-{
-    $c = is_array($node['config'] ?? null) ? $node['config'] : [];
 /** Evento do gatilho x evento ocorrido. INSCRITO_OU_REINSCRITO cobre os dois eventos de inscricao. */
 function automation_flow_trigger_event_matches(string $triggerEvent, string $event): bool
 {
@@ -434,6 +431,9 @@ function automation_flow_trigger_event_matches(string $triggerEvent, string $eve
     return false;
 }
 
+function automation_flow_trigger_matches(array $node, array $user, array $extra, string $event, int $flowId = 0, int $versionId = 0): bool
+{
+    $c = is_array($node['config'] ?? null) ? $node['config'] : [];
     if (!automation_flow_trigger_event_matches((string)($c['event'] ?? ''), $event)) return false;
     if ($event === 'LIVE_LEMBRETE_AGENDADO' && isset($extra['_scheduled_flow_id'])) {
         if ((string)($extra['_scheduled_flow_kind'] ?? '') !== 'automation') return false;
