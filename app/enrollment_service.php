@@ -167,6 +167,7 @@ function enrollment_register(PDO $pdo, array $input): array
         $utm[$key] = trim((string)($input[$key] ?? ''));
     }
 
+    $inscricaoLogId = 0; // id em inscricao_logs: chave estavel do envio ao Sino (boasvindas-<id>)
     $ownsTransaction = !$pdo->inTransaction();
     if ($ownsTransaction) $pdo->beginTransaction();
     try {
@@ -242,6 +243,7 @@ function enrollment_register(PDO $pdo, array $input): array
                     ':ut'=>$utm['utm_term'] ?: null, ':uco'=>$utm['utm_content'] ?: null,
                     ':novo'=>$isNew ? 1 : 0, ':access_type'=>$logAccessType, ':source'=>$source,
                 ]);
+            $inscricaoLogId = (int)$pdo->lastInsertId();
         }
         if ($ownsTransaction) $pdo->commit();
     } catch (Throwable $e) {
@@ -297,6 +299,7 @@ function enrollment_register(PDO $pdo, array $input): array
     }
     $extras = [
         'event_id'=>$eventId,
+        'inscricao_id'=>$inscricaoLogId,
         'codigo_turma'=>$codigoTurma,
         'course_id'=>$courseId,
         'course_code'=>(string)$courseId,

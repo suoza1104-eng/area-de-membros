@@ -196,6 +196,7 @@ try {
         // não impede o fluxo
     }
 
+    $inscricaoLogId = 0; // id em inscricao_logs: chave estavel do envio ao Sino (boasvindas-<id>)
     $pdo->beginTransaction();
 
     // pega turma pela janela atual
@@ -344,6 +345,7 @@ try {
                 ':access_type' => $logAccessType,
                 ':source' => 'formulario',
             ]);
+            $inscricaoLogId = (int)$pdo->lastInsertId();
         } catch (Throwable $e) {
             api_safe_log('warning', 'api_inscrever', 'Falha ao registrar inscricao_log', [
                 'user_id' => $user_id,
@@ -410,6 +412,7 @@ try {
         ]);
     }
     $extras = [
+        'inscricao_id'             => $inscricaoLogId,
         'codigo_turma'             => $codigo_turma,
         'course_id'                => $inscricaoCourseId,
         'course_code'              => (string)$inscricaoCourseId,
@@ -492,6 +495,7 @@ try {
     }
 
     $extras = [
+        'inscricao_id'             => $inscricaoLogId,
         'codigo_turma'             => $codigo_turma,
         'course_id'                => $inscricaoCourseId,
         'course_code'              => (string)$inscricaoCourseId,

@@ -14,6 +14,7 @@ require_once __DIR__ . '/student_api.php';
 require_once __DIR__ . '/welcome_page.php';
 
 const SINO_FLOW_BOAS_VINDAS = 'boas_vindas_aluno';
+const SINO_FLOW_BOAS_VINDAS_RESGATE = 'boas_vindas_aluno_resgate';
 const SINO_TAG_ALUNO        = 'aluno_quadros';
 const SINO_BATCH_MAX        = 5000;
 const SINO_RODADA_MAX       = 200;
@@ -101,8 +102,8 @@ function sino_request(string $method, string $path, ?array $body = null, ?string
     $decoded = is_array($decoded) ? $decoded : null;
     $error = '';
     if ($status < 200 || $status >= 300) {
-        $error = (string)($decoded['error']['message'] ?? '');
-        if ($error === '') $error = 'HTTP ' . $status . ': ' . mb_substr(trim((string)$raw), 0, 300);
+        $message = (string)($decoded['error']['message'] ?? '');
+        $error = 'HTTP ' . $status . ($message !== '' ? ': ' . $message : '') . ' | corpo: ' . mb_substr(trim((string)$raw), 0, 1000);
     }
     return ['status' => $status, 'body' => $decoded, 'error' => $error];
 }
@@ -136,6 +137,10 @@ function sino_ensure_schema(PDO $pdo): void
         KEY idx_sino_fila (status, proxima_tentativa_em),
         KEY idx_sino_ref (tipo, ref, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // Resposta do Sino (http, started, reason, horario) do ultimo envio.
+    if (!sino_column_exists($pdo, 'sino_outbox', 'resposta')) {
+        try { $pdo->exec("ALTER TABLE sino_outbox ADD COLUMN resposta TEXT NULL"); } catch (Throwable $e) {}
+    }
     // Link da live por turma (antes nao existia campo proprio para isso).
     if (!sino_column_exists($pdo, 'turmas', 'link_live')) {
         try { $pdo->exec("ALTER TABLE turmas ADD COLUMN link_live VARCHAR(500) NULL"); } catch (Throwable $e) {}
@@ -478,11 +483,31 @@ function sino_outbox_retry(PDO $pdo, array $job, int $http, string $erro, ?array
     return 'pendente';
 }
 
+/** Guarda a resposta do Sino no item da fila: http, started, reason e horario. */
+function sino_outbox_save_response(PDO $pdo, int $outboxId, array $res): void
+{
+    $body = is_array($res['body'] ?? null) ? $res['body'] : [];
+    $resposta = [
+        'http' => (int)($res['status'] ?? 0),
+        'started' => array_key_exists('started', $body) ? (bool)$body['started'] : null,
+        'reason' => isset($body['reason']) ? (is_scalar($body['reason']) ? (string)$body['reason'] : $body['reason']) : null,
+        'erro' => (string)($res['error'] ?? '') ?: null,
+        'em' => date('Y-m-d H:i:s'),
+    ];
+    try {
+        $pdo->prepare('UPDATE sino_outbox SET resposta = :r WHERE id = :id')
+            ->execute([':r' => json_encode($resposta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ':id' => $outboxId]);
+    } catch (Throwable $e) {
+        @error_log('sino_outbox_save_response: ' . $e->getMessage());
+    }
+}
+
 /** Conclui o job conforme o status HTTP: sucesso, repetir ou erro definitivo. */
 function sino_outbox_resolve(PDO $pdo, array $job, array $res, array $payload, string $okMsg = 'ok'): string
 {
     $http = (int)$res['status'];
     sino_log((string)$job['tipo'], (string)$job['ref'], $http, $http >= 200 && $http < 300 ? $okMsg : (string)$res['error'], ['outbox_id' => (int)$job['id']]);
+    sino_outbox_save_response($pdo, (int)$job['id'], $res);
     if ($http >= 200 && $http < 300) {
         sino_outbox_finish($pdo, $job, 'enviado', $http, '', $payload);
         return 'enviado';
@@ -733,6 +758,11 @@ function sino_render_data_value(string $template, array $user, array $extra): st
     }, $value);
 }
 
+function sino_boas_vindas_key(int $inscricaoId): string
+{
+    return 'boasvindas-' . $inscricaoId;
+}
+
 /**
  * Execucao do bloco: NAO chama a API, so enfileira no sino_outbox (tipo fluxo).
  * O fluxo da automacao segue para o proximo bloco sem esperar o envio.
@@ -783,6 +813,11 @@ function sino_automation_enqueue_flow(PDO $pdo, array $config, array $user, arra
 
     $runId = (int)($job['run_id'] ?? 0);
     $idem = 'fluxo-' . $flowKey . '-aluno-' . $userId . '-' . $runId;
+    // Boas-vindas: uma chave por inscricao. Reenvios (fluxo repetido, lote de
+    // recuperacao) caem na mesma chave e nunca geram mensagem duplicada.
+    $inscricaoId = (int)($extra['inscricao_id'] ?? 0);
+    if ($flowKey === SINO_FLOW_BOAS_VINDAS_RESGATE && $inscricaoId > 0) $idem = sino_boas_vindas_key($inscricaoId);
+    $contact['idempotencyKey'] = $idem;
     $ok = sino_enqueue('fluxo', (string)$userId, ['flow_key' => $flowKey, 'user_id' => $userId, 'run_id' => $runId, 'body' => $contact], $idem);
     if (!$ok) throw new RuntimeException('Falha ao colocar o aluno na fila do Sino.');
     return ['queued' => true, 'flow_key' => $flowKey, 'routing' => $routing, 'idempotency_key' => $idem];
