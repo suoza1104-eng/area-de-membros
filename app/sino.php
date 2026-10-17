@@ -69,7 +69,7 @@ function sino_api_key(): string
  * Chamada unica a API do Sino. Nunca lanca excecao por HTTP 4xx/5xx: devolve
  * ['status' => int (0 = falha de rede/timeout), 'body' => ?array, 'error' => string].
  */
-function sino_request(string $method, string $path, ?array $body = null, ?string $idempotencyKey = null): array
+function sino_request(string $method, string $path, ?array $body = null, ?string $idempotencyKey = null, int $timeoutSeconds = SINO_TIMEOUT_S): array
 {
     $key = sino_api_key();
     if ($key === '') return ['status' => 0, 'body' => null, 'error' => 'SINO_API_KEY nao configurada'];
@@ -81,7 +81,7 @@ function sino_request(string $method, string $path, ?array $body = null, ?string
     $opts = [
         CURLOPT_CUSTOMREQUEST  => strtoupper($method),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => SINO_TIMEOUT_S,
+        CURLOPT_TIMEOUT        => max(1, $timeoutSeconds),
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_NOSIGNAL       => 1,
     ];

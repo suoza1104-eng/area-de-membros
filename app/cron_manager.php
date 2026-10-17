@@ -96,6 +96,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 1,
             'timeout' => 120,
         ],
+        'lives_sino' => [
+            'label' => 'Avisos de live por turma (Sino)',
+            'description' => 'Na hora do disparo da turma, filtra os alunos e manda os pacotes para o Disparo escolhido no Sino.',
+            'script' => __DIR__ . '/../cron/processar_lives_sino.php',
+            'interval' => 1,
+            'timeout' => 900,
+        ],
         'fluxos_push' => [
             'label' => 'Fluxos de notificações push',
             'description' => 'Processa em lotes as etapas vencidas dos fluxos do aplicativo.',

@@ -2,8 +2,10 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
+require_once __DIR__ . '/../app/sino_live.php';
 proteger_admin();
 $pdo = getPDO();
+try { sino_live_ensure_schema($pdo); } catch (Throwable $e) {}
 course_access_ensure_schema($pdo);
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
@@ -353,6 +355,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['acao'] ?? '') === 
 }
 
 // ===================== CLONE (pré-preenche formulário) =====================
+/**
+ * Clonar turma: copia a configuracao de disparo da live (SF, webhook e Sino, com
+ * os mesmos filtros) e mantem o mesmo deslocamento do disparo em relacao a live.
+ * Nao copia o estado de envio nem a remessa digitada (a automatica usa a nova data).
+ */
+function turma_copiar_config_disparo(PDO $pdo, int $srcId, int $dstId, ?string $novaDataLive): void
+{
+    try {
+        $st = $pdo->prepare("SELECT * FROM turmas WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $srcId]);
+        $src = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$src) return;
+        $cols = ['sf_enabled', 'sf_tags_text', 'sf_flows_text', 'sf_fields_json', 'delay_ms', 'live_filter_tag_ids',
+                 'live_webhook_enabled', 'webhook_live_url',
+                 'sino_live_enabled', 'sino_dispatch_code', 'sino_dispatch_name', 'sino_batch_size'];
+        $set = []; $params = [':id' => $dstId];
+        foreach ($cols as $c) {
+            if (!array_key_exists($c, $src)) continue;
+            $set[] = "`$c` = :$c";
+            $params[":$c"] = $src[$c];
+        }
+        $srcLive = strtotime((string)($src['data_live'] ?? ''));
+        $srcDisparo = strtotime((string)($src['live_disparo_data'] ?? ''));
+        $novaLive = $novaDataLive ? strtotime($novaDataLive) : false;
+        if (array_key_exists('live_disparo_data', $src)) {
+            $set[] = "live_disparo_data = :ldd";
+            $params[':ldd'] = ($srcLive && $srcDisparo && $novaLive) ? date('Y-m-d H:i:s', $novaLive + ($srcDisparo - $srcLive)) : null;
+        }
+        if ($set) $pdo->prepare("UPDATE turmas SET " . implode(', ', $set) . " WHERE id = :id")->execute($params);
+    } catch (Throwable $e) {
+        @error_log('turma_copiar_config_disparo: ' . $e->getMessage());
+    }
+}
+
 $cloneFill = null;
 if (isset($_GET['clone_fill'])) {
     $srcId = (int)$_GET['clone_fill'];
@@ -372,6 +408,7 @@ if (isset($_GET['clone_fill'])) {
         $cloneFill = $src;
         $cloneFill['codigo'] = $newCodigo;
         $cloneFill['id']     = 0; // força criação nova
+        $cloneFill['_clone_from'] = (int)$src['id'];
     }
 }
 
@@ -467,6 +504,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             $pdo->prepare("INSERT INTO turmas (" . implode(",", $cols) . ") VALUES (" . implode(",", $vals) . ")")->execute($params);
+            $newTurmaId = (int)$pdo->lastInsertId();
+            $cloneFrom = (int)($_POST['clone_from'] ?? 0);
+            if ($cloneFrom > 0 && $newTurmaId > 0) {
+                turma_copiar_config_disparo($pdo, $cloneFrom, $newTurmaId, $dlDb);
+            }
         } catch (Throwable $e) {
             $msg = strpos((string)$e->getMessage(), '1062') !== false ? 'Código já existe em outra turma.' : 'Erro ao salvar turma.';
             header('Location: turmas.php?err=' . urlencode($msg)); exit;
@@ -532,6 +574,13 @@ try {
     }
 } catch (Throwable $e) {}
 $statusDisparosLive = carregar_status_disparos_live($pdo);
+$sinoLiveRuns = [];
+try {
+    $sinoIds = array_values(array_filter(array_map(fn($t) => (int)($t['sino_live_dispatch_id'] ?? 0), $turmas)));
+    if ($sinoIds) {
+        foreach ($pdo->query("SELECT * FROM sino_live_dispatches WHERE id IN (" . implode(',', $sinoIds) . ")")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) $sinoLiveRuns[(int)$r['id']] = $r;
+    }
+} catch (Throwable $e) {}
 
 $menu = 'turmas';
 include __DIR__ . '/_header.php';
@@ -699,6 +748,9 @@ include __DIR__ . '/_header.php';
 
     <form method="post" id="form-turma">
         <input type="hidden" name="id" value="<?= $isEdit ? (int)$edit['id'] : 0 ?>">
+        <?php if (!empty($edit['_clone_from'])): ?>
+            <input type="hidden" name="clone_from" value="<?= (int)$edit['_clone_from'] ?>">
+        <?php endif; ?>
 
         <!-- Identificação -->
         <p class="section-label">Identificação</p>
@@ -880,6 +932,9 @@ include __DIR__ . '/_header.php';
                     <?php else: ?>
                         <span class="badge-off">OFF</span>
                     <?php endif; ?>
+                    <?php if ((int)($t['sino_live_enabled'] ?? 0) === 1): ?>
+                        <br><a href="sino_live.php?turma=<?= (int)$t['id'] ?>" class="badge-ok" style="display:inline-block;margin-top:4px;text-decoration:none;" title="<?= h((string)($t['sino_dispatch_name'] ?? $t['sino_dispatch_code'] ?? '')) ?>">Sino</a>
+                    <?php endif; ?>
                 </td>
                 <td data-label="Disparado" data-sort-disparado="<?= $disparada ? 1 : 0 ?>">
                     <?php if ($disparada): ?>
@@ -898,6 +953,23 @@ include __DIR__ . '/_header.php';
                         <span>Faltam: <strong data-live-faltam><?= (int)($statusDisparo['faltam'] ?? 0) ?></strong></span>
                         <span>Erros: <strong data-live-erros><?= (int)($statusDisparo['erros'] ?? 0) ?></strong></span>
                     </div>
+                    <?php $sinoRunCard = $sinoLiveRuns[(int)($t['sino_live_dispatch_id'] ?? 0)] ?? null; if ((int)($t['sino_live_enabled'] ?? 0) === 1 || $sinoRunCard): ?>
+                        <?php
+                            $sinoSt = (string)($sinoRunCard['status'] ?? '');
+                            $sinoLbl = ['preparando' => 'Sino: preparando', 'enviando' => 'Sino: enviando', 'concluido' => 'Sino: concluído', 'erro' => 'Sino: parado por erro', 'cancelado' => 'Sino: cancelado'][$sinoSt] ?? 'Sino: aguardando horário';
+                            $sinoCls = ['concluido' => 'badge-ok', 'erro' => 'badge-error', 'cancelado' => 'badge-error', 'preparando' => 'badge-warn', 'enviando' => 'badge-warn'][$sinoSt] ?? 'badge-off';
+                        ?>
+                        <div style="margin-top:6px;">
+                            <a href="sino_live.php?turma=<?= (int)$t['id'] ?>" class="<?= $sinoCls ?>" style="text-decoration:none;"><?= h($sinoLbl) ?></a>
+                            <?php if ($sinoRunCard): ?>
+                                <div class="live-dispatch-counts">
+                                    <span>Pacotes: <strong><?= (int)$sinoRunCard['lotes_enviados'] ?>/<?= (int)$sinoRunCard['lotes_total'] ?></strong></span>
+                                    <span>Aceitos: <strong><?= (int)$sinoRunCard['accepted'] ?></strong></span>
+                                    <span>Recusados: <strong><?= (int)$sinoRunCard['errors_count'] ?></strong></span>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </td>
                 <td class="actions-cell" data-label="Ações">
                     <?php

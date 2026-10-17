@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/superfuncionario_dispatcher.php';
+require_once __DIR__ . '/../app/sino_live.php';
 
 proteger_admin();
 $pdo = getPDO();
+try { sino_live_ensure_schema($pdo); } catch (Throwable $e) {}
 
 // menu ativo
 $menu = 'superfuncionario';
@@ -313,6 +315,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
     }
     $sfFieldsJson = $sfPairs ? json_encode($sfPairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
 
+    // Sino: disparo escolhido (so o code e guardado), tamanho do pacote e remessa opcional.
+    $sinoEnabled = isset($_POST['sino_live_enabled']) ? 1 : 0;
+    $sinoCode    = trim((string)($_POST['sino_dispatch_code'] ?? ''));
+    $sinoName    = trim((string)($_POST['sino_dispatch_name_' . md5($sinoCode)] ?? ''));
+    $sinoBatch   = sino_live_batch_size($_POST['sino_batch_size'] ?? SINO_LIVE_BATCH_DEFAULT);
+    $sinoRemessa = trim((string)($_POST['sino_remessa'] ?? ''));
+    if ($sinoEnabled && $sinoCode === '') {
+        header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Escolha qual Disparo do Sino sera usado (ou desmarque o envio para o Sino).'));
+        exit;
+    }
+
     $offsetMinutes = sf_parse_live_offset_minutes($sfOffsetRaw);
     if ($offsetMinutes === null) {
         header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Deslocamento de disparo invalido. Use formatos como -2:30, 0:00 ou 1:15.'));
@@ -335,6 +348,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sf_tu
 
             $pdo->prepare("UPDATE turmas SET sf_enabled=:sfen,sf_tags_text=:sftt,sf_flows_text=:sfft,sf_fields_json=:sffj,delay_ms=:delay,live_filter_tag_ids=:filters,live_disparo_data=:ldd,live_disparada=0 WHERE id=:id")
                 ->execute([':sfen'=>$sfEnabled,':sftt'=>$sfTags?:null,':sfft'=>$sfFlows?:null,':sffj'=>$sfFieldsJson,':delay'=>$delayMs,':filters'=>$filterCfg,':ldd'=>$liveDisparoData,':id'=>$tid]);
+
+            // Sino: um envio em andamento nao e mexido; um encerrado (concluido, erro,
+            // cancelado) e liberado para um novo envio, como o SF faz com live_disparada.
+            $stSinoRun = $pdo->prepare("SELECT d.status FROM turmas t LEFT JOIN sino_live_dispatches d ON d.id = t.sino_live_dispatch_id WHERE t.id = :id");
+            $stSinoRun->execute([':id' => $tid]);
+            $sinoRunAtivo = in_array((string)$stSinoRun->fetchColumn(), ['preparando', 'enviando'], true);
+            $pdo->prepare("UPDATE turmas SET sino_live_enabled=:en, sino_dispatch_code=:code, sino_dispatch_name=:name, sino_batch_size=:bs, sino_remessa=:rem" . ($sinoRunAtivo ? '' : ', sino_live_disparada=0, sino_live_dispatch_id=NULL') . " WHERE id=:id")
+                ->execute([':en'=>$sinoEnabled, ':code'=>$sinoCode !== '' ? $sinoCode : null, ':name'=>$sinoName !== '' ? $sinoName : null, ':bs'=>$sinoBatch, ':rem'=>$sinoRemessa !== '' ? $sinoRemessa : null, ':id'=>$tid]);
         } catch (Throwable $e) {
             header('Location: superfuncionario.php?sf_edit=' . $tid . '&err=' . urlencode('Erro ao salvar configuracao da turma: ' . $e->getMessage()));
             exit;
@@ -1061,7 +1082,83 @@ include __DIR__ . '/_header.php';
 
                         <div class="checkbox-row" style="margin-bottom:14px;">
                             <input type="checkbox" id="sf-t-enabled" name="sf_enabled" <?= (int)($sfEditTurma['sf_enabled'] ?? 0) === 1 ? 'checked' : '' ?>>
-                            <label for="sf-t-enabled">Disparar alunos no SF ao chegar na data da live</label>
+                            <label for="sf-t-enabled">Disparar alunos no SF ao chegar na data da live <span class="note">(um por um)</span></label>
+                        </div>
+
+                        <?php
+                            $sinoCfgList = sino_live_list_configs();
+                            $sinoSelCode = trim((string)($sfEditTurma['sino_dispatch_code'] ?? ''));
+                            $sinoSelFound = false;
+                            $sinoRun = sino_live_dispatch($pdo, (int)($sfEditTurma['sino_live_dispatch_id'] ?? 0));
+                        ?>
+                        <div class="checkbox-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="sino-live-enabled" name="sino_live_enabled" <?= (int)($sfEditTurma['sino_live_enabled'] ?? 0) === 1 ? 'checked' : '' ?> onchange="document.getElementById('sino-live-box').style.display=this.checked?'':'none'">
+                            <label for="sino-live-enabled">Disparar alunos no Sino ao chegar na data da live <span class="note">(pacotes)</span></label>
+                        </div>
+                        <div id="sino-live-box" style="<?= (int)($sfEditTurma['sino_live_enabled'] ?? 0) === 1 ? '' : 'display:none;' ?>margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.02);">
+                            <div class="note" style="margin-bottom:10px;">Pode ligar SF e Sino juntos, ou so um deles. Com os dois ligados, o aluno recebe pelos dois. O Sino ja sabe as mensagens, o horario de cada etapa, o ritmo e os numeros: aqui voce so escolhe o Disparo. Os filtros e o horario abaixo valem para os dois.</div>
+                            <?php if ($sinoRun && in_array($sinoRun['status'], ['preparando', 'enviando'], true)): ?>
+                                <div class="note" style="color:#fbbf24;margin-bottom:10px;">Ha um envio ao Sino em andamento nesta turma (lote <?= (int)$sinoRun['lotes_enviados'] ?>/<?= (int)$sinoRun['lotes_total'] ?>). Salvar nao interrompe esse envio.</div>
+                            <?php endif; ?>
+                            <label class="lbl">Disparo do Sino</label>
+                            <?php if (!$sinoCfgList['ok']): ?>
+                                <div class="note" style="color:#f87171;">Nao foi possivel listar os disparos do Sino: <?= h($sinoCfgList['error']) ?></div>
+                            <?php elseif (!$sinoCfgList['dispatches']): ?>
+                                <div class="note">Nenhum disparo do tipo API no Sino. Crie em Automacao &rarr; Disparos.</div>
+                            <?php endif; ?>
+                            <div style="display:grid;gap:8px;margin:6px 0 12px;">
+                                <?php foreach ($sinoCfgList['dispatches'] as $dc):
+                                    $dcCode = (string)($dc['code'] ?? ''); if ($dcCode === '') continue;
+                                    $dcSel = $dcCode === $sinoSelCode; if ($dcSel) $sinoSelFound = true;
+                                    $dcPaused = (string)($dc['status'] ?? '') === 'paused';
+                                    $dcPacing = is_array($dc['pacing'] ?? null) ? $dc['pacing'] : [];
+                                ?>
+                                    <label style="display:block;cursor:pointer;padding:10px 12px;border:1px solid <?= $dcSel ? 'var(--accent,#38bdf8)' : 'var(--border)' ?>;border-radius:10px;">
+                                        <input type="radio" name="sino_dispatch_code" value="<?= h($dcCode) ?>" <?= $dcSel ? 'checked' : '' ?>>
+                                        <input type="hidden" name="sino_dispatch_name_<?= md5($dcCode) ?>" value="<?= h((string)($dc['name'] ?? '')) ?>">
+                                        <strong><?= h((string)($dc['name'] ?? $dcCode)) ?></strong>
+                                        <code style="margin-left:6px;"><?= h($dcCode) ?></code>
+                                        <span class="note" style="margin-left:6px;"><?= $dcPaused ? '<span style="color:#fbbf24;">pausado</span>' : 'ativo' ?> &middot; <?= h((string)($dc['purpose'] ?? '')) ?></span>
+                                        <?php if (empty($dc['acceptsContacts'])): ?><div class="note" style="color:#f87171;">Este disparo nao esta aceitando contatos no Sino.</div><?php endif; ?>
+                                        <?php if ($dcPaused): ?><div class="note" style="color:#fbbf24;">Pausado no Sino: os alunos ficam na fila e so saem quando o disparo for retomado la.</div><?php endif; ?>
+                                        <div style="margin-top:6px;">
+                                            <?php foreach ((array)($dc['steps'] ?? []) as $stp): ?>
+                                                <div class="note"><?= (int)($stp['order'] ?? 0) ?>. <?= h((string)($stp['flowName'] ?? $stp['flow'] ?? '')) ?> &mdash; <?= h((string)($stp['when'] ?? '')) ?>
+                                                    <?php if (array_key_exists('flowActive', (array)$stp) && !$stp['flowActive']): ?><span style="color:#f87171;"> &middot; fluxo nao publicado no Sino: esta etapa nao vai sair</span><?php endif; ?>
+                                                </div>
+                                            <?php endforeach; ?>
+                                            <?php if ($dcPacing): ?>
+                                                <div class="note">Chegada: <?= ($dcPacing['mode'] ?? '') === 'spread' ? 'espalha em ' . (int)($dcPacing['spreadMinutes'] ?? 0) . ' min' : h((string)($dcPacing['mode'] ?? '')) ?><?= !empty($dcPacing['windowStart']) ? ' &middot; ' . h((string)$dcPacing['windowStart']) . '&ndash;' . h((string)($dcPacing['windowEnd'] ?? '')) : '' ?> &middot; live: <?= h(is_scalar($dc['liveDate'] ?? null) ? (string)$dc['liveDate'] : '') ?></div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </label>
+                                <?php endforeach; ?>
+                                <?php if ($sinoSelCode !== '' && !$sinoSelFound): ?>
+                                    <label style="display:block;padding:10px 12px;border:1px solid #f87171;border-radius:10px;">
+                                        <input type="radio" name="sino_dispatch_code" value="<?= h($sinoSelCode) ?>" checked>
+                                        <input type="hidden" name="sino_dispatch_name_<?= md5($sinoSelCode) ?>" value="<?= h((string)($sfEditTurma['sino_dispatch_name'] ?? '')) ?>">
+                                        <strong><?= h((string)($sfEditTurma['sino_dispatch_name'] ?? $sinoSelCode)) ?></strong> <code><?= h($sinoSelCode) ?></code>
+                                        <div class="note" style="color:#f87171;"><?= $sinoCfgList['ok'] ? 'Este disparo nao aparece mais no Sino (apagado, arquivado ou renomeado). Escolha outro.' : 'Escolhido antes; nao foi possivel conferir no Sino agora.' ?></div>
+                                    </label>
+                                <?php endif; ?>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                                <div>
+                                    <label class="lbl">Tamanho do pacote</label>
+                                    <select name="sino_batch_size">
+                                        <?php $sinoBs = sino_live_batch_size($sfEditTurma['sino_batch_size'] ?? SINO_LIVE_BATCH_DEFAULT); foreach (SINO_LIVE_BATCH_SIZES as $bs): ?>
+                                            <option value="<?= $bs ?>" <?= $bs === $sinoBs ? 'selected' : '' ?>><?= number_format($bs, 0, ',', '.') ?> alunos</option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="note">Alunos por chamada. Os pacotes saem em sequencia.</div>
+                                </div>
+                                <div>
+                                    <label class="lbl">Remessa</label>
+                                    <input type="text" name="sino_remessa" value="<?= h((string)($sfEditTurma['sino_remessa'] ?? '')) ?>" placeholder="<?= h(sino_live_auto_remessa($sfEditTurma)) ?>" maxlength="150">
+                                    <div class="note">Vazio = automatica (<code><?= h(sino_live_auto_remessa($sfEditTurma)) ?></code>, muda sozinha se a live for remarcada). Mesma remessa = o Sino pula quem ja recebeu.</div>
+                                </div>
+                            </div>
+                            <div class="note" style="margin-top:10px;"><a href="sino_live.php?turma=<?= (int)$sfEditTurma['id'] ?>">Ver andamento do envio ao Sino &rarr;</a></div>
                         </div>
 
                         <div style="margin-bottom:14px;">
@@ -1077,13 +1174,13 @@ include __DIR__ . '/_header.php';
                                 </div>
                                 <div>
                                     <input type="text" id="sf-live-preview" value="<?= h($sfDisparoPreview) ?>" readonly>
-                                    <div class="note">Horario calculado para o disparo.</div>
+                                    <div class="note">Horario calculado para o disparo. No Sino, e quando os pacotes saem (etapa "ao chegar"); as etapas da live o Sino agenda pela data da live.</div>
                                 </div>
                             </div>
                         </div>
 
                         <div style="margin-bottom:14px;">
-                            <label class="lbl">Intervalo entre disparos (ms)</label>
+                            <label class="lbl">Intervalo entre disparos (ms) <span class="note">so SF</span></label>
                             <input type="number" name="delay_ms" value="<?= (int)($sfEditTurma['delay_ms'] ?? 500) ?>" min="0" max="30000">
                             <div class="note">Tempo de espera entre um aluno e outro. Ex.: <code>2000</code> = 2 segundos.</div>
                         </div>
