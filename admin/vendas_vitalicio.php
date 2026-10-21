@@ -136,6 +136,8 @@ function vv_payload_value(array $payload, array $paths): ?float {
 const VV_BONUS_GRANT_PRODUCTS = [
     'Formação Eletricista Residencial de Alto Nível',
     'Curso Completo de Quadros Elétricos',
+    'COMUNIDADE FERA',
+    'COMUNIDADE FERA 20% OFF (ALUNO SEL)',
 ];
 
 function vv_is_bonus_grant_product(?string $productName): bool {
@@ -216,7 +218,9 @@ if ($mode === 'lifetime') {
     $st = $pdo->prepare($sql);
     $st->execute($params);
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
-    $rows = array_values(array_filter($rows, static fn(array $r): bool => !vv_is_bonus_grant_product($r['product_name'] ?? null)));
+    // grant_type=bonus: vitalicio dado pela compra da FERA (app/course_bonus_lifetime.php).
+    $rows = array_values(array_filter($rows, static fn(array $r): bool => !vv_is_bonus_grant_product($r['product_name'] ?? null)
+        && (string)($r['grant_type'] ?? '') !== 'bonus'));
 
     // Status que contam como pagamento confirmado (mesmo vocabulario aceito no modo
     // "Hotmart por produto/preco" logo abaixo). O acesso vitalicio ja foi liberado

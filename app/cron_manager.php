@@ -89,6 +89,13 @@ function cron_manager_base_definitions(): array {
             'interval' => 15,
             'timeout' => 300,
         ],
+        'vitalicio_bonus' => [
+            'label' => 'Vitalicio bonus da FERA',
+            'description' => 'Libera o vitalicio do curso de Iniciacao em Montagem de Quadros para quem comprou a Formacao FERA (vendas dos ultimos 7 dias e alunos novos).',
+            'script' => __DIR__ . '/../cron/processar_vitalicio_bonus.php',
+            'interval' => 5,
+            'timeout' => 300,
+        ],
         'sino_outbox' => [
             'label' => 'Sino (WhatsApp) - fila de envio',
             'description' => 'Envia ao Sino os alunos cadastrados/alterados e as mudancas de data/link da live das turmas (ate 200 por rodada).',

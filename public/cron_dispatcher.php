@@ -83,6 +83,7 @@ try {
         $result['companion_pagarme_sync'] = cron_manager_execute($pdo, 'pagarme_sync', $source, false);
         $result['companion_hotmart_sync'] = cron_manager_execute($pdo, 'hotmart_sync', $source, false);
         $result['companion_firepay_reconciliation'] = cron_manager_execute($pdo, 'firepay_reconciliation', $source, false);
+        $result['companion_vitalicio_bonus'] = cron_manager_execute($pdo, 'vitalicio_bonus', $source, false);
         $result['companion_diagnostico_fluxos'] = cron_manager_execute($pdo, 'diagnostico_fluxos', $source, false);
         $result['companion_sino_outbox'] = cron_manager_execute($pdo, 'sino_outbox', $source, false);
         $result['companion_lives_sino'] = cron_manager_execute($pdo, 'lives_sino', $source, false);
