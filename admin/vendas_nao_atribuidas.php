@@ -141,6 +141,12 @@ function vna_find_student_for_sale(PDO $pdo, array $sale): ?array
     $st = $pdo->prepare('SELECT id,created_at,utm_source,utm_campaign_group,utm_campaign_name,utm_ad_name,utm_term FROM attribution_leads WHERE source_user_id=:uid ORDER BY created_at DESC LIMIT 1');
     $st->execute(['uid' => (int)$student['id']]);
     $lead = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    return vna_student_with_reason($student, $lead, $sale);
+}
+
+/** Anexa o lead e o motivo da falha de atribuicao ao aluno encontrado para a venda. */
+function vna_student_with_reason(array $student, ?array $lead, array $sale): array
+{
     $student['attribution_lead'] = $lead;
 
     $reason = 'aluno_encontrado';
@@ -161,6 +167,72 @@ function vna_find_student_for_sale(PDO $pdo, array $sale): ?array
     return $student;
 }
 
+/**
+ * Mesma busca de vna_find_student_for_sale, em lote (4 consultas para a pagina inteira
+ * em vez de ate 4 por venda). Precedencia igual: aluno ja casado em attribution_sales;
+ * sem casamento, o maior id entre os alunos com o mesmo e-mail OU telefone (comparacao
+ * feita no proprio MySQL, mesma collation). Devolve [indice da venda => aluno|null].
+ */
+function vna_find_students_for_sales(PDO $pdo, array $sales): array
+{
+    $result = array_fill_keys(array_keys($sales), null);
+    if (!$sales) return $result;
+    $cols = 'id,nome,email,telefone,codigo_turma,created_at,utm_source,utm_medium,utm_campaign,utm_content,utm_term';
+
+    // 1) Aluno ja casado pela transacao.
+    $matched = [];
+    $txs = array_values(array_unique(array_filter(array_map(static fn($s) => (string)($s['transaction_code'] ?? ''), $sales), static fn($t) => $t !== '')));
+    if ($txs) {
+        $st = $pdo->prepare('SELECT transaction_code, matched_user_id FROM attribution_sales WHERE transaction_code IN (' . implode(',', array_fill(0, count($txs), '?')) . ')');
+        $st->execute($txs);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) $matched[(string)$r['transaction_code']] = (int)$r['matched_user_id'];
+    }
+
+    // 2) Sem casamento: maior id por e-mail OU telefone, para todas as vendas de uma vez.
+    $userIdBySale = [];
+    $lookupParts = [];
+    $lookupParams = [];
+    foreach ($sales as $i => $sale) {
+        $tx = (string)($sale['transaction_code'] ?? '');
+        $matchedUserId = $tx !== '' ? (int)($matched[$tx] ?? 0) : 0;
+        if ($matchedUserId > 0) { $userIdBySale[$i] = $matchedUserId; continue; }
+        $email = normalize_email_value($sale['buyer_email'] ?? '');
+        $phone = normalize_phone_value($sale['buyer_phone'] ?? '');
+        if ($email === '' && $phone === '') continue;
+        $lookupParts[] = 'SELECT ? k, ? e, ? p';
+        array_push($lookupParams, (string)$i, $email, $phone);
+    }
+    if ($lookupParts) {
+        $keys = implode(' UNION ALL ', $lookupParts);
+        $phoneExpr = "RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(u.telefone,''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), 11)";
+        $st = $pdo->prepare("SELECT m.k, MAX(m.uid) uid FROM (
+                SELECT x.k, u.id uid FROM ({$keys}) x JOIN users u ON x.e <> '' AND LOWER(TRIM(u.email)) = x.e
+                UNION ALL
+                SELECT y.k, u.id uid FROM ({$keys}) y JOIN users u ON y.p <> '' AND {$phoneExpr} = RIGHT(y.p, 11)
+            ) m GROUP BY m.k");
+        $st->execute(array_merge($lookupParams, $lookupParams));
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) $userIdBySale[(int)$r['k']] = (int)$r['uid'];
+    }
+    if (!$userIdBySale) return $result;
+
+    // 3) Alunos e 4) leads (source_user_id e unico em attribution_leads).
+    $ids = array_values(array_unique($userIdBySale));
+    $in = implode(',', array_map('intval', $ids));
+    $students = [];
+    foreach ($pdo->query("SELECT {$cols} FROM users WHERE id IN ({$in})")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) $students[(int)$r['id']] = $r;
+    $leads = [];
+    foreach ($pdo->query("SELECT source_user_id,id,created_at,utm_source,utm_campaign_group,utm_campaign_name,utm_ad_name,utm_term FROM attribution_leads WHERE source_user_id IN ({$in}) ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+        $uid = (int)$r['source_user_id'];
+        unset($r['source_user_id']);
+        if (!isset($leads[$uid])) $leads[$uid] = $r;
+    }
+    foreach ($userIdBySale as $i => $uid) {
+        if (!isset($students[$uid])) continue;
+        $result[$i] = vna_student_with_reason($students[$uid], $leads[$uid] ?? null, $sales[$i]);
+    }
+    return $result;
+}
+
 $unattributedParams = ['model' => $model, 'start' => $period['start'] . ' 00:00:00', 'end' => $period['end'] . ' 23:59:59'];
 $unattributedProductSql = '';
 if ($productFilter !== '') {
@@ -169,8 +241,15 @@ if ($productFilter !== '') {
 }
 
 $unattributedRows = md_rows($pdo, "SELECT s.id,s.transaction_code,s.sale_date,s.product_name,s.gross_revenue,s.producer_net,s.buyer_name,s.buyer_email,s.buyer_phone FROM v_sales_master s JOIN attribution_sales axs ON axs.transaction_code=s.transaction_code LEFT JOIN attribution_matches am ON am.sale_id=axs.id AND am.attribution_model=:model WHERE " . md_approved_sql('s') . " AND s.sale_date BETWEEN :start AND :end AND am.id IS NULL{$unattributedProductSql} ORDER BY s.sale_date DESC LIMIT 100", $unattributedParams);
-foreach ($unattributedRows as &$saleRow) {
-    $saleRow['_student'] = vna_find_student_for_sale($pdo, $saleRow);
+try {
+    $studentsBySale = vna_find_students_for_sales($pdo, $unattributedRows);
+    foreach ($unattributedRows as $i => &$saleRow) {
+        $saleRow['_student'] = $studentsBySale[$i] ?? null;
+    }
+} catch (Throwable $e) {
+    foreach ($unattributedRows as &$saleRow) {
+        $saleRow['_student'] = vna_find_student_for_sale($pdo, $saleRow);
+    }
 }
 unset($saleRow);
 

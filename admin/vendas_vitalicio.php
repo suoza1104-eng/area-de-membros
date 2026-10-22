@@ -183,7 +183,9 @@ if ($mode === 'lifetime') {
     // o acesso dias depois da compra, e usar granted_at faz vendas antigas "pularem" pro
     // dia do processamento em vez do dia em que realmente aconteceram.
     $dateColumn = $salesViewReady ? "COALESCE(vsm.sale_date, cla.granted_at)" : "cla.granted_at";
-    $where = ["{$dateColumn} BETWEEN :ini AND :fim", "cla.is_paid = 1"];
+    // grant_type=bonus (vitalicio dado pela compra da FERA) nunca entra nesta tela: filtrar ja
+    // no SQL evita juntar ~2.900 linhas com as vendas so para descarta-las no PHP depois.
+    $where = ["{$dateColumn} BETWEEN :ini AND :fim", "cla.is_paid = 1", "COALESCE(cla.grant_type, '') <> 'bonus'"];
     if ($q !== '') {
         $where[] = "(cla.offer_code LIKE :q OR cla.transaction_code LIKE :q OR cla.turma_codigo LIKE :q OR u.nome LIKE :q OR u.email LIKE :q)";
         $params[':q'] = '%' . $q . '%';
@@ -192,9 +194,32 @@ if ($mode === 'lifetime') {
     // course_lifetime_access.transaction_code usa collation diferente de v_sales_master
     // (utf8mb4_general_ci vs utf8mb4_unicode_ci) — sem o COLLATE explicito o MySQL recusa
     // a comparacao (erro 1267) em vez de simplesmente nao casar a linha.
+    // O COLLATE dos dois lados impede o uso de indice (a view inteira era cruzada com cada
+    // linha). Copiamos as colunas usadas da view para uma tabela temporaria ja na collation
+    // de course_lifetime_access e com indice; se nao der, fica o JOIN antigo.
     $joinSales = $salesViewReady
         ? "LEFT JOIN v_sales_master vsm ON vsm.transaction_code COLLATE utf8mb4_unicode_ci = cla.transaction_code COLLATE utf8mb4_unicode_ci"
         : "";
+    if ($salesViewReady) {
+        try {
+            $pdo->exec("DROP TEMPORARY TABLE IF EXISTS tmp_vv_sales");
+            $pdo->exec("CREATE TEMPORARY TABLE tmp_vv_sales (
+                    transaction_code VARCHAR(100) COLLATE utf8mb4_general_ci NULL,
+                    status VARCHAR(10) NULL,
+                    product_name VARCHAR(255) NULL,
+                    gross_revenue DECIMAL(12,2) NULL,
+                    net_revenue DECIMAL(12,2) NULL,
+                    producer_net DECIMAL(12,2) NULL,
+                    sale_date DATETIME NULL,
+                    KEY idx_tmp_vv_tx (transaction_code)
+                ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            $pdo->exec("INSERT INTO tmp_vv_sales (transaction_code, status, product_name, gross_revenue, net_revenue, producer_net, sale_date)
+                SELECT transaction_code, status, product_name, gross_revenue, net_revenue, producer_net, sale_date FROM v_sales_master");
+            $joinSales = "LEFT JOIN tmp_vv_sales vsm ON vsm.transaction_code = cla.transaction_code";
+        } catch (Throwable $e) {
+            // mantem o JOIN direto na view
+        }
+    }
     $selectSales = $salesViewReady
         ? "vsm.status AS sale_status, vsm.product_name, NULL AS price_name, NULL AS currency, vsm.gross_revenue, vsm.net_revenue, vsm.producer_net, vsm.sale_date AS sale_at,"
         : "NULL AS sale_status, NULL AS product_name, NULL AS price_name, NULL AS currency, NULL AS gross_revenue, NULL AS net_revenue, NULL AS producer_net, NULL AS sale_at,";

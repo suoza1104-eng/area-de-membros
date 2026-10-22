@@ -193,7 +193,9 @@ function rl_disparar_lembrete_imediato(PDO $pdo, int $reagId): bool {
     return false;
 }
 
+// Estrutura das tabelas: roda uma vez por versao (schema_once), nao a cada abertura.
 try {
+    schema_once('reagendamentos_live', '2026-10-22', static function () use ($pdo): void {
     $pdo->exec("CREATE TABLE IF NOT EXISTS live_reschedule_tokens (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
@@ -247,6 +249,7 @@ try {
         try { $pdo->exec($sql); } catch (Throwable $e) {}
     }
     reagendamento_live_ensure_logs($pdo);
+    });
 } catch (Throwable $e) {
     // A tela continua carregando para exibir o erro nas acoes dependentes.
 }
@@ -766,7 +769,73 @@ $approvedSalesStatusSql = "LOWER(COALESCE(s.status,'')) IN ('approved','complete
 $phoneDigitsExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(%s,''),'+',''),' ',''),'-',''),'(',''),')',''),'.','')";
 $uPhoneNorm = 'RIGHT(' . sprintf($phoneDigitsExpr, 'u.telefone') . ', 11)';
 $sPhoneNorm = 'RIGHT(' . sprintf($phoneDigitsExpr, 's.buyer_phone') . ', 11)';
-$exprCompraCurso = $salesMasterReady
+// Vendas aprovadas ja normalizadas em tabelas temporarias indexadas (uma por e-mail, uma
+// por telefone): o EXISTS abaixo passa a buscar pelo indice em vez de varrer
+// v_sales_master inteira, com LOWER/REPLACE, para cada reagendamento (era ~40 s por consulta).
+// Mesmo filtro de aprovadas e mesma normalizacao da versao antiga; "e-mail OU telefone"
+// virou dois EXISTS ligados por OR, que e equivalente. Se nao der para criar as tabelas
+// temporarias, cai na expressao antiga.
+$salesTmpReady = false;
+if ($salesMasterReady) {
+    try {
+        $pdo->exec("DROP TEMPORARY TABLE IF EXISTS tmp_rl_email");
+        $pdo->exec("DROP TEMPORARY TABLE IF EXISTS tmp_rl_phone");
+        $pdo->exec("CREATE TEMPORARY TABLE tmp_rl_email (
+                email_norm VARCHAR(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+                sale_date DATETIME NOT NULL,
+                KEY idx_tmp_rl_email (email_norm, sale_date)
+            ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        $pdo->exec("CREATE TEMPORARY TABLE tmp_rl_phone (
+                phone_norm VARCHAR(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+                sale_date DATETIME NOT NULL,
+                KEY idx_tmp_rl_phone (phone_norm, sale_date)
+            ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        $pdo->exec("INSERT INTO tmp_rl_email (email_norm, sale_date)
+            SELECT LOWER(s.buyer_email), s.sale_date
+              FROM v_sales_master s
+             WHERE s.buyer_email IS NOT NULL
+               AND $approvedSalesStatusSql
+               AND s.sale_date IS NOT NULL");
+        $pdo->exec("INSERT INTO tmp_rl_phone (phone_norm, sale_date)
+            SELECT {$sPhoneNorm}, s.sale_date
+              FROM v_sales_master s
+             WHERE s.buyer_phone IS NOT NULL AND s.buyer_phone <> ''
+               AND $approvedSalesStatusSql
+               AND s.sale_date IS NOT NULL");
+        $salesTmpReady = true;
+    } catch (Throwable $e) {
+        $salesTmpReady = false;
+    }
+}
+$notRescheduledAfter = function (string $saleDateExpr) use ($impactStartExpr): string {
+    return "NOT EXISTS (
+              SELECT 1
+              FROM reagendamentos_live r2
+              WHERE r2.user_id = r.user_id
+                AND r2.id <> r.id
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) > $impactStartExpr
+                AND COALESCE(r2.new_turma_live_at, r2.created_at) <= $saleDateExpr
+          )";
+};
+$exprCompraCurso = $salesTmpReady
+    ? "(EXISTS (
+        SELECT 1
+        FROM tmp_rl_email te
+        WHERE u.email IS NOT NULL AND u.email <> ''
+          AND te.email_norm = LOWER(u.email) COLLATE utf8mb4_unicode_ci
+          AND te.sale_date >= $impactStartExpr
+          AND " . $notRescheduledAfter('te.sale_date') . "
+        LIMIT 1
+    ) OR EXISTS (
+        SELECT 1
+        FROM tmp_rl_phone tp
+        WHERE u.telefone IS NOT NULL AND u.telefone <> ''
+          AND tp.phone_norm = {$uPhoneNorm} COLLATE utf8mb4_unicode_ci
+          AND tp.sale_date >= $impactStartExpr
+          AND " . $notRescheduledAfter('tp.sale_date') . "
+        LIMIT 1
+    ))"
+    : ($salesMasterReady
     ? "EXISTS (
         SELECT 1
         FROM v_sales_master s
@@ -788,7 +857,7 @@ $exprCompraCurso = $salesMasterReady
           )
         LIMIT 1
     )"
-    : '0';
+    : '0');
 
 try {
     $st = $pdo->prepare("SELECT

@@ -25,7 +25,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     }catch(Throwable $e){$error=$e->getMessage();}
 }
 
-$templates=$pdo->query("SELECT t.*,v.version_number,(SELECT COUNT(*) FROM email_messages m WHERE m.template_version_id=t.current_version_id) sends,(SELECT COUNT(*) FROM email_messages m WHERE m.template_version_id=t.current_version_id AND m.delivered_at IS NOT NULL) delivered,(SELECT COUNT(*) FROM email_messages m WHERE m.template_version_id=t.current_version_id AND m.first_clicked_at IS NOT NULL) clicks FROM email_templates t LEFT JOIN email_template_versions v ON v.id=t.current_version_id WHERE t.status<>'deleted' ORDER BY t.updated_at DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
+$templates=$pdo->query("SELECT t.*,v.version_number,COALESCE(x.sends,0) sends,COALESCE(x.delivered,0) delivered,COALESCE(x.clicks,0) clicks FROM email_templates t LEFT JOIN email_template_versions v ON v.id=t.current_version_id LEFT JOIN (SELECT template_version_id,COUNT(*) sends,SUM(delivered_at IS NOT NULL) delivered,SUM(first_clicked_at IS NOT NULL) clicks FROM email_messages GROUP BY template_version_id) x ON x.template_version_id=t.current_version_id WHERE t.status<>'deleted' ORDER BY t.updated_at DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
 $aiConfigured=trim((string)get_setting('whatsapp_ai_openai_api_key',''))!=='';
 $menu='email_marketing';
 $page_title='Modelos de e-mail';

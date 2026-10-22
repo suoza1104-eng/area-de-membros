@@ -20,10 +20,13 @@ function logs_dt_br(?string $dt): string {
 }
 
 function logs_table_exists(PDO $pdo, string $table): bool {
+    // Chamada varias vezes por pagina (inclusive dentro de lacos): consulta cada tabela uma vez.
+    static $cache = [];
+    if (array_key_exists($table, $cache)) return $cache[$table];
     try {
         $st = $pdo->prepare("SHOW TABLES LIKE :t");
         $st->execute([':t' => $table]);
-        return (bool)$st->fetchColumn();
+        return $cache[$table] = (bool)$st->fetchColumn();
     } catch (Throwable $e) {
         return false;
     }
@@ -651,16 +654,25 @@ if (($source === '' || $source === 'cron_live') && logs_table_exists($pdo, 'live
         foreach ($params as $k => $v) $st->bindValue($k, $v);
         $st->bindValue(':lim', $limit, PDO::PARAM_INT);
         $st->execute();
-        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+        $dispatchRows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        // Contagem por status de todos os disparos listados numa consulta so (antes: uma por disparo).
+        $recipientStatsById = [];
+        $recipientStatsOk = false;
+        if ($dispatchRows && logs_table_exists($pdo, 'live_turma_dispatch_recipients')) {
+            try {
+                $dispatchIds = implode(',', array_map(static fn(array $d): int => (int)$d['id'], $dispatchRows));
+                foreach ($pdo->query("SELECT dispatch_id, status, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id IN ($dispatchIds) GROUP BY dispatch_id, status ORDER BY dispatch_id, status")->fetchAll(PDO::FETCH_ASSOC) ?: [] as $sr) {
+                    $recipientStatsById[(int)$sr['dispatch_id']][(string)$sr['status']] = (int)$sr['qtd'];
+                }
+                $recipientStatsOk = true;
+            } catch (Throwable $e) {}
+        }
+        foreach ($dispatchRows as $r) {
             $recipientStats = [];
             $recipientSample = [];
-            if (logs_table_exists($pdo, 'live_turma_dispatch_recipients')) {
+            if ($recipientStatsOk) {
                 try {
-                    $rs = $pdo->prepare("SELECT status, COUNT(*) qtd FROM live_turma_dispatch_recipients WHERE dispatch_id=:id GROUP BY status");
-                    $rs->execute([':id' => (int)$r['id']]);
-                    foreach ($rs->fetchAll(PDO::FETCH_ASSOC) ?: [] as $sr) {
-                        $recipientStats[(string)$sr['status']] = (int)$sr['qtd'];
-                    }
+                    $recipientStats = $recipientStatsById[(int)$r['id']] ?? [];
                     $rr = $pdo->prepare("
                         SELECT user_id, nome, email, telefone, status, skip_reason, attempts,
                                webhook_ok, webhook_fail, sf_ok, sf_fail, manychat_ok, manychat_fail,

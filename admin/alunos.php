@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/certificado_pdf.php';
 require_once __DIR__ . '/../app/retorno_agendamentos.php';
+require_once __DIR__ . '/../app/course_access_bulk.php';
 proteger_admin();
 $pdo = getPDO();
 retorno_ensure_tables($pdo);
@@ -677,6 +678,8 @@ if ($alunos) {
         }
     } catch (Throwable $e) {}
 }
+// Prazo/vitalicio da pagina inteira em 4 consultas (antes: 4-5 consultas por aluno).
+$accessStatusPorUser = $alunos ? course_access_status_bulk($pdo, array_map(static fn($a) => (int)$a['id'], $alunos)) : [];
 
 $temFiltroUtm  = ($fUtmSrc !== '' || $fUtmMed !== '' || $fUtmCamp !== '');
 $temFiltroData = ($fDateFrom !== '' || $fDateTo !== '');
@@ -1030,7 +1033,7 @@ require __DIR__ . '/_header.php';
                 $certEmitido = trim((string)($a['cert_emitido_em'] ?? ''));
                 $temCert = in_array('CERT_EMITIDO', array_map('strtoupper', $tags));
                 $retornosAluno = $retornosPorUser[(int)$a['id']] ?? [];
-                $accessStatus = course_access_status($pdo, (int)$a['id']);
+                $accessStatus = $accessStatusPorUser[(int)$a['id']] ?? course_access_status($pdo, (int)$a['id']);
                 $accessRemainingDays = isset($accessStatus['remaining_seconds']) && $accessStatus['remaining_seconds'] !== null
                     ? (int)ceil((int)$accessStatus['remaining_seconds'] / 86400)
                     : null;

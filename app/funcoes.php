@@ -726,6 +726,26 @@ function set_setting(string $chave, string $valor): void {
 }
 
 /**
+ * Roda um bloco de CREATE/ALTER uma vez por versao (guardada em settings), e nao
+ * a cada abertura de pagina: DDL repetido custa idas ao banco remoto e trava
+ * metadados da tabela. Mudou o SQL? Mude $version (ou passe um hash do SQL).
+ * Fora de transacao apenas: DDL faz commit implicito no MySQL.
+ */
+function schema_once(string $key, string $version, callable $migrate): void {
+    static $done = [];
+    if (isset($done[$key])) return;
+    $done[$key] = true;
+    $settingKey = 'schema_v_' . $key;
+    if (get_setting($settingKey, '') === $version) return;
+    $migrate();
+    try {
+        set_setting($settingKey, $version);
+    } catch (Throwable $e) {
+        @error_log('schema_once ' . $key . ': ' . $e->getMessage());
+    }
+}
+
+/**
 /**
  * Gera um código UID de 36 caracteres com letras minúsculas, números e traços.
  */

@@ -71,6 +71,18 @@ function automation_trigger_seed_catalog(): array
 
 function automation_triggers_ensure_schema(PDO $pdo): void
 {
+    // CREATE + um upsert por gatilho do catalogo: so quando o catalogo muda (versao = hash).
+    if (function_exists('schema_once')) {
+        schema_once('automation_triggers', sha1((string)json_encode(automation_trigger_seed_catalog())), static function () use ($pdo): void {
+            automation_triggers_migrate($pdo);
+        });
+        return;
+    }
+    automation_triggers_migrate($pdo);
+}
+
+function automation_triggers_migrate(PDO $pdo): void
+{
     $pdo->exec("CREATE TABLE IF NOT EXISTS automation_triggers (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         code VARCHAR(100) NOT NULL,
@@ -110,6 +122,11 @@ function automation_triggers_ensure_schema(PDO $pdo): void
 
 function automation_trigger_rows(?PDO $pdo = null, bool $includeLessons = true): array
 {
+    // A tela pede a mesma lista mais de uma vez (opcoes + grupos). Em POST le sempre do banco.
+    static $cache = [];
+    $cacheKey = ($pdo ? 'db' : 'seed') . ($includeLessons ? '+aulas' : '');
+    $useCache = PHP_SAPI !== 'cli' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET';
+    if ($useCache && isset($cache[$cacheKey])) return $cache[$cacheKey];
     $rows = [];
     if ($pdo) {
         automation_triggers_ensure_schema($pdo);
@@ -129,6 +146,7 @@ function automation_trigger_rows(?PDO $pdo = null, bool $includeLessons = true):
             }
         } catch (Throwable $e) {}
     }
+    if ($useCache) $cache[$cacheKey] = $rows;
     return $rows;
 }
 

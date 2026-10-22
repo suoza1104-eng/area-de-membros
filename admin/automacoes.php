@@ -624,7 +624,10 @@ if ($logStatus !== '') { $logWhere[] = 's.status=:status'; $logParams['status'] 
 if ($logDe !== '') { $logWhere[] = 's.started_at>=:de'; $logParams['de'] = $logDe . ' 00:00:00'; }
 if ($logAte !== '') { $logWhere[] = 's.started_at<=:ate'; $logParams['ate'] = $logAte . ' 23:59:59'; }
 $logWhereSql = $logWhere ? ('WHERE ' . implode(' AND ', $logWhere)) : '';
-$logsStmt = $pdo->prepare("SELECT s.*,j.id reprocess_job_id,j.channel job_channel,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
+// Sem filtro de fluxo/aluno o MySQL comecava por automation_flow_runs (varredura + ordenacao
+// de tudo); lendo os passos pela PK em ordem decrescente ele para no LIMIT. Mesmo resultado.
+$logJoinHint = ($logFlowId > 0 || $logAluno !== '') ? '' : 'STRAIGHT_JOIN ';
+$logsStmt = $pdo->prepare("SELECT {$logJoinHint}s.*,j.id reprocess_job_id,j.channel job_channel,r.flow_id,r.user_id,f.name flow_name,u.nome,u.email
     FROM automation_flow_steps s
     LEFT JOIN automation_flow_jobs j ON j.id=s.job_id
     JOIN automation_flow_runs r ON r.id=s.run_id

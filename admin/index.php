@@ -253,30 +253,126 @@ if ((empty($_SESSION['admin_logado']) || $_SESSION['admin_logado'] !== true) && 
     exit;
 }
 
+// Detalhe de uma linha dos rankings (historico de inscricoes / de grupos), pedido
+// ao expandir a linha: a pagina principal nao carrega mais todos os historicos.
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && isset($_GET['dash_details'])) {
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+    header('Content-Type: text/html; charset=UTF-8');
+    header('Cache-Control: no-store');
+    try {
+        $pdoDetails = getPDO();
+        $detailsKey = (string)($_GET['key'] ?? '');
+        if ((string)$_GET['dash_details'] === 'gr') {
+            echo dash_gr_detail_inner_html(dash_group_ranking_history($pdoDetails, [$detailsKey])[$detailsKey] ?? []);
+        } else {
+            $detailsIds = array_values(array_unique(array_filter(array_map('intval', explode(',', (string)($_GET['ids'] ?? ''))), static fn(int $id): bool => $id > 0)));
+            $rkRow = null;
+            foreach (dash_inscricao_ranking_rows($pdoDetails, $detailsIds) as $row) {
+                if ((string)($row['chave'] ?? '') === $detailsKey) { $rkRow = $row; break; }
+            }
+            if ($rkRow === null) {
+                echo '<div style="font-size:12px;color:var(--dim)">Sem histórico detalhado disponível.</div>';
+            } else {
+                echo dash_rk_detail_inner_html($rkRow, dash_inscricao_ranking_history($pdoDetails, $detailsIds)[$detailsKey] ?? []);
+            }
+        }
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo '<div style="font-size:12px;color:var(--danger)">Erro ao carregar o histórico.</div>';
+    }
+    exit;
+}
+
+/**
+ * Cache do dashboard (montar a pagina leva varios segundos no banco remoto):
+ * - ate 1 min: entrega a copia pronta;
+ * - de 1 a 10 min: entrega a copia na hora e recalcula depois de encerrar a
+ *   resposta (fastcgi/litespeed_finish_request), um recalculo por vez (lock);
+ * - mais velha (ou sem como recalcular depois): recalcula antes de responder.
+ * ?nocache=1 recalcula na hora e atualiza a copia.
+ */
+const DASH_CACHE_FRESH_S = 60;
+const DASH_CACHE_STALE_S = 600;
+const DASH_CACHE_LOCK_S = 120;
+
+function dash_cache_finish_request(): bool {
+    if (function_exists('fastcgi_finish_request')) return fastcgi_finish_request();
+    if (function_exists('litespeed_finish_request')) return litespeed_finish_request();
+    return false;
+}
+
+function dash_cache_try_lock(string $lockFile): bool {
+    if (is_file($lockFile) && (time() - (int)@filemtime($lockFile)) > DASH_CACHE_LOCK_S) @unlink($lockFile);
+    $fh = @fopen($lockFile, 'x');
+    if ($fh === false) return false;
+    fclose($fh);
+    return true;
+}
+
+/** Troca o marcador do topo por "Atualizado ha X min · atualizar agora". */
+function dash_cache_with_note(string $html, int $ageSeconds): string {
+    $query = $_GET;
+    unset($query['nocache']);
+    $query['nocache'] = '1';
+    $minutes = intdiv(max(0, $ageSeconds), 60);
+    $note = '<span style="font-size:12px;color:var(--muted)">Atualizado '
+        . ($minutes < 1 ? 'há menos de 1 min' : 'há ' . $minutes . ' min')
+        . ' · <a href="index.php?' . htmlspecialchars(http_build_query($query)) . '">atualizar agora</a></span>';
+    return str_replace('<!--DASH_CACHE_NOTE-->', $note, $html);
+}
+
 $__dashboardCacheFile = null;
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && empty($_GET['nocache'])) {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
     $__cacheDir = __DIR__ . '/../app/cache/admin_dashboard';
     if (!is_dir($__cacheDir)) @mkdir($__cacheDir, 0775, true);
     if (is_dir($__cacheDir) && is_writable($__cacheDir)) {
+        $__cacheQuery = $_GET;
+        unset($__cacheQuery['nocache']);
+        ksort($__cacheQuery);
         $__cacheKey = sha1(json_encode([
             'v' => defined('APP_VERSION') ? APP_VERSION : '1',
-            'query' => $_SERVER['QUERY_STRING'] ?? '',
+            'query' => http_build_query($__cacheQuery),
             'tipo' => $_SESSION['admin_tipo'] ?? '',
             'equipe' => $_SESSION['equipe_id'] ?? '',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $__dashboardCacheFile = $__cacheDir . '/' . $__cacheKey . '.html';
-        if (is_file($__dashboardCacheFile) && (time() - filemtime($__dashboardCacheFile)) < 60) {
-            header('X-Dashboard-Cache: HIT');
-            readfile($__dashboardCacheFile);
-            exit;
-        }
-        ob_start(static function (string $html) use ($__dashboardCacheFile): string {
-            if (http_response_code() < 300 && strlen($html) > 1000) {
-                @file_put_contents($__dashboardCacheFile, $html, LOCK_EX);
+        $__cacheLock = $__dashboardCacheFile . '.lock';
+        $__cacheBackground = false;
+        $__cacheAge = is_file($__dashboardCacheFile) ? time() - (int)filemtime($__dashboardCacheFile) : null;
+        if (empty($_GET['nocache']) && $__cacheAge !== null && $__cacheAge < DASH_CACHE_STALE_S) {
+            $__cacheFresh = $__cacheAge < DASH_CACHE_FRESH_S;
+            $__canFinish = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+            // Velha: so entrega antes se der para recalcular depois; se outro acesso
+            // ja esta recalculando (lock), entrega a copia e nao recalcula de novo.
+            $__gotLock = !$__cacheFresh && $__canFinish && dash_cache_try_lock($__cacheLock);
+            $__lockBusy = !$__cacheFresh && $__canFinish && !$__gotLock;
+            if ($__cacheFresh || $__gotLock || $__lockBusy) {
+                $__cachedHtml = (string)@file_get_contents($__dashboardCacheFile);
+                if ($__cachedHtml !== '') {
+                    header('X-Dashboard-Cache: ' . ($__cacheFresh ? 'HIT' : 'STALE'));
+                    echo dash_cache_with_note($__cachedHtml, $__cacheAge);
+                    if (!$__gotLock) exit;
+                    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+                    dash_cache_finish_request();
+                    ignore_user_abort(true);
+                    $__cacheBackground = true;
+                } elseif ($__gotLock) {
+                    @unlink($__cacheLock);
+                }
             }
-            return $html;
+        }
+        if ($__cacheBackground) {
+            register_shutdown_function(static function () use ($__cacheLock): void { @unlink($__cacheLock); });
+        }
+        ob_start(static function (string $html) use ($__dashboardCacheFile, $__cacheBackground): string {
+            if (http_response_code() < 300 && strlen($html) > 1000) {
+                // grava em arquivo temporario e renomeia: quem le nunca pega copia pela metade
+                $tmp = $__dashboardCacheFile . '.' . getmypid() . '.tmp';
+                if (@file_put_contents($tmp, $html, LOCK_EX) !== false) @rename($tmp, $__dashboardCacheFile);
+            }
+            return $__cacheBackground ? '' : $html;
         });
-        header('X-Dashboard-Cache: MISS');
+        if (!$__cacheBackground) header('X-Dashboard-Cache: MISS');
     }
 }
 
@@ -287,7 +383,8 @@ if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 $pdo = getPDO();
 require_once __DIR__ . '/../app/push_notifications.php';
-push_ensure_schema($pdo);
+// Estrutura so uma vez por versao (antes rodava CREATE/ALTER a cada abertura).
+schema_once('dashboard_push', '2026-10-22', static function () use ($pdo): void { push_ensure_schema($pdo); });
 
 function dash_get_setting(PDO $pdo, string $key, string $default = ''): string {
     try {
@@ -474,6 +571,8 @@ $pctReinsc = $totalInscEvts > 0 ? round($reinscritos / $totalInscEvts * 100, 1) 
 // ========================
 // 4) SERIES TEMPORAIS (graficos de linha)
 // ========================
+// Estrutura so uma vez por versao: o MODIFY abaixo reescrevia login_events a cada abertura.
+schema_once('dashboard', '2026-10-22', static function () use ($pdo): void {
 try {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS login_events (
@@ -522,6 +621,7 @@ try {
 try {
     $pdo->exec("ALTER TABLE lesson_progress ADD COLUMN completion_source VARCHAR(40) NULL");
 } catch (Throwable $e) {}
+});
 
 function dash_bucket_expr(string $dateExpr, string $period): string {
     if ($period === 'monthly') return "DATE_FORMAT($dateExpr, '%Y-%m')";
@@ -613,18 +713,75 @@ function dash_event_base_where(string $dateExpr, string $prefix, string $dataDe,
     return array_merge($where, dash_turma_where('u', $turmaCol, $turmaIds, $codigosTurma, $params, $prefix));
 }
 
-function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, string $valueExpr, string $prefix, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma): array {
+/**
+ * Diario, mensal e anual numa consulta so (GROUP BY ... WITH ROLLUP). Os subtotais do
+ * ROLLUP recalculam o agregado sobre o grupo inteiro, entao COUNT(DISTINCT) continua
+ * correto. MySQL 5.7 nao aceita ORDER BY com ROLLUP: a ordem e feita aqui.
+ */
+function dash_fetch_series_all(PDO $pdo, string $fromSql, string $dateExpr, string $valueExpr, array $baseWhere, array $baseParams): array {
+    // Data nula nao pode existir aqui: NULL nas colunas abaixo marca so os subtotais.
+    $baseWhere[] = "$dateExpr IS NOT NULL";
+    $sql = "
+        SELECT DATE_FORMAT($dateExpr, '%Y') AS dash_y, DATE_FORMAT($dateExpr, '%Y-%m') AS dash_m, DATE($dateExpr) AS dash_d, $valueExpr AS total
+        FROM $fromSql
+        WHERE " . implode(' AND ', $baseWhere) . "
+        GROUP BY dash_y, dash_m, dash_d WITH ROLLUP
+    ";
+    $st = $pdo->prepare($sql);
+    $st->execute($baseParams);
+    $buckets = ['daily' => [], 'monthly' => [], 'yearly' => []];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        if ($row['dash_y'] === null) continue; // total geral
+        if ($row['dash_m'] === null) { $period = 'yearly'; $bucket = (string)$row['dash_y']; }
+        elseif ($row['dash_d'] === null) { $period = 'monthly'; $bucket = (string)$row['dash_m']; }
+        else { $period = 'daily'; $bucket = (string)$row['dash_d']; }
+        if ($bucket === '') continue;
+        $buckets[$period][$bucket] = round((float)($row['total'] ?? 0), 2);
+    }
+    $out = [];
+    foreach ($buckets as $period => $values) {
+        ksort($values, SORT_STRING); // mesma ordem do antigo ORDER BY bucket
+        $out[$period] = ['labels' => [], 'data' => []];
+        foreach ($values as $bucket => $value) {
+            $out[$period]['labels'][] = dash_bucket_label((string)$bucket, $period);
+            $out[$period]['data'][] = $value;
+        }
+    }
+    return $out;
+}
+
+/**
+ * Series diaria/mensal/anual: uma consulta com ROLLUP; se falhar, volta ao caminho
+ * antigo (uma consulta por periodo). $whereFor(sufixo) devolve [where, params].
+ */
+function dash_period_series(PDO $pdo, string $fromSql, string $dateExpr, string $valueExpr, callable $whereFor): array {
+    // Divisao (ex.: SUM(100 / N)) sai com outra precisao decimal no ROLLUP: mantem o caminho antigo.
+    if (strpos($valueExpr, '/') === false) {
+        try {
+            [$where, $params] = $whereFor('all');
+            return dash_fetch_series_all($pdo, $fromSql, $dateExpr, $valueExpr, $where, $params);
+        } catch (Throwable $e) {
+            // cai no caminho antigo abaixo
+        }
+    }
     $out = [];
     foreach (['daily', 'monthly', 'yearly'] as $period) {
-        $params = [];
-        $where = dash_event_base_where($dateExpr, $prefix . '_' . $period, $dataDe, $dataAte, $turmaCol, $turmaIds, $codigosTurma, $params);
         try {
+            [$where, $params] = $whereFor($period);
             $out[$period] = dash_fetch_series($pdo, $period, $fromSql, $dateExpr, $valueExpr, $where, $params);
         } catch (Throwable $e) {
             $out[$period] = ['labels' => [], 'data' => []];
         }
     }
     return $out;
+}
+
+function dash_all_period_series(PDO $pdo, string $fromSql, string $dateExpr, string $valueExpr, string $prefix, string $dataDe, string $dataAte, ?string $turmaCol, array $turmaIds, array $codigosTurma): array {
+    return dash_period_series($pdo, $fromSql, $dateExpr, $valueExpr, static function (string $suffix) use ($dateExpr, $prefix, $dataDe, $dataAte, $turmaCol, $turmaIds, $codigosTurma): array {
+        $params = [];
+        $where = dash_event_base_where($dateExpr, $prefix . '_' . $suffix, $dataDe, $dataAte, $turmaCol, $turmaIds, $codigosTurma, $params);
+        return [$where, $params];
+    });
 }
 
 $tagChartTags = [];
@@ -779,8 +936,10 @@ function dash_lead_engagement_series(PDO $pdo, string $dataDe, string $dataAte, 
         ? "SELECT user_id,1 has_certificate FROM certificates WHERE status='emitido' GROUP BY user_id"
         : "SELECT NULL user_id,0 has_certificate WHERE 1=0";
 
+    // A classificacao e a mesma em todos os periodos: roda uma vez por dia e os
+    // demais periodos sao somas dos dias (cada aluno entra em um bucket so).
     $out = $empty;
-    foreach (array_keys($empty) as $period) {
+    foreach (['daily'] as $period) {
         $params = [];
         $where = ['u.created_at IS NOT NULL'];
         if ($dataDe !== '') {
@@ -827,23 +986,44 @@ function dash_lead_engagement_series(PDO $pdo, string $dataDe, string $dataAte, 
         try {
             $st = $pdo->prepare($sql);
             $st->execute($params);
-            $byBucket = [];
+            $byBucket = array_fill_keys(array_keys($empty), []);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-                $bucket = (string)($row['bucket'] ?? '');
+                $day = (string)($row['bucket'] ?? '');
                 $perfil = (string)($row['perfil'] ?? '');
-                if ($bucket === '' || !isset($out[$period][$perfil])) continue;
-                if (!isset($byBucket[$bucket])) $byBucket[$bucket] = ['frio' => 0, 'morno' => 0, 'quente' => 0, 'pelando' => 0];
-                $byBucket[$bucket][$perfil] = (int)($row['total'] ?? 0);
+                if ($day === '' || !isset($out['daily'][$perfil])) continue;
+                foreach (dash_engagement_day_buckets($day) as $bucketPeriod => $bucket) {
+                    if (!isset($byBucket[$bucketPeriod][$bucket])) $byBucket[$bucketPeriod][$bucket] = ['frio' => 0, 'morno' => 0, 'quente' => 0, 'pelando' => 0];
+                    $byBucket[$bucketPeriod][$bucket][$perfil] += (int)($row['total'] ?? 0);
+                }
             }
-            foreach ($byBucket as $bucket => $values) {
-                $out[$period]['labels'][] = dash_engagement_bucket_label($bucket, $period);
-                foreach (['frio','morno','quente','pelando'] as $perfil) $out[$period][$perfil][] = (int)$values[$perfil];
+            foreach ($byBucket as $bucketPeriod => $buckets) {
+                ksort($buckets, SORT_STRING); // mesma ordem do antigo ORDER BY bucket
+                foreach ($buckets as $bucket => $values) {
+                    $out[$bucketPeriod]['labels'][] = dash_engagement_bucket_label((string)$bucket, $bucketPeriod);
+                    foreach (['frio','morno','quente','pelando'] as $perfil) $out[$bucketPeriod][$perfil][] = (int)$values[$perfil];
+                }
             }
         } catch (Throwable $e) {
-            $out[$period] = $empty[$period];
+            $out = $empty;
         }
     }
     return $out;
+}
+
+/** Buckets de cada periodo para um dia 'Y-m-d' (mesmas chaves de dash_engagement_bucket_expr). */
+function dash_engagement_day_buckets(string $day): array {
+    $ts = strtotime($day . ' 00:00:00');
+    if ($ts === false) return [];
+    $month = (int)date('n', $ts);
+    $year = date('Y', $ts);
+    return [
+        'daily' => date('Y-m-d', $ts),
+        'weekly' => date('Y-m-d', strtotime('-' . ((int)date('N', $ts) - 1) . ' days', $ts)),
+        'monthly' => date('Y-m', $ts),
+        'quarterly' => $year . '-T' . (int)ceil($month / 3),
+        'semester' => $year . '-S' . ($month <= 6 ? 1 : 2),
+        'yearly' => $year,
+    ];
 }
 
 function dash_device_family(?string $userAgent): string {
@@ -1205,27 +1385,21 @@ foreach ([
         'color' => $cfgLive['color'],
         'series' => ['daily' => ['labels' => [], 'data' => []], 'monthly' => ['labels' => [], 'data' => []], 'yearly' => ['labels' => [], 'data' => []]],
     ];
-    foreach (['daily', 'monthly', 'yearly'] as $periodLive) {
-        $paramsLive = ['tipo_live' => $cfgLive['tipo']];
-        $dateExprLive = 'COALESCE(ler.processado_em, ler.recebido_em)';
-        $whereLive = dash_event_base_where($dateExprLive, $chartKey . '_' . $periodLive, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsLive);
-        $whereLive[] = "ler.status = 'processado'";
-        $whereLive[] = "ler.user_id IS NOT NULL";
-        $whereLive[] = "le.tipo = :tipo_live";
-        try {
-            $dashLineCharts[$chartKey]['series'][$periodLive] = dash_fetch_series(
-                $pdo,
-                $periodLive,
-                "live_event_recebimentos ler JOIN live_events le ON le.id = ler.event_id JOIN users u ON u.id = ler.user_id",
-                $dateExprLive,
-                'COUNT(DISTINCT ler.user_id)',
-                $whereLive,
-                $paramsLive
-            );
-        } catch (Throwable $e) {
-            $dashLineCharts[$chartKey]['series'][$periodLive] = ['labels' => [], 'data' => []];
+    $dateExprLive = 'COALESCE(ler.processado_em, ler.recebido_em)';
+    $dashLineCharts[$chartKey]['series'] = dash_period_series(
+        $pdo,
+        "live_event_recebimentos ler JOIN live_events le ON le.id = ler.event_id JOIN users u ON u.id = ler.user_id",
+        $dateExprLive,
+        'COUNT(DISTINCT ler.user_id)',
+        static function (string $periodLive) use ($cfgLive, $dateExprLive, $chartKey, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro): array {
+            $paramsLive = ['tipo_live' => $cfgLive['tipo']];
+            $whereLive = dash_event_base_where($dateExprLive, $chartKey . '_' . $periodLive, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsLive);
+            $whereLive[] = "ler.status = 'processado'";
+            $whereLive[] = "ler.user_id IS NOT NULL";
+            $whereLive[] = "le.tipo = :tipo_live";
+            return [$whereLive, $paramsLive];
         }
-    }
+    );
 }
 
 foreach ([
@@ -1246,34 +1420,28 @@ foreach ([
         'color' => $cfgGroup['color'],
         'series' => ['daily' => ['labels' => [], 'data' => []], 'monthly' => ['labels' => [], 'data' => []], 'yearly' => ['labels' => [], 'data' => []]],
     ];
-    foreach (['daily', 'monthly', 'yearly'] as $periodGroup) {
-        $paramsGroup = [];
-        $dateExprGroup = 'ge.created_at';
-        $whereGroup = dash_event_base_where($dateExprGroup, $chartKey . '_' . $periodGroup, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsGroup);
-        $whereGroup[] = 'ge.user_id IS NOT NULL';
-        $whereGroup[] = 'ge.user_id > 0';
-        $whereGroup[] = 'COALESCE(wg.is_ignored, 0) = 0';
-        $eventPh = [];
-        foreach ($cfgGroup['events'] as $i => $eventName) {
-            $k = 'group_event_' . $periodGroup . '_' . $chartKey . '_' . $i;
-            $eventPh[] = ':' . $k;
-            $paramsGroup[$k] = $eventName;
+    $dateExprGroup = 'ge.created_at';
+    $dashLineCharts[$chartKey]['series'] = dash_period_series(
+        $pdo,
+        'whatsapp_group_events ge LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id JOIN users u ON u.id = ge.user_id',
+        $dateExprGroup,
+        'COUNT(DISTINCT ge.user_id)',
+        static function (string $periodGroup) use ($cfgGroup, $dateExprGroup, $chartKey, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro): array {
+            $paramsGroup = [];
+            $whereGroup = dash_event_base_where($dateExprGroup, $chartKey . '_' . $periodGroup, $dataDe, $dataAte, $lineTurmaCol, $turmaIds, $codigosTurmaFiltro, $paramsGroup);
+            $whereGroup[] = 'ge.user_id IS NOT NULL';
+            $whereGroup[] = 'ge.user_id > 0';
+            $whereGroup[] = 'COALESCE(wg.is_ignored, 0) = 0';
+            $eventPh = [];
+            foreach ($cfgGroup['events'] as $i => $eventName) {
+                $k = 'group_event_' . $periodGroup . '_' . $chartKey . '_' . $i;
+                $eventPh[] = ':' . $k;
+                $paramsGroup[$k] = $eventName;
+            }
+            $whereGroup[] = 'ge.interpreted_event IN (' . implode(',', $eventPh) . ')';
+            return [$whereGroup, $paramsGroup];
         }
-        $whereGroup[] = 'ge.interpreted_event IN (' . implode(',', $eventPh) . ')';
-        try {
-            $dashLineCharts[$chartKey]['series'][$periodGroup] = dash_fetch_series(
-                $pdo,
-                $periodGroup,
-                'whatsapp_group_events ge LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id JOIN users u ON u.id = ge.user_id',
-                $dateExprGroup,
-                'COUNT(DISTINCT ge.user_id)',
-                $whereGroup,
-                $paramsGroup
-            );
-        } catch (Throwable $e) {
-            $dashLineCharts[$chartKey]['series'][$periodGroup] = ['labels' => [], 'data' => []];
-        }
-    }
+    );
 }
 
 $completionLabels = [];
@@ -2089,60 +2257,8 @@ try {
 
 if ($hasIL) {
     try {
-        $utmSel = $hasUtmCols
-            ? "MAX(u.utm_source) AS utm_source, MAX(u.utm_medium) AS utm_medium, MAX(u.utm_campaign) AS utm_campaign, MAX(u.utm_content) AS utm_content,"
-            : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
-
-        $rankSql = "
-            SELECT
-                COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
-                GROUP_CONCAT(DISTINCT u.id ORDER BY u.id SEPARATOR ',') AS user_ids_str,
-                MIN(u.id)       AS id,
-                MIN(u.nome)     AS nome,
-                MIN(u.email)    AS email,
-                MIN(u.telefone) AS telefone,
-                $utmSel
-                COUNT(il.id) AS qtd_inscricoes,
-                MIN(il.created_at) AS primeiro_cadastro,
-                MAX(il.created_at) AS ultimo_cadastro
-            FROM users u
-            JOIN inscricao_logs il ON il.user_id = u.id
-            GROUP BY chave
-            ORDER BY qtd_inscricoes DESC, ultimo_cadastro DESC
-            LIMIT 30
-        ";
-        $rankingRows = $pdo->query($rankSql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-        if ($rankingRows) {
-            $allRkUids = [];
-            foreach ($rankingRows as $row) {
-                foreach (explode(',', (string)($row['user_ids_str'] ?? '')) as $uid) {
-                    $uid = (int)$uid;
-                    if ($uid > 0) $allRkUids[] = $uid;
-                }
-            }
-            $in = implode(',', array_unique($allRkUids));
-
-            $histSql = "
-                SELECT
-                    COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
-                    DATE(il.created_at) AS data_dia,
-                    il.created_at       AS hora,
-                    il.utm_source,
-                    il.utm_medium,
-                    il.utm_campaign,
-                    il.utm_content,
-                    il.codigo_turma,
-                    il.is_novo
-                FROM inscricao_logs il
-                JOIN users u ON u.id = il.user_id
-                WHERE il.user_id IN ($in)
-                ORDER BY chave ASC, il.created_at ASC
-            ";
-            foreach ($pdo->query($histSql)->fetchAll(PDO::FETCH_ASSOC) as $h) {
-                $rankHistorico[$h['chave']][] = $h;
-            }
-        }
+        // O historico de cada pessoa e buscado so ao expandir a linha (?dash_details=rk).
+        $rankingRows = dash_inscricao_ranking_rows($pdo);
     } catch (Throwable $e) {
         $rankingRows = [];
     }
@@ -2180,47 +2296,289 @@ try {
         ORDER BY qtd_entradas DESC, grupos_distintos DESC, ultima_entrada DESC
         LIMIT 30
     ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-    if ($groupRankingRows) {
-        $keys = [];
-        foreach ($groupRankingRows as $row) {
-            $key = trim((string)($row['ranking_key'] ?? ''));
-            if ($key !== '') $keys[] = $key;
-        }
-        $keys = array_values(array_unique($keys));
-        if ($keys) {
-            $in = implode(',', array_map([$pdo, 'quote'], $keys));
-            $histRows = $pdo->query("
-                SELECT
-                    x.*
-                FROM (
-                    SELECT
-                        CASE
-                            WHEN ge.user_id IS NOT NULL AND ge.user_id > 0 THEN CONCAT('u:', ge.user_id)
-                            WHEN COALESCE(NULLIF(TRIM(ge.participant_phone), ''), '') <> '' THEN CONCAT('p:', TRIM(ge.participant_phone))
-                            WHEN COALESCE(NULLIF(TRIM(ge.participant_id), ''), '') <> '' THEN CONCAT('pid:', TRIM(ge.participant_id))
-                            ELSE CONCAT('e:', ge.id)
-                        END AS ranking_key,
-                        ge.*,
-                        wg.group_name,
-                        wg.picture_url,
-                        wg.is_ignored
-                    FROM whatsapp_group_events ge
-                    LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
-                    WHERE ge.interpreted_event IN ('WHATSAPP_GRUPO_ENTROU','WHATSAPP_GRUPO_SAIU','WHATSAPP_GRUPO_REMOVIDO_ADMIN')
-                      AND COALESCE(wg.is_ignored, 0) = 0
-                ) x
-                WHERE x.ranking_key IN ($in)
-                ORDER BY x.ranking_key ASC, x.created_at DESC, x.id DESC
-            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            foreach ($histRows as $h) {
-                $groupRankingHistorico[(string)$h['ranking_key']][] = $h;
-            }
-        }
-    }
+    // O historico de cada participante e buscado so ao expandir a linha (?dash_details=gr).
 } catch (Throwable $e) {
     $groupRankingRows = [];
     $groupRankingHistorico = [];
+}
+
+/**
+ * Ranking de inscricoes multiplas por pessoa (email > telefone > id). Sem $userIds:
+ * top 30. Com $userIds: so as pessoas desses alunos (detalhe de uma linha).
+ */
+function dash_inscricao_ranking_rows(PDO $pdo, ?array $userIds = null): array {
+    $hasUtmCols = false;
+    try { $pdo->query("SELECT utm_source FROM users LIMIT 0"); $hasUtmCols = true; } catch (Throwable $e) {}
+    $utmSel = $hasUtmCols
+        ? "MAX(u.utm_source) AS utm_source, MAX(u.utm_medium) AS utm_medium, MAX(u.utm_campaign) AS utm_campaign, MAX(u.utm_content) AS utm_content,"
+        : "NULL AS utm_source, NULL AS utm_medium, NULL AS utm_campaign, NULL AS utm_content,";
+    $whereSql = '';
+    $limitSql = 'LIMIT 30';
+    if ($userIds !== null) {
+        $userIds = array_values(array_filter(array_map('intval', $userIds), static fn(int $id): bool => $id > 0));
+        if (!$userIds) return [];
+        $whereSql = 'WHERE u.id IN (' . implode(',', $userIds) . ')';
+        $limitSql = '';
+    }
+
+    $rankSql = "
+        SELECT
+            COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
+            GROUP_CONCAT(DISTINCT u.id ORDER BY u.id SEPARATOR ',') AS user_ids_str,
+            MIN(u.id)       AS id,
+            MIN(u.nome)     AS nome,
+            MIN(u.email)    AS email,
+            MIN(u.telefone) AS telefone,
+            $utmSel
+            COUNT(il.id) AS qtd_inscricoes,
+            MIN(il.created_at) AS primeiro_cadastro,
+            MAX(il.created_at) AS ultimo_cadastro
+        FROM users u
+        JOIN inscricao_logs il ON il.user_id = u.id
+        $whereSql
+        GROUP BY chave
+        ORDER BY qtd_inscricoes DESC, ultimo_cadastro DESC
+        $limitSql
+    ";
+    return $pdo->query($rankSql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+/** Historico de inscricoes dos alunos, agrupado pela chave da pessoa. */
+function dash_inscricao_ranking_history(PDO $pdo, array $userIds): array {
+    $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds), static fn(int $id): bool => $id > 0)));
+    if (!$userIds) return [];
+    $in = implode(',', $userIds);
+    $histSql = "
+        SELECT
+            COALESCE(NULLIF(TRIM(u.email),''), NULLIF(TRIM(u.telefone),''), CAST(u.id AS CHAR)) AS chave,
+            DATE(il.created_at) AS data_dia,
+            il.created_at       AS hora,
+            il.utm_source,
+            il.utm_medium,
+            il.utm_campaign,
+            il.utm_content,
+            il.codigo_turma,
+            il.is_novo
+        FROM inscricao_logs il
+        JOIN users u ON u.id = il.user_id
+        WHERE il.user_id IN ($in)
+        ORDER BY chave ASC, il.created_at ASC
+    ";
+    $out = [];
+    foreach ($pdo->query($histSql)->fetchAll(PDO::FETCH_ASSOC) as $h) {
+        $out[$h['chave']][] = $h;
+    }
+    return $out;
+}
+
+/** Historico de entradas/saidas de grupos por chave do ranking (u:/p:/pid:/e:). */
+function dash_group_ranking_history(PDO $pdo, array $keys): array {
+    $keys = array_values(array_unique(array_filter(array_map(static fn($k): string => trim((string)$k), $keys), static fn(string $k): bool => $k !== '')));
+    if (!$keys) return [];
+    $in = implode(',', array_map([$pdo, 'quote'], $keys));
+    $histRows = $pdo->query("
+        SELECT
+            x.*
+        FROM (
+            SELECT
+                CASE
+                    WHEN ge.user_id IS NOT NULL AND ge.user_id > 0 THEN CONCAT('u:', ge.user_id)
+                    WHEN COALESCE(NULLIF(TRIM(ge.participant_phone), ''), '') <> '' THEN CONCAT('p:', TRIM(ge.participant_phone))
+                    WHEN COALESCE(NULLIF(TRIM(ge.participant_id), ''), '') <> '' THEN CONCAT('pid:', TRIM(ge.participant_id))
+                    ELSE CONCAT('e:', ge.id)
+                END AS ranking_key,
+                ge.*,
+                wg.group_name,
+                wg.picture_url,
+                wg.is_ignored
+            FROM whatsapp_group_events ge
+            LEFT JOIN whatsapp_groups wg ON wg.group_id = ge.group_id
+            WHERE ge.interpreted_event IN ('WHATSAPP_GRUPO_ENTROU','WHATSAPP_GRUPO_SAIU','WHATSAPP_GRUPO_REMOVIDO_ADMIN')
+              AND COALESCE(wg.is_ignored, 0) = 0
+        ) x
+        WHERE x.ranking_key IN ($in)
+        ORDER BY x.ranking_key ASC, x.created_at DESC, x.id DESC
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $out = [];
+    foreach ($histRows as $h) {
+        $out[(string)$h['ranking_key']][] = $h;
+    }
+    return $out;
+}
+
+function rkDt(?string $d): string {
+    if (!$d || trim($d) === '') return '—';
+    try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
+}
+
+function rkDtHora(?string $d): string {
+    if (!$d || trim($d) === '') return '—';
+    try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
+}
+
+function dash_gr_dt(?string $d): string {
+    if (!$d || trim($d) === '') return '—';
+    try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
+}
+
+/** Conteudo de .rk-detail-inner do ranking de inscricoes (contato, UTMs e historico). */
+function dash_rk_detail_inner_html(array $rk, array $hist): string {
+    ob_start();
+?>
+                        <!-- Info fixa do aluno -->
+                        <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                            <div>
+                                <div class="rk-detail-title">Contato</div>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Nome</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars((string)($rk['nome']??'')) ?></span></div>
+                                <div class="rk-insc-row"><span class="rk-insc-k">E-mail</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars((string)($rk['email']??'')) ?></span></div>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Telefone</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars(trim((string)($rk['telefone']??''))) ?: '—' ?></span></div>
+                            </div>
+                            <?php
+                            $hasAnyUtm = false;
+                            foreach (['utm_source','utm_medium','utm_campaign','utm_content'] as $uk) {
+                                if (trim((string)($rk[$uk]??'')) !== '') { $hasAnyUtm = true; break; }
+                            }
+                            if ($hasAnyUtm):
+                            ?>
+                            <div>
+                                <div class="rk-detail-title">UTMs (última inscrição)</div>
+                                <?php foreach (['utm_source'=>'Source','utm_medium'=>'Medium','utm_campaign'=>'Campaign','utm_content'=>'Content'] as $uk=>$ul):
+                                    $uv = trim((string)($rk[$uk]??''));
+                                    if ($uv==='') continue;
+                                ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k"><?= htmlspecialchars($ul) ?></span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars($uv) ?></span></div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- Histórico de inscrições -->
+                        <div class="rk-detail-title">
+                            Histórico de inscrições (<?= count($hist) ?> <?= count($hist)===1?'cadastro':'cadastros' ?>)
+                        </div>
+                        <?php if ($hist): ?>
+                        <div class="rk-insc-grid">
+                            <?php foreach ($hist as $hi => $h):
+                                $pUtms = [
+                                    'source'   => trim((string)($h['utm_source']   ?? '')),
+                                    'medium'   => trim((string)($h['utm_medium']   ?? '')),
+                                    'campaign' => trim((string)($h['utm_campaign'] ?? '')),
+                                    'content'  => trim((string)($h['utm_content']  ?? '')),
+                                ];
+                                $hasPayloadUtm = array_filter($pUtms, fn($v) => $v !== '');
+                                $isNovo = (int)($h['is_novo'] ?? 1);
+                                $turmaH = trim((string)($h['codigo_turma'] ?? ''));
+                            ?>
+                            <div class="rk-insc-card">
+                                <div class="rk-insc-date">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                    <?= rkDtHora((string)($h['hora']??'')) ?>
+                                    <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi+1 ?></span>
+                                    <?php if (!$isNovo): ?>
+                                    <span style="margin-left:4px;font-size:10px;background:rgba(99,102,241,.12);color:#818cf8;padding:1px 6px;border-radius:999px">re-inscrição</span>
+                                    <?php endif; ?>
+                                </div>
+                                <?php if ($turmaH !== ''): ?>
+                                <div class="rk-insc-row">
+                                    <span class="rk-insc-k">Turma</span>
+                                    <span class="rk-insc-v"><?= htmlspecialchars($turmaH) ?></span>
+                                </div>
+                                <?php endif; ?>
+                                <?php if ($hasPayloadUtm): ?>
+                                    <?php foreach (['source'=>'Source','medium'=>'Medium','campaign'=>'Campaign','content'=>'Content'] as $pk=>$pl):
+                                        $pv = $pUtms[$pk];
+                                        if ($pv==='') continue;
+                                    ?>
+                                    <div class="rk-insc-row">
+                                        <span class="rk-insc-k">UTM <?= htmlspecialchars($pl) ?></span>
+                                        <span class="rk-insc-v"><?= htmlspecialchars($pv) ?></span>
+                                    </div>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <div style="font-size:11px;color:var(--dim)">UTMs não disponíveis</div>
+                                <?php endif; ?>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php else: ?>
+                        <div style="font-size:12px;color:var(--dim)">Sem histórico detalhado disponível.</div>
+                        <?php endif; ?>
+<?php
+    return (string)ob_get_clean();
+}
+
+/** Conteudo de .rk-detail-inner do ranking de grupos (entradas e saidas). */
+function dash_gr_detail_inner_html(array $hist): string {
+    $grDt = 'dash_gr_dt';
+    $grEventLabel = 'dash_gr_event_label';
+    ob_start();
+?>
+                        <div class="rk-detail-title">
+                            Historico de grupos (<?= count($hist) ?> <?= count($hist) === 1 ? 'evento' : 'eventos' ?>)
+                        </div>
+                        <?php if ($hist): ?>
+                        <div class="rk-insc-grid">
+                            <?php foreach ($hist as $hi => $h):
+                                $groupName = trim((string)($h['group_name'] ?? ''));
+                                $groupId = trim((string)($h['group_id'] ?? ''));
+                                $picture = trim((string)($h['picture_url'] ?? ''));
+                                $participantPhone = trim((string)($h['participant_phone'] ?? ''));
+                                $participantId = trim((string)($h['participant_id'] ?? ''));
+                                $authorId = trim((string)($h['author_id'] ?? ''));
+                                $action = trim((string)($h['action'] ?? ''));
+                                $ignored = (int)($h['is_ignored'] ?? 0) === 1;
+                            ?>
+                            <div class="rk-insc-card">
+                                <div class="rk-group-card-head">
+                                    <?php if ($picture !== ''): ?>
+                                    <img class="rk-group-avatar" src="<?= htmlspecialchars($picture) ?>" alt="">
+                                    <?php endif; ?>
+                                    <div style="min-width:0">
+                                        <div style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupName !== '' ? $groupName : $groupId) ?></div>
+                                        <div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupId) ?></div>
+                                    </div>
+                                </div>
+                                <div class="rk-insc-date">
+                                    <?= htmlspecialchars($grEventLabel((string)($h['interpreted_event'] ?? ''))) ?>
+                                    <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi + 1 ?></span>
+                                </div>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Data</span><span class="rk-insc-v"><?= $grDt((string)($h['created_at'] ?? '')) ?></span></div>
+                                <?php if ($participantPhone !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Telefone</span><span class="rk-insc-v"><?= htmlspecialchars($participantPhone) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($action !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Acao</span><span class="rk-insc-v"><?= htmlspecialchars($action) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($participantId !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Participante</span><span class="rk-insc-v"><?= htmlspecialchars($participantId) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($authorId !== ''): ?>
+                                <div class="rk-insc-row"><span class="rk-insc-k">Autor</span><span class="rk-insc-v"><?= htmlspecialchars($authorId) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($ignored): ?>
+                                <div style="font-size:10px;color:var(--warning);margin-top:6px">Grupo marcado para ignorar</div>
+                                <?php endif; ?>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php else: ?>
+                        <div style="font-size:12px;color:var(--dim)">Sem historico detalhado disponivel.</div>
+                        <?php endif; ?>
+<?php
+    return (string)ob_get_clean();
+}
+
+function dash_gr_event_label(string $event): string {
+    switch ($event) {
+        case 'WHATSAPP_GRUPO_ENTROU':
+            return 'Entrou no grupo';
+        case 'WHATSAPP_GRUPO_SAIU':
+            return 'Saiu por conta propria';
+        case 'WHATSAPP_GRUPO_REMOVIDO_ADMIN':
+            return 'Removido por admin';
+        default:
+            return $event;
+    }
 }
 
 $emailDashboard = ['sent'=>0,'delivered'=>0,'opened'=>0,'clicked'=>0,'bounced'=>0,'complaints'=>0,'unsubscribed'=>0];
@@ -2243,7 +2601,7 @@ include __DIR__ . '/_header.php';
 <?php endif; ?>
 
 <div class="d-flex align-center justify-between mb-4">
-    <div></div>
+    <div><!--DASH_CACHE_NOTE--></div>
     <a href="alunos.php" class="btn btn-ghost btn-sm">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
         Ver alunos
@@ -4944,15 +5302,7 @@ body.dash-chart-fullscreen {
         </thead>
         <tbody>
         <?php
-        // funções fora do loop para não causar "Cannot redeclare"
-        function rkDt(?string $d): string {
-            if (!$d || trim($d) === '') return '—';
-            try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
-        }
-        function rkDtHora(?string $d): string {
-            if (!$d || trim($d) === '') return '—';
-            try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
-        }
+        // rkDt/rkDtHora sao funcoes de topo (usadas tambem pelo detalhe sob demanda)
         foreach ($rankingRows as $ri => $rk):
             $uid       = (int)$rk['id'];
             $chave     = (string)($rk['chave'] ?? '');
@@ -4967,7 +5317,6 @@ body.dash-chart-fullscreen {
             elseif ($qtd >= 3)     $countColor = 'color:#fdba74;background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.25)';
             elseif ($qtd === 2)    $countColor = 'color:#fcd34d;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.2)';
             else                   $countColor = 'color:var(--muted);background:var(--bg-hover);border:1px solid var(--border)';
-            $hist = $rankHistorico[$chave] ?? [];
             $extraRow = $ri >= 5 ? ' rk-extra-row' : '';
         ?>
         <tr class="main-row<?= $extraRow ?>" id="rkrow-<?= $ri ?>" onclick="rkToggle(<?= $ri ?>)">
@@ -4992,87 +5341,8 @@ body.dash-chart-fullscreen {
         </tr>
         <tr class="<?= trim($extraRow) ?>">
             <td colspan="8" style="padding:0;border-bottom:none">
-                <div class="rk-detail" id="rkdet-<?= $ri ?>">
-                    <div class="rk-detail-inner">
-                        <!-- Info fixa do aluno -->
-                        <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-                            <div>
-                                <div class="rk-detail-title">Contato</div>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Nome</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars((string)($rk['nome']??'')) ?></span></div>
-                                <div class="rk-insc-row"><span class="rk-insc-k">E-mail</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars((string)($rk['email']??'')) ?></span></div>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Telefone</span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars(trim((string)($rk['telefone']??''))) ?: '—' ?></span></div>
-                            </div>
-                            <?php
-                            $hasAnyUtm = false;
-                            foreach (['utm_source','utm_medium','utm_campaign','utm_content'] as $uk) {
-                                if (trim((string)($rk[$uk]??'')) !== '') { $hasAnyUtm = true; break; }
-                            }
-                            if ($hasAnyUtm):
-                            ?>
-                            <div>
-                                <div class="rk-detail-title">UTMs (última inscrição)</div>
-                                <?php foreach (['utm_source'=>'Source','utm_medium'=>'Medium','utm_campaign'=>'Campaign','utm_content'=>'Content'] as $uk=>$ul):
-                                    $uv = trim((string)($rk[$uk]??''));
-                                    if ($uv==='') continue;
-                                ?>
-                                <div class="rk-insc-row"><span class="rk-insc-k"><?= htmlspecialchars($ul) ?></span>&nbsp;&nbsp;<span class="rk-insc-v"><?= htmlspecialchars($uv) ?></span></div>
-                                <?php endforeach; ?>
-                            </div>
-                            <?php endif; ?>
-                        </div>
-
-                        <!-- Histórico de inscrições -->
-                        <div class="rk-detail-title">
-                            Histórico de inscrições (<?= count($hist) ?> <?= count($hist)===1?'cadastro':'cadastros' ?>)
-                        </div>
-                        <?php if ($hist): ?>
-                        <div class="rk-insc-grid">
-                            <?php foreach ($hist as $hi => $h):
-                                $pUtms = [
-                                    'source'   => trim((string)($h['utm_source']   ?? '')),
-                                    'medium'   => trim((string)($h['utm_medium']   ?? '')),
-                                    'campaign' => trim((string)($h['utm_campaign'] ?? '')),
-                                    'content'  => trim((string)($h['utm_content']  ?? '')),
-                                ];
-                                $hasPayloadUtm = array_filter($pUtms, fn($v) => $v !== '');
-                                $isNovo = (int)($h['is_novo'] ?? 1);
-                                $turmaH = trim((string)($h['codigo_turma'] ?? ''));
-                            ?>
-                            <div class="rk-insc-card">
-                                <div class="rk-insc-date">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                    <?= rkDtHora((string)($h['hora']??'')) ?>
-                                    <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi+1 ?></span>
-                                    <?php if (!$isNovo): ?>
-                                    <span style="margin-left:4px;font-size:10px;background:rgba(99,102,241,.12);color:#818cf8;padding:1px 6px;border-radius:999px">re-inscrição</span>
-                                    <?php endif; ?>
-                                </div>
-                                <?php if ($turmaH !== ''): ?>
-                                <div class="rk-insc-row">
-                                    <span class="rk-insc-k">Turma</span>
-                                    <span class="rk-insc-v"><?= htmlspecialchars($turmaH) ?></span>
-                                </div>
-                                <?php endif; ?>
-                                <?php if ($hasPayloadUtm): ?>
-                                    <?php foreach (['source'=>'Source','medium'=>'Medium','campaign'=>'Campaign','content'=>'Content'] as $pk=>$pl):
-                                        $pv = $pUtms[$pk];
-                                        if ($pv==='') continue;
-                                    ?>
-                                    <div class="rk-insc-row">
-                                        <span class="rk-insc-k">UTM <?= htmlspecialchars($pl) ?></span>
-                                        <span class="rk-insc-v"><?= htmlspecialchars($pv) ?></span>
-                                    </div>
-                                    <?php endforeach; ?>
-                                <?php else: ?>
-                                    <div style="font-size:11px;color:var(--dim)">UTMs não disponíveis</div>
-                                <?php endif; ?>
-                            </div>
-                            <?php endforeach; ?>
-                        </div>
-                        <?php else: ?>
-                        <div style="font-size:12px;color:var(--dim)">Sem histórico detalhado disponível.</div>
-                        <?php endif; ?>
-                    </div>
+                <div class="rk-detail" id="rkdet-<?= $ri ?>" data-detail-url="index.php?<?= htmlspecialchars(http_build_query(['dash_details' => 'rk', 'key' => $chave, 'ids' => (string)($rk['user_ids_str'] ?? '')])) ?>">
+                    <div class="rk-detail-inner"><div style="font-size:12px;color:var(--dim)">Carregando histórico...</div></div>
                 </div>
             </td>
         </tr>
@@ -5093,22 +5363,8 @@ body.dash-chart-fullscreen {
 
 <?php if ($groupRankingRows): ?>
 <?php
-$grDt = static function (?string $d): string {
-    if (!$d || trim($d) === '') return '—';
-    try { return (new DateTime($d))->format('d/m/Y H:i:s'); } catch (Throwable $e) { return $d; }
-};
-$grEventLabel = static function (string $event): string {
-    switch ($event) {
-        case 'WHATSAPP_GRUPO_ENTROU':
-            return 'Entrou no grupo';
-        case 'WHATSAPP_GRUPO_SAIU':
-            return 'Saiu por conta propria';
-        case 'WHATSAPP_GRUPO_REMOVIDO_ADMIN':
-            return 'Removido por admin';
-        default:
-            return $event;
-    }
-};
+$grDt = 'dash_gr_dt';
+$grEventLabel = 'dash_gr_event_label';
 ?>
 <details class="dash-collapsible">
 <summary><span>Ranking de entradas em grupos</span><span class="dash-chevron">▶</span></summary>
@@ -5155,7 +5411,6 @@ $grEventLabel = static function (string $event): string {
             else                   $rankCls = 'rank-n';
             $entries = (int)($gr['qtd_entradas'] ?? 0);
             $distinctGroups = (int)($gr['grupos_distintos'] ?? 0);
-            $hist = $groupRankingHistorico[$rankingKey] ?? [];
             $displayName = $uid > 0
                 ? (string)($gr['nome'] ?? '-')
                 : 'Numero nao identificado';
@@ -5189,60 +5444,8 @@ $grEventLabel = static function (string $event): string {
         </tr>
         <tr class="<?= trim($extraRow) ?>">
             <td colspan="9" style="padding:0;border-bottom:none">
-                <div class="rk-detail" id="grdet-<?= $gi ?>">
-                    <div class="rk-detail-inner">
-                        <div class="rk-detail-title">
-                            Historico de grupos (<?= count($hist) ?> <?= count($hist) === 1 ? 'evento' : 'eventos' ?>)
-                        </div>
-                        <?php if ($hist): ?>
-                        <div class="rk-insc-grid">
-                            <?php foreach ($hist as $hi => $h):
-                                $groupName = trim((string)($h['group_name'] ?? ''));
-                                $groupId = trim((string)($h['group_id'] ?? ''));
-                                $picture = trim((string)($h['picture_url'] ?? ''));
-                                $participantPhone = trim((string)($h['participant_phone'] ?? ''));
-                                $participantId = trim((string)($h['participant_id'] ?? ''));
-                                $authorId = trim((string)($h['author_id'] ?? ''));
-                                $action = trim((string)($h['action'] ?? ''));
-                                $ignored = (int)($h['is_ignored'] ?? 0) === 1;
-                            ?>
-                            <div class="rk-insc-card">
-                                <div class="rk-group-card-head">
-                                    <?php if ($picture !== ''): ?>
-                                    <img class="rk-group-avatar" src="<?= htmlspecialchars($picture) ?>" alt="">
-                                    <?php endif; ?>
-                                    <div style="min-width:0">
-                                        <div style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupName !== '' ? $groupName : $groupId) ?></div>
-                                        <div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars($groupId) ?></div>
-                                    </div>
-                                </div>
-                                <div class="rk-insc-date">
-                                    <?= htmlspecialchars($grEventLabel((string)($h['interpreted_event'] ?? ''))) ?>
-                                    <span style="margin-left:4px;font-size:10px;background:var(--primary-dim);color:var(--primary);padding:1px 6px;border-radius:999px">#<?= $hi + 1 ?></span>
-                                </div>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Data</span><span class="rk-insc-v"><?= $grDt((string)($h['created_at'] ?? '')) ?></span></div>
-                                <?php if ($participantPhone !== ''): ?>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Telefone</span><span class="rk-insc-v"><?= htmlspecialchars($participantPhone) ?></span></div>
-                                <?php endif; ?>
-                                <?php if ($action !== ''): ?>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Acao</span><span class="rk-insc-v"><?= htmlspecialchars($action) ?></span></div>
-                                <?php endif; ?>
-                                <?php if ($participantId !== ''): ?>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Participante</span><span class="rk-insc-v"><?= htmlspecialchars($participantId) ?></span></div>
-                                <?php endif; ?>
-                                <?php if ($authorId !== ''): ?>
-                                <div class="rk-insc-row"><span class="rk-insc-k">Autor</span><span class="rk-insc-v"><?= htmlspecialchars($authorId) ?></span></div>
-                                <?php endif; ?>
-                                <?php if ($ignored): ?>
-                                <div style="font-size:10px;color:var(--warning);margin-top:6px">Grupo marcado para ignorar</div>
-                                <?php endif; ?>
-                            </div>
-                            <?php endforeach; ?>
-                        </div>
-                        <?php else: ?>
-                        <div style="font-size:12px;color:var(--dim)">Sem historico detalhado disponivel.</div>
-                        <?php endif; ?>
-                    </div>
+                <div class="rk-detail" id="grdet-<?= $gi ?>" data-detail-url="index.php?<?= htmlspecialchars(http_build_query(['dash_details' => 'gr', 'key' => $rankingKey])) ?>">
+                    <div class="rk-detail-inner"><div style="font-size:12px;color:var(--dim)">Carregando histórico...</div></div>
                 </div>
             </td>
         </tr>
@@ -5273,6 +5476,20 @@ $grEventLabel = static function (string $event): string {
 </details>
 
 <script>
+// Historico de cada linha e buscado so na primeira vez que ela e aberta.
+function rkLoadDetail(det) {
+    var url = det.getAttribute('data-detail-url');
+    if (!url || det.getAttribute('data-loaded') === '1') return;
+    det.setAttribute('data-loaded', '1');
+    var inner = det.querySelector('.rk-detail-inner');
+    fetch(url, { credentials: 'same-origin' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) { if (inner) inner.innerHTML = html; })
+        .catch(function () {
+            det.removeAttribute('data-loaded');
+            if (inner) inner.innerHTML = '<div style="font-size:12px;color:var(--danger)">Erro ao carregar o histórico. Feche e abra de novo.</div>';
+        });
+}
 function rkToggle(i) {
     var row = document.getElementById('rkrow-' + i);
     var det = document.getElementById('rkdet-' + i);
@@ -5280,6 +5497,7 @@ function rkToggle(i) {
     var open = det.classList.contains('open');
     det.classList.toggle('open', !open);
     row.classList.toggle('open', !open);
+    if (!open) rkLoadDetail(det);
 }
 function grToggle(i) {
     var row = document.getElementById('grrow-' + i);
@@ -5288,6 +5506,7 @@ function grToggle(i) {
     var open = det.classList.contains('open');
     det.classList.toggle('open', !open);
     row.classList.toggle('open', !open);
+    if (!open) rkLoadDetail(det);
 }
 function rkToggleList(key) {
     var panel = document.getElementById(key === 'grupos' ? 'rkpanel-grupos' : 'rkpanel-insc');

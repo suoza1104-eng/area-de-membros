@@ -13,6 +13,18 @@ function voice_json($value): string
 
 function voice_ensure_schema(PDO $pdo): void
 {
+    // DDL so quando este arquivo muda (antes rodava a cada abertura da tela e do cron).
+    if (function_exists('schema_once')) {
+        schema_once('voice_torpedo', md5_file(__FILE__), static function () use ($pdo): void {
+            voice_migrate_schema($pdo);
+        });
+        return;
+    }
+    voice_migrate_schema($pdo);
+}
+
+function voice_migrate_schema(PDO $pdo): void
+{
     $pdo->exec("CREATE TABLE IF NOT EXISTS voice_providers (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         provider VARCHAR(40) NOT NULL,

@@ -16,6 +16,12 @@ if (!function_exists('mb_strtolower')) {
 
 function support_chat_ensure_schema(PDO $pdo): void
 {
+    // Tabelas, colunas e valores padrao: so roda de novo quando este arquivo muda (antes: dezenas de DDL a cada requisicao).
+    schema_once('support_chat',(string)@md5_file(__FILE__),static function()use($pdo):void{support_chat_ensure_schema_run($pdo);});
+}
+
+function support_chat_ensure_schema_run(PDO $pdo): void
+{
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_conversations (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
@@ -238,8 +244,8 @@ function support_chat_ensure_schema(PDO $pdo): void
     support_chat_ensure_user_summary_columns($pdo);
 }
 
-function support_chat_table_exists(PDO $pdo,string $table): bool {try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
-function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);return(bool)$st->fetchColumn();}catch(Throwable $e){return false;}}
+function support_chat_table_exists(PDO $pdo,string $table): bool {static $cache=[];if(isset($cache[$table]))return $cache[$table];try{$st=$pdo->prepare("SHOW TABLES LIKE :t");$st->execute(['t'=>$table]);$ok=(bool)$st->fetchColumn();if($ok)$cache[$table]=true;return $ok;}catch(Throwable $e){return false;}}
+function support_chat_column_exists(PDO $pdo,string $table,string $column): bool {static $cache=[];$k=$table.'.'.$column;if(isset($cache[$k]))return $cache[$k];try{$st=$pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :c");$st->execute(['c'=>$column]);$ok=(bool)$st->fetchColumn();if($ok)$cache[$k]=true;return $ok;}catch(Throwable $e){return false;}}
 
 function support_agent_display_name(?PDO $pdo=null): string
 {
@@ -664,7 +670,8 @@ function support_learning_collect_suggestions(PDO $pdo): int
 
 function support_learning_dashboard(PDO $pdo): array
 {
-    support_learning_collect_suggestions($pdo);
+    // A coleta (support_learning_collect_suggestions) fica no cron processar_support_learning e no botao "coletar":
+    // rodar aqui gravava ~2.400 linhas a cada abertura da tela.
     $summary=['evaluations'=>0,'pending'=>0,'applied'=>0,'dismissed'=>0,'avg_overall'=>0,'avg_humanization'=>0];
     try{$summary=array_merge($summary,$pdo->query("SELECT COUNT(*) evaluations,ROUND(AVG(overall_score),2) avg_overall,ROUND(AVG(humanization_score),2) avg_humanization FROM support_ai_evaluations")->fetch(PDO::FETCH_ASSOC)?:[]);}catch(Throwable $ignored){}
     try{foreach($pdo->query("SELECT status,COUNT(*) total FROM support_ai_learning_suggestions GROUP BY status")->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$summary[(string)$r['status']]=(int)$r['total'];}catch(Throwable $ignored){}
@@ -980,7 +987,13 @@ function support_chat_conversations(PDO $pdo,string $filter='open',array $criter
         (SELECT body FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_body,
         (SELECT message_type FROM support_messages m WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1) last_type
         FROM support_conversations c JOIN users u ON u.id=c.user_id WHERE {$where} ORDER BY c.last_message_at DESC,c.id DESC LIMIT 200");$st->execute($params);$rows=$st->fetchAll(PDO::FETCH_ASSOC)?:[];
-    foreach($rows as &$row)$row=array_merge($row,support_chat_presence_status($pdo,(int)($row['user_id']??0),(string)($row['student_last_seen_at']??'')));
+    // Presenca em lote (2 consultas agrupadas) em vez de ~5 por conversa; mesma regra de support_chat_presence_status.
+    $seenConv=[];$seenPush=[];$ids=array_values(array_unique(array_filter(array_map(static fn($r)=>(int)($r['user_id']??0),$rows))));
+    if($ids){$in=implode(',',$ids);
+        try{foreach($pdo->query("SELECT user_id,MAX(student_last_seen_at) seen FROM support_conversations WHERE user_id IN ({$in}) GROUP BY user_id")->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$seenConv[(int)$r['user_id']]=(string)($r['seen']??'');}catch(Throwable $ignored){}
+        if(support_chat_table_exists($pdo,'push_devices')&&support_chat_column_exists($pdo,'push_devices','last_seen_at')){try{foreach($pdo->query("SELECT user_id,MAX(last_seen_at) seen FROM push_devices WHERE user_id IN ({$in}) AND status='active' GROUP BY user_id")->fetchAll(PDO::FETCH_ASSOC)?:[] as $r)$seenPush[(int)$r['user_id']]=(string)($r['seen']??'');}catch(Throwable $ignored){}}
+    }
+    foreach($rows as &$row){$uid=(int)($row['user_id']??0);$last=trim((string)($row['student_last_seen_at']??''));if($uid>0){$last=support_chat_presence_newer($last,$seenConv[$uid]??'');$last=support_chat_presence_newer($last,$seenPush[$uid]??'');}$row=array_merge($row,support_chat_presence_from_last($last));}
     unset($row);
     return $rows;
 }
@@ -1018,17 +1031,27 @@ function support_chat_presence_status(PDO $pdo,int $userId,string $conversationS
     if($userId>0){
         try{
             $st=$pdo->prepare("SELECT MAX(student_last_seen_at) FROM support_conversations WHERE user_id=:u");
-            $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
-            if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+            $st->execute(['u'=>$userId]);$last=support_chat_presence_newer($last,(string)($st->fetchColumn()?:''));
         }catch(Throwable $ignored){}
         if(support_chat_table_exists($pdo,'push_devices')&&support_chat_column_exists($pdo,'push_devices','last_seen_at')){
             try{
                 $st=$pdo->prepare("SELECT MAX(last_seen_at) FROM push_devices WHERE user_id=:u AND status='active'");
-                $st->execute(['u'=>$userId]);$seen=(string)($st->fetchColumn()?:'');
-                if($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))$last=$seen;
+                $st->execute(['u'=>$userId]);$last=support_chat_presence_newer($last,(string)($st->fetchColumn()?:''));
             }catch(Throwable $ignored){}
         }
     }
+    return support_chat_presence_from_last($last);
+}
+
+/** A mais recente entre duas datas de "visto por ultimo" (texto vazio = sem data). */
+function support_chat_presence_newer(string $last,string $seen): string
+{
+    return ($seen!==''&&($last===''||strtotime($seen)>strtotime($last)))?$seen:$last;
+}
+
+/** Rotulo Online/Offline a partir do "visto por ultimo" ja consolidado. */
+function support_chat_presence_from_last(string $last): array
+{
     $ts=$last!==''?strtotime($last):0;
     $seconds=$ts>0?max(0,time()-$ts):null;
     $threshold=max(60,min(1800,(int)get_setting('support_chat_online_threshold_seconds','180')));
