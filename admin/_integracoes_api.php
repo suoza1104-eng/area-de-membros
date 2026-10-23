@@ -28,6 +28,7 @@ $apiResultLabels = [
     'register_test_existing' => ['Cadastro (teste): já existe', ''],
     'register_replay' => ['Cadastro: repetição', ''],
     'register_ambiguous' => ['Cadastro: ambíguo', 'err'],
+    'register_phone_mismatch' => ['Cadastro: telefone não confere', 'err'],
     'register_no_turma' => ['Cadastro: sem turma', 'err'],
     'register_bad_request' => ['Cadastro: inválido', 'err'],
     'register_forbidden' => ['Cadastro: sem permissão', 'err'],

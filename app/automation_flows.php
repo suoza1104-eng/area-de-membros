@@ -460,6 +460,9 @@ function automation_flow_trigger_matches(array $node, array $user, array $extra,
         }
         if (!$matchedCourse) return false;
     }
+    // Origem da inscricao a ignorar (ex.: sino_whatsapp, quando o Sino ja entregou o acesso).
+    $excludedOrigins = array_filter(array_map('trim', explode(',', strtolower((string)($c['excludeOrigins'] ?? '')))));
+    if ($excludedOrigins && in_array(strtolower(trim((string)($extra['origem'] ?? ''))), $excludedOrigins, true)) return false;
     $filter = trim((string)($c['filter'] ?? ''));
     if ($filter === '') return true;
     foreach ([$user['codigo_turma'] ?? '', $user['turma_codigo'] ?? '', $extra['codigo_turma'] ?? ''] as $value) {

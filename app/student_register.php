@@ -157,6 +157,7 @@ function student_register_simulated_profile(array $turma, string $nome, string $
         'email' => $email,
         'telefone' => $telefone,
         'telefone_normalizado' => $telefone,
+        'telefone_whatsapp' => student_api_whatsapp_phone($telefone),
         'cadastrado_em' => $now->format(DateTimeInterface::ATOM),
         'turma_atual' => [
             'codigo' => (string)$turma['codigo'],

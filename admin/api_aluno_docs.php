@@ -34,6 +34,7 @@ $sections = [
         ['id', 'int', 'ID interno do aluno.'],
         ['nome / email / telefone', 'string', 'Dados do cadastro como estão gravados.'],
         ['telefone_normalizado', 'string|null', 'Telefone do cadastro com DDD, só dígitos, sem 55.'],
+        ['telefone_whatsapp', 'string|null', 'Telefone num formato único para WhatsApp: 55 + DDD + número, com o nono dígito nos celulares (ex.: 5577991342398). Use este campo para comparar e enviar.'],
         ['cadastrado_em', 'datetime', 'Data do primeiro cadastro.'],
         ['primeiro_login_em / ultimo_login_em', 'datetime|null', 'Primeiro e último acesso à área de membros.'],
         ['total_logins', 'int', 'Quantidade de logins bem-sucedidos.'],
@@ -274,7 +275,8 @@ td:nth-child(2){color:var(--muted);white-space:nowrap;font-size:12px}
       <tr><td>400</td><td>nome_invalido, telefone_invalido, email_obrigatorio, email_invalido, curso_invalido, chave_idempotencia_invalida, json_invalido</td><td>Dado inválido; o campo vem em <code>campo</code>.</td></tr>
       <tr><td>401</td><td>chave_invalida</td><td>Chave ausente ou errada.</td></tr>
       <tr><td>403</td><td>sem_permissao, chave_revogada, https_obrigatorio</td><td>Chave sem a permissão Cadastro, revogada, ou chamada sem HTTPS.</td></tr>
-      <tr><td>409</td><td>ambiguous</td><td>O telefone bate com mais de um aluno, ou e-mail e telefone são de cadastros diferentes (lista em <code>candidatos</code>).</td></tr>
+      <tr><td>409</td><td>ambiguous</td><td>O telefone bate com mais de um aluno (lista em <code>candidatos</code>).</td></tr>
+      <tr><td>409</td><td>telefone_nao_confere</td><td>O e-mail já é de outro aluno, com outro telefone. Por segurança não devolve a conta nem os links: a equipe confere. (Achar pelo telefone basta: o WhatsApp garante o número.)</td></tr>
       <tr><td>422</td><td>turma_indisponivel</td><td>Nenhuma turma com inscrições abertas agora.</td></tr>
       <tr><td>429</td><td>limite</td><td>Passou do limite de cadastros por minuto; aguarde <code>Retry-After</code> segundos.</td></tr>
       <tr><td>503</td><td>ocupado</td><td>Outro cadastro do mesmo telefone em andamento; tente de novo após <code>Retry-After</code>.</td></tr>

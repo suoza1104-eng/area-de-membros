@@ -158,19 +158,13 @@ try {
     if (!$test) $replay();
 
     $resolved = student_api_resolve($pdo, $email, $phoneLocal);
-    $emailAndPhoneSplit = $resolved['status'] === 'found'
-        && $resolved['match']['metodo'] === 'email'
-        && (int)$resolved['match']['encontrado_por_telefone'] > 0;
-    if ($resolved['status'] === 'ambiguous' || $emailAndPhoneSplit) {
-        $candidates = $resolved['candidates'];
-        if ($emailAndPhoneSplit) {
-            $candidates = [];
-            $byPhone = student_api_users_by_phone($pdo, $phoneLocal);
-            foreach (array_merge([$resolved['user']], $byPhone) as $i => $u) {
-                $candidates[] = ['id' => (int)$u['id'], 'nome' => (string)$u['nome'], 'email' => (string)$u['email'], 'telefone' => (string)$u['telefone'], 'encontrado_por' => $i === 0 ? 'email' : 'telefone'];
-            }
-        }
-        register_api_error(409, 'ambiguous', 'O e-mail e o telefone pertencem a cadastros diferentes (ou o telefone bate com mais de um aluno). A equipe precisa conferir.', null, 'register_ambiguous', ['candidatos' => $candidates]);
+    if ($resolved['status'] === 'ambiguous') {
+        register_api_error(409, 'ambiguous', 'O telefone bate com mais de um aluno. A equipe precisa conferir.', null, 'register_ambiguous', ['candidatos' => $resolved['candidates']]);
+    }
+    // O telefone e o que o WhatsApp garante. Achar o aluno so pelo e-mail (digitado
+    // na conversa) nao prova que e a mesma pessoa: nao devolve conta nem links.
+    if ($resolved['status'] === 'found' && $resolved['match']['metodo'] === 'email') {
+        register_api_error(409, 'telefone_nao_confere', 'Este e-mail ja pertence a outro cadastro, com outro telefone. A equipe precisa conferir antes de liberar o acesso.', 'email', 'register_phone_mismatch');
     }
 
     $includeFinancial = (int)$key['scope_financial'] === 1;

@@ -350,6 +350,20 @@ function student_api_normalize_phone(string $phone): string
     return $digits;
 }
 
+/**
+ * Telefone num formato unico para WhatsApp: 55 + DDD + numero, com o nono digito
+ * nos celulares (ex.: 5577991342398). null quando nao parece telefone brasileiro.
+ */
+function student_api_whatsapp_phone(string $phone): ?string
+{
+    $local = student_api_normalize_phone($phone);
+    if (!preg_match('/^[1-9]{2}\d{8,9}$/', $local)) return null;
+    if (strlen($local) === 10 && in_array($local[2], ['6', '7', '8', '9'], true)) {
+        $local = substr($local, 0, 2) . '9' . substr($local, 2);
+    }
+    return '55' . $local;
+}
+
 /** Variacoes do telefone como podem estar gravadas em users.telefone (com/sem 55, com/sem 9o digito). */
 function student_api_phone_variants(string $local): array
 {
@@ -680,6 +694,7 @@ function student_api_build_profile(PDO $pdo, array $user, bool $includeFinancial
         'email' => $user['email'],
         'telefone' => $user['telefone'],
         'telefone_normalizado' => student_api_normalize_phone((string)$user['telefone']) ?: null,
+        'telefone_whatsapp' => student_api_whatsapp_phone((string)$user['telefone']),
         'cadastrado_em' => student_api_dt($user['created_at'] ?? null),
         'ultimo_login_em' => student_api_dt($user['last_login_at'] ?? null),
         'primeiro_login_em' => student_api_dt($loginStats['primeiro'] ?? null),
