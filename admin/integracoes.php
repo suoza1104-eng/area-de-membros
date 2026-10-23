@@ -5,6 +5,7 @@ require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/payment_events.php';
 require_once __DIR__ . '/../app/evolution_api.php';
 require_once __DIR__ . '/../app/student_api.php';
+require_once __DIR__ . '/../app/student_register.php';
 
 proteger_admin();
 $pdo = getPDO();
@@ -191,6 +192,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (string)($_SESSION['equipe_nome'] ?? $_SESSION['equipe_email'] ?? 'admin')
             );
             $apiNewKey = $created['key'];
+            if (isset($_POST['api_scope_register'])) {
+                student_register_ensure_schema($pdo);
+                $pdo->prepare("UPDATE student_api_keys SET scope_register = 1 WHERE id = :id")->execute([':id' => (int)$created['id']]);
+            }
             $msgOk = 'Chave criada. Copie agora: ela não será exibida novamente.';
         } catch (Throwable $e) {
             $msgError = 'Erro ao criar chave: ' . $e->getMessage();
@@ -205,6 +210,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msgOk = 'Limite da chave atualizado.';
         } catch (Throwable $e) {
             $msgError = 'Erro ao atualizar limite: ' . $e->getMessage();
+        }
+    } elseif ($action === 'api_update_key_register') {
+        try {
+            student_register_ensure_schema($pdo);
+            $keyId = (int)($_POST['api_key_id'] ?? 0);
+            $rate = max(1, min(1000, (int)($_POST['api_register_rate'] ?? STUDENT_REGISTER_DEFAULT_RATE)));
+            $pdo->prepare("UPDATE student_api_keys SET scope_register = :s, register_rate_limit_per_minute = :rate WHERE id = :id")
+                ->execute([':s' => isset($_POST['api_scope_register']) ? 1 : 0, ':rate' => $rate, ':id' => $keyId]);
+            $msgOk = 'Permissão de cadastro atualizada.';
+        } catch (Throwable $e) {
+            $msgError = 'Erro ao atualizar permissão de cadastro: ' . $e->getMessage();
         }
     } elseif (in_array($action, ['api_revoke_key', 'api_activate_key', 'api_delete_key'], true)) {
         try {

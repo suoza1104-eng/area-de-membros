@@ -7,6 +7,7 @@ if (!function_exists('int_h') || !isset($pdo)) { http_response_code(404); exit; 
 $apiKeys = [];
 $apiLogs = [];
 try {
+    student_register_ensure_schema($pdo);
     $apiKeys = student_api_list_keys($pdo);
     $apiLogs = student_api_recent_logs($pdo, 50);
 } catch (Throwable $e) {
@@ -21,6 +22,18 @@ $apiResultLabels = [
     'revoked' => ['Chave revogada', 'err'],
     'bad_request' => ['Requisição inválida', 'err'],
     'error' => ['Erro', 'err'],
+    'register_created' => ['Cadastro: criado', 'ok'],
+    'register_existing' => ['Cadastro: já existia', 'ok'],
+    'register_test_created' => ['Cadastro (teste): criaria', ''],
+    'register_test_existing' => ['Cadastro (teste): já existe', ''],
+    'register_replay' => ['Cadastro: repetição', ''],
+    'register_ambiguous' => ['Cadastro: ambíguo', 'err'],
+    'register_no_turma' => ['Cadastro: sem turma', 'err'],
+    'register_bad_request' => ['Cadastro: inválido', 'err'],
+    'register_forbidden' => ['Cadastro: sem permissão', 'err'],
+    'register_unauthorized' => ['Cadastro: chave inválida', 'err'],
+    'register_busy' => ['Cadastro: ocupado', 'err'],
+    'register_error' => ['Cadastro: erro', 'err'],
 ];
 $inputStyle = 'width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);';
 $labelStyle = 'display:block;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;margin-bottom:4px;';
@@ -78,6 +91,9 @@ $labelStyle = 'display:block;font-size:10px;color:var(--muted);font-weight:800;t
       <label style="display:flex;gap:8px;align-items:center;font-size:12px;cursor:pointer;margin-bottom:10px;">
         <input type="checkbox" name="api_scope_financial" value="1" checked> Incluir compras e valores
       </label>
+      <label style="display:flex;gap:8px;align-items:center;font-size:12px;cursor:pointer;margin-bottom:10px;">
+        <input type="checkbox" name="api_scope_register" value="1"> Pode cadastrar alunos
+      </label>
     </div>
     <div><button class="int-btn primary" type="submit">Gerar chave</button></div>
   </form>
@@ -102,6 +118,15 @@ $labelStyle = 'display:block;font-size:10px;color:var(--muted);font-weight:800;t
               <input type="hidden" name="api_key_id" value="<?= (int)$k['id'] ?>">
               <input type="number" name="api_rate" min="1" max="1000" value="<?= (int)$k['rate_limit_per_minute'] ?>" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;">
               <button class="int-btn" type="submit" style="padding:4px 7px;font-size:10px;">/min</button>
+            </form>
+            <form method="post" action="integracoes.php?tab=api" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:6px 0 0;">
+              <input type="hidden" name="action" value="api_update_key_register">
+              <input type="hidden" name="api_key_id" value="<?= (int)$k['id'] ?>">
+              <label style="display:flex;gap:4px;align-items:center;font-size:11px;cursor:pointer;">
+                <input type="checkbox" name="api_scope_register" value="1" <?= (int)($k['scope_register'] ?? 0) === 1 ? 'checked' : '' ?>> Cadastro
+              </label>
+              <input type="number" name="api_register_rate" min="1" max="1000" value="<?= (int)($k['register_rate_limit_per_minute'] ?? STUDENT_REGISTER_DEFAULT_RATE) ?>" title="Cadastros por minuto" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;">
+              <button class="int-btn" type="submit" style="padding:4px 7px;font-size:10px;">salvar</button>
             </form>
           </td>
           <td><span class="int-badge <?= $active ? 'ok' : 'err' ?>"><?= $active ? 'Ativa' : 'Revogada' ?></span></td>

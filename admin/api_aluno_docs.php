@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/funcoes.php';
 require_once __DIR__ . '/../app/student_api.php';
+require_once __DIR__ . '/../app/student_register.php';
 
 proteger_admin();
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
@@ -11,6 +12,7 @@ function apid_h(string $v): string { return htmlspecialchars($v, ENT_QUOTES | EN
 
 $endpoint = rtrim(BASE_URL, '/') . '/api/v1/aluno.php';
 $messagesEndpoint = rtrim(BASE_URL, '/') . '/api/v1/mensagens.php';
+$registerEndpoint = rtrim(BASE_URL, '/') . '/api/v1/cadastrar_aluno.php';
 
 // [campo, tipo, descricao]
 $sections = [
@@ -247,6 +249,38 @@ td:nth-child(2){color:var(--muted);white-space:nowrap;font-size:12px}
   -d '{"telefone":"11999998888","action":"opt_out","source":"sino","reason":"cancelou_mensagens"}'</pre>
   <p>Campos aceitos: <code>user_id</code>, <code>email</code> ou <code>telefone</code> para localizar o aluno; <code>action</code> como <code>opt_out</code> para cancelar ou <code>opt_in</code> para reativar; <code>source</code>, <code>reason</code> e <code>event_id</code> opcionais.</p>
   <p>Ao cancelar, o sistema grava <code>preferencias_mensagens.whatsapp_opt_out=true</code>, aplica a tag <code>MENSAGENS_CANCELADAS</code> e enfileira atualizacao para o Sino com os campos <code>whatsapp_opt_out=1</code> e <code>receber_mensagens=0</code>.</p>
+  <h2>9. Cadastrar aluno no curso gratuito</h2>
+  <p>Coloca no curso gratuito quem chega pelo WhatsApp (ex.: anúncio do Sino) e devolve os links de acesso. Exige uma chave com a permissão <strong>Cadastro</strong> (Integrações &gt; Chaves API), que tem limite próprio por minuto (padrão <?= (int)STUDENT_REGISTER_DEFAULT_RATE ?>), separado do limite da consulta. Só HTTPS.</p>
+  <div class="box">
+    <strong>POST</strong> <code><?= apid_h($registerEndpoint) ?></code><br>
+    <span class="muted">Content-Type: application/json</span>
+  </div>
+  <pre>curl -X POST "<?= apid_h($registerEndpoint) ?>"   -H "X-API-Key: amk_sua_chave_aqui"   -H "Content-Type: application/json"   -d '{"nome":"José Carlos de Oliveira","telefone":"5577991342398","email":"jose@exemplo.com","curso":"IMQ","origem":"anuncio_whatsapp","origem_detalhes":{"campanha":"...","conjunto":"...","anuncio":"..."},"sino_lead_id":9831,"chave_idempotencia":"sino-lead-9831","teste":true}'</pre>
+  <ul>
+    <li><code>nome</code> (obrigatório): nome e sobrenome, sem números. Sai no certificado.</li>
+    <li><code>telefone</code> (obrigatório): DDD + número, com ou sem 55. É gravado sem o 55 e com o nono dígito; a consulta acha o aluno por qualquer formato.</li>
+    <li><code>email</code> (obrigatório): é o login do aluno na área de membros.</li>
+    <li><code>curso</code> (obrigatório): hoje só <code>IMQ</code>.</li>
+    <li><code>chave_idempotencia</code> (obrigatório): a mesma chave devolve a mesma resposta (com <code>"repeticao": true</code>), sem cadastrar de novo.</li>
+    <li><code>origem</code>, <code>origem_detalhes</code>, <code>sino_lead_id</code> (opcionais): ficam guardados no cadastro (UTM: origem → source, campanha → campaign, conjunto → term, anúncio → content).</li>
+    <li><code>teste</code>: <code>true</code> valida e responde como se fosse cadastrar, sem gravar aluno. No teste os links de acesso não são criados: vêm só os que o aluno já tem (aluno novo: <code>null</code>), e o link do grupo.</li>
+  </ul>
+  <p><strong>Aluno novo</strong> (HTTP 201, <code>status: "created"</code>): entra na turma com inscrições abertas, pela mesma regra do formulário, sem vitalício. O prazo de acesso segue a configuração da turma (veja <code>aluno.acesso.acesso_expira_em</code>). Dispara os mesmos eventos de uma inscrição pelo formulário (<code>INSCRITO</code>, <code>INSCRICAO_GRATUITA</code>), com <code>origem = "<?= apid_h(STUDENT_REGISTER_SOURCE) ?>"</code> para filtrar nas automações.</p>
+  <p><strong>Aluno já cadastrado</strong> (HTTP 200, <code>status: "existing"</code>): nada é alterado (turma, prazo e acesso continuam iguais); a resposta traz os dados e os links dele.</p>
+  <p>O bloco <code>aluno</code> tem o mesmo formato da consulta (seções 4 e 5). O bloco <code>links</code> traz: <code>magic_link</code> (entra já logado, vale por várias entradas e por no mínimo 15 dias, novos links valem 60), <code>magic_link_expira_em</code>, <code>app_login_url</code> (instala o app já logado), <code>welcome_url</code> (passo a passo de primeiro acesso) e <code>grupo_whatsapp_url</code> (grupo da turma).</p>
+  <table>
+    <thead><tr><th>HTTP</th><th>erro</th><th>Quando acontece</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td>nome_invalido, telefone_invalido, email_obrigatorio, email_invalido, curso_invalido, chave_idempotencia_invalida, json_invalido</td><td>Dado inválido; o campo vem em <code>campo</code>.</td></tr>
+      <tr><td>401</td><td>chave_invalida</td><td>Chave ausente ou errada.</td></tr>
+      <tr><td>403</td><td>sem_permissao, chave_revogada, https_obrigatorio</td><td>Chave sem a permissão Cadastro, revogada, ou chamada sem HTTPS.</td></tr>
+      <tr><td>409</td><td>ambiguous</td><td>O telefone bate com mais de um aluno, ou e-mail e telefone são de cadastros diferentes (lista em <code>candidatos</code>).</td></tr>
+      <tr><td>422</td><td>turma_indisponivel</td><td>Nenhuma turma com inscrições abertas agora.</td></tr>
+      <tr><td>429</td><td>limite</td><td>Passou do limite de cadastros por minuto; aguarde <code>Retry-After</code> segundos.</td></tr>
+      <tr><td>503</td><td>ocupado</td><td>Outro cadastro do mesmo telefone em andamento; tente de novo após <code>Retry-After</code>.</td></tr>
+      <tr><td>500</td><td>erro_interno</td><td>Falha do nosso lado; repita com a mesma <code>chave_idempotencia</code>.</td></tr>
+    </tbody>
+  </table>
 </main>
 </body>
 </html>

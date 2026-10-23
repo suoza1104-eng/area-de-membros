@@ -264,18 +264,26 @@ function student_api_find_key(PDO $pdo, string $plain): ?array
     return $row ?: null;
 }
 
-function student_api_rate_limit_status(PDO $pdo, array $key): array
+/**
+ * Janela deslizante de 60s por chave. O cadastro (logs "register_*") tem limite
+ * proprio e nao consome o limite da consulta, nem o contrario.
+ */
+function student_api_rate_limit_status(PDO $pdo, array $key, string $bucket = 'consulta'): array
 {
-    $limit = max(1, (int)($key['rate_limit_per_minute'] ?? 60));
+    $isRegister = $bucket === 'register';
+    $limit = $isRegister
+        ? max(1, (int)($key['register_rate_limit_per_minute'] ?? 20))
+        : max(1, (int)($key['rate_limit_per_minute'] ?? 60));
+    $bucketSql = $isRegister ? "AND result LIKE 'register%'" : "AND result NOT LIKE 'register%'";
     $st = $pdo->prepare("SELECT COUNT(*) FROM student_api_logs
-        WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND)");
+        WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND) {$bucketSql}");
     $st->execute([':id' => (int)$key['id']]);
     $used = (int)$st->fetchColumn();
     $retryAfter = 1;
 
     if ($used >= $limit) {
         $oldest = $pdo->prepare("SELECT created_at FROM student_api_logs
-            WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND)
+            WHERE key_id = :id AND created_at >= (NOW() - INTERVAL 60 SECOND) {$bucketSql}
             ORDER BY created_at ASC
             LIMIT 1");
         $oldest->execute([':id' => (int)$key['id']]);
