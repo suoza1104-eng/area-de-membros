@@ -283,6 +283,12 @@ function sf_http_post_json(string $url, array $headers, array $body, int $timeou
  * ------------------------------*/
 function sf_disparar_evento(PDO $pdo, string $evento, array $user, array $extra = []): bool
 {
+    // Quem o Sino cadastrou ja recebe o acesso e o acompanhamento pelo WhatsApp
+    // oficial: os eventos da inscricao dele nao vao para o SuperFuncionario.
+    if (strtolower(trim((string)($extra['origem'] ?? ''))) === 'sino_whatsapp') {
+        sf_log($pdo, $evento, null, true, null, 'Pulado: aluno cadastrado pelo Sino (origem sino_whatsapp).', ['user' => $user, 'extra' => $extra], '');
+        return true;
+    }
     $cfg = sf_get_config($pdo);
     if ((int)$cfg['is_enabled'] !== 1) {
         sf_log($pdo, $evento, null, false, null, 'SuperFuncionario desativado nas configuracoes.', ['user' => $user, 'extra' => $extra], '');
